@@ -7,6 +7,32 @@ namespace Minicloud.Worker.Tests.DevelopmentWorkspaces;
 
 public sealed class WorkspaceRuntimeEvidenceTests
 {
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"activityAt":null}""")]
+    public void RuntimeWithoutRecordedActivityHasNoActivityTimestamp(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Null(DevelopmentWorkspaceProcessor.ActivityTimestamp(document.RootElement));
+    }
+
+    [Fact]
+    public void RuntimeActivityPreservesNumericTimestamp()
+    {
+        using var document = JsonDocument.Parse("""{"activityAt":1730000000.125}""");
+        Assert.Equal(1730000000.125, DevelopmentWorkspaceProcessor.ActivityTimestamp(document.RootElement));
+    }
+
+    [Theory]
+    [InlineData("""{"activityAt":"1730000000"}""")]
+    [InlineData("""{"activityAt":false}""")]
+    [InlineData("""{"activityAt":{}}""")]
+    public void MalformedRuntimeActivityRemainsRejected(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Throws<InvalidOperationException>(() => DevelopmentWorkspaceProcessor.ActivityTimestamp(document.RootElement));
+    }
+
     [Fact]
     public void BootstrapHostIdentityMatchesItsPrivateKeyAndContainsNoToolInstallation()
     {

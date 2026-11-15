@@ -10,6 +10,10 @@ namespace Minicloud.Worker.DevelopmentWorkspaces;
 
 public sealed partial class DevelopmentWorkspaceProcessor
 {
+    internal static double? ActivityTimestamp(JsonElement status) =>
+        status.TryGetProperty("activityAt", out var useful) && useful.ValueKind != JsonValueKind.Null &&
+        useful.TryGetDouble(out var seconds) ? seconds : null;
+
     private async Task RefreshRuntimeAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string operationId, CancellationToken ct, bool allowRevive = false, bool publishRoute = true)
     {
         var status = Result(await runtime.CallAsync(Target(vm), operationId, "status", null, ct));
@@ -71,7 +75,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 owner.BackupStatus = "Stale";
             if (previous != (owner.LastBackupAt, owner.BackupStatus)) { owner.Revision++; owner.UpdatedAt = Now; }
         }
-        if (status.TryGetProperty("activityAt", out var useful) && useful.TryGetDouble(out var seconds) && seconds > 0)
+        if (ActivityTimestamp(status) is { } seconds && seconds > 0)
         {
             var activity = DateTimeOffset.FromUnixTimeMilliseconds(checked((long)(seconds * 1000)));
             if (activity <= Now && (fresh.LastActivityAt is null || activity > fresh.LastActivityAt)) fresh.LastActivityAt = activity;

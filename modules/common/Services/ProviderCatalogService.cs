@@ -181,7 +181,8 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
     {
         if (await db.Apps.AnyAsync(x => x.PlanId == plan.Id, ct)
             || await db.Deployments.AnyAsync(x => x.PlanId == plan.Id, ct)
-            || await db.ServerInstances.AnyAsync(x => x.PlanId == plan.Id, ct))
+            || await db.ServerInstances.AnyAsync(x => x.PlanId == plan.Id, ct)
+            || await db.DevelopmentWorkspaceVms.AnyAsync(x => x.PlanId == plan.Id, ct))
             throw new ProviderCatalogException("plan_in_use", "This plan is referenced by an environment or resource. Disable it instead.");
         foreach (var claim in await db.ProviderPlanNames.Where(x => x.OrganizationId == plan.OrganizationId && x.PlanId == plan.Id).ToListAsync(ct)) claim.Retired = true;
         db.ProviderPlans.Remove(plan);
