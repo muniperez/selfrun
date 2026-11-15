@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -110,6 +111,55 @@ class FakeLinux:
     def unmount(self):
         self.events.append("unmount")
         self.mounted = False
+
+
+class LayoutTests(unittest.TestCase):
+    def test_postgres_parent_and_data_are_owned_before_initdb_under_private_umask(self):
+        for existing_parent in (False, True):
+            with self.subTest(existing_parent=existing_parent), \
+                    tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
+                workspace = Path(directory)
+                parent = workspace / "postgres"
+                if existing_parent:
+                    parent.mkdir(mode=0o700)
+                account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+                adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
+
+                def initdb(argv):
+                    self.assertEqual(argv[:4], ["runuser", "-u", "postgres", "--"])
+                    for path in (parent, parent / "16"):
+                        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+                        self.assertEqual((path.stat().st_uid, path.stat().st_gid),
+                                         (account.pw_uid, account.pw_gid))
+                        self.assertTrue(os.access(path, os.X_OK))
+                    (parent / "16/PG_VERSION").write_text("16\n")
+                    return ""
+
+                previous = os.umask(0o077)
+                try:
+                    with patch("pwd.getpwnam", return_value=account), \
+                            patch.object(rt.os, "chown", wraps=os.chown) as chown, \
+                            patch.object(rt, "run", side_effect=initdb):
+                        adapter.layout()
+                    chown.assert_any_call(parent, account.pw_uid, account.pw_gid)
+                    chown.assert_any_call(parent / "16", account.pw_uid, account.pw_gid)
+                finally:
+                    os.umask(previous)
+
+    def test_postgres_parent_symlink_is_rejected_before_creating_data(self):
+        with tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (workspace / "postgres").symlink_to(outside, target_is_directory=True)
+            adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
+            with patch.object(rt.os, "chown"), patch.object(rt, "run") as run:
+                with self.assertRaisesRegex(rt.Blocked, "Workspace layout symlink"):
+                    adapter.layout()
+            self.assertFalse((outside / "16").exists())
+            run.assert_not_called()
 
 
 class RuntimeTests(unittest.TestCase):
