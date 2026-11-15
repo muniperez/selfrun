@@ -57,6 +57,10 @@ Workspace layout assigns both `postgres/` and `postgres/16/` to the separate Pos
 account before initialization, including with a restrictive root umask.
 The workspace root is explicitly traversable (0755); the coding-owned `emulators/`
 parent is initialized before its private children. No recursive permission changes occur.
+The pinned T3 empty Foundation database is recognized only with zero events, projections
+and outbox entries. Native x86-64 stdin-only `pselect6` additionally requires reading and
+rechecking the actual fd set; a freezer-obscured wait requires its cgroup's frozen proof.
+Neither adapter enables terminal-input observation or qualifies the production gateway.
 Only root key-based SSH is admitted, with no agent forwarding. Provider firewalls/network
 rules **must** deny lateral VM/sibling/control-plane-private access and public service
 ports; this filesystem runtime cannot prove network isolation. Never forward a worker SSH

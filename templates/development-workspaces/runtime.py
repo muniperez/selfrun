@@ -324,11 +324,22 @@ class Procfs:
             syscall = (directory / "syscall").read_text().strip()
             parts = syscall.split()
             read_number = {"x86_64": 0, "aarch64": 63}.get(self.machine)
-            require(read_number is not None and len(parts) == 9 and int(parts[0], 0) == read_number and
-                    int(parts[1], 0) == 0 and int(parts[3], 0) > 0,
-                    "Native terminal adapter required: no proven blocking read(0) syscall")
-            require((directory / "wchan").read_text().strip() in ("n_tty_read", "wait_woken"),
-                    "Native terminal adapter required: no proven sleeping PTY read")
+            require(read_number is not None and len(parts) == 9,
+                    "Native terminal adapter required: no proven blocking stdin syscall")
+            channel = (directory / "wchan").read_text().strip()
+            polling = self.machine == "x86_64" and int(parts[0], 0) == 270
+            if polling:
+                require(int(parts[1], 0) == 1 and int(parts[2], 0) > 0 and
+                        all(int(parts[index], 0) == 0 for index in (3, 4, 5)),
+                        "Native terminal adapter required: pselect is not an infinite stdin-only wait")
+                require(self.stdin_fd_set(pid, int(parts[2], 0)) == 1 and
+                        (channel == "do_select" or channel == "get_signal" and self.frozen(process)),
+                        "Native terminal adapter required: no proven sleeping stdin-only pselect")
+            else:
+                require(int(parts[0], 0) == read_number and int(parts[1], 0) == 0 and int(parts[3], 0) > 0,
+                        "Native terminal adapter required: no proven blocking read(0) syscall")
+                require(channel in ("n_tty_read", "wait_woken"),
+                        "Native terminal adapter required: no proven sleeping PTY read")
             tty = self.tty(pid)
             device = process["tty"] & 0xffffffff
             require((os.major(tty[3]), os.minor(tty[3])) ==
@@ -338,8 +349,27 @@ class Procfs:
                     (directory / "syscall").read_text().strip() == syscall and self.tty(pid) == tty and
                     not (directory / "task" / str(pid) / "children").read_text().strip(),
                     "Terminal evidence changed during inspection")
+            if polling:
+                require(self.stdin_fd_set(pid, int(parts[2], 0)) == 1 and
+                        (directory / "wchan").read_text().strip() == channel and
+                        (channel != "get_signal" or self.frozen(process)),
+                        "Terminal stdin wait evidence changed during inspection")
         except (OSError, ValueError, UnicodeError) as error:
             raise Blocked("Cannot prove idle terminal from kernel evidence") from error
+
+    def stdin_fd_set(self, pid, address):
+        with (self.root / str(pid) / "mem").open("rb", buffering=0) as memory:
+            mask = os.pread(memory.fileno(), 8, address)
+        require(len(mask) == 8, "Native terminal adapter required: unreadable stdin fd set")
+        return int.from_bytes(mask, "little")
+
+    def frozen(self, process):
+        group = process["cgroup"]
+        require(group.startswith("0::/minicloudwork.slice/") and
+                ".." not in Path(group.removeprefix("0::")).parts,
+                "Unknown terminal freezer cgroup")
+        return "frozen 1" in (Path("/sys/fs/cgroup" + group.removeprefix("0::")) /
+                              "cgroup.events").read_text().splitlines()
 
 
 def t3_idle_database(path, expected_sequence):
@@ -389,7 +419,21 @@ def t3_idle_database(path, expected_sequence):
         metadata = connection.execute(
             "SELECT schema_version,last_sequence FROM orchestration_v2_projection_metadata "
             "WHERE projection_name='thread-projections'").fetchall()
-        require(metadata == [(2, global_sequence)],
+        empty_bootstrap = False
+        if metadata == [(1, 0)] and global_sequence == 0:
+            # The pinned Foundation migration seeds version 1 before any V2 event exists.
+            projections = [name for name, in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name GLOB 'orchestration_v2_projection_*'") if
+                name != "orchestration_v2_projection_metadata"]
+            require(all(re.fullmatch(r"orchestration_v2_projection_[a-z_]+", name)
+                        for name in projections), "Unknown pinned T3 projection table")
+            empty_bootstrap = (
+                connection.execute("SELECT COUNT(*) FROM orchestration_events").fetchone() == (0,) and
+                connection.execute("SELECT COUNT(*) FROM orchestration_v2_effect_outbox").fetchone() == (0,) and
+                all(connection.execute("SELECT COUNT(*) FROM " + name).fetchone() == (0,)
+                    for name in projections))
+        require(metadata == [(2, global_sequence)] or empty_bootstrap,
                 "Pinned T3 thread projection is unknown or not caught up to the global V2 cursor")
         counts = {}
         for table, allowed in tables.items():
@@ -399,7 +443,8 @@ def t3_idle_database(path, expected_sequence):
                 count += 1
             counts[table] = count
         return dict(type="T3CommittedIdle", sourceCommit="24e77473ecf41bc1f7142529c7911c1c1aae1d76",
-                    schemaVersion=2, threadSequence=thread_sequence, globalV2Sequence=global_sequence,
+                    schemaVersion=metadata[0][0], emptyBootstrap=empty_bootstrap,
+                    threadSequence=thread_sequence, globalV2Sequence=global_sequence,
                     projectionName="thread-projections", rowsChecked=counts)
     except sqlite3.Error as error:
         raise Blocked("Pinned T3 read-only state inspection failed; keep compute running") from error

@@ -50,6 +50,34 @@ class T3StateTests(unittest.TestCase):
         self.assertEqual((0, 10), (result["threadSequence"], result["globalV2Sequence"]))
         self.assertEqual(before, hashlib.sha256(self.db.read_bytes()).hexdigest())
 
+    def test_pinned_foundation_version_one_is_idle_only_when_all_state_is_empty(self):
+        tables = [name for name, in self.writer.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'") if name !=
+            "orchestration_v2_projection_metadata"]
+        for table in tables:
+            self.writer.execute("DELETE FROM " + table)
+        self.writer.execute("UPDATE orchestration_v2_projection_metadata SET schema_version=1")
+        self.writer.commit()
+        result = rt.t3_idle_database(self.db, 0)
+        self.assertTrue(result["emptyBootstrap"])
+        self.assertEqual(1, result["schemaVersion"])
+        for sql in ("INSERT INTO orchestration_events VALUES (1,1,'thread')",
+                    "INSERT INTO orchestration_v2_projection_runs VALUES ('old','completed')",
+                    "INSERT INTO orchestration_v2_effect_outbox VALUES ('old','succeeded')"):
+            with self.subTest(sql=sql):
+                self.writer.execute(sql)
+                self.writer.commit()
+                with self.assertRaisesRegex(rt.Blocked, "projection is unknown"):
+                    rt.t3_idle_database(self.db, 0)
+                for table in tables:
+                    self.writer.execute("DELETE FROM " + table)
+                self.writer.commit()
+        self.writer.execute("CREATE TABLE orchestration_v2_projection_messages (message TEXT)")
+        self.writer.execute("INSERT INTO orchestration_v2_projection_messages VALUES ('stale')")
+        self.writer.commit()
+        with self.assertRaisesRegex(rt.Blocked, "projection is unknown"):
+            rt.t3_idle_database(self.db, 0)
+
     def test_advanced_thread_cursor_or_global_projection_lag_blocks(self):
         self.writer.execute("INSERT INTO orchestration_events VALUES (1,2,'thread')")
         self.writer.execute("INSERT INTO orchestration_events VALUES (2,2,'project')")

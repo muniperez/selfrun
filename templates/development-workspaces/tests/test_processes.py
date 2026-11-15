@@ -21,6 +21,7 @@ class FixtureProcfs(rt.Procfs):
         self.exe = dict(path="/usr/bin/bash", uid=0, mode=0o100755)
         self.descriptor = ("/dev/pts/3", 5, 7, os.makedev(136, 3))
         self.on_tty = None
+        self.frozen_state = False
 
     def executable(self, pid):
         return dict(self.exe)
@@ -29,6 +30,9 @@ class FixtureProcfs(rt.Procfs):
         if self.on_tty:
             self.on_tty()
         return self.descriptor
+
+    def frozen(self, process):
+        return self.frozen_state
 
 
 class IdleTerminalTests(unittest.TestCase):
@@ -90,6 +94,44 @@ class IdleTerminalTests(unittest.TestCase):
         self.reader.exe["path"] = "/usr/bin/dash"
         self.write(110, argv=["/bin/sh", "-i"])
         self.inspect()
+
+    def pselect(self, mask=1, **overrides):
+        (self.root / "110/mem").write_bytes(bytes(64) + mask.to_bytes(8, "little"))
+        self.write(110, syscall="270 0x1 0x40 0x0 0x0 0x0 0x0 0x100 0x200",
+                   wchan="do_select", **overrides)
+
+    def test_native_pselect_requires_actual_stdin_only_fd_set_and_infinite_wait(self):
+        self.pselect()
+        self.inspect()
+        self.write(110, wchan="get_signal")
+        with self.assertRaisesRegex(rt.Blocked, "sleeping stdin-only"):
+            self.inspect()
+        self.reader.frozen_state = True
+        self.inspect()
+        for mask in (0, 2, 3):
+            with self.subTest(mask=mask):
+                self.pselect(mask)
+                with self.assertRaises(rt.Blocked):
+                    self.inspect()
+        self.pselect()
+        for syscall in ("270 0x2 0x40 0x0 0x0 0x0 0x0 0x100 0x200",
+                        "270 0x1 0x40 0x0 0x0 0x80 0x0 0x100 0x200",
+                        "270 0x1 0x40 0x80 0x0 0x0 0x0 0x100 0x200"):
+            with self.subTest(syscall=syscall):
+                self.write(110, syscall=syscall)
+                with self.assertRaisesRegex(rt.Blocked, "infinite stdin-only"):
+                    self.inspect()
+
+    def test_pselect_fd_set_change_or_unreadable_memory_fails_closed(self):
+        self.pselect()
+        self.reader.on_tty = lambda: (self.root / "110/mem").write_bytes(bytes(64) + (3).to_bytes(8, "little"))
+        with self.assertRaisesRegex(rt.Blocked, "wait evidence changed"):
+            self.inspect()
+        self.reader.on_tty = None
+        self.pselect()
+        (self.root / "110/mem").unlink()
+        with self.assertRaisesRegex(rt.Blocked, "Cannot prove idle"):
+            self.inspect()
 
     def test_c_commands_scripts_background_and_stopped_jobs_cannot_be_classified_idle(self):
         for argv in (["/bin/bash", "-c", "read"], ["/bin/bash", "-ic", "read"],
