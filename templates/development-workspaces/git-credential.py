@@ -70,6 +70,8 @@ def main():
         total = 0
         while True:
             line = sys.stdin.readline(8193)
+            if not line:
+                break
             total += len(line)
             if total > 16384 or not line.endswith("\n"):
                 return

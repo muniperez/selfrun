@@ -160,6 +160,8 @@ installation token issued for at most one hour. Parent stages `/run/minicloud-gi
 The installed root-owned `git-credential.py get` answers only the exact HTTPS host/path
 with future expiry no more than one hour away; store/erase, redirects, missing path,
 other repositories/hosts and expired credentials have no response or diagnostics.
+Git requests may end at EOF after a complete newline-terminated field or at a blank line;
+truncated fields still fail closed.
 There is no prompt/fallback. Parent must use the token's **real issuer expiry**, renew/revoke
 explicitly and never claim this helper turns a broad PAT/deploy key into a short-lived token.
 All Git/helper/SSH execution runs as UID 2000, never root. Remote evidence is collected in

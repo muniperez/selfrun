@@ -1,7 +1,10 @@
 import contextlib
 import importlib.util
 import io
+import os
 from pathlib import Path
+import shlex
+import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
@@ -77,6 +80,33 @@ class CredentialTests(unittest.TestCase):
             helper.main()
         self.assertEqual("", output.getvalue())
         self.assertEqual("", error.getvalue())
+
+    def test_complete_eof_request_is_accepted_but_truncated_field_is_rejected(self):
+        request = "protocol=https\nhost=github.com\npath=fixture/project.git\n"
+        self.assertEqual(self.invoke("get", request + "\n"), self.invoke("get", request))
+        self.assertEqual(("", "", 0), self.invoke("get", request.rstrip("\n")))
+
+    def test_actual_git_credential_fill_can_read_synthetic_credential(self):
+        source = (
+            "import importlib.util;"
+            f"s=importlib.util.spec_from_file_location('helper',{str(HERE / 'git-credential.py')!r});"
+            "h=importlib.util.module_from_spec(s);s.loader.exec_module(h);"
+            f"h.load_credential=lambda:{self.credential!r};"
+            "h.time.time=lambda:1000;h.main()"
+        )
+        command = "!" + shlex.join([sys.executable, "-B", "-c", source])
+        result = subprocess.run(
+            ["git", "-c", "credential.helper=", "-c", "credential.helper=" + command,
+             "-c", "credential.useHttpPath=true", "credential", "fill"],
+            input="protocol=https\nhost=github.com\npath=fixture/project.git\n\n",
+            text=True, capture_output=True, timeout=10,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": "/nonexistent",
+                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                 "GIT_TERMINAL_PROMPT": "0"})
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("username=x-access-token\n", result.stdout)
+        self.assertIn("password=synthetic-fixture-not-a-token\n", result.stdout)
+        self.assertEqual("", result.stderr)
 
     def test_runtime_git_selects_only_root_helper_and_runs_all_git_work_unprivileged(self):
         git = runtime.Git()
