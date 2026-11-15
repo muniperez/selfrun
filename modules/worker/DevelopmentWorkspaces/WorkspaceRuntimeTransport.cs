@@ -23,6 +23,12 @@ public interface IWorkspaceRuntimeTransport
 
 public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> options) : IWorkspaceRuntimeTransport
 {
+    // SSH.NET accepts octal digits as a decimal argument, not POSIX bit values.
+    internal const short PrivateDirectoryMode = 700;
+    internal const short PrivateFileMode = 600;
+    internal const short RepositoryCredentialDirectoryMode = 711;
+    internal const short RepositoryCredentialFileMode = 400;
+
     internal ConnectionInfo Connection(WorkspaceRuntimeTarget target)
     {
         if (!IPAddress.TryParse(target.Address, out var address) || IPAddress.IsLoopback(address) ||
@@ -77,7 +83,7 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
             foreach (var directory in new[] { "/etc/minicloud-workspace", "/run/minicloud-workspace" })
             {
                 if (!sftp.Exists(directory)) sftp.CreateDirectory(directory);
-                sftp.ChangePermissions(directory, 448);
+                sftp.ChangePermissions(directory, PrivateDirectoryMode);
             }
             Upload(sftp, "/etc/minicloud-workspace/runtime.json", config);
             Upload(sftp, "/run/minicloud-workspace/enrollment.json", enrollment);
@@ -92,13 +98,13 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
         await sftp.ConnectAsync(ct);
         const string directory = "/run/minicloud-git";
         if (!sftp.Exists(directory)) sftp.CreateDirectory(directory);
-        sftp.ChangePermissions(directory, 457);
+        sftp.ChangePermissions(directory, RepositoryCredentialDirectoryMode);
         const string path = directory + "/credential.json";
         Upload(sftp, path, credential);
         var attributes = sftp.GetAttributes(path);
         attributes.UserId = 2000; attributes.GroupId = 2000;
         sftp.SetAttributes(path, attributes);
-        sftp.ChangePermissions(path, 256);
+        sftp.ChangePermissions(path, RepositoryCredentialFileMode);
     }
 
     public async Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
@@ -149,7 +155,7 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
     {
         var staged = path + ".staged";
         using var stream = client.Open(staged, FileMode.Create, FileAccess.Write);
-        client.ChangePermissions(staged, 384);
+        client.ChangePermissions(staged, PrivateFileMode);
         stream.Write(JsonSerializer.SerializeToUtf8Bytes(payload));
         stream.Flush(); stream.Close();
         if (client.Exists(path)) client.DeleteFile(path);
