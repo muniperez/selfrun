@@ -132,6 +132,34 @@ public sealed class GatewayRelayTests
     }
 
     [Fact]
+    public async Task BootstrapQueueIsBoundedAndCanceledWaitersReleaseCapacity()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        var first = fixture.SendAsync("/assets/held.js", authenticated: true);
+        await fixture.AssetStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var cancellation = new CancellationTokenSource();
+        using var canceledRequest = new HttpRequestMessage(HttpMethod.Get, "/assets/canceled.js");
+        canceledRequest.Headers.Add("Cookie", fixture.Cookie);
+        var canceled = fixture.Client.SendAsync(canceledRequest, cancellation.Token);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled);
+        var requests = Enumerable.Range(0, 33).Select(i =>
+            fixture.SendAsync($"/assets/chunk-{i}.js", authenticated: true)).ToList();
+        var rejected = await Task.WhenAny(requests).WaitAsync(TimeSpan.FromSeconds(5));
+        using var rejectedResponse = await rejected;
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejectedResponse.StatusCode);
+        requests.Remove(rejected);
+        fixture.ReleaseAsset.TrySetResult();
+        using var firstResponse = await first;
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        foreach (var request in requests)
+        {
+            using var response = await request;
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task HttpTimeoutIsBounded()
     {
         await using var fixture = await Fixture.StartAsync();
