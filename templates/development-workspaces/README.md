@@ -65,6 +65,8 @@ The pinned T3 read-only resource monitor is recognized separately only by its ex
 release digest, immutable root-owned code, argument-free invocation, direct T3 parent,
 registered service cgroup and stdio IPC, with no TTY or children. Other
 children, agents and helpers remain unregistered work. Tool archives install root-owned.
+The pinned T3 CLI's graceful interrupted exit (130) is a successful systemd stop;
+other nonzero exits still fail the clean-stop fence.
 Only root key-based SSH is admitted, with no agent forwarding. Provider firewalls/network
 rules **must** deny lateral VM/sibling/control-plane-private access and public service
 ports; this filesystem runtime cannot prove network isolation. Never forward a worker SSH

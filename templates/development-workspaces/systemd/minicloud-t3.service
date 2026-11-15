@@ -13,6 +13,7 @@ Environment=HOME=/workspace/home
 Environment=CODEX_HOME=/workspace/home/.codex
 ExecStart=/usr/local/bin/t3 serve --host 127.0.0.1 --port 3773 --base-dir /workspace/t3 --no-browser
 Restart=no
+SuccessExitStatus=130
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
