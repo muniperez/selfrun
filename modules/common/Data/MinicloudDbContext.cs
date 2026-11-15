@@ -585,6 +585,7 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.Property(x => x.OrganizationId).HasColumnName("organization_id");
             entity.Property(x => x.NormalizedName).HasColumnName("normalized_name").HasMaxLength(128);
             entity.Property(x => x.PlanId).HasColumnName("plan_id");
+            entity.Property(x => x.PlanName).HasColumnName("plan_name");
             entity.Property(x => x.ProviderAccountId).HasColumnName("provider_account_id");
             entity.Property(x => x.ProviderSshKeyId).HasColumnName("provider_ssh_key_id");
             entity.Property(x => x.SshPublicKey).HasColumnName("ssh_public_key");

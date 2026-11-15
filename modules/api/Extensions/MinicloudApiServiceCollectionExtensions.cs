@@ -168,6 +168,7 @@ public static class MinicloudApiServiceCollectionExtensions
         services.AddScoped<AppBranchService>();
         services.AddScoped<AppEnvironmentService>();
         services.AddScoped<EnvironmentSshAccessService>();
+        services.AddScoped<CodingWorkspaceService>();
         services.AddScoped<AppDeletionService>();
         services.AddScoped<DeploymentOrchestrator>();
         services.AddScoped<IAppSecretService, AppSecretService>();

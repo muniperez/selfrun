@@ -7,6 +7,7 @@ public sealed class CodingWorkspace
     public string Name { get; set; } = default!;
     public string NormalizedName { get; set; } = default!;
     public string PlanId { get; set; } = default!;
+    public string PlanName { get; set; } = default!;
     public string ProviderAccountId { get; set; } = default!;
     public string Provider { get; set; } = default!;
     public string Region { get; set; } = default!;

@@ -40,6 +40,11 @@ public sealed record CodingWorkspaceOperationResponse(
     string? ErrorCode,
     string? ErrorMessage);
 
+public sealed record CreateCodingWorkspaceResponse(
+    CodingWorkspaceResponse Workspace,
+    CodingWorkspaceOperationResponse Operation,
+    bool Resumed);
+
 public sealed record CodingWorkspaceAuthRequest(string Provider);
 
 public sealed record CodingWorkspaceAuthResponse(

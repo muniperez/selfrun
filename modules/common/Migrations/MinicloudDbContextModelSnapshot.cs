@@ -667,6 +667,234 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("cli_login_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("Minicloud.Common.Models.CodingWorkspace", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Agent")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("agent");
+
+                    b.Property<string>("AgentVersion")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("agent_version");
+
+                    b.Property<string>("BootstrapRevision")
+                        .HasColumnType("text")
+                        .HasColumnName("bootstrap_revision");
+
+                    b.Property<string>("Connectivity")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("connectivity");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Image")
+                        .HasColumnType("text")
+                        .HasColumnName("image");
+
+                    b.Property<string>("IpAddress")
+                        .HasColumnType("text")
+                        .HasColumnName("ip_address");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error_code");
+
+                    b.Property<DateTimeOffset?>("LastObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_observed_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("normalized_name");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("plan_id");
+
+                    b.Property<string>("PlanName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("plan_name");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("ProviderAccountId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_account_id");
+
+                    b.Property<string>("ProviderServerId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_server_id");
+
+                    b.Property<string>("ProviderSshKeyId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_ssh_key_id");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("region");
+
+                    b.Property<string>("Repository")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("repository");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("sku");
+
+                    b.Property<string>("SshFingerprint")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ssh_fingerprint");
+
+                    b.Property<string>("SshPublicKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ssh_public_key");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("stage");
+
+                    b.Property<string>("T3Version")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("t3_version");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("WorkspaceUser")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_user");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "NormalizedName")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "PlanId");
+
+                    b.HasIndex("OrganizationId", "ProviderAccountId", "ProviderSshKeyId");
+
+                    b.HasIndex("ProviderAccountId", "Provider", "ProviderServerId")
+                        .IsUnique();
+
+                    b.ToTable("coding_workspaces", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.CodingWorkspaceOperation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasColumnType("text")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("OwnershipToken")
+                        .HasColumnType("text")
+                        .HasColumnName("ownership_token");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("stage");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnershipToken")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.HasIndex("OrganizationId", "WorkspaceId", "CreatedAt");
+
+                    b.ToTable("coding_workspace_operations", (string)null);
+                });
+
             modelBuilder.Entity("Minicloud.Common.Models.CustomDomainRegistration", b =>
                 {
                     b.Property<string>("Id")
@@ -3915,6 +4143,39 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("ApprovedByUser");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.CodingWorkspace", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Minicloud.Common.Models.ProviderPlan", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "PlanId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Minicloud.Common.Models.ProviderSshKey", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ProviderAccountId", "ProviderSshKeyId")
+                        .HasPrincipalKey("OrganizationId", "ProviderAccountId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.CodingWorkspaceOperation", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.CodingWorkspace", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "WorkspaceId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Minicloud.Common.Models.CustomDomainRegistration", b =>
