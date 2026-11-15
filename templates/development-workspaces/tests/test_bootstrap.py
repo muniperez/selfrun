@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -41,19 +42,26 @@ class BootstrapTests(unittest.TestCase):
         self.envelope = dict(vmId="vm", generation=2, operationId="start", expiresAt=1e12,
                              token="not-a-real-credential", url="https://example.invalid/enroll")
         self.manifest = dict(architecture="linux/amd64", provenance=dict(toolArtifactsVerified=True))
+        self.manifest_bytes = (json.dumps(self.manifest, indent=2) + "\n").encode()
 
     def execute(self, opener):
         def load(path):
             return self.envelope if Path(path) == self.enrollment else self.config
         read_text = Path.read_text
+        read_bytes = Path.read_bytes
         def read(path, *args, **kwargs):
             if str(path) == "/opt/minicloud-workspace/image-manifest.json":
-                return json.dumps(self.manifest)
+                return self.manifest_bytes.decode()
             return read_text(path, *args, **kwargs)
+        def read_raw(path):
+            if str(path) == "/opt/minicloud-workspace/image-manifest.json":
+                return self.manifest_bytes
+            return read_bytes(path)
         with patch.object(bootstrap, "load_config", side_effect=load), \
              patch.object(bootstrap, "call", return_value={"type": "BootstrapReady"}), \
              patch.object(bootstrap, "run") as process, \
              patch.object(Path, "read_text", read), \
+             patch.object(Path, "read_bytes", read_raw), \
              patch.object(bootstrap.urllib.request, "build_opener", return_value=opener):
             result = bootstrap.bootstrap(self.root / "config.json", self.enrollment, self.root / "state")
         self.assertTrue(all(call.args[0][0] == "systemctl" for call in process.call_args_list))
@@ -91,6 +99,19 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(runtime.Blocked, "already attempted"):
             self.execute(opener)
         self.assertEqual(1, opener.count)
+
+    def test_enrollment_hashes_exact_manifest_bytes_not_reserialized_json(self):
+        response = SimpleNamespace(status=200, read=lambda n: b"{}")
+        class Opener:
+            request = None
+            def open(inner, request, timeout):
+                inner.request = request
+                return contextlib.nullcontext(response)
+        opener = Opener()
+        self.execute(opener)
+        submitted = json.loads(opener.request.data)["imageManifestSha256"]
+        self.assertEqual(hashlib.sha256(self.manifest_bytes).hexdigest(), submitted)
+        self.assertNotEqual(runtime.digest(self.manifest), submitted)
 
     def test_wrong_generation_and_redirects_block(self):
         self.envelope["generation"] = 1

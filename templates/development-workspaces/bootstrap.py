@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-shot prepared-image bootstrap. Never installs tools or formats storage."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-from runtime import Blocked, atomic_json, digest, load_config, require, run
+from runtime import Blocked, atomic_json, load_config, require, run
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -86,7 +87,8 @@ def bootstrap(config_path, enrollment_path, state_dir):
                 descriptor.get("serverVersion") == "0.1.9", "Pinned protocol-2 T3 is not ready")
     # Enrollment means runtime ready, not T3 gateway authenticated. Parent registers the gateway later.
     body = dict(schemaVersion=1, vmId=c["vmId"], generation=c["generation"], kind=c["kind"],
-                operationId=enrollment["operationId"], imageManifestSha256=digest(manifest),
+                operationId=enrollment["operationId"],
+                imageManifestSha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
                 bootstrapReceipt=ready)
     atomic_json(intent, dict(vmId=c["vmId"], generation=c["generation"],
                              operationId=enrollment["operationId"], attemptedAt=time.time()))
