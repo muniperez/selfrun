@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Minicloud.Common.Migrations
 {
     [DbContext(typeof(MinicloudDbContext))]
-    [Migration("20261115085537_DevelopmentWorkspaceVms")]
+    [Migration("20261117100000_DevelopmentWorkspaceVms")]
     partial class DevelopmentWorkspaceVms
     {
         /// <inheritdoc />
