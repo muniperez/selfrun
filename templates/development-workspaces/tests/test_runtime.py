@@ -141,6 +141,12 @@ class LayoutTests(unittest.TestCase):
                             patch.object(rt.os, "chown", wraps=os.chown) as chown, \
                             patch.object(rt, "run", side_effect=initdb):
                         adapter.layout()
+                    self.assertEqual(workspace.stat().st_mode & 0o777, 0o755)
+                    for relative in ("repos", "home", "emulators", "emulators/exports", "emulators/config"):
+                        path = workspace / relative
+                        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+                        self.assertTrue(os.access(path, os.X_OK))
+                        chown.assert_any_call(path, os.getuid(), os.getgid())
                     chown.assert_any_call(parent, account.pw_uid, account.pw_gid)
                     chown.assert_any_call(parent / "16", account.pw_uid, account.pw_gid)
                 finally:
@@ -160,6 +166,19 @@ class LayoutTests(unittest.TestCase):
                     adapter.layout()
             self.assertFalse((outside / "16").exists())
             run.assert_not_called()
+
+    def test_workspace_symlink_is_rejected_without_changing_target_permissions(self):
+        with tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir(mode=0o700)
+            workspace = root / "workspace"
+            workspace.symlink_to(outside, target_is_directory=True)
+            adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
+            with self.assertRaisesRegex(rt.Blocked, "Workspace layout symlink"):
+                adapter.layout()
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(list(outside.iterdir()), [])
 
 
 class RuntimeTests(unittest.TestCase):

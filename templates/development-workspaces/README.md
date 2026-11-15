@@ -55,6 +55,8 @@ in the builder, never on a workspace boot.
 The installed binaries and `systemd/` units use UID/GID **2000:2000** (`coding`, no SSH login).
 Workspace layout assigns both `postgres/` and `postgres/16/` to the separate PostgreSQL
 account before initialization, including with a restrictive root umask.
+The workspace root is explicitly traversable (0755); the coding-owned `emulators/`
+parent is initialized before its private children. No recursive permission changes occur.
 Only root key-based SSH is admitted, with no agent forwarding. Provider firewalls/network
 rules **must** deny lateral VM/sibling/control-plane-private access and public service
 ports; this filesystem runtime cannot prove network isolation. Never forward a worker SSH

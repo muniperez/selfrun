@@ -474,7 +474,9 @@ class Linux:
         require(not (self.workspace / ".minicloud-volume.json").exists(), "Primary data on ephemeral")
 
     def layout(self):
-        for relative in ("repos", "t3", "transcripts", "postgres", "postgres/16", "emulators/exports",
+        require(self.workspace.is_dir() and not self.workspace.is_symlink(), "Workspace layout symlink")
+        self.workspace.chmod(0o755)
+        for relative in ("repos", "t3", "transcripts", "postgres", "postgres/16", "emulators", "emulators/exports",
                          "emulators/config", "artifacts", "config", "home"):
             directory = self.workspace / relative
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
