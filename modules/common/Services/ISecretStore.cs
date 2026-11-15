@@ -17,6 +17,7 @@ public sealed record SecretStoreWriteRequest(
     // Organization infrastructure credentials use their own namespace, never a synthetic app.
     public string? ProviderAccountId { get; init; }
     public string? CredentialGeneration { get; init; }
+    public string? IntegrationId { get; init; }
 }
 
 public sealed record StoredSecretReference(

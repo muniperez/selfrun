@@ -14,7 +14,10 @@ public sealed class OpenBaoSecretStore(HttpClient httpClient, IOptions<OpenBaoSe
 
     public async Task<StoredSecretReference> PutAsync(SecretStoreWriteRequest request, CancellationToken cancellationToken)
     {
-        var path = request.ProviderAccountId is null
+        var path = request.IntegrationId is not null
+            ? IntegrationPathFor(_options.EnvironmentPrefix, request.OrganizationId, request.IntegrationId,
+                request.CredentialGeneration ?? throw new ArgumentException("A credential generation is required."))
+            : request.ProviderAccountId is null
             ? PathFor(request.OrganizationId, request.AppId, request.ServiceName, request.Name)
             : ProviderPathFor(_options.EnvironmentPrefix, request.OrganizationId, request.ProviderAccountId,
                 request.CredentialGeneration ?? throw new ArgumentException("A credential generation is required."));
@@ -148,6 +151,9 @@ public sealed class OpenBaoSecretStore(HttpClient httpClient, IOptions<OpenBaoSe
 
     public static string ProviderPathFor(string environment, string organizationId, string providerAccountId, string generation) =>
         string.Join('/', "env", Segment(environment), "orgs", Segment(organizationId), "providers", Segment(providerAccountId), "credentials", Segment(generation));
+
+    public static string IntegrationPathFor(string environment, string organizationId, string integrationId, string generation) =>
+        string.Join('/', "env", Segment(environment), "orgs", Segment(organizationId), "integrations", Segment(integrationId), "credentials", Segment(generation));
 
     private static string EscapePath(string value) => string.Join('/', value.Split('/').Select(Segment));
 

@@ -132,6 +132,26 @@ public sealed class ProviderCredentialTests : IClassFixture<SqliteTestHarness>
     }
 
     [Fact]
+    public async Task OpenBaoIntegrationCredentialsUseTheirOwnNamespaceAndVersionedReferences()
+    {
+        var urls = new List<string>();
+        using var http = new HttpClient(new Transport((request, _) =>
+        {
+            urls.Add(request.RequestUri!.PathAndQuery);
+            return Json(request.Method == HttpMethod.Post ? """{"data":{"version":9}}""" : """{"data":{"data":{"value":"fixture"}}}""");
+        }));
+        var store = new OpenBaoSecretStore(http, Options.Create(new OpenBaoSecretStoreOptions { Address = "https://bao.fixture", Token = "fixture", EnvironmentPrefix = "test" }));
+        var reference = await store.PutAsync(new SecretStoreWriteRequest("org", "", "", "github", "fixture")
+            { IntegrationId = "github-app", CredentialGeneration = "generation" }, default);
+        await store.GetAsync(reference, default);
+        await store.DeleteAsync(reference, default);
+        Assert.Equal("/v1/minicloud-apps/data/env/test/orgs/org/integrations/github-app/credentials/generation", urls[0]);
+        Assert.EndsWith("?version=9", urls[1]);
+        Assert.Contains("/metadata/env/test/orgs/org/integrations/", urls[2]);
+        Assert.DoesNotContain(urls, url => url.Contains("/providers/") || url.Contains("/apps/"));
+    }
+
+    [Fact]
     public async Task OpenBaoReadsRenewableTokenFileOnEveryRequestAndNeverExposesIt()
     {
         var fixture = CreateOpenBaoTokenFixture();

@@ -27,6 +27,7 @@ public sealed partial class MinicloudDbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        AdvanceGitHubAppRevisions();
         var pending = PendingNumberAllocations();
         if (pending.Count == 0)
         {
@@ -51,6 +52,7 @@ public sealed partial class MinicloudDbContext
 
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
+        AdvanceGitHubAppRevisions();
         var pending = PendingNumberAllocations();
         if (pending.Count == 0)
         {

@@ -4,6 +4,10 @@
 }
 
 {$CONSOLE_HOSTNAME} {
+    header /settings/github/* {
+        Referrer-Policy no-referrer
+        Cache-Control no-store
+    }
     encode zstd gzip
     reverse_proxy dashboard:8080
 }

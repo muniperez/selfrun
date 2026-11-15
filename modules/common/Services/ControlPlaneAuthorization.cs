@@ -62,6 +62,8 @@ public sealed class ControlPlaneAuthorization(MinicloudDbContext db)
 
     private static string? ScopeFor(OrganizationAction action) => action switch
     {
+        OrganizationAction.ReadGitHub => ApiKeyScopes.GitHubRead,
+        OrganizationAction.ManageGitHub => ApiKeyScopes.GitHubWrite,
         OrganizationAction.ReadDatabases => ApiKeyScopes.DatabasesRead,
         OrganizationAction.ManageDatabases => ApiKeyScopes.DatabasesManage,
         OrganizationAction.ReadApps => ApiKeyScopes.AppsRead,
@@ -85,6 +87,8 @@ public sealed class ControlPlaneAuthorization(MinicloudDbContext db)
 
     private static bool RoleAllows(OrganizationRole role, OrganizationAction action) => action switch
     {
+        OrganizationAction.ReadGitHub => true,
+        OrganizationAction.ManageGitHub => role is OrganizationRole.Owner or OrganizationRole.Admin,
         OrganizationAction.ReadDatabases => true,
         OrganizationAction.ManageDatabases => role is OrganizationRole.Owner or OrganizationRole.Admin or OrganizationRole.Developer,
         OrganizationAction.ReadProviders or OrganizationAction.ReadPlans => true,
@@ -100,6 +104,8 @@ public sealed class ControlPlaneAuthorization(MinicloudDbContext db)
 
 public enum OrganizationAction
 {
+    ReadGitHub,
+    ManageGitHub,
     ReadDatabases,
     ManageDatabases,
     ReadApps,

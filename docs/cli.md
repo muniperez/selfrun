@@ -2,6 +2,10 @@
 
 The current command is `minicloud`.
 
+For owner-controlled GitHub App setup, run `minicloud github setup --no-browser`,
+then inspect `minicloud github status` and `minicloud github repositories`.
+See [GitHub App setup, installation and recovery](github-app.md).
+
 CLI source builds remain supported. A new exact signed binary distribution
 workflow is implemented, but no new binaries have been published/qualified.
 See [verified binary/source installation](cli-distribution.md).

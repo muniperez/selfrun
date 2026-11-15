@@ -1582,6 +1582,143 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("domains", (string)null);
                 });
 
+            modelBuilder.Entity("Minicloud.Common.Models.GitHubAppConnection", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("AppId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("app_id");
+
+                    b.Property<string>("AppSlug")
+                        .HasColumnType("text")
+                        .HasColumnName("app_slug");
+
+                    b.Property<string>("ConversionCodeHash")
+                        .HasColumnType("text")
+                        .HasColumnName("conversion_code_hash");
+
+                    b.Property<string>("CredentialGeneration")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("credential_generation");
+
+                    b.Property<string>("FailureCode")
+                        .HasColumnType("text")
+                        .HasColumnName("failure_code");
+
+                    b.Property<string>("InstallationActorId")
+                        .HasColumnType("text")
+                        .HasColumnName("installation_actor_id");
+
+                    b.Property<long>("InstallationExpiresAtTicks")
+                        .HasColumnType("bigint")
+                        .HasColumnName("installation_expires_at_ticks");
+
+                    b.Property<long?>("InstallationId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("installation_id");
+
+                    b.Property<string>("InstallationStateHash")
+                        .HasColumnType("text")
+                        .HasColumnName("installation_state_hash");
+
+                    b.Property<bool>("InstallationStateUsed")
+                        .HasColumnType("boolean")
+                        .HasColumnName("installation_state_used");
+
+                    b.Property<DateTimeOffset?>("LastVerifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_verified_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<long?>("OwnerId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("owner_id");
+
+                    b.Property<string>("OwnerLogin")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("owner_login");
+
+                    b.Property<string>("OwnerType")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("owner_type");
+
+                    b.Property<string>("RepositoriesJson")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("repositories_json");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("SecretPath")
+                        .HasColumnType("text")
+                        .HasColumnName("secret_path");
+
+                    b.Property<string>("SecretProvider")
+                        .HasColumnType("text")
+                        .HasColumnName("secret_provider");
+
+                    b.Property<string>("SecretVersion")
+                        .HasColumnType("text")
+                        .HasColumnName("secret_version");
+
+                    b.Property<string>("SetupActorId")
+                        .HasColumnType("text")
+                        .HasColumnName("setup_actor_id");
+
+                    b.Property<long>("SetupExpiresAtTicks")
+                        .HasColumnType("bigint")
+                        .HasColumnName("setup_expires_at_ticks");
+
+                    b.Property<string>("SetupStateHash")
+                        .HasColumnType("text")
+                        .HasColumnName("setup_state_hash");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.ToTable("github_app_connections", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.GitHubWebhookReceipt", b =>
+                {
+                    b.Property<string>("ConnectionId")
+                        .HasColumnType("text")
+                        .HasColumnName("connection_id");
+
+                    b.Property<string>("DeliveryId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("delivery_id");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.HasKey("ConnectionId", "DeliveryId");
+
+                    b.ToTable("github_webhook_receipts", (string)null);
+                });
+
             modelBuilder.Entity("Minicloud.Common.Models.GrafanaDataSourceBinding", b =>
                 {
                     b.Property<string>("Id")
@@ -4081,6 +4218,24 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("App");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.GitHubAppConnection", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.GitHubWebhookReceipt", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.GitHubAppConnection", null)
+                        .WithMany()
+                        .HasForeignKey("ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Minicloud.Common.Models.GrafanaDataSourceBinding", b =>
