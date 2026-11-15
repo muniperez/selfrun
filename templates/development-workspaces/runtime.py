@@ -964,8 +964,11 @@ class Runtime:
                     "Only an explicitly cancelled, not-delete-committed frozen VM can resume")
             self.s["phase"] = "Resuming"
             self.s["receipts"] = {}
+            prepared = self.s.pop("preparedBackup", None)
             self.s.pop("fenceOperation", None)
             self.save()  # Revoke all deletion receipts durably before allowing a single write.
+            if prepared:
+                (self.root / prepared["objectId"]).unlink(missing_ok=True)
             if self.s.get("filesystemReadOnly", True):
                 self.adapter.writable()
             self.adapter.thaw()
@@ -1122,8 +1125,8 @@ class Runtime:
                 "Independent age recipient and recoverable external key reference required")
         require(policy.get("retentionDays", 0) > 0, "Explicit retention policy required")
         last = self.s.get("lastBackup")
-        if last and last["operationId"] == operation and last["freshness"] in (
-                "VerifiedOffHost", "VerifiedUpload"):
+        if (last and self.s["receipts"].get(operation) == last and last["operationId"] == operation
+                and last["freshness"] in ("VerifiedOffHost", "VerifiedUpload")):
             return last
         prepared = self.s.get("preparedBackup")
         if prepared:

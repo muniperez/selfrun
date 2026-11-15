@@ -555,7 +555,7 @@ class RuntimeTests(unittest.TestCase):
         source["receiptId"] = rt.digest(source)
         self.assert_blocked("restore", "separate", authorizedRestore=True, backupReceipt=source)
 
-    def make_streaming_backup(self):
+    def make_streaming_backup(self, acknowledge=True):
         self.runtime = self.primary()
         self.runtime.c["backup"] = dict(transport="management-ssh-stream",
                                        recipient="age1test-fixture-not-a-real-key",
@@ -577,6 +577,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse((self.root / "primary-state/backup.tar").exists())
         self.assert_blocked("backup-ack", "confirmation", preparedReceiptId=prepared["receiptId"],
                             ciphertextSha256=prepared["ciphertextSha256"])
+        if not acknowledge:
+            return prepared, stream.getvalue()
         receipt = self.request("backup-ack", preparedReceiptId=prepared["receiptId"],
                                ciphertextSha256=prepared["ciphertextSha256"],
                                durablyStoredOffHost=True, independentRecoveryKeyConfirmed=True,
@@ -584,6 +586,31 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual("VerifiedOffHost", receipt["freshness"])
         self.assertFalse((self.runtime.root / receipt["objectId"]).exists())
         return receipt, stream.getvalue()
+
+    def test_resume_discards_prepared_backup_before_reopening_writes(self):
+        prepared, _ = self.make_streaming_backup(acknowledge=False)
+        ciphertext = self.runtime.root / prepared["objectId"]
+        self.assertTrue(ciphertext.exists())
+        self.request("resume", deletionNotCommitted=True)
+        self.assertNotIn("preparedBackup", self.runtime.s)
+        self.assertFalse(ciphertext.exists())
+        self.assert_blocked("backup-ack", "frozen", preparedReceiptId=prepared["receiptId"],
+                            ciphertextSha256=prepared["ciphertextSha256"],
+                            durablyStoredOffHost=True, independentRecoveryKeyConfirmed=True,
+                            destinationIdentity="operator-offhost-storage")
+
+    def test_resume_cannot_reuse_verified_backup_after_new_writes(self):
+        receipt, _ = self.make_streaming_backup()
+        self.request("resume", deletionNotCommitted=True)
+        (self.repo / "file.txt").write_text("new writes after the acknowledged backup\n")
+        def fake_encrypt(source, output, recipient):
+            with rt.tarfile.open(output, "w") as archive:
+                archive.add(source, arcname="data")
+        with patch.object(rt, "encrypt_archive", side_effect=fake_encrypt):
+            self.assert_blocked("quiesce", "off-host acknowledgement", backupRequired=True)
+        prepared = self.request("backup")
+        self.assertNotEqual(receipt["objectId"], prepared["objectId"])
+        self.assertNotEqual(receipt["representativeHashes"], prepared["representativeHashes"])
 
     def test_primary_streaming_backup_ack_and_restore_separate_owned_volume(self):
         receipt, archive = self.make_streaming_backup()
