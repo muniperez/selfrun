@@ -33,6 +33,26 @@ public sealed class WorkspaceRuntimeEvidenceTests
         Assert.Throws<InvalidOperationException>(() => WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), key));
     }
 
+    [Fact]
+    public void BootstrapOverridesVendorPasswordExpiryWithoutEnablingPasswordLogin()
+    {
+        const string authorizedKey = "ssh-ed25519 AAAAtest management";
+        var config = WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), authorizedKey);
+        using var document = JsonDocument.Parse(config["#cloud-config\n".Length..]);
+        var payload = document.RootElement;
+        Assert.False(payload.GetProperty("chpasswd").GetProperty("expire").GetBoolean());
+        Assert.False(payload.GetProperty("ssh_pwauth").GetBoolean());
+        var root = Assert.Single(payload.GetProperty("users").EnumerateArray());
+        Assert.Equal("root", root.GetProperty("name").GetString());
+        Assert.True(root.GetProperty("lock_passwd").GetBoolean());
+        Assert.Equal(authorizedKey, Assert.Single(root.GetProperty("ssh_authorized_keys").EnumerateArray()).GetString());
+        var sshPolicy = Assert.Single(payload.GetProperty("write_files").EnumerateArray()).GetProperty("content").GetString()!;
+        Assert.Contains("PasswordAuthentication no\n", sshPolicy);
+        Assert.Contains("KbdInteractiveAuthentication no\n", sshPolicy);
+        Assert.Contains("PermitRootLogin prohibit-password\n", sshPolicy);
+        Assert.DoesNotContain("UsePAM no", sshPolicy);
+    }
+
     [Theory]
     [InlineData("idle", true)]
     [InlineData("completed", true)]

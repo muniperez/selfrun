@@ -32,6 +32,7 @@ internal static class WorkspaceBootstrap
         return "#cloud-config\n" + JsonSerializer.Serialize(new
         {
             disable_root = false, ssh_pwauth = false, ssh_deletekeys = true,
+            chpasswd = new { expire = false },
             ssh_genkeytypes = Array.Empty<string>(),
             ssh_keys = new { rsa_private = secret.HostPrivateKey, rsa_public = secret.HostPublicKey },
             users = new[] { new { name = "root", lock_passwd = true, ssh_authorized_keys = new[] { authorizedKey } } },
