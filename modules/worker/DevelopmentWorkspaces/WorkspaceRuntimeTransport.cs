@@ -54,7 +54,10 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
         client.HostKeyReceived += (_, key) => key.CanTrust = CryptographicOperations.FixedTimeEquals(
             Encoding.ASCII.GetBytes("SHA256:" + key.FingerPrintSHA256), Encoding.ASCII.GetBytes(target.HostFingerprint));
 
-    public async Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct)
+    public async Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct) =>
+        Parse(await ExecuteAsync(target, CallCommand(target, operationId, action, arguments), ct));
+
+    internal static string CallCommand(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments)
     {
         var payload = JsonSerializer.SerializeToElement(arguments ?? new { });
         var request = payload.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone());
@@ -62,9 +65,8 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
         request["generation"] = JsonSerializer.SerializeToElement(target.Generation);
         request["operationId"] = JsonSerializer.SerializeToElement(operationId);
         request["action"] = JsonSerializer.SerializeToElement(action);
-        var encoded = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
-        return Parse(await ExecuteAsync(target,
-            $"printf '%s' '{encoded}' | base64 -d | python3 -B /opt/minicloud-workspace/runtime.py call", ct));
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request) + "\n"));
+        return $"printf '%s' '{encoded}' | base64 -d | python3 -B /opt/minicloud-workspace/runtime.py call";
     }
 
     public async Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct)
