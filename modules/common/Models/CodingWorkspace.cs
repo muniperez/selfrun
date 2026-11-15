@@ -1,5 +1,12 @@
 namespace Minicloud.Common.Models;
 
+public static class CodingWorkspaceVersions
+{
+    public const string Codex = "0.169.0";
+    public const string T3 = "0.1.9";
+    public const string BootstrapRevision = "coding-workspace-v1";
+}
+
 public sealed class CodingWorkspace
 {
     public string Id { get; set; } = default!;
@@ -18,15 +25,30 @@ public sealed class CodingWorkspace
     public string SshFingerprint { get; set; } = default!;
     public string Repository { get; set; } = default!;
     public string Agent { get; set; } = "codex";
-    public string AgentVersion { get; set; } = default!;
-    public string T3Version { get; set; } = "0.1.9";
+    public string AgentVersion { get; set; } = "pending";
+    public string RequestedAgentVersion { get; set; } = default!;
+    public string T3Version { get; set; } = "pending";
+    public string RequestedT3Version { get; set; } = default!;
     public string WorkspaceUser { get; set; } = "coding";
     public string? ProviderServerId { get; set; }
     public string? IpAddress { get; set; }
+    public bool AllocationReconciliationRequired { get; set; }
+    public string ProviderStatus { get; set; } = "unknown";
     public string Stage { get; set; } = "requested";
     public string Connectivity { get; set; } = "unknown";
+    public string BootstrapStatus { get; set; } = "unknown";
+    public string T3Health { get; set; } = "unknown";
+    public string CodexAuthentication { get; set; } = "unknown";
+    public string GitHubAuthentication { get; set; } = "unknown";
+    public string RepositoryStatus { get; set; } = "unknown";
     public string? BootstrapRevision { get; set; }
     public DateTimeOffset? LastObservedAt { get; set; }
+    public DateTimeOffset? ProviderObservedAt { get; set; }
+    public DateTimeOffset? BootstrapObservedAt { get; set; }
+    public DateTimeOffset? T3ObservedAt { get; set; }
+    public DateTimeOffset? CodexAuthenticationObservedAt { get; set; }
+    public DateTimeOffset? GitHubAuthenticationObservedAt { get; set; }
+    public DateTimeOffset? RepositoryObservedAt { get; set; }
     public string? LastErrorCode { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -39,6 +61,7 @@ public sealed class CodingWorkspaceOperation
     public string OrganizationId { get; set; } = default!;
     public string WorkspaceId { get; set; } = default!;
     public string Kind { get; set; } = default!;
+    public string? RequestedBy { get; set; }
     public string Status { get; set; } = "queued";
     public string Stage { get; set; } = "requested";
     public int AttemptCount { get; set; }

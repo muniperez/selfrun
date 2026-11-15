@@ -225,6 +225,46 @@ Legacy installations may retain these imported plan names during migration. They
 | `P0-D-1` | DigitalOcean | `nyc3` | `s-1vcpu-1gb` | $6.00/month |
 | `P0-D-2` | DigitalOcean | `nyc3` | `s-1vcpu-2gb` | $12.00/month |
 
+## Coding workspaces
+
+Coding workspaces are separate private VPS resources, not applications or deployments. The current bootstrap accepts only a Hetzner plan using the `ubuntu-24.04` image; other provider/image combinations are rejected. Tool pins are T3 Code `0.1.9` and Codex CLI `0.169.0`. These source pins are not a claim of live VPS, reboot, scheduling, or draft-PR qualification.
+
+The CLI must have `plans:read`, `providers:read`, `apps:read`, and `apps:write` for the selected organization. The provider account must already contain a registered SSH public key whose fingerprint matches a key available locally or in `ssh-agent`. Minicloud validates that match before requesting a VPS:
+
+```sh
+minicloud agents create coding --plan medium --agent codex --repo OWNER/REPO
+minicloud agents create coding --plan medium --agent codex --repo OWNER/REPO \
+  --ssh-key <provider-key-id> --ssh-identity ~/.ssh/id_ed25519
+minicloud agents list
+minicloud agents status coding
+minicloud agents list --json
+minicloud agents status coding --json
+```
+
+In an interactive terminal, the CLI offers matching local keys when `--ssh-key` is omitted. Noninteractive creation must identify a matching provider key with `--ssh-key`; `--ssh-identity` can select its local private key, and the CLI never uploads the private key. Existing `providers ssh-keys` IDs alone are not sufficient: the matching local key or agent identity is required before allocation.
+
+Creation returns a durable workspace ID and polls the durable operation while it provisions. Repeating the same organization/name with the same plan, repository, agent, and SSH key resumes the current operation; conflicting settings are rejected. Private repository authorization is resumed without reprovisioning:
+
+```sh
+minicloud agents auth coding --provider codex
+minicloud agents auth coding --provider github
+minicloud agents open coding
+minicloud agents open coding --no-browser
+```
+
+The authorization commands run the provider's device/browser flow over SSH and display its URL and code in the local terminal. Approve only the code shown by your own CLI. Codex and GitHub credentials stay under the remote `coding` user's protected credential directories and are not sent to Minicloud. GitHub authorization requests `repo` and `read:org`, checks repository write permission, and clones into `/home/coding/repos/<repository-name>`; an existing clone is reused only when its origin matches the requested repository.
+
+`open` uses the matching local SSH identity, obtains a short-lived T3 pairing link over the trusted SSH connection, maps it to a local loopback tunnel, and keeps the tunnel alive until interrupted. OpenSSH prompts for first-use host-key approval and stores the approved key in `~/.config/minicloud/known_hosts`; a changed key is rejected. The tunnel does not expose T3 publicly. `--no-browser` prints the local pairing URL, which expires after five minutes. `--json` is supported for `create`, `list`, `status`, and confirmed `destroy`; create emits JSON Lines progress. Interactive authorization and tunnel commands reject JSON mode.
+
+Status distinguishes the provisioning stage from observations. A `pending` or `unknown` T3, authentication, or repository field is not a successful health check; each observation timestamp is populated only when that check has run. The bootstrap installs T3 as a user service with systemd lingering and keeps repositories, T3 state, and credentials on the VPS disk. They survive service restart and VPS reboot but are not copied to managed volumes; destroying the workspace deletes the VPS disk and all of that data. Destroy requires an explicit name confirmation or `--yes`:
+
+```sh
+minicloud agents destroy coding
+minicloud agents destroy coding --yes
+```
+
+If provisioning fails after allocation, the failed operation reports the retained VPS identity; resume or destroy that workspace rather than creating a replacement. T3 pairing is implemented but has not been live-qualified. Live provider recovery, scheduled-task recovery, interrupted-task handling, and unattended draft-PR workflows have not been qualified yet.
+
 ## Branch Deployments
 
 Deploy every configured service from the currently checked-out Git branch:

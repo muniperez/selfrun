@@ -80,6 +80,61 @@ public sealed class CodingWorkspacesController(
         catch (CodingWorkspaceException ex) { return ValidationError(ex.Code, ex.Message); }
     }
 
+    [HttpPost("{workspaceId}/observe-connection")]
+    public async Task<IResult> RecordConnectionObservation(string workspaceId, CancellationToken ct)
+    {
+        var workspace = await db.CodingWorkspaces.AsNoTracking().SingleOrDefaultAsync(x => x.Id == workspaceId, ct);
+        if (workspace is null) return EndpointResults.NotFound("workspace_not_found", "Coding workspace was not found.");
+        if (!await CanAccessAsync(workspace.OrganizationId, OrganizationAction.WriteApps, ct))
+            return EndpointResults.NotFound("workspace_not_found", "Coding workspace was not found.");
+        try
+        {
+            var observed = await workspaces.RecordConnectionObservationAsync(workspace.OrganizationId, workspaceId, ct);
+            return Results.Ok(CodingWorkspaceService.ToResponse(observed));
+        }
+        catch (CodingWorkspaceException ex) { return ValidationError(ex.Code, ex.Message); }
+    }
+
+    [HttpPost("{workspaceId}/auth")]
+    public async Task<IResult> StartAuthentication(
+        string workspaceId, StartCodingWorkspaceAuthRequest request, CancellationToken ct)
+    {
+        var workspace = await db.CodingWorkspaces.AsNoTracking().SingleOrDefaultAsync(x => x.Id == workspaceId, ct);
+        if (workspace is null) return EndpointResults.NotFound("workspace_not_found", "Coding workspace was not found.");
+        if (!await CanAccessAsync(workspace.OrganizationId, OrganizationAction.WriteApps, ct))
+            return EndpointResults.NotFound("workspace_not_found", "Coding workspace was not found.");
+        try
+        {
+            var actor = RequirePrincipal(HttpContext).ToActorIdentity();
+            var operation = await workspaces.StartAuthenticationAsync(
+                workspace.OrganizationId, workspaceId, request.Provider, actor.Describe(), ct);
+            return Results.Accepted($"/api/coding-workspaces/operations/{operation.Id}",
+                new CodingWorkspaceAuthOperationResponse(CodingWorkspaceService.ToResponse(operation), request.Provider));
+        }
+        catch (CodingWorkspaceException ex) { return ValidationError(ex.Code, ex.Message); }
+    }
+
+    [HttpPost("{workspaceId}/auth/{provider}/complete")]
+    public async Task<IResult> CompleteAuthentication(
+        string workspaceId,
+        string provider,
+        CompleteCodingWorkspaceAuthRequest request,
+        CancellationToken ct)
+    {
+        var workspace = await db.CodingWorkspaces.AsNoTracking().SingleOrDefaultAsync(x => x.Id == workspaceId, ct);
+        if (workspace is null) return EndpointResults.NotFound("workspace_not_found", "Coding workspace was not found.");
+        if (!await CanAccessAsync(workspace.OrganizationId, OrganizationAction.WriteApps, ct))
+            return EndpointResults.NotFound("workspace_not_found", "Coding workspace was not found.");
+        try
+        {
+            var operation = await workspaces.CompleteAuthenticationAsync(
+                workspace.OrganizationId, workspaceId, provider, request,
+                RequirePrincipal(HttpContext).ToActorIdentity().Describe(), ct);
+            return Results.Ok(CodingWorkspaceService.ToResponse(operation));
+        }
+        catch (CodingWorkspaceException ex) { return ValidationError(ex.Code, ex.Message); }
+    }
+
     private Task<bool> CanAccessAsync(string organizationId, OrganizationAction action, CancellationToken ct) =>
         authorization.CanAccessOrganizationAsync(RequirePrincipal(HttpContext).ToActorIdentity(), organizationId, action, ct);
 

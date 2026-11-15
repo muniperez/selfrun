@@ -125,6 +125,7 @@ public sealed partial class HetznerClient : IVpsProviderClient, IVpsProviderSshK
 
         using var httpRequest = CreateRequest(HttpMethod.Post, "servers");
         httpRequest.Content = JsonContent.Create(payload);
+        httpRequest.Options.Set(NoRetry, request.DisableRetries);
 
         using var response = await SendAsync(httpRequest, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);

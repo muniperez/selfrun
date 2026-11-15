@@ -83,7 +83,7 @@ public sealed partial class CliApplication
             }
             if (args[0] == "instance") return await RunInstanceAsync(args.Skip(1).ToArray(), cancellationToken);
             if (args[0] == "seed") return await RunSeedAsync(args.Skip(1).ToArray(), cancellationToken);
-            if (args[0] is "token" or "init" or "add-service" or "login" or "assets" or "deploy" or "branch" or "status" or "logs" or "apps" or "domains" or "secrets" or "environments" or "plans" or "providers")
+            if (args[0] is "token" or "init" or "add-service" or "login" or "assets" or "deploy" or "branch" or "status" or "logs" or "apps" or "domains" or "secrets" or "environments" or "plans" or "providers" or "agents")
                 await EnsureInstanceAsync(cancellationToken);
             return args[0] switch
             {
@@ -96,6 +96,7 @@ public sealed partial class CliApplication
                 "environments" => await RunEnvironmentsAsync(args.Skip(1).ToArray(), cancellationToken),
                 "plans" => await RunPlansAsync(args.Skip(1).ToArray(), cancellationToken),
                 "providers" => await RunProvidersAsync(args.Skip(1).ToArray(), cancellationToken),
+                "agents" => await RunAgentsAsync(args.Skip(1).ToArray(), cancellationToken),
                 "branch" => await RunBranchAsync(args.Skip(1).ToArray(), cancellationToken),
                 "status" => await RunStatusAsync(args.Skip(1).ToArray(), cancellationToken),
                 "logs" => await RunLogsAsync(args.Skip(1).ToArray(), cancellationToken),
@@ -107,28 +108,29 @@ public sealed partial class CliApplication
         }
         catch (ApiException ex) when (ex.StatusCode is 401 or 403 || ex.Code == "missing_token")
         {
-            _console.WriteError($"Auth error: {ex.Message}");
+            WriteCommandError(args, ex.Code, $"Auth error: {ex.Message}");
             return CliExitCodes.AuthError;
         }
         catch (ApiException ex) when (ex.Code == "missing_service_secret")
         {
-            _console.WriteError($"API error ({ex.Code}): {ex.Message}");
+            WriteCommandError(args, ex.Code, $"API error ({ex.Code}): {ex.Message}");
             return CliExitCodes.ValidationError;
         }
         catch (ApiException ex) when (ex.StatusCode is 400 or 409 && (ex.Code.StartsWith("plan_", StringComparison.Ordinal)
-            || ex.Code.StartsWith("provider_", StringComparison.Ordinal) || ex.Code == "revision_conflict"))
+            || ex.Code.StartsWith("provider_", StringComparison.Ordinal) || ex.Code.StartsWith("workspace_", StringComparison.Ordinal)
+            || ex.Code.StartsWith("ssh_key_", StringComparison.Ordinal) || ex.Code == "revision_conflict"))
         {
-            _console.WriteError($"API error ({ex.Code}): {ex.Message}");
+            WriteCommandError(args, ex.Code, $"API error ({ex.Code}): {ex.Message}");
             return CliExitCodes.ValidationError;
         }
         catch (ApiException ex)
         {
-            _console.WriteError($"API error ({ex.Code}): {ex.Message}");
+            WriteCommandError(args, ex.Code, $"API error ({ex.Code}): {ex.Message}");
             return CliExitCodes.NetworkOrApiUnavailable;
         }
         catch (HttpRequestException ex)
         {
-            _console.WriteError($"Network error: {ex.Message}");
+            WriteCommandError(args, "network_error", $"Network error: {ex.Message}");
             return CliExitCodes.NetworkOrApiUnavailable;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -138,14 +140,25 @@ public sealed partial class CliApplication
         }
         catch (TaskCanceledException)
         {
-            _console.WriteError("Network error: request timed out.");
+            WriteCommandError(args, "request_timeout", "Network error: request timed out.");
             return CliExitCodes.NetworkOrApiUnavailable;
         }
         catch (CliCommandException ex)
         {
-            _console.WriteError(ex.Message);
+            WriteCommandError(args,
+                ex.ExitCode == CliExitCodes.ValidationError ? "validation_error" : "command_failed", ex.Message, ex.ExitCode);
             return ex.ExitCode;
         }
+    }
+
+    private void WriteCommandError(string[] args, string code, string message, int? exitCode = null)
+    {
+        if (args.Length > 0 && args[0] == "agents" && IsAgentJsonMode(args))
+        {
+            WriteAgentJson(new { error = new { code, message }, exitCode });
+            return;
+        }
+        _console.WriteError(message);
     }
 
     public static string GetVersion()
@@ -195,6 +208,7 @@ public sealed partial class CliApplication
         _console.WriteLine("  environments    List, create, update, or rename application environments");
         _console.WriteLine("  plans           List named plans in an organization");
         _console.WriteLine("  providers       Add provider accounts, list SSH keys, or import legacy bindings");
+        _console.WriteLine("  agents          Create, inspect, open, and destroy coding workspaces");
         _console.WriteLine("  branch          Manage preview environments (deploy branch, branch destroy)");
         _console.WriteLine("  assets          Publish immutable customer assets on the assigned VPS");
         _console.WriteLine("  status          Show deployment status and service URLs (--watch to stream updates)");
@@ -245,6 +259,22 @@ public sealed partial class CliApplication
                 _console.WriteLine("Usage: minicloud assets publish <name> [--config minicloud.yml]");
                 _console.WriteLine("Publishes an assets.<name> source definition through the deployment queue. Builds stay on the customer VPS.");
                 _console.WriteLine("Activation requires an explicit service assetMounts.<name>.releaseId pin.");
+                return CliExitCodes.Success;
+            case "agents":
+            case "agents create":
+            case "agents list":
+            case "agents status":
+            case "agents open":
+            case "agents auth":
+            case "agents destroy":
+                _console.WriteLine("Manage private T3 Code coding workspaces.");
+                _console.WriteLine("  minicloud agents create <name> --plan <plan> --agent codex --repo OWNER/REPO [--organization <id>] [--ssh-key <provider-key-id>] [--ssh-identity <private-key-path>] [--json]");
+                _console.WriteLine("  minicloud agents list [--organization <id>] [--json]");
+                _console.WriteLine("  minicloud agents status <name> [--organization <id>] [--json]");
+                _console.WriteLine("  minicloud agents open <name> [--organization <id>] [--no-browser]");
+                _console.WriteLine("  minicloud agents auth <name> --provider codex|github");
+                _console.WriteLine("  minicloud agents destroy <name> [--organization <id>] [--yes] [--json]");
+                _console.WriteLine("Create requires a registered provider SSH key whose fingerprint matches a local SSH key or ssh-agent identity.");
                 return CliExitCodes.Success;
             case "deploy cancel":
                 _console.WriteLine("Usage: minicloud deploy cancel <deployment-number> [--organization <id>]");

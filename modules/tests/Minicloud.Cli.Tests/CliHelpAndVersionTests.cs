@@ -119,6 +119,66 @@ public sealed class CliHelpAndVersionTests
         Assert.Contains("--since", console.Output);
     }
 
+    [Theory]
+    [InlineData("help", "agents")]
+    [InlineData("agents", "--help")]
+    public async Task Agents_help_documents_workspace_commands(params string[] args)
+    {
+        var (app, console) = CreateApp();
+
+        var exitCode = await app.RunAsync(args, CancellationToken.None);
+
+        Assert.Equal(CliExitCodes.Success, exitCode);
+        Assert.Contains("minicloud agents create", console.Output);
+        Assert.Contains("minicloud agents open", console.Output);
+        Assert.Contains("minicloud agents auth", console.Output);
+        Assert.Contains("--json", console.Output);
+    }
+
+    [Fact]
+    public async Task Agent_json_mode_returns_structured_cli_errors()
+    {
+        var (app, console) = CreateApp();
+
+        var exitCode = await app.RunAsync(["agents", "list", "--json"], CancellationToken.None);
+
+        Assert.Equal(CliExitCodes.AuthError, exitCode);
+        Assert.Contains("\"error\"", console.Output);
+        Assert.Contains("\"code\":\"missing_token\"", console.Output);
+        Assert.DoesNotContain("API error", console.Error);
+    }
+
+    [Fact]
+    public void Pairing_url_uses_loopback_tunnel_and_preserves_pairing_material()
+    {
+        var pairingUrl = new Uri("http://127.0.0.1:3773/?pairingCode=one-time-code");
+
+        var localUrl = CliApplication.RewritePairingUrlForTunnel(pairingUrl, "203.0.113.12", 49152);
+
+        Assert.Equal("http", localUrl.Scheme);
+        Assert.Equal("127.0.0.1", localUrl.Host);
+        Assert.Equal(49152, localUrl.Port);
+        Assert.Equal("/?pairingCode=one-time-code", localUrl.PathAndQuery);
+    }
+
+    [Fact]
+    public void Pairing_url_rejects_an_unrelated_host()
+    {
+        var pairingUrl = new Uri("https://example.com/?pairingCode=one-time-code");
+
+        Assert.Throws<CliCommandException>(() =>
+            CliApplication.RewritePairingUrlForTunnel(pairingUrl, "203.0.113.12", 49152));
+    }
+
+    [Fact]
+    public void Pairing_url_rejects_https_when_the_remote_service_uses_loopback_http()
+    {
+        var pairingUrl = new Uri("https://127.0.0.1:3773/?pairingCode=one-time-code");
+
+        Assert.Throws<CliCommandException>(() =>
+            CliApplication.RewritePairingUrlForTunnel(pairingUrl, "203.0.113.12", 49152));
+    }
+
     [Fact]
     public async Task Help_unknown_command_returns_validation_error()
     {

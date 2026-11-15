@@ -683,9 +683,31 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("agent_version");
 
+                    b.Property<DateTimeOffset?>("BootstrapObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("bootstrap_observed_at");
+
+                    b.Property<bool>("AllocationReconciliationRequired")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allocation_reconciliation_required");
+
                     b.Property<string>("BootstrapRevision")
                         .HasColumnType("text")
                         .HasColumnName("bootstrap_revision");
+
+                    b.Property<string>("BootstrapStatus")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("bootstrap_status");
+
+                    b.Property<string>("CodexAuthentication")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("codex_authentication");
+
+                    b.Property<DateTimeOffset?>("CodexAuthenticationObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("codex_authentication_observed_at");
 
                     b.Property<string>("Connectivity")
                         .IsRequired()
@@ -695,6 +717,15 @@ namespace Minicloud.Common.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("GitHubAuthentication")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("git_hub_authentication");
+
+                    b.Property<DateTimeOffset?>("GitHubAuthenticationObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("git_hub_authentication_observed_at");
 
                     b.Property<string>("Image")
                         .HasColumnType("text")
@@ -752,6 +783,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("provider_account_id");
 
+                    b.Property<DateTimeOffset?>("ProviderObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_observed_at");
+
                     b.Property<string>("ProviderServerId")
                         .HasColumnType("text")
                         .HasColumnName("provider_server_id");
@@ -760,6 +795,11 @@ namespace Minicloud.Common.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("provider_ssh_key_id");
+
+                    b.Property<string>("ProviderStatus")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_status");
 
                     b.Property<string>("Region")
                         .IsRequired()
@@ -770,6 +810,25 @@ namespace Minicloud.Common.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("repository");
+
+                    b.Property<DateTimeOffset?>("RepositoryObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("repository_observed_at");
+
+                    b.Property<string>("RepositoryStatus")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("repository_status");
+
+                    b.Property<string>("RequestedAgentVersion")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("requested_agent_version");
+
+                    b.Property<string>("RequestedT3Version")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("requested_t3_version");
 
                     b.Property<string>("Sku")
                         .IsRequired()
@@ -790,6 +849,15 @@ namespace Minicloud.Common.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("stage");
+
+                    b.Property<string>("T3Health")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("t3_health");
+
+                    b.Property<DateTimeOffset?>("T3ObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("t3_observed_at");
 
                     b.Property<string>("T3Version")
                         .IsRequired()
@@ -864,6 +932,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("ownership_token");
 
+                    b.Property<string>("RequestedBy")
+                        .HasColumnType("text")
+                        .HasColumnName("requested_by");
+
                     b.Property<string>("Stage")
                         .IsRequired()
                         .HasColumnType("text")
@@ -887,6 +959,10 @@ namespace Minicloud.Common.Migrations
 
                     b.HasIndex("OwnershipToken")
                         .IsUnique();
+
+                    b.HasIndex("OrganizationId", "WorkspaceId")
+                        .IsUnique()
+                        .HasFilter("status IN ('queued', 'running')");
 
                     b.HasIndex("Status", "CreatedAt");
 

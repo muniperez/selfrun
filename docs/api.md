@@ -13,6 +13,9 @@ API routes and identity aliases. Clients and server must be updated together.
   operational clients. Its telemetry, logs, storage and image actions use the
   same explicit environment identity. Plan and preview actions also target this
   environment resource; they do not resolve application aliases.
+- `/api/coding-workspaces` creates and lists organization-owned private coding
+  workspaces, exposes workspace and durable operation status, queues scoped
+  destruction, and starts/completes resumable provider-authentication sessions.
 - Other product resources use `/api`, including providers, plans, deployments,
   secrets, runtime ingestion, registry credentials and CLI authentication.
 

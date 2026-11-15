@@ -88,6 +88,37 @@ public sealed class MinicloudApiClient
     public Task<IReadOnlyList<ProviderPlanResponse>> GetPlansAsync(string organizationId, CancellationToken cancellationToken) =>
         SendAsync<IReadOnlyList<ProviderPlanResponse>>(HttpMethod.Get, $"/api/plans?organizationId={Uri.EscapeDataString(organizationId)}", null, cancellationToken);
 
+    public Task<CreateCodingWorkspaceResponse> CreateCodingWorkspaceAsync(CreateCodingWorkspaceRequest request, CancellationToken ct) =>
+        SendAsync<CreateCodingWorkspaceResponse>(HttpMethod.Post, "/api/coding-workspaces", request, ct);
+
+    public Task<IReadOnlyList<CodingWorkspaceResponse>> GetCodingWorkspacesAsync(string organizationId, CancellationToken ct) =>
+        SendAsync<IReadOnlyList<CodingWorkspaceResponse>>(HttpMethod.Get,
+            $"/api/coding-workspaces?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);
+
+    public Task<CodingWorkspaceResponse> GetCodingWorkspaceAsync(string id, CancellationToken ct) =>
+        SendAsync<CodingWorkspaceResponse>(HttpMethod.Get, $"/api/coding-workspaces/{Uri.EscapeDataString(id)}", null, ct);
+
+    public Task<CodingWorkspaceOperationResponse> GetCodingWorkspaceOperationAsync(string id, CancellationToken ct) =>
+        SendAsync<CodingWorkspaceOperationResponse>(HttpMethod.Get,
+            $"/api/coding-workspaces/operations/{Uri.EscapeDataString(id)}", null, ct);
+
+    public Task<CodingWorkspaceOperationResponse> DestroyCodingWorkspaceAsync(string id, CancellationToken ct) =>
+        SendAsync<CodingWorkspaceOperationResponse>(HttpMethod.Delete, $"/api/coding-workspaces/{Uri.EscapeDataString(id)}", null, ct);
+
+    public Task<CodingWorkspaceResponse> RecordCodingWorkspaceConnectionAsync(string id, CancellationToken ct) =>
+        SendAsync<CodingWorkspaceResponse>(HttpMethod.Post,
+            $"/api/coding-workspaces/{Uri.EscapeDataString(id)}/observe-connection", null, ct);
+
+    public Task<CodingWorkspaceAuthOperationResponse> StartCodingWorkspaceAuthAsync(
+        string id, StartCodingWorkspaceAuthRequest request, CancellationToken ct) =>
+        SendAsync<CodingWorkspaceAuthOperationResponse>(HttpMethod.Post,
+            $"/api/coding-workspaces/{Uri.EscapeDataString(id)}/auth", request, ct);
+
+    public Task<CodingWorkspaceOperationResponse> CompleteCodingWorkspaceAuthAsync(
+        string id, string provider, CompleteCodingWorkspaceAuthRequest request, CancellationToken ct) =>
+        SendAsync<CodingWorkspaceOperationResponse>(HttpMethod.Post,
+            $"/api/coding-workspaces/{Uri.EscapeDataString(id)}/auth/{Uri.EscapeDataString(provider)}/complete", request, ct);
+
     public Task<ProviderAccountResponse> CreateProviderAsync(CreateProviderRequest request, CancellationToken ct) =>
         SendAsync<ProviderAccountResponse>(HttpMethod.Post, "/api/providers", request, ct);
 

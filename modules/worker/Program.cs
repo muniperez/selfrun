@@ -236,6 +236,8 @@ builder.Services.AddScoped<DatabaseManagementService>();
 builder.Services.AddScoped<DatabaseNetworkService>();
 builder.Services.Configure<Minicloud.Worker.Databases.DatabasePlatformOptions>(builder.Configuration.GetSection(Minicloud.Worker.Databases.DatabasePlatformOptions.SectionName));
 builder.Services.AddHostedService<Minicloud.Worker.Databases.DatabaseOperationWorker>();
+builder.Services.AddScoped<Minicloud.Worker.CodingWorkspaces.CodingWorkspaceOperationProcessor>();
+builder.Services.AddHostedService<Minicloud.Worker.CodingWorkspaces.CodingWorkspaceOperationWorker>();
 
 // Maintenance authority: every claim loop validates this process's epoch/host before claiming work.
 builder.Services.AddMinicloudMaintenanceParticipant(builder.Configuration, "worker");

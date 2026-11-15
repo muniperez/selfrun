@@ -141,6 +141,25 @@ public class HetznerClientTests
     }
 
     [Fact]
+    public async Task CreateServerAsync_CanDisableRetriesForAmbiguousAllocationResponses()
+    {
+        _handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var client = new HetznerClient(
+            new HttpClient(new ResilientHttpRetryHandler(_handler, maxRetries: 3, baseDelay: TimeSpan.Zero))
+            {
+                BaseAddress = new Uri(_options.BaseUrl)
+            },
+            _options);
+        var request = new CreateServerRequest(
+            "minicloud-coding-workspace", "cx22", "fsn1", ["123"], "#cloud-config",
+            DisableRetries: true);
+
+        await Assert.ThrowsAsync<ProviderApiException>(() => client.CreateServerAsync(request));
+
+        Assert.Single(_handler.RecordedRequests);
+    }
+
+    [Fact]
     public async Task SshKeyInventoryAndRegistrationUseHetznerApiShapes()
     {
         _handler.QueueJsonResponse("""{"ssh_keys":[{"id":123,"name":"work","public_key":"ssh-ed25519 fixture"}],"meta":{"pagination":{"next_page":null}}}""");
