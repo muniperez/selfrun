@@ -13,7 +13,7 @@ services:
       - workspace-gateway-credential
     volumes:
       - type: bind
-        source: ${MINICLOUD_SECRETS_DIR:?set MINICLOUD_SECRETS_DIR}/development-workspaces.json
+        source: ${MINICLOUD_WORKSPACE_SECRETS_DIR:?set MINICLOUD_WORKSPACE_SECRETS_DIR outside the installation root}/development-workspaces.json
         target: /etc/minicloud/development-workspaces.json
         read_only: true
         bind:
@@ -28,7 +28,7 @@ services:
       DevelopmentWorkspaceWorker__ApiBaseUrl: ${API_URL:?set API_URL}
     volumes:
       - type: bind
-        source: ${MINICLOUD_SECRETS_DIR:?set MINICLOUD_SECRETS_DIR}/development-workspaces.json
+        source: ${MINICLOUD_WORKSPACE_SECRETS_DIR:?set MINICLOUD_WORKSPACE_SECRETS_DIR outside the installation root}/development-workspaces.json
         target: /etc/minicloud/development-workspaces.json
         read_only: true
         bind:
@@ -95,7 +95,7 @@ services:
 
 secrets:
   workspace-gateway-credential:
-    file: ${MINICLOUD_SECRETS_DIR:?set MINICLOUD_SECRETS_DIR}/workspace-gateway-credential
+    file: ${MINICLOUD_WORKSPACE_SECRETS_DIR:?set MINICLOUD_WORKSPACE_SECRETS_DIR outside the installation root}/workspace-gateway-credential
 
 networks:
   workspace-gateway-proxy:

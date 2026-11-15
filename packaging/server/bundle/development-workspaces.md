@@ -9,11 +9,14 @@ workspace image first.
 
 ## Protected configuration
 
-1. Copy `development-workspaces.example.json` to
-   `$MINICLOUD_SECRETS_DIR/development-workspaces.json`, owned by root:1654,
-   mode 0440, with its parent directory root-only. The API's non-root UID/GID
-   1654 must be able to read this single-file bind mount; root-only 0600
-   permissions would prevent startup.
+1. Set `MINICLOUD_WORKSPACE_SECRETS_DIR` to a separate root-owned 0700 directory
+   **outside** the private server installation root, for example
+   `/etc/minicloud-workspaces`. Keep the existing `MINICLOUD_SECRETS_DIR`
+   unchanged. Installation/maintenance validation requires every file inside
+   the installation root to remain 0400/0600; do not weaken that invariant.
+   Copy `development-workspaces.example.json` to
+   `$MINICLOUD_WORKSPACE_SECRETS_DIR/development-workspaces.json`, owned by
+   root:1654, mode 0440, with its parent directory root-only.
    The example intentionally has no image IDs, organization IDs, provider
    credentials or available capacity. Populate qualified image manifests,
    allowed plans/SKUs/regions, current pricing and explicit spend ceilings,
@@ -21,7 +24,7 @@ workspace image first.
    `ManagementAddresses` (every control-plane/private management address to
    block). Only then set `DevelopmentWorkspaces.Enabled=true`.
 2. Preprovision a **separate** random service credential (at least 32 characters)
-   at `$MINICLOUD_SECRETS_DIR/workspace-gateway-credential`. Never overwrite an
+   at `$MINICLOUD_WORKSPACE_SECRETS_DIR/workspace-gateway-credential`. Never overwrite an
    existing credential as part of startup. For the image's UID/GID 1654, use
    root:1654 ownership and mode 0440 on this file; keep its parent root-only.
    Docker Compose file secrets are bind mounts: do not rely on secret `mode`
@@ -50,9 +53,11 @@ DNS `*.<suffix>` to Caddy and allow inbound TCP 80/443. Use a publicly resolvabl
 real domain and appropriate ACME issuer for deployment.
 
 From the bundle directory, retain the installation's existing environment
-and verified `images.env`, then explicitly opt in:
+and verified `images.env`, set the external workspace secrets directory, then
+explicitly opt in:
 
 ```sh
+export MINICLOUD_WORKSPACE_SECRETS_DIR=/etc/minicloud-workspaces
 docker compose --env-file images.env -f compose.yml -f compose.workspaces.yml \
   --profile workspaces config --quiet
 docker compose --env-file images.env -f compose.yml -f compose.workspaces.yml \
