@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -32,6 +34,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     private readonly FakeSecrets secrets = new();
     private readonly FakeRuntime runtime = new();
     private readonly FakeTunnels tunnels = new();
+    private readonly GitHubHandler github = new();
     private readonly DevelopmentWorkspaceWorkerOptions workerOptions = new()
     {
         ApiBaseUrl = "https://control.example.test", ManagementAddresses = ["198.51.100.1/32"],
@@ -70,7 +73,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
                     ProviderAccountId = "account", AllowedRegions = ["nbg1"], ProviderImageId = "image-qualified",
                     ManifestSha256 = new('a', 64) }
             },
-            Repositories = [new() { OrganizationId = "org", Repository = "https://git.example.test/team/project.git",
+            Repositories = [new() { OrganizationId = "org", Repository = "https://github.com/fixture-owner/project.git",
                 AllowedBaseRefs = ["refs/heads/main"], AllowPush = true }]
         };
         var participant = MaintenanceParticipant.CreateLocal("worker", clock);
@@ -85,7 +88,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             .AddSingleton<IOptions<DevelopmentWorkspaceOptions>>(Options.Create(policy))
             .AddSingleton<IOptions<DeploymentPipelineOptions>>(Options.Create(new DeploymentPipelineOptions
                 { SshPublicKey = "ssh-ed25519 AAAAsynthetic-management-key" }))
-            .AddSingleton(new WorkspaceGitAccessService(db, secrets, null!, clock, Options.Create(policy)))
+            .AddSingleton(new WorkspaceGitAccessService(db, secrets, new(new HttpClient(github), clock), clock, Options.Create(policy)))
             .BuildServiceProvider();
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -221,7 +224,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         operation = await CurrentOperation(operation.Id);
         var unrelated = cloud.Servers["server-owned"] with { Id = "ordinary-app", Labels = new Dictionary<string, string>() };
         cloud.Servers.Add(unrelated.Id, unrelated);
-        foreach (var expected in new[] { "detach", "detached", "delete-intent", "delete", "delete-confirm", "delete", "cleanup" })
+        foreach (var expected in new[] { "detach", "detached", "delete-intent", "commit-delete", "delete", "delete-confirm", "delete", "cleanup" })
         {
             await Hop(expected);
             Assert.True((await CurrentVm(vm.Id)).ComputeReserved);
@@ -318,12 +321,183 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Equal(0, cloud.Deletes);
     }
 
+    [Theory]
+    [InlineData("success")]
+    [InlineData("revoke-failure")]
+    [InlineData("stage-failure")]
+    [InlineData("read-failure")]
+    public async Task RotationRetiresOldBeforeReplacementAndNewOnFailure(string scenario)
+    {
+        var (_, vm, operation) = await SeedStop("pending", ephemeral: true);
+        await EnableGitHubCredentials(vm);
+        github.FailToken = scenario == "revoke-failure" ? "old-token" : null;
+        runtime.FailStage = scenario == "stage-failure";
+        runtime.FailRead = scenario == "read-failure";
+        await Hop(scenario switch { "success" => "gateway-drain", "read-failure" or "stage-failure" => "pending", _ => "wait-for-save" });
+        if (scenario == "read-failure")
+            Assert.Equal(0, github.Issued);
+        else
+        {
+            Assert.Contains("revoke:old-token", runtime.Actions);
+            if (scenario == "success")
+            {
+                Assert.True(runtime.Actions.IndexOf("revoke:old-token") < runtime.Actions.IndexOf("stage:new-token-1"));
+                Assert.DoesNotContain("revoke:new-token-1", runtime.Actions);
+            }
+            else
+            {
+                Assert.Contains("revoke:new-token-1", runtime.Actions);
+                if (scenario == "revoke-failure") Assert.DoesNotContain("stage:new-token-1", runtime.Actions);
+            }
+        }
+        Assert.Equal(0, cloud.Deletes);
+        Assert.True((await CurrentVm(vm.Id)).ComputeReserved);
+        var durable = (await CurrentOperation(operation.Id)).ProviderEvidenceJson ?? "";
+        Assert.DoesNotContain("old-token", durable);
+        Assert.DoesNotContain("new-token", durable);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FinalRetirementFollowsLastReceiptAndPrecedesDurableDeletionAcrossRetry(bool discard)
+    {
+        var (_, vm, operation) = await SeedStop("quiesce", ephemeral: true);
+        await EnableGitHubCredentials(vm);
+        runtime.Phase = "Frozen";
+        runtime.WorkBranch = vm.WorkBranch!;
+        if (discard)
+        {
+            var tracked = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+            tracked.DiscardGeneration = vm.Generation; tracked.DiscardOperationId = operation.Id;
+            tracked.DiscardRequestedAt = clock.GetUtcNow(); tracked.DiscardRequestedBy = "actor";
+            await db.SaveChangesAsync();
+        }
+        await Hop("delete-intent");
+        runtime.Actions.Clear();
+        github.BeforeRevoke = async token =>
+        {
+            if (!token.StartsWith("new-token", StringComparison.Ordinal) && token != "old-token") return;
+            var evidence = (await CurrentOperation(operation.Id)).ProviderEvidenceJson!;
+            Assert.False(JsonDocument.Parse(evidence).RootElement.GetProperty("deleteCommitted").GetBoolean());
+            Assert.Equal(0, cloud.Deletes);
+        };
+        await Hop("commit-delete");
+        var lastValidation = runtime.Actions.LastIndexOf("receipt-validate");
+        var lastRevocation = runtime.Actions.FindLastIndex(x => x.StartsWith("revoke:", StringComparison.Ordinal));
+        Assert.True(lastValidation >= 0 && lastRevocation > lastValidation);
+        var proof = JsonDocument.Parse((await CurrentOperation(operation.Id)).ProviderEvidenceJson!).RootElement;
+        Assert.True(proof.GetProperty("repositoryCredentialRevoked").GetBoolean());
+        Assert.False(proof.GetProperty("deleteCommitted").GetBoolean());
+        runtime.FailRead = true;
+        runtime.FailReceipt = true;
+        var calls = runtime.Actions.Count;
+        await Hop("delete");
+        Assert.Equal(calls, runtime.Actions.Count);
+        Assert.Equal(0, cloud.Deletes);
+        await Hop("delete-confirm");
+        Assert.Equal(1, cloud.Deletes);
+    }
+
+    [Theory]
+    [InlineData("revoke")]
+    [InlineData("receipt")]
+    [InlineData("missing")]
+    [InlineData("openbao")]
+    public async Task UnconfirmedFinalRetirementNeverCommitsComputeDeletion(string failure)
+    {
+        var (_, vm, operation) = await SeedStop("quiesce", ephemeral: true);
+        await EnableGitHubCredentials(vm);
+        runtime.Phase = "Frozen"; runtime.WorkBranch = vm.WorkBranch!;
+        await Hop("delete-intent");
+        runtime.Actions.Clear();
+        runtime.FailReceipt = failure == "receipt";
+        if (failure == "missing") runtime.Credential = null;
+        if (failure == "revoke")
+            github.BeforeRevoke = token =>
+            {
+                if (runtime.Actions.Contains("receipt-validate")) github.FailToken = token;
+                return Task.CompletedTask;
+            };
+        if (failure == "openbao")
+        {
+            var tracked = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+            tracked.RepositoryCredentialRef = JsonSerializer.Serialize(new StoredSecretReference("openbao", "external", "1"));
+            // Explicit discard bypasses Git-save, never credential retirement.
+            tracked.GitSavedOperationId = null;
+            await db.SaveChangesAsync();
+        }
+        if (failure == "missing")
+        {
+            var tracked = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+            tracked.GitSavedOperationId = null;
+            await db.SaveChangesAsync();
+        }
+        await Hop("delete-intent");
+        var proof = JsonDocument.Parse((await CurrentOperation(operation.Id)).ProviderEvidenceJson!).RootElement;
+        Assert.False(proof.GetProperty("deleteCommitted").GetBoolean());
+        Assert.False(proof.GetProperty("repositoryCredentialRevoked").GetBoolean());
+        Assert.True((await CurrentVm(vm.Id)).ComputeReserved);
+        Assert.Equal(0, cloud.Deletes);
+        if (failure == "receipt") Assert.DoesNotContain(runtime.Actions, x =>
+            x.StartsWith("revoke:", StringComparison.Ordinal) && runtime.Actions.IndexOf(x) > runtime.Actions.IndexOf("receipt-validate"));
+    }
+
+    [Fact]
+    public async Task LostRetirementCheckpointRetriesWithFreshGitValidationAndAlreadyRevokedToken()
+    {
+        var (_, vm, operation) = await SeedStop("quiesce", ephemeral: true);
+        await EnableGitHubCredentials(vm);
+        runtime.Phase = "Frozen"; runtime.WorkBranch = vm.WorkBranch!;
+        await Hop("delete-intent");
+        github.BeforeRevoke = token =>
+        {
+            if (runtime.Actions.Contains("receipt-validate"))
+            {
+                clock.Advance(TimeSpan.FromSeconds(121));
+                github.BeforeRevoke = null;
+            }
+            return Task.CompletedTask;
+        };
+        await Hop("delete-intent");
+        Assert.False(JsonDocument.Parse((await CurrentOperation(operation.Id)).ProviderEvidenceJson!)
+            .RootElement.GetProperty("repositoryCredentialRevoked").GetBoolean());
+        Assert.Equal(0, cloud.Deletes);
+        runtime.Actions.Clear();
+        await Hop("commit-delete");
+        Assert.Contains("already-revoked:new-token-2", runtime.Actions);
+        Assert.Contains("receipt-validate", runtime.Actions);
+        Assert.True(runtime.Actions.IndexOf("receipt-validate") < runtime.Actions.IndexOf("revoke:new-token-3"));
+        Assert.Equal(0, cloud.Deletes);
+    }
+
+    private async Task EnableGitHubCredentials(DevelopmentWorkspaceVm vm)
+    {
+        policy.Repositories[0].GitHubConnectionId = "connection";
+        using var rsa = RSA.Create(2048);
+        secrets.Add("app", JsonSerializer.Serialize(new GitHubAppCredentials(42, "fixture", 7, "fixture-owner",
+            "Organization", rsa.ExportRSAPrivateKeyPem(), "webhook", "client", "secret")));
+        db.GitHubAppConnections.Add(new()
+        {
+            Id = "connection", OrganizationId = "org", Status = "connected", AppId = 42, OwnerId = 7,
+            OwnerLogin = "fixture-owner", OwnerType = "Organization", InstallationId = 900,
+            LastVerifiedAt = clock.GetUtcNow(), SecretProvider = "openbao", SecretPath = "app", SecretVersion = "1"
+        });
+        var tracked = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+        tracked.RepositoryCredentialRef = JsonSerializer.Serialize(new StoredSecretReference("github-app", "connection", vm.Repository));
+        runtime.Credential = JsonSerializer.SerializeToElement(new
+            { origin = vm.Repository, username = "x-access-token", password = "old-token", expiresAt = clock.GetUtcNow().AddMinutes(30).ToUnixTimeSeconds() });
+        github.ExpiresAt = clock.GetUtcNow().AddMinutes(50);
+        github.Actions = runtime.Actions;
+        await db.SaveChangesAsync();
+    }
+
     private async Task<(DevelopmentWorkspace Workspace, DevelopmentWorkspaceVm Vm, DevelopmentWorkspaceOperation Operation)> Seed(string step, bool ephemeral = false)
     {
         var workspace = await lifecycle.CreateAsync(new("org", "Worker fixture", "image", "standard", "plan", 20, "create"), "actor", default);
         workspace = ephemeral
             ? await lifecycle.LaunchEphemeralAsync(workspace.Id, "org", new("image", "standard", "plan",
-                "https://git.example.test/team/project.git", "refs/heads/main", new('b', 40), true, true, "ephemeral"), "actor", default)
+                "https://github.com/fixture-owner/project.git", "refs/heads/main", new('b', 40), true, true, "ephemeral"), "actor", default)
             : await lifecycle.StartAsync(workspace.Id, "org", default);
         var vm = workspace.Vms.Single(x => x.Kind == (ephemeral ? "ephemeral" : "primary"));
         var operation = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == vm.OperationId);
@@ -426,10 +600,16 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public string Phase { get; set; } = "Ready";
         public string ReceiptFilesystemUuid { get; set; } = "filesystem-retained";
         public int ReceiptGenerationDelta { get; set; }
+        public string WorkBranch { get; set; } = "";
+        public JsonElement? Credential { get; set; }
+        public bool FailStage { get; set; }
+        public bool FailRead { get; set; }
+        public bool FailReceipt { get; set; }
         public List<string> Actions { get; } = [];
         public Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct)
         {
             Actions.Add(action);
+            if (action == "receipt-validate" && FailReceipt) throw new InvalidOperationException("Receipt was not confirmed.");
             if (action == "status")
             {
                 var result = new Dictionary<string, object?>
@@ -449,6 +629,14 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
                     operationId, receiptId = "receipt-owned", type = "PrimaryQuiesced", unmounted = true,
                     filesystemUuid = ReceiptFilesystemUuid
                 } }, Json));
+            if (action is "git-save" or "discard")
+                return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, result = new
+                {
+                    schemaVersion = 1, vmId = target.VmId, generation = target.Generation, kind = target.Kind,
+                    operationId, receiptId = "receipt-owned", type = action == "git-save" ? "GitSaved" : "DiscardAuthorized",
+                    repositories = new[] { new { path = "/workspace/repos/project", headSha = new string('c', 40),
+                        remoteRef = "refs/heads/" + WorkBranch } }
+                } }, Json));
             return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, result = new { receiptId = "receipt-owned" } }, Json));
         }
         public Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct) =>
@@ -457,8 +645,63 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             throw new InvalidOperationException("Bootstrap was not expected in this stage.");
         public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct) =>
             Task.FromResult(new string('t', 48));
-        public Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct) =>
-            throw new InvalidOperationException("Repository authority must not be inherited in this fixture.");
+        public Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct)
+        {
+            Actions.Add("stage:" + credential.GetProperty("password").GetString());
+            if (FailStage) throw new InvalidOperationException("Staging failed.");
+            Credential = credential.Clone();
+            return Task.CompletedTask;
+        }
+        public Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
+        {
+            Actions.Add("read-credential");
+            if (FailRead) throw new InvalidOperationException("Readback failed.");
+            return Task.FromResult(Credential);
+        }
+    }
+
+    private sealed class GitHubHandler : HttpMessageHandler
+    {
+        public DateTimeOffset ExpiresAt { get; set; }
+        public List<string> Actions { get; set; } = [];
+        public string? FailToken { get; set; }
+        public int Issued { get; private set; }
+        public Func<string, Task>? BeforeRevoke { get; set; }
+        private readonly HashSet<string> revoked = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.Equal("api.github.com", request.RequestUri!.Host);
+            var path = request.RequestUri.AbsolutePath;
+            if (request.Method == HttpMethod.Delete && path == "/installation/token")
+            {
+                var token = request.Headers.Authorization!.Parameter!;
+                if (BeforeRevoke is not null) await BeforeRevoke(token);
+                Actions.Add("revoke:" + token);
+                if (token == FailToken) return new(HttpStatusCode.ServiceUnavailable);
+                if (!revoked.Add(token))
+                {
+                    Actions.Add("already-revoked:" + token);
+                    return new(HttpStatusCode.Unauthorized);
+                }
+                return new(HttpStatusCode.NoContent);
+            }
+            if (request.Method == HttpMethod.Get && path == "/app/installations/900")
+                return Response(new { id = 900, app_id = 42, account = new { id = 7, login = "fixture-owner", type = "Organization" },
+                    suspended_at = (string?)null, permissions = new { contents = "write" } });
+            if (request.Method == HttpMethod.Get && path == "/repos/fixture-owner/project")
+                return Response(new { id = 123, full_name = "fixture-owner/project",
+                    clone_url = "https://github.com/fixture-owner/project.git", owner = new { id = 7 } });
+            if (request.Method == HttpMethod.Post && path == "/app/installations/900/access_tokens")
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                if (body.RootElement.TryGetProperty("repositories", out _))
+                    return Response(new { token = "metadata-token" });
+                return Response(new { token = "new-token-" + ++Issued, expires_at = ExpiresAt,
+                    permissions = new { contents = "write", metadata = "read" }, repositories = new[] { new { id = 123 } } });
+            }
+            throw new InvalidOperationException("Unexpected mocked GitHub request.");
+        }
+        private static HttpResponseMessage Response(object body) => new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
     }
 
     private sealed class FakeSecrets : ISecretStore

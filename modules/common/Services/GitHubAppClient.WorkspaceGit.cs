@@ -44,7 +44,7 @@ public sealed partial class GitHubAppClient
         }
         finally
         {
-            await RevokeWorkspaceCredentialAsync(metadataToken, ct);
+            await RevokeWorkspaceCredentialAsync(metadataToken, CancellationToken.None);
         }
 
         var issuedAt = clock.GetUtcNow();
@@ -69,15 +69,15 @@ public sealed partial class GitHubAppClient
         }
         catch
         {
-            if (!string.IsNullOrWhiteSpace(token)) await RevokeWorkspaceCredentialAsync(token, ct);
+            if (!string.IsNullOrWhiteSpace(token)) await RevokeWorkspaceCredentialAsync(token, CancellationToken.None);
             throw;
         }
     }
 
     public async Task RevokeWorkspaceCredentialAsync(string token, CancellationToken ct)
     {
-        try { using var revoked = await SendAsync(HttpMethod.Delete, "installation/token", token, null, ct); }
-        catch (Exception ex) when (ex is GitHubAppException or OperationCanceledException) { }
+        // This exact endpoint rejects expired/already-revoked tokens with 401; other failures are not proof of revocation.
+        using var revoked = await SendAsync(HttpMethod.Delete, "installation/token", token, null, ct, tokenRevocation: true);
     }
 
     private static GitHubAppException Denied() =>

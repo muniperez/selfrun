@@ -56,6 +56,17 @@ Disconnecting or removing repository access stops renewal. Existing tokens may
 remain valid until GitHub revokes them or their returned expiry. This does not
 authenticate `gh`, Codex or Claude accounts.
 
+Workspace token rotation reads the current credential through pinned SSH/SFTP
+and revokes it with GitHub's `DELETE /installation/token` before replacing it.
+Failed rotation also attempts to revoke the newly issued token. Teardown revokes
+the final token after the last Git receipt validation and durably records that
+confirmation before committing compute deletion. Revocation failures retain
+compute and its reservation; only GitHub success or an unauthorized response
+(expired/already revoked) confirms retirement. Tokens stay in memory and the
+workspace's `/run/minicloud-git/credential.json`, never operation evidence or logs.
+Externally supplied OpenBao credentials have no provider-revocation integration:
+their rotation/teardown cannot claim revocation and fails closed.
+
 ## Status, recovery and credential rotation
 
 Status distinguishes `setup_pending`, `converting`, `app_created` (installation

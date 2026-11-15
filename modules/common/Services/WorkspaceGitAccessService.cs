@@ -25,6 +25,31 @@ public sealed class WorkspaceGitAccessService(MinicloudDbContext db, ISecretStor
         Regex.IsMatch(repository, @"\Ahttps://github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9_.-]+\.git\z",
             RegexOptions.CultureInvariant) && !repository.Contains("/..", StringComparison.Ordinal);
 
+    public async Task RevokeAsync(string organizationId, string canonicalRepoUrl, string serializedAuthorityRef,
+        WorkspaceGitCredential credential, CancellationToken ct)
+    {
+        try
+        {
+            var reference = JsonSerializer.Deserialize<StoredSecretReference>(serializedAuthorityRef, JsonOptions) ?? throw Denied();
+            if (reference.Provider != "github-app" || !IsCanonicalRepository(canonicalRepoUrl)
+                || reference.Version != canonicalRepoUrl || string.IsNullOrWhiteSpace(reference.Path)
+                || credential.Origin != canonicalRepoUrl || credential.Username != "x-access-token"
+                || string.IsNullOrWhiteSpace(credential.Password) || credential.Password.Any(char.IsControl))
+                throw Denied();
+            // Disconnection or policy removal must not prevent retirement of an already-issued token.
+            if (!await db.GitHubAppConnections.AsNoTracking().AnyAsync(x =>
+                x.Id == reference.Path && x.OrganizationId == organizationId
+                && x.AppId > 0 && x.InstallationId > 0, ct))
+                throw Denied();
+            await github.RevokeWorkspaceCredentialAsync(credential.Password, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is GitHubAppException or JsonException or InvalidOperationException or ArgumentException or FormatException)
+        {
+            throw Denied();
+        }
+    }
+
     public async Task<WorkspaceGitCredential> IssueAsync(string organizationId, string canonicalRepoUrl,
         string serializedAuthorityRef, CancellationToken ct)
     {
@@ -57,13 +82,18 @@ public sealed class WorkspaceGitAccessService(MinicloudDbContext db, ISecretStor
                 || app.OwnerLogin != connection.OwnerLogin || app.OwnerType != connection.OwnerType)
                 throw Denied();
             var credential = await github.IssueWorkspaceCredentialAsync(app, connection.InstallationId.Value, canonicalRepoUrl, ct);
-            if (!await db.GitHubAppConnections.AsNoTracking().AnyAsync(x => x.Id == connection.Id
-                && x.OrganizationId == organizationId && x.Status == "connected" && x.Revision == connection.Revision, ct))
+            try
             {
-                await github.RevokeWorkspaceCredentialAsync(credential.Password, ct);
-                throw Denied();
+                if (!await db.GitHubAppConnections.AsNoTracking().AnyAsync(x => x.Id == connection.Id
+                    && x.OrganizationId == organizationId && x.Status == "connected" && x.Revision == connection.Revision, ct))
+                    throw Denied();
+                return credential;
             }
-            return credential;
+            catch
+            {
+                await github.RevokeWorkspaceCredentialAsync(credential.Password, CancellationToken.None);
+                throw;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is GitHubAppException or SecretStoreUnavailableException or JsonException

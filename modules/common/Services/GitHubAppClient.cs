@@ -100,7 +100,8 @@ public sealed partial class GitHubAppClient(HttpClient client, TimeProvider cloc
         return message + "." + Encode(rsa.SignData(Encoding.ASCII.GetBytes(message), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
     }
 
-    private async Task<JsonDocument> SendAsync(HttpMethod method, string path, string? token, object? body, CancellationToken ct)
+    private async Task<JsonDocument> SendAsync(HttpMethod method, string path, string? token, object? body, CancellationToken ct,
+        bool tokenRevocation = false)
     {
         using var request = new HttpRequestMessage(method, new Uri("https://api.github.com/" + path));
         request.Headers.UserAgent.ParseAdd("Minicloud-GitHub-App/1.0");
@@ -113,6 +114,11 @@ public sealed partial class GitHubAppClient(HttpClient client, TimeProvider cloc
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (tokenRevocation)
+            {
+                if (response.StatusCode == HttpStatusCode.Unauthorized) return JsonDocument.Parse("{}");
+                if (response.StatusCode != HttpStatusCode.NoContent) throw Unavailable();
+            }
             if (!response.IsSuccessStatusCode)
                 throw response.StatusCode switch
                 {

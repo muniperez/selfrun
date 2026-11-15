@@ -164,6 +164,73 @@ public sealed class WorkspaceGitAccessTests : IAsyncLifetime
         Assert.Equal(calls, handler.Calls.Count);
     }
 
+    [Theory]
+    [InlineData(204, true)]
+    [InlineData(401, true)]
+    [InlineData(200, false)]
+    [InlineData(202, false)]
+    [InlineData(403, false)]
+    [InlineData(404, false)]
+    [InlineData(429, false)]
+    [InlineData(500, false)]
+    public async Task RetirementRequiresActualGitHubConfirmationEvenAfterDisconnection(int status, bool retired)
+    {
+        Connection.Status = "disconnected";
+        policy.Repositories.Clear();
+        await db.SaveChangesAsync();
+        handler.RevokeStatus = (HttpStatusCode)status;
+        // Expiry from the workspace is not trusted as provider revocation evidence.
+        var credential = new WorkspaceGitCredential(Origin, "x-access-token", SecretToken, 0);
+        if (retired) await Service.RevokeAsync("org", Origin, Authority, credential, default);
+        else
+        {
+            var error = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() =>
+                Service.RevokeAsync("org", Origin, Authority, credential, default));
+            Assert.DoesNotContain(SecretToken, error.ToString());
+            Assert.Null(error.InnerException);
+        }
+        Assert.Equal("revoke-write", Assert.Single(handler.Calls));
+    }
+
+    [Theory]
+    [InlineData("foreign-org")]
+    [InlineData("foreign-connection")]
+    [InlineData("foreign-origin")]
+    [InlineData("foreign-credential")]
+    [InlineData("openbao")]
+    public async Task RetirementCannotSubstituteAuthorityOrClaimExternalProviderRevocation(string mutation)
+    {
+        var authority = Authority;
+        var origin = Origin;
+        var organization = "org";
+        var credential = new WorkspaceGitCredential(Origin, "x-access-token", SecretToken, 0);
+        switch (mutation)
+        {
+            case "foreign-org": organization = "other"; break;
+            case "foreign-connection": authority = authority.Replace("connection", "foreign"); break;
+            case "foreign-origin": origin = Origin.Replace("private-repo", "other"); break;
+            case "foreign-credential": credential = new(Origin.Replace("private-repo", "other"), "x-access-token", SecretToken, 0); break;
+            case "openbao": authority = authority.Replace("github-app", "openbao"); break;
+        }
+        await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() =>
+            Service.RevokeAsync(organization, origin, authority, credential, default));
+        Assert.Empty(handler.Calls);
+    }
+
+    [Fact]
+    public async Task RetirementTransportFailureAndCancellationAreNotSuccess()
+    {
+        var credential = new WorkspaceGitCredential(Origin, "x-access-token", SecretToken, 0);
+        handler.Failure = "transport-error";
+        var error = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() =>
+            Service.RevokeAsync("org", Origin, Authority, credential, default));
+        Assert.DoesNotContain(SecretToken, error.ToString());
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            Service.RevokeAsync("org", Origin, Authority, credential, canceled.Token));
+    }
+
     [Fact]
     public async Task OpenBaoRetainsExactSelectedReferenceNamespaceAndExpiryGuards()
     {
@@ -230,6 +297,7 @@ public sealed class WorkspaceGitAccessTests : IAsyncLifetime
         public string? Failure { get; set; }
         public DateTimeOffset ExpiresAt { get; set; }
         public Func<Task>? BeforeWriteResponse { get; set; }
+        public HttpStatusCode RevokeStatus { get; set; } = HttpStatusCode.NoContent;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -275,7 +343,7 @@ public sealed class WorkspaceGitAccessTests : IAsyncLifetime
             if (request.Method == HttpMethod.Delete && path == "/installation/token")
             {
                 Calls.Add(request.Headers.Authorization?.Parameter == SecretToken ? "revoke-write" : "revoke-metadata");
-                return new(HttpStatusCode.NoContent);
+                return new(RevokeStatus) { Content = new StringContent(SecretToken) };
             }
             throw new InvalidOperationException("Unexpected mocked GitHub request.");
         }

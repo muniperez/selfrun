@@ -35,6 +35,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         public string? ReceiptId { get; set; }
         public string? EnvironmentId { get; set; }
         public bool DeleteCommitted { get; set; }
+        public bool RepositoryCredentialRevoked { get; set; }
         public long? T3SnapshotSequence { get; set; }
     }
 

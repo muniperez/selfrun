@@ -144,6 +144,13 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 if (vm.Kind == "ephemeral" && vm.GitSavedOperationId == op.Id)
                     await RefreshRepositoryCredentialAsync(vm, ct, force: true);
                 Result(await runtime.CallAsync(Target(vm), op.Id, "receipt-validate", new { receiptId = evidence.ReceiptId }, ct));
+                await RevokeRepositoryCredentialAsync(vm, ct);
+                evidence.RepositoryCredentialRevoked = true;
+                await SaveAsync(op, evidence, "commit-delete", null, ct);
+                break;
+            case "commit-delete":
+                if (!evidence.RepositoryCredentialRevoked)
+                    throw new InvalidOperationException("Repository credential retirement has no durable confirmation.");
                 await SaveAsync(op, evidence, op.Step, (_, fresh, _) => fresh.LastHeartbeatAt = Now, ct, release: false);
                 db.ChangeTracker.Clear();
                 var guardedVm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == vm.Id, ct);
@@ -154,7 +161,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 await SaveAsync(op, evidence, "delete", (_, fresh, _) => fresh.Phase = "deleting", ct);
                 break;
             case "delete":
-                if (!evidence.DeleteCommitted || vm.QuiescedOperationId != op.Id || vm.QuiescedGeneration != vm.Generation ||
+                if (!evidence.DeleteCommitted || !evidence.RepositoryCredentialRevoked ||
+                    vm.QuiescedOperationId != op.Id || vm.QuiescedGeneration != vm.Generation ||
                     string.IsNullOrEmpty(vm.QuiescenceReceipt))
                     throw new InvalidOperationException("There is no durable deletion intent and quiescence proof for this generation.");
                 var server = await cloud.GetWorkspaceServerAsync(vm.ProviderServerId!, ct);
@@ -186,6 +194,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 if (vm.ProviderFirewallId is not null) await cloud.DeleteWorkspaceFirewallAsync(vm.ProviderFirewallId, ComputeLabels(workspace, vm), ct);
                 await tunnels.RemoveAsync(vm.Id, vm.Generation, ct);
                 RepositoryRenewals.TryRemove((vm.Id, vm.Generation), out _);
+                RepositoryCredentialLocks.TryRemove((vm.Id, vm.Generation), out _);
                 await SaveAsync(op, evidence, "stopped", (fresh, machine, parent) =>
                 {
                     machine.Phase = "stopped"; machine.ComputeReserved = false; machine.GatewayReady = false;

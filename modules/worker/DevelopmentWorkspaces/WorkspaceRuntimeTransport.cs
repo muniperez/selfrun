@@ -17,6 +17,8 @@ public interface IWorkspaceRuntimeTransport
     Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct);
     Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct);
     Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct);
+    Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct) =>
+        throw new NotSupportedException("Repository credential readback is required for safe retirement.");
 }
 
 public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> options) : IWorkspaceRuntimeTransport
@@ -97,6 +99,27 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
         attributes.UserId = 2000; attributes.GroupId = 2000;
         sftp.SetAttributes(path, attributes);
         sftp.ChangePermissions(path, 256);
+    }
+
+    public async Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
+    {
+        using var sftp = new SftpClient(Connection(target));
+        Pin(sftp, target);
+        await sftp.ConnectAsync(ct);
+        const string path = "/run/minicloud-git/credential.json";
+        if (!sftp.Exists(path)) return null;
+        using var stream = sftp.OpenRead(path);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        int count;
+        while ((count = await stream.ReadAsync(chunk, ct)) > 0)
+        {
+            if (buffer.Length + count > 16384)
+                throw new InvalidOperationException("Repository credential exceeds the bounded readback size.");
+            buffer.Write(chunk, 0, count);
+        }
+        using var document = JsonDocument.Parse(buffer.ToArray());
+        return document.RootElement.Clone();
     }
 
     public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct)
