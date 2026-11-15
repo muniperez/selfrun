@@ -43,11 +43,18 @@ Installation lifecycle webhooks are delivered automatically by GitHub.
 No Marketplace publication, central credential service or hand-copied private
 key, client secret, webhook secret or environment variable is needed.
 
-**This is control-plane integration, not workspace authentication.** Automatic
-installation-token issuance to workspaces, credential renewal/Git helpers,
-`gh` integration and credential revocation on workspace deletion are follow-up
-work. Continue authenticating workspace Git separately. Codex/Claude account
-authentication is also separate.
+Development workspaces can use this connection only when an operator explicitly
+selects its connection ID as `GitHubConnectionId` in the exact organization's
+`DevelopmentWorkspaces:Repositories` push policy. The repository must be a
+canonical `https://github.com/owner/repository.git` URL and remain accessible in
+the connected installation. Git access receives a freshly verified, single
+repository Contents-write token expiring within one hour; the App key and
+installation-wide credentials never enter the workspace. Do not configure
+`Credential` alongside `GitHubConnectionId`; the latter is renewable authority,
+not a stored token, so it does not require `CredentialExpiresAt`.
+Disconnecting or removing repository access stops renewal. Existing tokens may
+remain valid until GitHub revokes them or their returned expiry. This does not
+authenticate `gh`, Codex or Claude accounts.
 
 ## Status, recovery and credential rotation
 

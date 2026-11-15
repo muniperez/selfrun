@@ -1,0 +1,7 @@
+[Unit]
+Description=Freezable coding work, never the control agent or database
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksMax=4096

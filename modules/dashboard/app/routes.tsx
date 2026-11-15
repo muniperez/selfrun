@@ -48,6 +48,7 @@ export const routes: RouteObject[] = [
       { path: "/apps/new", element: <CreateAppModule /> },
       { path: "/databases", element: <DatabasesModule /> },
       { path: "/workspaces", element: <WorkspacesModule /> },
+      { path: "/workspaces/:workspaceId", element: <WorkspacesModule /> },
       { path: "/databases/:databaseId", element: <DatabaseDetailModule /> },
       { path: "/plans", element: <ProvidersModule /> },
       { path: "/plans/accounts", element: <ProviderAccountsModule /> },

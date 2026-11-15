@@ -301,11 +301,31 @@ public sealed partial class CliApplication
             case "workspaces start":
             case "workspaces stop":
             case "workspaces cancel-idle-stop":
+            case "workspaces resize-next-start":
+            case "workspaces vms":
+            case "workspaces launch":
+            case "workspaces vm-status":
+            case "workspaces vm-start":
+            case "workspaces vm-stop":
+            case "workspaces vm-cancel-idle-stop":
+            case "workspaces vm-discard":
+            case "workspaces vm-resize-next-start":
+            case "workspaces stop-all":
+            case "workspaces task-renew":
+            case "workspaces task-complete":
                 _console.WriteLine("Manage opt-in ephemeral development workspaces");
                 _console.WriteLine("  minicloud workspaces list [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces create --name <name> --image <registered-image> --profile Standard|Heavy --plan <plan-id> --volume-gb <10-10000> [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces status <workspace-id> --organization <id>");
                 _console.WriteLine("  minicloud workspaces <start|stop|cancel-idle-stop> <workspace-id> --organization <id>");
+                _console.WriteLine("  minicloud workspaces <vms|stop-all> <workspace-id> [--organization <id>]");
+                _console.WriteLine("  minicloud workspaces launch <workspace-id> --image <id> --profile Standard|Heavy --plan <id> --repository <url> --base-ref <ref> --base-commit <resolved-sha> --push-authorized --acknowledge-ignored-data-loss [--idempotency-key <key>] [--repository-credential-ref <ref>]");
+                _console.WriteLine("  minicloud workspaces vm-status <workspace-id> --vm <id>");
+                _console.WriteLine("  minicloud workspaces <vm-start|vm-stop|vm-cancel-idle-stop> <workspace-id> --vm <id> --generation <n>");
+                _console.WriteLine("  minicloud workspaces <resize-next-start|vm-resize-next-start> <workspace-id> [--vm <id>] --generation <n> --image <id> --profile Standard|Heavy --plan <id>");
+                _console.WriteLine("  minicloud workspaces vm-discard <workspace-id> --vm <id> --generation <n> --discard-local-data --acknowledge-ignored-data-loss");
+                _console.WriteLine("  minicloud workspaces <task-renew|task-complete> <workspace-id> --vm <id> --generation <n> --task <id> [--cancelled]");
+                _console.WriteLine("All commands accept --organization <id>; required with multiple organizations. Ephemeral roots are Git-only; ignored/untracked data is not retained. Stop-all enumerates VMs and retains independent Git-save guards.");
                 _console.WriteLine("Provisioning requires operator-enabled image/profile/rate policy. Stopped compute does not stop retained-volume charges.");
                 return CliExitCodes.Success;
             case "plans":

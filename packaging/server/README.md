@@ -4,6 +4,10 @@ This is the **server** channel, independent of source-built CLI delivery. No
 server assets have been published or qualified by this change. Existing CLI
 installers and the reusable customer deployment workflow retain their meaning.
 
+Optional [development workspace packaging](bundle/development-workspaces.md)
+adds a separately supervised gateway only through an explicit Compose override
+and profile. It does not change the default release image set or enable workspaces.
+
 The [maintenance implementation](../../docs/server-maintenance.md) provides
 coordinated backup, upgrade, restore and transfer through the durable
 maintenance authority, plus independent OpenBao recovery-dependency archives.

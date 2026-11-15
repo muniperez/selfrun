@@ -1472,6 +1472,830 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("deployment_services", (string)null);
                 });
 
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspace", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BackupStatus")
+                        .HasColumnType("text")
+                        .HasColumnName("backup_status");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<DateTimeOffset?>("LastBackupAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_backup_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset?>("PricingUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("pricing_updated_at");
+
+                    b.Property<string>("PrimaryVmId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("primary_vm_id");
+
+                    b.Property<string>("ProviderAccountId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_account_id");
+
+                    b.Property<string>("ProviderVolumeId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_volume_id");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("region");
+
+                    b.Property<string>("RequestDigest")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("request_digest");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("revision");
+
+                    b.Property<decimal>("StorageMonthlyRate")
+                        .HasColumnType("numeric")
+                        .HasColumnName("storage_monthly_rate");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VolumeAttachedVmId")
+                        .HasColumnType("text")
+                        .HasColumnName("volume_attached_vm_id");
+
+                    b.Property<string>("VolumeFilesystem")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("volume_filesystem");
+
+                    b.Property<string>("VolumeFilesystemUuid")
+                        .HasColumnType("text")
+                        .HasColumnName("volume_filesystem_uuid");
+
+                    b.Property<int>("VolumeSizeGb")
+                        .HasColumnType("integer")
+                        .HasColumnName("volume_size_gb");
+
+                    b.Property<string>("VolumeStatus")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("volume_status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "Name")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "ProviderAccountId");
+
+                    b.HasIndex("ProviderAccountId", "ProviderVolumeId")
+                        .IsUnique();
+
+                    b.ToTable("development_workspaces", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceGatewayRoute", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint")
+                        .HasColumnName("generation");
+
+                    b.Property<int>("LoopbackPort")
+                        .HasColumnType("integer")
+                        .HasColumnName("loopback_port");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset>("RegisteredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("registered_at");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("Service")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("service");
+
+                    b.Property<string>("T3CredentialReference")
+                        .HasColumnType("text")
+                        .HasColumnName("t3_credential_reference");
+
+                    b.Property<string>("VmId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("vm_id");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VmId", "Generation", "Service")
+                        .IsUnique();
+
+                    b.ToTable("development_workspace_gateway_routes", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceGatewaySession", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ApiKeyId")
+                        .HasColumnType("text")
+                        .HasColumnName("api_key_id");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("LaunchDigest")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("launch_digest");
+
+                    b.Property<DateTimeOffset>("LaunchExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("launch_expires_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset?>("RedeemedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("redeemed_at");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("revision");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("Service")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("service");
+
+                    b.Property<string>("SessionDigest")
+                        .HasColumnType("text")
+                        .HasColumnName("session_digest");
+
+                    b.Property<DateTimeOffset>("SessionExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("session_expires_at");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("text")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("VmId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("vm_id");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LaunchDigest")
+                        .IsUnique();
+
+                    b.HasIndex("SessionDigest")
+                        .IsUnique();
+
+                    b.HasIndex("VmId", "Generation");
+
+                    b.ToTable("development_workspace_gateway_sessions", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceOperation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<decimal>("ComputeHourlyRate")
+                        .HasColumnType("numeric")
+                        .HasColumnName("compute_hourly_rate");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasColumnType("text")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("ImageId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("image_id");
+
+                    b.Property<string>("ImageManifestSha256")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("image_manifest_sha256");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasColumnType("text")
+                        .HasColumnName("lease_owner");
+
+                    b.Property<string>("LeaseToken")
+                        .HasColumnType("text")
+                        .HasColumnName("lease_token");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("plan_id");
+
+                    b.Property<string>("ProviderAccountId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_account_id");
+
+                    b.Property<string>("ProviderActionId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_action_id");
+
+                    b.Property<string>("ProviderEvidenceJson")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_evidence_json");
+
+                    b.Property<string>("ProviderImage")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_image");
+
+                    b.Property<string>("ProviderResourceId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_resource_id");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("region");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("sku");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Step")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("step");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VmId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("vm_id");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "LeaseExpiresAt");
+
+                    b.HasIndex("WorkspaceId", "VmId");
+
+                    b.HasIndex("VmId", "Generation", "Kind");
+
+                    b.ToTable("development_workspace_operations", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceTaskLease", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("task_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VmId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("vm_id");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkspaceId", "VmId");
+
+                    b.HasIndex("VmId", "Generation", "Status");
+
+                    b.HasIndex("VmId", "Generation", "TaskId")
+                        .IsUnique();
+
+                    b.ToTable("development_workspace_task_leases", (string)null);
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceVm", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AllocationOperationId")
+                        .HasColumnType("text")
+                        .HasColumnName("allocation_operation_id");
+
+                    b.Property<string>("Architecture")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("architecture");
+
+                    b.Property<string>("BaseCommit")
+                        .HasColumnType("text")
+                        .HasColumnName("base_commit");
+
+                    b.Property<string>("BaseRef")
+                        .HasColumnType("text")
+                        .HasColumnName("base_ref");
+
+                    b.Property<DateTimeOffset?>("BaseVerifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("base_verified_at");
+
+                    b.Property<long?>("BaseVerifiedGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("base_verified_generation");
+
+                    b.Property<decimal>("ComputeHourlyRate")
+                        .HasColumnType("numeric")
+                        .HasColumnName("compute_hourly_rate");
+
+                    b.Property<bool>("ComputeReserved")
+                        .HasColumnType("boolean")
+                        .HasColumnName("compute_reserved");
+
+                    b.Property<int>("CpuCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("cpu_count");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DesiredState")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("desired_state");
+
+                    b.Property<long?>("DiscardGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("discard_generation");
+
+                    b.Property<string>("DiscardOperationId")
+                        .HasColumnType("text")
+                        .HasColumnName("discard_operation_id");
+
+                    b.Property<DateTimeOffset?>("DiscardRequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("discard_requested_at");
+
+                    b.Property<string>("DiscardRequestedBy")
+                        .HasColumnType("text")
+                        .HasColumnName("discard_requested_by");
+
+                    b.Property<DateTimeOffset?>("EnrolledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enrolled_at");
+
+                    b.Property<string>("EnrollmentTokenDigest")
+                        .HasColumnType("text")
+                        .HasColumnName("enrollment_token_digest");
+
+                    b.Property<DateTimeOffset?>("EnrollmentTokenExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enrollment_token_expires_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasColumnType("text")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("FinalHead")
+                        .HasColumnType("text")
+                        .HasColumnName("final_head");
+
+                    b.Property<bool>("GatewayReady")
+                        .HasColumnType("boolean")
+                        .HasColumnName("gateway_ready");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("GitSaveReceipt")
+                        .HasColumnType("text")
+                        .HasColumnName("git_save_receipt");
+
+                    b.Property<DateTimeOffset?>("GitSavedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("git_saved_at");
+
+                    b.Property<long?>("GitSavedGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("git_saved_generation");
+
+                    b.Property<string>("GitSavedOperationId")
+                        .HasColumnType("text")
+                        .HasColumnName("git_saved_operation_id");
+
+                    b.Property<string>("GitStatus")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("git_status");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<DateTimeOffset?>("IgnoredDataAcknowledgedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ignored_data_acknowledged_at");
+
+                    b.Property<string>("ImageId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("image_id");
+
+                    b.Property<string>("ImageManifestSha256")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("image_manifest_sha256");
+
+                    b.Property<string>("IpAddress")
+                        .HasColumnType("text")
+                        .HasColumnName("ip_address");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset?>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at");
+
+                    b.Property<DateTimeOffset?>("LastHeartbeatAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_heartbeat_at");
+
+                    b.Property<DateTimeOffset?>("LastReadyAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_ready_at");
+
+                    b.Property<int>("MemoryGiB")
+                        .HasColumnType("integer")
+                        .HasColumnName("memory_gi_b");
+
+                    b.Property<string>("NextImageId")
+                        .HasColumnType("text")
+                        .HasColumnName("next_image_id");
+
+                    b.Property<string>("NextPlanId")
+                        .HasColumnType("text")
+                        .HasColumnName("next_plan_id");
+
+                    b.Property<string>("NextProfile")
+                        .HasColumnType("text")
+                        .HasColumnName("next_profile");
+
+                    b.Property<string>("OperationId")
+                        .HasColumnType("text")
+                        .HasColumnName("operation_id");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("phase");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("plan_id");
+
+                    b.Property<string>("Profile")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("profile");
+
+                    b.Property<string>("ProviderFirewallId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_firewall_id");
+
+                    b.Property<string>("SshBootstrapSecretRef")
+                        .HasColumnType("text")
+                        .HasColumnName("ssh_bootstrap_secret_ref");
+
+                    b.Property<string>("RuntimeCredentialRef")
+                        .HasColumnType("text")
+                        .HasColumnName("runtime_credential_ref");
+
+                    b.Property<long?>("SshHostKeyGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ssh_host_key_generation");
+
+                    b.Property<string>("ProviderAccountId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_account_id");
+
+                    b.Property<string>("ProviderActionId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_action_id");
+
+                    b.Property<string>("ProviderImage")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("provider_image");
+
+                    b.Property<string>("ProviderIpId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_ip_id");
+
+                    b.Property<string>("ProviderServerId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_server_id");
+
+                    b.Property<bool>("PushAuthorized")
+                        .HasColumnType("boolean")
+                        .HasColumnName("push_authorized");
+
+                    b.Property<DateTimeOffset?>("QuiescedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("quiesced_at");
+
+                    b.Property<long?>("QuiescedGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("quiesced_generation");
+
+                    b.Property<string>("QuiescedOperationId")
+                        .HasColumnType("text")
+                        .HasColumnName("quiesced_operation_id");
+
+                    b.Property<string>("QuiescenceReceipt")
+                        .HasColumnType("text")
+                        .HasColumnName("quiescence_receipt");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("region");
+
+                    b.Property<string>("Repository")
+                        .HasColumnType("text")
+                        .HasColumnName("repository");
+
+                    b.Property<string>("RepositoryCredentialRef")
+                        .HasColumnType("text")
+                        .HasColumnName("repository_credential_ref");
+
+                    b.Property<string>("RequestDigest")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("request_digest");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("revision");
+
+                    b.Property<DateTimeOffset?>("RuntimeTokenExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("runtime_token_expires_at");
+
+                    b.Property<string>("RuntimeTokenHash")
+                        .HasColumnType("text")
+                        .HasColumnName("runtime_token_hash");
+
+                    b.Property<DateTimeOffset?>("ShutdownDeadline")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("shutdown_deadline");
+
+                    b.Property<string>("ShutdownReason")
+                        .HasColumnType("text")
+                        .HasColumnName("shutdown_reason");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("sku");
+
+                    b.Property<string>("SshHostKey")
+                        .HasColumnType("text")
+                        .HasColumnName("ssh_host_key");
+
+                    b.Property<string>("SshHostKeyFingerprint")
+                        .HasColumnType("text")
+                        .HasColumnName("ssh_host_key_fingerprint");
+
+                    b.Property<bool>("StartAfterStop")
+                        .HasColumnType("boolean")
+                        .HasColumnName("start_after_stop");
+
+                    b.Property<DateTimeOffset?>("StartRequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("start_requested_at");
+
+                    b.Property<string>("TaskSecretReferencesJson")
+                        .HasColumnType("text")
+                        .HasColumnName("task_secret_references_json");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VerifiedRemoteCommit")
+                        .HasColumnType("text")
+                        .HasColumnName("verified_remote_commit");
+
+                    b.Property<string>("VerifiedRemoteRef")
+                        .HasColumnType("text")
+                        .HasColumnName("verified_remote_ref");
+
+                    b.Property<string>("WorkBranch")
+                        .HasColumnType("text")
+                        .HasColumnName("work_branch");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkspaceId")
+                        .IsUnique()
+                        .HasFilter("kind = 'primary'");
+
+                    b.HasIndex("OrganizationId", "PlanId");
+
+                    b.HasIndex("OrganizationId", "ProviderAccountId");
+
+                    b.HasIndex("OrganizationId", "WorkspaceId");
+
+                    b.HasIndex("ProviderAccountId", "ProviderServerId")
+                        .IsUnique();
+
+                    b.HasIndex("Repository", "WorkBranch")
+                        .IsUnique()
+                        .HasFilter("kind = 'ephemeral'");
+
+                    b.HasIndex("WorkspaceId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("DesiredState", "Phase", "ShutdownDeadline");
+
+                    b.ToTable("development_workspace_vms", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_development_vm_kind", "kind IN ('primary', 'ephemeral')");
+                        });
+                });
+
             modelBuilder.Entity("Minicloud.Common.Models.Domain", b =>
                 {
                     b.Property<string>("Id")
@@ -4196,6 +5020,66 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("ImagePublication");
                 });
 
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspace", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Minicloud.Common.Models.ProviderAccount", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ProviderAccountId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceOperation", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.DevelopmentWorkspaceVm", null)
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId", "VmId")
+                        .HasPrincipalKey("WorkspaceId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceTaskLease", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.DevelopmentWorkspaceVm", null)
+                        .WithMany("TaskLeases")
+                        .HasForeignKey("WorkspaceId", "VmId")
+                        .HasPrincipalKey("WorkspaceId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceVm", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.ProviderPlan", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "PlanId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Minicloud.Common.Models.ProviderAccount", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ProviderAccountId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Minicloud.Common.Models.DevelopmentWorkspace", null)
+                        .WithMany("Vms")
+                        .HasForeignKey("OrganizationId", "WorkspaceId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Minicloud.Common.Models.Domain", b =>
                 {
                     b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
@@ -4592,6 +5476,16 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Logs");
 
                     b.Navigation("Services");
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspace", b =>
+                {
+                    b.Navigation("Vms");
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceVm", b =>
+                {
+                    b.Navigation("TaskLeases");
                 });
 
             modelBuilder.Entity("Minicloud.Common.Models.MinicloudApp", b =>

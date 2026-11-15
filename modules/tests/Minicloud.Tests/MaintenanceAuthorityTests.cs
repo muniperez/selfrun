@@ -238,6 +238,61 @@ public sealed class MaintenanceAuthorityTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task WorkspaceOperationsAndQueuedReplacementStartsBlockMaintenanceDrainUntilReconciled()
+    {
+        await SeedInstallationAsync();
+        await using var db = _harness.CreateDbContext();
+        var now = DateTimeOffset.UtcNow;
+        db.Organizations.Add(new Organization { Id = "workspace-org", Name = "Workspace org", Slug = "workspace-org" });
+        db.ProviderAccounts.Add(new ProviderAccount { Id = "workspace-account", OrganizationId = "workspace-org", Name = "Synthetic",
+            ProviderType = Minicloud.Common.Providers.CloudProvider.Hetzner, CredentialPath = "synthetic", CredentialGeneration = "test" });
+        db.ProviderPlans.Add(new ProviderPlan { Id = "workspace-plan", OrganizationId = "workspace-org",
+            ProviderAccountId = "workspace-account", Name = "Workspace plan", NormalizedName = "workspace-plan", Region = "nbg1", Sku = "synthetic" });
+        var workspace = new DevelopmentWorkspace { Id = "workspace", OrganizationId = "workspace-org", CreatedBy = "actor",
+            Name = "Workspace", PrimaryVmId = "workspace-vm", ProviderAccountId = "workspace-account", Region = "nbg1",
+            VolumeSizeGb = 20, Currency = "USD", IdempotencyKey = "workspace-create", RequestDigest = "digest",
+            CreatedAt = now, UpdatedAt = now };
+        var vm = new DevelopmentWorkspaceVm { Id = "workspace-vm", WorkspaceId = workspace.Id, OrganizationId = workspace.OrganizationId,
+            Kind = "primary", IdempotencyKey = "primary", RequestDigest = "digest", Generation = 1,
+            ImageId = "image", Profile = "standard", PlanId = "workspace-plan", ProviderAccountId = workspace.ProviderAccountId,
+            Region = workspace.Region, Sku = "synthetic", ProviderImage = "provider-image", ImageManifestSha256 = new('a', 64),
+            StartAfterStop = true, CreatedAt = now, UpdatedAt = now };
+        workspace.Vms.Add(vm);
+        db.DevelopmentWorkspaces.Add(workspace);
+        DevelopmentWorkspaceOperation Operation(string id, string status, DateTimeOffset? expires = null) => new()
+        {
+            Id = id, WorkspaceId = workspace.Id, VmId = vm.Id, Generation = vm.Generation, Kind = "stop",
+            Status = status, LeaseExpiresAt = expires, PlanId = vm.PlanId, ProviderAccountId = vm.ProviderAccountId,
+            Region = vm.Region, Sku = vm.Sku, ImageId = vm.ImageId, ProviderImage = vm.ProviderImage,
+            ImageManifestSha256 = vm.ImageManifestSha256, CreatedAt = now, UpdatedAt = now
+        };
+        db.DevelopmentWorkspaceOperations.AddRange(Operation("workspace-pending", "pending"),
+            Operation("workspace-running", "running", now.AddMinutes(5)),
+            Operation("workspace-expired", "running", now.AddMinutes(-5)),
+            Operation("workspace-blocked", "blocked"), Operation("workspace-completed", "completed"),
+            Operation("workspace-cancelled", "cancelled"), Operation("workspace-superseded", "superseded"));
+        await db.SaveChangesAsync();
+        var service = Service(db);
+        await service.FenceAsync(Installation, "op-workspace-drain");
+        var status = await service.DrainStatusAsync(Installation);
+        Assert.False(status.Drained);
+        Assert.Equal(5, status.BlockingCount);
+        var queued = Assert.Single(status.Work, x => x.Category == "development_workspace_operations" && x.State == "queued");
+        Assert.Equal("workspace-pending", Assert.Single(queued.Ids));
+        var leased = Assert.Single(status.Work, x => x.Category == "development_workspace_operations" && x.State == "leased");
+        Assert.Equal("workspace-running", Assert.Single(leased.Ids));
+        var uncertain = Assert.Single(status.Work, x => x.Category == "development_workspace_operations" && x.State == "uncertain");
+        Assert.Equal(new[] { "workspace-blocked", "workspace-expired" }, uncertain.Ids);
+        var starts = Assert.Single(status.Work, x => x.Category == "development_workspace_starts");
+        Assert.Equal(("queued", true, vm.Id), (starts.State, starts.BlocksDrain, Assert.Single(starts.Ids)));
+        Assert.All(new[] { queued, leased, uncertain }, category => Assert.True(category.BlocksDrain));
+        foreach (var operation in await db.DevelopmentWorkspaceOperations.ToListAsync()) operation.Status = "completed";
+        vm.StartAfterStop = false;
+        await db.SaveChangesAsync();
+        Assert.True((await service.DrainStatusAsync(Installation)).Drained);
+    }
+
+    [Fact]
     public async Task DrainStatusReportsInFlightAndUncertainWorkAndIgnoresInformationalQueues()
     {
         await SeedInstallationAsync();

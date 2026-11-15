@@ -1,6 +1,7 @@
 using Minicloud.Api.Extensions;
 using Minicloud.Api.Services;
 using Minicloud.Common.Services;
+using Minicloud.Common.Extensions;
 
 if (args.Length > 0 && args[0] == "bootstrap")
 {
@@ -15,6 +16,7 @@ if (args.Length > 0 && args[0] == "maintenance")
 }
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddDevelopmentWorkspaceConfiguration();
 if (args.Length > 0 && args[0] == "migrate")
 {
     if (args.Length != 1)
@@ -36,6 +38,7 @@ builder.Services.AddScoped<DatabaseNetworkService>();
 builder.Services.AddMinicloudApi(builder.Configuration, builder.Environment);
 builder.Services.AddMinicloudBootstrap();
 builder.Services.AddSetupTransport();
+builder.Services.AddDevelopmentWorkspaceGateway(builder.Configuration);
 
 builder.Services.AddScoped<DatabaseManagementService>();
 builder.Services.AddScoped<DatabaseBackupPurgeService>();

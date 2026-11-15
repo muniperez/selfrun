@@ -7,7 +7,7 @@ using System.Text;
 using System.Text.Json;
 using Minicloud.Common.Contracts;
 
-namespace Minicloud.Api.Services;
+namespace Minicloud.Common.Services;
 
 public sealed class GitHubAppException(string code, string message, int statusCode = 400) : Exception(message)
 {
@@ -19,7 +19,7 @@ public sealed record GitHubAppCredentials(long AppId, string Slug, long OwnerId,
     string OwnerType, string Pem, string WebhookSecret, string ClientId, string ClientSecret);
 public sealed record VerifiedGitHubInstallation(long Id, bool Suspended, IReadOnlyList<GitHubRepository> Repositories);
 
-public sealed class GitHubAppClient(HttpClient client, TimeProvider clock)
+public sealed partial class GitHubAppClient(HttpClient client, TimeProvider clock)
 {
     public async Task<GitHubAppCredentials> ConvertAsync(string code, CancellationToken ct)
     {
