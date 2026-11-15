@@ -14,6 +14,9 @@ public sealed class WorkspaceGatewayRelay : IDisposable
     private readonly HttpClient client;
     private readonly object gate = new();
     private readonly Dictionary<string, int> sessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> waitingSessions = new(StringComparer.Ordinal);
+    private TaskCompletionSource admissionChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int waitingRequests;
     private readonly SemaphoreSlim certificateAdmissions = new(8);
     private int connections;
     private static readonly HashSet<string> RequestHeaders = new(StringComparer.OrdinalIgnoreCase)
@@ -76,7 +79,15 @@ public sealed class WorkspaceGatewayRelay : IDisposable
         var session = context.Request.Cookies[CookieName];
         if (session?.Length != 64) { context.Response.StatusCode = 401; return; }
         var sessionKey = DevelopmentWorkspaceGatewayOptions.Digest(session);
-        if (!Admit(sessionKey)) { context.Response.StatusCode = 429; return; }
+        using var admissionTimeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        admissionTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.HttpTimeoutSeconds, 1, 300)));
+        try
+        {
+            if (!await AdmitAsync(sessionKey, IsBootstrapRequest(context), admissionTimeout.Token))
+            { context.Response.StatusCode = 429; return; }
+        }
+        catch (OperationCanceledException)
+        { context.Response.StatusCode = 504; return; }
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         lifetime.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.ConnectionLifetimeSeconds, 1, 3600)));
         try
@@ -141,26 +152,75 @@ public sealed class WorkspaceGatewayRelay : IDisposable
         target.LoopbackPort <= options.MaximumRelayPort && (target.Bearer is null ||
             target.Bearer.Length is > 0 and <= 8192 && !target.Bearer.Any(char.IsControl));
 
-    private bool Admit(string session)
+    private bool IsBootstrapRequest(HttpContext context)
+    {
+        if (context.WebSockets.IsWebSocketRequest ||
+            !options.TryParseHost(context.Request.Host.Value ?? "", out _, out var service) || service != "t3")
+            return false;
+        var request = context.Request;
+        return (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) &&
+                request.Path.StartsWithSegments("/assets") ||
+            HttpMethods.IsGet(request.Method) &&
+                (request.Path == "/.well-known/t3/environment" || request.Path == "/api/auth/session") ||
+            HttpMethods.IsPost(request.Method) && request.Path == "/api/auth/websocket-ticket";
+    }
+
+    private bool AdmitUnderLock(string session)
+    {
+        var current = sessions.GetValueOrDefault(session);
+        if (connections >= Math.Clamp(options.MaxConnections, 1, 1024) ||
+            current >= Math.Clamp(options.MaxConnectionsPerSession, 1, 64)) return false;
+        connections++;
+        sessions[session] = current + 1;
+        return true;
+    }
+
+    private async Task<bool> AdmitAsync(string session, bool waitForBootstrap, CancellationToken ct)
     {
         lock (gate)
         {
-            var current = sessions.GetValueOrDefault(session);
-            if (connections >= Math.Clamp(options.MaxConnections, 1, 1024) ||
-                current >= Math.Clamp(options.MaxConnectionsPerSession, 1, 64)) return false;
-            connections++;
-            sessions[session] = current + 1;
-            return true;
+            if (AdmitUnderLock(session)) return true;
+            if (!waitForBootstrap || waitingRequests >= Math.Clamp(options.MaxConnections, 1, 1024) * 4 ||
+                waitingSessions.GetValueOrDefault(session) >= Math.Clamp(options.MaxConnectionsPerSession, 1, 64) * 32)
+                return false;
+            waitingRequests++;
+            waitingSessions[session] = waitingSessions.GetValueOrDefault(session) + 1;
+        }
+        try
+        {
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                Task changed;
+                lock (gate)
+                {
+                    if (AdmitUnderLock(session)) return true;
+                    changed = admissionChanged.Task;
+                }
+                await changed.WaitAsync(ct);
+            }
+        }
+        finally
+        {
+            lock (gate)
+            {
+                waitingRequests--;
+                if (--waitingSessions[session] == 0) waitingSessions.Remove(session);
+            }
         }
     }
 
     private void Release(string session)
     {
+        TaskCompletionSource changed;
         lock (gate)
         {
             connections--;
             if (--sessions[session] == 0) sessions.Remove(session);
+            changed = admissionChanged;
+            admissionChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+        changed.TrySetResult();
     }
 
     private Uri Upstream(HttpContext context, int port, string scheme)

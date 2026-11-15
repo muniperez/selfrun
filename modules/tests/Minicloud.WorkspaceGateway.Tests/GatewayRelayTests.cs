@@ -116,6 +116,22 @@ public sealed class GatewayRelayTests
     }
 
     [Fact]
+    public async Task BootstrapAssetsWaitForCapacityWithoutRelaxingOtherConnectionCaps()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        var first = fixture.SendAsync("/assets/held.js", authenticated: true);
+        await fixture.AssetStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var queued = fixture.SendAsync("/assets/main.css", authenticated: true);
+        using var rejected = await fixture.SendAsync("/", authenticated: true);
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        fixture.ReleaseAsset.TrySetResult();
+        using var firstResponse = await first;
+        using var assetResponse = await queued;
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, assetResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task HttpTimeoutIsBounded()
     {
         await using var fixture = await Fixture.StartAsync();
@@ -287,6 +303,8 @@ public sealed class GatewayRelayTests
         public string? LastWebSocketQuery { get; private set; }
         public HttpClient Client { get; private set; } = null!;
         public FakeControl Control { get; private set; } = null!;
+        public TaskCompletionSource AssetStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseAsset { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private WebApplication upstream = null!;
         private TestServer gateway = null!;
         private WebApplication gatewayApplication = null!;
@@ -312,6 +330,11 @@ public sealed class GatewayRelayTests
             fixture.upstream.UseWebSockets();
             fixture.upstream.Run(async context =>
             {
+                if (context.Request.Path == "/assets/held.js")
+                {
+                    fixture.AssetStarted.TrySetResult();
+                    await fixture.ReleaseAsset.Task.WaitAsync(context.RequestAborted);
+                }
                 if (context.Request.Path == "/slow") { await Task.Delay(3000, context.RequestAborted); return; }
                 if (context.WebSockets.IsWebSocketRequest)
                 {
