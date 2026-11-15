@@ -13,7 +13,8 @@ public sealed partial class DevelopmentWorkspaceService
             var candidates = await db.DevelopmentWorkspaceOperations
                 .Where(x => x.Status == "pending" || x.Status == "running")
                 .ToListAsync(ct);
-            foreach (var operation in candidates.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id))
+            foreach (var operation in candidates.OrderBy(x => x.UpdatedAt).ThenBy(x => x.Attempts)
+                         .ThenBy(x => x.CreatedAt).ThenBy(x => x.Id))
             {
                 if (operation.LeaseExpiresAt > Now) continue;
                 var vm = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == operation.VmId, ct);

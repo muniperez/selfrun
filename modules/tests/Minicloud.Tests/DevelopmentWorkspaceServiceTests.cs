@@ -616,6 +616,38 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         Assert.False(await Service().CanDeleteComputeAsync(vm, stop, default));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReleasedBlockedStopDoesNotStarveOtherVmAndRemainsReclaimable(bool advanceClock)
+    {
+        var workspace = await Service().StartAsync((await Workspace()).Id, "org", default);
+        var primary = Primary(workspace);
+        await Ready(primary.Id);
+        workspace = await Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default);
+        var ephemeral = workspace.Vms.Single(x => x.Kind == "ephemeral");
+        await Ready(ephemeral.Id);
+        await Service().StopVmAsync(workspace.Id, "org", ephemeral.Id, 1, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Service().StopVmAsync(workspace.Id, "org", primary.Id, 1, default);
+        if (advanceClock) clock.Advance(TimeSpan.FromSeconds(1));
+        var blocked = (await Service().ClaimOperationAsync("worker", default))!;
+        Assert.Equal(ephemeral.Id, blocked.VmId);
+        await Service().UpdateClaimedOperationAsync(blocked.Id, blocked.LeaseToken!, (operation, vm, _) =>
+        {
+            operation.Status = "pending"; operation.Step = "wait-for-tasks";
+            operation.LeaseToken = null; operation.LeaseOwner = null; operation.LeaseExpiresAt = null;
+            vm.Phase = "blocked"; vm.ErrorCode = "workspace_reconciliation_required";
+        }, default);
+        if (advanceClock) clock.Advance(TimeSpan.FromSeconds(1));
+
+        var independent = (await Service().ClaimOperationAsync("worker", default))!;
+        Assert.Equal(primary.Id, independent.VmId);
+        var retry = (await Service().ClaimOperationAsync("another-worker", default))!;
+        Assert.Equal(blocked.Id, retry.Id);
+        Assert.NotEqual(blocked.LeaseToken, retry.LeaseToken);
+    }
+
     [Fact]
     public async Task GitSaveMustBeAfterQuiescenceAndMatchGenerationOperationBranchAndHead()
     {
