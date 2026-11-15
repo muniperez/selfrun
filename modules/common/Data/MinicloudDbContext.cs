@@ -31,6 +31,8 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
     public DbSet<DeploymentLog> DeploymentLogs => Set<DeploymentLog>();
     public DbSet<DeploymentArtifact> DeploymentArtifacts => Set<DeploymentArtifact>();
     public DbSet<ServerInstance> ServerInstances => Set<ServerInstance>();
+    public DbSet<CodingWorkspace> CodingWorkspaces => Set<CodingWorkspace>();
+    public DbSet<CodingWorkspaceOperation> CodingWorkspaceOperations => Set<CodingWorkspaceOperation>();
     public DbSet<CustomDomainRegistration> CustomDomainRegistrations => Set<CustomDomainRegistration>();
     public DbSet<Domain> Domains => Set<Domain>();
     public DbSet<RuntimeServer> RuntimeServers => Set<RuntimeServer>();
@@ -572,6 +574,60 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.Property(x => x.BootstrapStatus).HasColumnName("bootstrap_status");
             entity.Property(x => x.CreatedAt).HasColumnName("created_at");
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        });
+
+        modelBuilder.Entity<CodingWorkspace>(entity =>
+        {
+            entity.ToTable("coding_workspaces");
+            entity.HasAlternateKey(x => new { x.OrganizationId, x.Id });
+            entity.HasIndex(x => new { x.OrganizationId, x.NormalizedName }).IsUnique();
+            entity.HasIndex(x => new { x.ProviderAccountId, x.Provider, x.ProviderServerId }).IsUnique();
+            entity.Property(x => x.OrganizationId).HasColumnName("organization_id");
+            entity.Property(x => x.NormalizedName).HasColumnName("normalized_name").HasMaxLength(128);
+            entity.Property(x => x.PlanId).HasColumnName("plan_id");
+            entity.Property(x => x.ProviderAccountId).HasColumnName("provider_account_id");
+            entity.Property(x => x.ProviderSshKeyId).HasColumnName("provider_ssh_key_id");
+            entity.Property(x => x.SshPublicKey).HasColumnName("ssh_public_key");
+            entity.Property(x => x.SshFingerprint).HasColumnName("ssh_fingerprint");
+            entity.Property(x => x.ProviderServerId).HasColumnName("provider_server_id");
+            entity.Property(x => x.IpAddress).HasColumnName("ip_address");
+            entity.Property(x => x.AgentVersion).HasColumnName("agent_version");
+            entity.Property(x => x.T3Version).HasColumnName("t3_version");
+            entity.Property(x => x.WorkspaceUser).HasColumnName("workspace_user");
+            entity.Property(x => x.BootstrapRevision).HasColumnName("bootstrap_revision");
+            entity.Property(x => x.LastObservedAt).HasColumnName("last_observed_at");
+            entity.Property(x => x.LastErrorCode).HasColumnName("last_error_code");
+            entity.Property(x => x.LastError).HasColumnName("last_error");
+            entity.Property(x => x.CreatedAt).HasColumnName("created_at");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            entity.HasOne<Organization>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ProviderPlan>().WithMany()
+                .HasForeignKey(x => new { x.OrganizationId, x.PlanId })
+                .HasPrincipalKey(x => new { x.OrganizationId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ProviderSshKey>().WithMany()
+                .HasForeignKey(x => new { x.OrganizationId, x.ProviderAccountId, x.ProviderSshKeyId })
+                .HasPrincipalKey(x => new { x.OrganizationId, x.ProviderAccountId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CodingWorkspaceOperation>(entity =>
+        {
+            entity.ToTable("coding_workspace_operations");
+            entity.HasIndex(x => new { x.Status, x.CreatedAt });
+            entity.HasIndex(x => new { x.OrganizationId, x.WorkspaceId, x.CreatedAt });
+            entity.HasIndex(x => x.OwnershipToken).IsUnique();
+            entity.Property(x => x.OrganizationId).HasColumnName("organization_id");
+            entity.Property(x => x.WorkspaceId).HasColumnName("workspace_id");
+            entity.Property(x => x.AttemptCount).HasColumnName("attempt_count");
+            entity.Property(x => x.OwnershipToken).HasColumnName("ownership_token");
+            entity.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at");
+            entity.Property(x => x.ErrorCode).HasColumnName("error_code");
+            entity.Property(x => x.ErrorMessage).HasColumnName("error_message");
+            entity.Property(x => x.CreatedAt).HasColumnName("created_at");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
+            entity.HasOne<CodingWorkspace>().WithMany()
+                .HasForeignKey(x => new { x.OrganizationId, x.WorkspaceId })
+                .HasPrincipalKey(x => new { x.OrganizationId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<CustomDomainRegistration>(entity =>
