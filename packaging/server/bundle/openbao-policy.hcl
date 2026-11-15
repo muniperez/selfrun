@@ -21,3 +21,11 @@ path "auth/token/renew-self" {
 path "auth/token/lookup-self" {
   capabilities = ["read"]
 }
+
+path "minicloud-apps/data/env/+/orgs/+/integrations/+/credentials/+" {
+  capabilities = ["create", "update", "read"]
+}
+
+path "minicloud-apps/metadata/env/+/orgs/+/integrations/+/credentials/+" {
+  capabilities = ["delete"]
+}

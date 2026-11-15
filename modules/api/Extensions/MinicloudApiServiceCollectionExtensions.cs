@@ -190,6 +190,10 @@ public static class MinicloudApiServiceCollectionExtensions
         // minicloud-worker claims Queued deployments via PostgreSQL SKIP LOCKED.
         services.AddScoped<ControlPlanePrincipalResolver>();
         services.AddScoped<ControlPlaneAuthorization>();
+        services.AddScoped<GitHubAppService>();
+        services.AddHttpClient<GitHubAppClient>()
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         services
             .AddAuthentication(ControlPlaneAuthenticationHandler.SchemeName)
             .AddScheme<AuthenticationSchemeOptions, ControlPlaneAuthenticationHandler>(ControlPlaneAuthenticationHandler.SchemeName, _ => { });

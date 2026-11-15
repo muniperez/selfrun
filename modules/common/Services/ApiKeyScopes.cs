@@ -2,6 +2,8 @@ namespace Minicloud.Common.Services;
 
 public static class ApiKeyScopes
 {
+    public const string GitHubRead = "github:read";
+    public const string GitHubWrite = "github:write";
     public const string DatabasesRead = "databases:read";
     public const string DatabasesManage = "databases:manage";
     public const string AppsRead = "apps:read";
@@ -21,6 +23,7 @@ public static class ApiKeyScopes
 
     public static readonly IReadOnlyList<string> CliLoginDefault =
     [
+        GitHubRead,
         AppsRead,
         AppsWrite,
         DeploymentsCreate,
@@ -33,6 +36,8 @@ public static class ApiKeyScopes
 
     public static readonly ISet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
+        GitHubRead,
+        GitHubWrite,
         DatabasesRead,
         DatabasesManage,
         AppsRead,

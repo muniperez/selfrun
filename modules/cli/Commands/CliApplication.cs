@@ -83,7 +83,7 @@ public sealed partial class CliApplication
             }
             if (args[0] == "instance") return await RunInstanceAsync(args.Skip(1).ToArray(), cancellationToken);
             if (args[0] == "seed") return await RunSeedAsync(args.Skip(1).ToArray(), cancellationToken);
-            if (args[0] is "token" or "init" or "add-service" or "login" or "assets" or "deploy" or "branch" or "status" or "logs" or "apps" or "domains" or "secrets" or "environments" or "plans" or "providers" or "workspaces")
+            if (args[0] is "token" or "init" or "add-service" or "login" or "assets" or "deploy" or "branch" or "status" or "logs" or "apps" or "domains" or "secrets" or "environments" or "plans" or "providers" or "github" or "workspaces")
                 await EnsureInstanceAsync(cancellationToken);
             return args[0] switch
             {
@@ -97,6 +97,7 @@ public sealed partial class CliApplication
                 "plans" => await RunPlansAsync(args.Skip(1).ToArray(), cancellationToken),
                 "workspaces" => await RunWorkspacesAsync(args.Skip(1).ToArray(), cancellationToken),
                 "providers" => await RunProvidersAsync(args.Skip(1).ToArray(), cancellationToken),
+                "github" => await RunGitHubAsync(args.Skip(1).ToArray(), cancellationToken),
                 "branch" => await RunBranchAsync(args.Skip(1).ToArray(), cancellationToken),
                 "status" => await RunStatusAsync(args.Skip(1).ToArray(), cancellationToken),
                 "logs" => await RunLogsAsync(args.Skip(1).ToArray(), cancellationToken),
@@ -189,6 +190,7 @@ public sealed partial class CliApplication
         _console.WriteLine("  minicloud <command> [arguments] [options]");
         _console.WriteLine();
         _console.WriteLine("Commands:");
+        _console.WriteLine("  github          Set up and inspect your organization-owned GitHub connection");
         _console.WriteLine("  seed            Provision the first control plane without an instance/login");
         _console.WriteLine("  init            Initialize a new application and generate minicloud.yml");
         _console.WriteLine("  add-service     Add a new service configuration to an existing application");
@@ -314,6 +316,12 @@ public sealed partial class CliApplication
                 _console.WriteLine("Reads the cloud token from the provider environment variable; tokens are never command arguments.");
                 _console.WriteLine("minicloud providers import-legacy --manifest <path>");
                 _console.WriteLine("minicloud providers ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");
+                return CliExitCodes.Success;
+            case "github":
+                _console.WriteLine("minicloud github setup [--organization <id>] [--no-browser]");
+                _console.WriteLine("minicloud github status [--organization <id>] [--json]");
+                _console.WriteLine("minicloud github repositories|disconnect|reconnect|reconcile [--organization <id>]");
+                _console.WriteLine("Setup opens the dashboard; approve App creation and installation separately. No App credentials are returned to the CLI.");
                 return CliExitCodes.Success;
             case "deploy branch":
                 _console.WriteLine("Deploy all services to an isolated branch environment");

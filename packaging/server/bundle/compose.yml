@@ -29,6 +29,7 @@ x-api-environment: &api-environment
   ServerRelease__ManifestPath: /etc/minicloud/server-release.json
   Cors__AllowedOrigins__0: ${CONSOLE_URL:?set CONSOLE_URL}
   Console__BaseUrl: ${CONSOLE_URL:?set CONSOLE_URL}
+  GitHub__ApiUrl: ${API_URL:?set API_URL}
   Kratos__PublicBaseUrl: http://kratos:4433/
   Kratos__AdminBaseUrl: http://kratos:4434/
   Kratos__DashboardOrigin: ${CONSOLE_URL:?set CONSOLE_URL}
