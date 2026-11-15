@@ -35,6 +35,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     private readonly FakeRuntime runtime = new();
     private readonly FakeTunnels tunnels = new();
     private readonly GitHubHandler github = new();
+    private readonly DiagnosticLogger diagnostics = new();
     private readonly DevelopmentWorkspaceWorkerOptions workerOptions = new()
     {
         ApiBaseUrl = "https://control.example.test", ManagementAddresses = ["198.51.100.1/32"],
@@ -84,6 +85,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             .AddSingleton<ISecretStore>(secrets).AddSingleton<IWorkspaceRuntimeTransport>(runtime)
             .AddSingleton<IWorkspaceTunnelManager>(tunnels).AddSingleton<IIdGenerator, IdGenerator>()
             .AddSingleton<TimeProvider>(clock).AddSingleton(participant)
+            .AddSingleton<ILogger<DevelopmentWorkspaceProcessor>>(diagnostics)
             .AddSingleton<IOptions<DevelopmentWorkspaceWorkerOptions>>(Options.Create(workerOptions))
             .AddSingleton<IOptions<DevelopmentWorkspaceOptions>>(Options.Create(policy))
             .AddSingleton<IOptions<DeploymentPipelineOptions>>(Options.Create(new DeploymentPipelineOptions
@@ -120,6 +122,31 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
 
     private MinicloudDbContext Context() => new(new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
     private DevelopmentWorkspaceProcessor Processor() => ActivatorUtilities.CreateInstance<DevelopmentWorkspaceProcessor>(services);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReconciliationLogsSafeCauseWithoutExceptionOrProviderBody(bool providerFailure)
+    {
+        var (_, vm, operation) = await Seed("allocate");
+        cloud.BeforeCreate = () => throw (providerFailure
+            ? new HttpRequestException("secret-bootstrap-provider-body", null, HttpStatusCode.ServiceUnavailable)
+            : new KeyNotFoundException("secret-bootstrap-provider-body"));
+
+        await Hop();
+
+        var entry = Assert.Single(diagnostics.Entries);
+        Assert.Null(entry.Exception);
+        Assert.Contains(operation.Id, entry.Message);
+        Assert.Contains("allocate", entry.Message);
+        Assert.Contains(providerFailure ? nameof(HttpRequestException) : nameof(KeyNotFoundException), entry.Message);
+        if (providerFailure) Assert.Contains("503", entry.Message);
+        Assert.DoesNotContain("secret-bootstrap-provider-body", entry.Message);
+        Assert.Equal("blocked", (await CurrentVm(vm.Id)).Phase);
+        Assert.True((await CurrentVm(vm.Id)).ComputeReserved);
+        await Hop();
+        Assert.Equal(1, cloud.Creates);
+    }
 
     [Fact]
     public async Task LostAllocationResponsePersistsIntentAndReconcilesExactLabelsWithoutSecondCreate()
@@ -729,6 +756,15 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             Assert.Equal("org", organizationId); Assert.Equal("account", providerAccountId);
             return Task.FromResult<IVpsProviderClient>(cloud);
         }
+    }
+
+    private sealed class DiagnosticLogger : ILogger<DevelopmentWorkspaceProcessor>
+    {
+        public List<(string Message, Exception? Exception)> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Entries.Add((formatter(state, exception), exception));
     }
 
     private sealed class FakeCloud : IVpsProviderClient, IDevelopmentWorkspaceProvider

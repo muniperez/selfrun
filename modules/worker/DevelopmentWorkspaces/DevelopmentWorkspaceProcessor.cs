@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
@@ -20,7 +21,8 @@ public sealed partial class DevelopmentWorkspaceProcessor(
     ISecretStore secrets, IWorkspaceRuntimeTransport runtime, IWorkspaceTunnelManager tunnels,
     IOptions<DevelopmentWorkspaceWorkerOptions> options,
     IOptions<DeploymentPipelineOptions> pipeline, IIdGenerator ids, TimeProvider clock, MaintenanceParticipant maintenance,
-    WorkspaceGitAccessService gitAccess, IOptions<DevelopmentWorkspaceOptions> policy)
+    WorkspaceGitAccessService gitAccess, IOptions<DevelopmentWorkspaceOptions> policy,
+    ILogger<DevelopmentWorkspaceProcessor>? logger = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private DateTimeOffset Now => clock.GetUtcNow();
@@ -64,8 +66,12 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (DevelopmentWorkspaceException error) when (error.Code is "workspace_operation_stale" or "workspace_generation_stale" or "workspace_revision_conflict") { }
-        catch (Exception)
+        catch (Exception error)
         {
+            logger?.LogError(
+                "Workspace operation {OperationId} ({OperationKind}) failed at step {Step}; exception type {ExceptionType}; HTTP status {HttpStatusCode}. Reconciliation is required.",
+                operation.Id, operation.Kind, operation.Step, error.GetType().Name,
+                error is HttpRequestException { StatusCode: { } status } ? (int?)status : null);
             try
             {
                 await lifecycle.UpdateClaimedOperationAsync(operation.Id, token, (op, vm, _) =>

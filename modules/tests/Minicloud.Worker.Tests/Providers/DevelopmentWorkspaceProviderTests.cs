@@ -65,6 +65,44 @@ public sealed class DevelopmentWorkspaceProviderTests
         Assert.False(payload.RootElement.GetProperty("public_net").GetProperty("enable_ipv6").GetBoolean());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CurrentServerLocationSupportsAllocationAndRecoveryDiscovery(bool ipv4Pending)
+    {
+        var server = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(Server())!;
+        server.Remove("datacenter");
+        server["location"] = JsonSerializer.SerializeToElement(new { id = 4, name = "ash" });
+        if (ipv4Pending)
+        {
+            server["status"] = JsonSerializer.SerializeToElement("initializing");
+            server["public_net"] = JsonSerializer.SerializeToElement(new
+            {
+                ipv4 = (object?)null,
+                firewalls = new[] { new { id = 601, status = "pending" } }
+            });
+        }
+        var body = JsonSerializer.Serialize(server);
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse("{\"server\":" + body + ",\"action\":{\"id\":701,\"status\":\"running\"}}");
+        handler.QueueJsonResponse("{\"servers\":[" + body + "]}");
+        handler.QueueJsonResponse("{\"server\":" + body + "}");
+        var client = Client(handler);
+        var allocated = await client.CreateWorkspaceServerAsync(
+            new("mc-workspacevm-synthetic-g1", "standard-test", "ash", "501", "#cloud-config\n", "601", Labels()), default);
+        var discovered = Assert.Single(await client.FindWorkspaceServersAsync(Labels(), default));
+        var fetched = await client.GetWorkspaceServerAsync("301", default);
+        foreach (var result in new[] { allocated.Server, discovered, fetched! })
+        {
+            Assert.Equal("ash", result.Region);
+            Assert.Equal("301", result.Id);
+            Assert.Equal(ipv4Pending ? null : "401", result.PrimaryIpId);
+            Assert.Equal(!ipv4Pending, result.FirewallsApplied);
+        }
+        Assert.Equal("701", allocated.Action.Id);
+        Assert.Single(handler.RecordedRequests, request => request.Method == HttpMethod.Post);
+    }
+
     [Fact]
     public async Task VolumeCreationExposesFormattingActionsAndNeverAutomounts()
     {

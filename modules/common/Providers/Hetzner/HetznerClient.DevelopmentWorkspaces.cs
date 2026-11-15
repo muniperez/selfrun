@@ -261,8 +261,11 @@ public sealed partial class HetznerClient : IDevelopmentWorkspaceProvider
         var network = value.GetProperty("public_net");
         var ipv4 = network.GetProperty("ipv4");
         var firewalls = network.TryGetProperty("firewalls", out var rules) ? rules.EnumerateArray().ToArray() : [];
+        var location = value.TryGetProperty("location", out var currentLocation) && currentLocation.ValueKind == JsonValueKind.Object
+            ? currentLocation
+            : value.GetProperty("datacenter").GetProperty("location");
         return new(NumericJsonId(value.GetProperty("id")), value.GetProperty("name").GetString()!, value.GetProperty("status").GetString()!,
-            value.GetProperty("datacenter").GetProperty("location").GetProperty("name").GetString()!,
+            location.GetProperty("name").GetString()!,
             value.GetProperty("server_type").GetProperty("name").GetString()!,
             value.TryGetProperty("image", out var image) && image.ValueKind != JsonValueKind.Null
                 ? NumericJsonId(image.GetProperty("id")) : "",
