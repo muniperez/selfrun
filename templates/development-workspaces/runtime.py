@@ -19,6 +19,9 @@ import tarfile
 import time
 import uuid
 
+T3_RESOURCE_MONITOR = "/opt/minicloud-t3/t3-0.1.9-linux-x64/resource-monitor/linux-x64/t3-resource-monitor"
+T3_RESOURCE_MONITOR_SHA256 = "1b8040fc50484f8089c56aaaefc359dbfc9ff2d1d85dbf6b3df26aeceabda286"
+
 
 class Blocked(Exception):
     def __init__(self, reason, state="Blocked"):
@@ -371,6 +374,36 @@ class Procfs:
         return "frozen 1" in (Path("/sys/fs/cgroup" + group.removeprefix("0::")) /
                               "cgroup.events").read_text().splitlines()
 
+    def t3_resource_monitor(self, process, inventory, t3_pids):
+        executable = self.executable(process["pid"])
+        if executable["path"] != T3_RESOURCE_MONITOR:
+            return False
+        directory = self.root / str(process["pid"])
+        require(process["ppid"] in t3_pids and process["uids"] == (2000,) * 4 and
+                process["tty"] == 0 and process["threads"] in (1, 2) and process["state"] in ("R", "S") and
+                process["cgroup"] == inventory[process["ppid"]]["cgroup"] ==
+                "0::/minicloudwork.slice/minicloud-t3.service",
+                "Pinned T3 telemetry helper has an unknown process identity")
+        require(executable["uid"] == 0 and not executable["mode"] & 0o022,
+                "Pinned T3 telemetry helper is not root-owned immutable code")
+        Linux.verify_unit_file(T3_RESOURCE_MONITOR)
+        with Path(T3_RESOURCE_MONITOR).open("rb") as binary:
+            require(hashlib.file_digest(binary, "sha256").hexdigest() == T3_RESOURCE_MONITOR_SHA256,
+                    "Pinned T3 telemetry helper digest mismatch")
+        require((directory / "cmdline").read_bytes() == os.fsencode(T3_RESOURCE_MONITOR) + b"\0" and
+                not any(p["ppid"] == process["pid"] for p in inventory.values()) and
+                not (directory / "task" / str(process["pid"]) / "children").read_text().strip(),
+                "Pinned T3 telemetry helper has arguments or unregistered children")
+        environment = {entry.split(b"=", 1)[0] for entry in
+                       (directory / "environ").read_bytes().split(b"\0") if entry}
+        require(not environment.intersection({b"LD_PRELOAD", b"LD_LIBRARY_PATH", b"LD_AUDIT",
+                                              b"GLIBC_TUNABLES"}),
+                "Pinned T3 telemetry helper has unsafe loader environment")
+        pipes = [os.readlink(directory / "fd" / str(fd)) for fd in (0, 1)]
+        require(pipes[0] != pipes[1] and all(re.fullmatch(r"(?:pipe|socket):\[[0-9]+\]", p) for p in pipes),
+                "Pinned T3 telemetry helper lacks its supervised stdio pipes")
+        return True
+
 
 def t3_idle_database(path, expected_sequence):
     """Pinned v0.1.9 committed-state proof, never an invented T3 drain endpoint."""
@@ -686,6 +719,8 @@ class Linux:
                 continue
             require("/minicloudwork.slice/" in process["cgroup"],
                     "Coding process escaped supervised work slice")
+            if process["pid"] not in allowed and self.processes.t3_resource_monitor(process, inventory, t3_pids):
+                allowed[process["pid"]] = "pinned-t3-resource-monitor"
             if process["pid"] not in allowed:
                 require(self.config.get("observedTerminalInputs") is True,
                         "Unregistered live coding process; terminal input observation is not qualified")

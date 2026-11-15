@@ -31,6 +31,10 @@
     "commit": "24e77473ecf41bc1f7142529c7911c1c1aae1d76",
     "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.9/t3-0.1.9-linux-x64.tar.gz",
     "sha256": "0141025335da334759cecd8db3483e09772f3600ca03674698524e7d94291362",
+    "resourceMonitor": {
+      "path": "t3-0.1.9-linux-x64/resource-monitor/linux-x64/t3-resource-monitor",
+      "sha256": "1b8040fc50484f8089c56aaaefc359dbfc9ff2d1d85dbf6b3df26aeceabda286"
+    },
     "environmentProtocol": 2
   },
   "postgresqlMajor": 16,

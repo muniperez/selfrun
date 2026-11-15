@@ -1,7 +1,9 @@
 import copy
+import hashlib
 import os
 from pathlib import Path
 import sys
+import shutil
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -22,9 +24,10 @@ class FixtureProcfs(rt.Procfs):
         self.descriptor = ("/dev/pts/3", 5, 7, os.makedev(136, 3))
         self.on_tty = None
         self.frozen_state = False
+        self.exe_by_pid = {}
 
     def executable(self, pid):
-        return dict(self.exe)
+        return dict(self.exe_by_pid.get(pid, self.exe))
 
     def tty(self, pid):
         if self.on_tty:
@@ -132,6 +135,70 @@ class IdleTerminalTests(unittest.TestCase):
         (self.root / "110/mem").unlink()
         with self.assertRaisesRegex(rt.Blocked, "Cannot prove idle"):
             self.inspect()
+
+    def telemetry_monitor(self):
+        shutil.rmtree(self.root / "110")
+        self.config["observedTerminalInputs"] = False
+        binary = self.root / "pinned-monitor"
+        binary.write_bytes(b"synthetic immutable telemetry binary")
+        binary.chmod(0o755)
+        self.write(120, ppid=100, tty=0, threads=2, argv=[str(binary)])
+        (self.root / "120/environ").write_bytes(b"HOME=/workspace/home\0")
+        self.reader.exe_by_pid[120] = dict(path=str(binary), uid=0, mode=0o100755)
+        for pid in (100, 120):
+            (self.root / str(pid) / "fd").mkdir()
+            for fd in (0, 1):
+                (self.root / str(pid) / "fd" / str(fd)).symlink_to(f"pipe:[{1000 + fd}]")
+        return binary
+
+    def test_only_exact_pinned_supervised_telemetry_helper_is_infrastructure_without_terminal_opt_in(self):
+        binary = self.telemetry_monitor()
+        with patch.object(rt, "T3_RESOURCE_MONITOR", str(binary)), \
+                patch.object(rt, "T3_RESOURCE_MONITOR_SHA256", hashlib.sha256(binary.read_bytes()).hexdigest()), \
+                patch.object(rt.Linux, "verify_unit_file"):
+            self.inspect()
+            self.reader.exe_by_pid[120]["path"] = "/usr/bin/bash"
+            with self.assertRaisesRegex(rt.Blocked, "Unregistered live coding process"):
+                self.inspect()
+            self.reader.exe_by_pid[120]["path"] = str(binary)
+            self.write(120, argv=[str(binary), "--unknown"])
+            with self.assertRaisesRegex(rt.Blocked, "arguments or unregistered children"):
+                self.inspect()
+            self.write(120, argv=[str(binary)])
+            for change in (dict(tty=123), dict(threads=3), dict(ppid=1),
+                           dict(cgroup="0::/minicloudwork.slice/other.service")):
+                original = copy.deepcopy(self.records[120])
+                with self.subTest(change=change):
+                    self.write(120, **change)
+                    with self.assertRaisesRegex(rt.Blocked, "unknown process identity"):
+                        self.inspect()
+                self.write(120, **original)
+            self.write(130, ppid=120, tty=0, argv=["unknown-child"])
+            with self.assertRaisesRegex(rt.Blocked, "[Uu]nregistered"):
+                self.inspect()
+
+    def test_telemetry_helper_mutated_binary_owner_or_non_ipc_stdio_blocks(self):
+        binary = self.telemetry_monitor()
+        original = binary.read_bytes()
+        with patch.object(rt, "T3_RESOURCE_MONITOR", str(binary)), \
+                patch.object(rt, "T3_RESOURCE_MONITOR_SHA256", hashlib.sha256(original).hexdigest()), \
+                patch.object(rt.Linux, "verify_unit_file"):
+            binary.write_bytes(b"changed")
+            with self.assertRaisesRegex(rt.Blocked, "digest mismatch"):
+                self.inspect()
+            binary.write_bytes(original)
+            self.reader.exe_by_pid[120]["uid"] = 2000
+            with self.assertRaisesRegex(rt.Blocked, "root-owned immutable"):
+                self.inspect()
+            self.reader.exe_by_pid[120]["uid"] = 0
+            (self.root / "120/environ").write_bytes(b"LD_PRELOAD=/workspace/inject.so\0")
+            with self.assertRaisesRegex(rt.Blocked, "unsafe loader environment"):
+                self.inspect()
+            (self.root / "120/environ").write_bytes(b"HOME=/workspace/home\0")
+            (self.root / "120/fd/1").unlink()
+            (self.root / "120/fd/1").symlink_to("/workspace/arbitrary-file")
+            with self.assertRaisesRegex(rt.Blocked, "supervised stdio pipes"):
+                self.inspect()
 
     def test_c_commands_scripts_background_and_stopped_jobs_cannot_be_classified_idle(self):
         for argv in (["/bin/bash", "-c", "read"], ["/bin/bash", "-ic", "read"],

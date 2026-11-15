@@ -61,6 +61,10 @@ The pinned T3 empty Foundation database is recognized only with zero events, pro
 and outbox entries. Native x86-64 stdin-only `pselect6` additionally requires reading and
 rechecking the actual fd set; a freezer-obscured wait requires its cgroup's frozen proof.
 Neither adapter enables terminal-input observation or qualifies the production gateway.
+The pinned T3 read-only resource monitor is recognized separately only by its exact
+release digest, immutable root-owned code, argument-free invocation, direct T3 parent,
+registered service cgroup and stdio IPC, with no TTY or children. Other
+children, agents and helpers remain unregistered work. Tool archives install root-owned.
 Only root key-based SSH is admitted, with no agent forwarding. Provider firewalls/network
 rules **must** deny lateral VM/sibling/control-plane-private access and public service
 ports; this filesystem runtime cannot prove network isolation. Never forward a worker SSH

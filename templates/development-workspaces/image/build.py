@@ -79,7 +79,7 @@ def install(source_revision, builder):
         download(lock[name], artifact)
         destination = Path("/opt") / ("minicloud-" + name)
         destination.mkdir(parents=True, exist_ok=True)
-        argv = ["tar", "-xf", str(artifact), "-C", str(destination)]
+        argv = ["tar", "--no-same-owner", "-xf", str(artifact), "-C", str(destination)]
         if name == "node":
             argv += ["--strip-components=1"]
         run(argv)
@@ -89,6 +89,10 @@ def install(source_revision, builder):
     t3 = list(Path("/opt/minicloud-t3").rglob("t3"))
     require(len(t3) == 1 and t3[0].is_file(), "Unexpected T3 release archive layout")
     Path("/usr/local/bin/t3").symlink_to(t3[0])
+    monitor = Path("/opt/minicloud-t3") / lock["t3"]["resourceMonitor"]["path"]
+    with monitor.open("rb") as binary:
+        require(hashlib.file_digest(binary, "sha256").hexdigest() ==
+                lock["t3"]["resourceMonitor"]["sha256"], "Pinned T3 telemetry helper checksum mismatch")
     tools = Path("/opt/minicloud-tools")
     tools.mkdir(exist_ok=True)
     for name in ("package.json", "package-lock.json"):
