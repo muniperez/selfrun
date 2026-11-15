@@ -43,7 +43,7 @@ def main():
         runtime.validate_request(dict(vmId=args.vm_id, generation=args.generation,
                                       operationId=args.operation_id))
         require(runtime.s["phase"] == "Ready", "Runtime not admitting sessions")
-        result = subprocess.run(argv, capture_output=True, timeout=30, text=True)
+        result = subprocess.run(argv, capture_output=True, timeout=30, text=True, cwd=c["workspace"])
         require(result.returncode == 0 and result.stdout.strip() and "\n" not in result.stdout.strip(),
                 "Headless auth failed; no token logged, gateway remains blocked")
         # stdout is intentionally only the secret, with no lifecycle receipt or log text.

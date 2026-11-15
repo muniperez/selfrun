@@ -136,6 +136,7 @@ class BootstrapTests(unittest.TestCase):
                 builder.builder_guard("DESTROY-DISPOSABLE-IMAGE-BUILDER")
 
     def test_headless_auth_uses_verified_singular_scope_duration_and_sensitive_stdout(self):
+        self.config["workspace"] = str(self.root)
         arguments = ["issue-t3-session.py", "--vm-id", "vm", "--generation", "2",
                      "--operation-id", "session", "--subject", "authorized-user", "--ttl", "120",
                      "--scope", "fixture-scope-one", "--scope", "fixture-scope-two",
@@ -155,6 +156,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(2, argv.count("--scope"))
         self.assertNotIn("--scopes", argv)
         self.assertNotIn("--dpop", argv)
+        self.assertEqual(self.config["workspace"], command.call_args.kwargs["cwd"])
         self.assertEqual("fixture-sensitive-output\n", captured.getvalue())
 
 
