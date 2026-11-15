@@ -10,7 +10,10 @@ workspace image first.
 ## Protected configuration
 
 1. Copy `development-workspaces.example.json` to
-   `$MINICLOUD_SECRETS_DIR/development-workspaces.json`, owned by root, mode 0600.
+   `$MINICLOUD_SECRETS_DIR/development-workspaces.json`, owned by root:1654,
+   mode 0440, with its parent directory root-only. The API's non-root UID/GID
+   1654 must be able to read this single-file bind mount; root-only 0600
+   permissions would prevent startup.
    The example intentionally has no image IDs, organization IDs, provider
    credentials or available capacity. Populate qualified image manifests,
    allowed plans/SKUs/regions, current pricing and explicit spend ceilings,
