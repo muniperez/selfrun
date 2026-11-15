@@ -1,4 +1,8 @@
 {
+    # Proxy errors otherwise include request URIs containing bearer capabilities.
+    log {
+        exclude http.log.error
+    }
     on_demand_tls {
         ask http://{$MINICLOUD_WORKSPACE_GATEWAY_ADDRESS}:8080/internal/certificate
     }

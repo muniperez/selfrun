@@ -80,7 +80,9 @@ DNS-01); the private gateway ask endpoint authorizes only current approved
 workspace hosts/generations. No DNS-provider secret is needed. No public
 unauthenticated route resolver is exposed. Keep access/query/body logging and
 URL tracing off at Caddy and every upstream collector: launch links and
-WebSocket query tickets are confidential.
+WebSocket query tickets are confidential. The optional Caddy configuration also
+excludes HTTP error-request logging, which otherwise captures full request URIs
+even without an access log.
 
 ## Isolation and limits
 
