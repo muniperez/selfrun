@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import select
 import shutil
 import socket
 import sqlite3
@@ -221,6 +222,42 @@ def bootstrap_with_local_enrollment(config, directory):
         thread.join(timeout=5)
         key.unlink(missing_ok=True)
         enrollment.unlink(missing_ok=True)
+
+
+def initialize_codex_without_credentials(workspace, home):
+    binaries = list(Path("/opt/minicloud-tools/node_modules/@openai").glob("codex*/vendor/*/bin/codex"))
+    check(len(binaries) == 1, "NATIVE_CODEX_EXECUTABLE_AMBIGUOUS")
+    binary = binaries[0]
+    check(binary.is_file() and not binary.is_symlink() and binary.stat().st_uid == 0 and
+          not binary.stat().st_mode & 0o022, "UNTRUSTED_NATIVE_CODEX_EXECUTABLE")
+    process = subprocess.Popen(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
+        str(binary), "app-server", "--listen", "stdio://"], cwd=workspace, text=True,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        env={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+             "HOME": str(home), "CODEX_HOME": str(home / ".codex")})
+    try:
+        process.stdin.write(json.dumps(dict(id=1, method="initialize", params=dict(
+            clientInfo=dict(name="minicloud-native-qualification", version="1.0.0"),
+            capabilities=dict(experimentalApi=True)))) + "\n")
+        process.stdin.flush()
+        ready, _, _ = select.select([process.stdout], [], [], 15)
+        check(bool(ready), "CODEX_NATIVE_INITIALIZE_TIMEOUT")
+        response = json.loads(process.stdout.readline(65537))
+        check(response.get("id") == 1 and "result" in response, "CODEX_NATIVE_INITIALIZE_REJECTED")
+        process.stdin.close()
+        process.wait(timeout=15)
+        check(process.returncode == 0, "CODEX_NATIVE_INITIALIZE_EXIT_FAILED")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        if not process.stdin.closed:
+            process.stdin.close()
+        process.stdout.close()
 
 
 class Report:
@@ -509,8 +546,11 @@ class Native:
                 env={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"})
             check(codex.returncode == 0 and "0.169.0" in codex.stdout and not codex.stderr.strip(),
                   "CODEX_GIT_PROBE_VERSION_FAILED")
+            version_probe_count = len(list((codex_home / ".tmp").glob("git-*")))
+            initialize_codex_without_credentials(Path(registration["path"]), home)
             probes = sorted((codex_home / ".tmp").glob("git-*"))
-            check(bool(probes) and all(path.is_dir() and not path.is_symlink() for path in probes),
+            check(len(probes) > version_probe_count and
+                  all(path.is_dir() and not path.is_symlink() for path in probes),
                   "ACTUAL_CODEX_EMPTY_GIT_PROBES_NOT_CREATED")
             for probe in probes:
                 check(set(path.name for path in probe.iterdir()) == {"HEAD", "objects", "refs"} and
@@ -596,6 +636,9 @@ class Native:
             check(probe_tree() == original, "GIT_SAVE_MUTATED_CODEX_PROBES")
             return {"actualCodexVersionUid": 2000, "actualCodexVersion": "0.169.0",
                     "actualCodexEmptyProbeCount": len(probes), "registeredCheckoutInspected": True,
+                    "codexVersionAloneProbeCount": version_probe_count,
+                    "actualCodexCacheCreationTrigger": "credential-free-app-server-initialize",
+                    "codexAppServerExitedCleanly": True,
                     "actualCodexExactThreeEntryEmptyProbeFormat": True,
                     "actualRuntimeGitSavedReceipt": True, "actualKernelFrozenReadonlyBind": True,
                     "probeFilesAndModesUnchanged": True, "rejected": rejected,
