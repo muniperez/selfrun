@@ -37,7 +37,6 @@
     },
     "environmentProtocol": 2
   },
-  "postgresqlMajor": 16,
   "codingUid": 2000,
   "codingGid": 2000,
   "browserLibraries": [

@@ -78,7 +78,7 @@ def install(source_revision, builder):
     env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
     run(["apt-get", "-qq", "update"], env=env, timeout=1800)
     packages = ["python3", "git", "curl", "ca-certificates", "openssh-server", "openssh-client",
-                "age", "postgresql-16", "postgresql-client-16", "util-linux", "e2fsprogs",
+                "age", "util-linux", "e2fsprogs",
                 "libicu74", "libssl3t64", "xz-utils", "build-essential", "pkg-config",
                 "unzip", "zip", "jq", "ripgrep", "sqlite3", *lock["browserLibraries"]]
     run(["apt-get", "-y", "-qq", "install", "--no-install-recommends", *packages], env=env, timeout=1800)
@@ -120,8 +120,7 @@ def install(source_revision, builder):
     Path("/var/cache/minicloud-workspace/verification").mkdir(parents=True, exist_ok=True, mode=0o711)
     Path("/var/cache/minicloud-workspace").chmod(0o711)
     Path("/etc/minicloud-workspace").mkdir(mode=0o700, exist_ok=True)
-    run(["systemctl", "mask", "postgresql.service", "postgresql@.service",
-         "apt-daily.service", "apt-daily-upgrade.service", "apt-daily.timer",
+    run(["systemctl", "mask", "apt-daily.service", "apt-daily-upgrade.service", "apt-daily.timer",
          "apt-daily-upgrade.timer", "unattended-upgrades.service"])
     Path("/etc/ssh/sshd_config.d/00-minicloud-workspace.conf").write_text(
         "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
@@ -148,13 +147,12 @@ def install(source_revision, builder):
 def generalize():
     # Guard is applied by main before either install or this destructive operation.
     os.chdir("/")
-    for unit in ("minicloud-workspace.service", "minicloud-t3.service",
-                 "minicloud-postgres.service", "postgresql.service", "postgresql@16-main.service"):
+    for unit in ("minicloud-workspace.service", "minicloud-t3.service"):
         subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=120, check=False)
     require(not os.path.ismount("/workspace"), "Never erase an attached workspace")
     for path in ("/workspace", "/root/.codex", "/root/.t3", "/root/.config", "/root/.cache",
                  "/root/.npm", "/root/.ssh", "/home/ubuntu/.ssh", "/var/lib/minicloud-workspace",
-                 "/var/cache/minicloud-workspace/verification", "/var/lib/postgresql",
+                 "/var/cache/minicloud-workspace/verification",
                  "/etc/minicloud-workspace", "/var/log/journal"):
         target = Path(path)
         if target.is_dir() and not target.is_symlink():
