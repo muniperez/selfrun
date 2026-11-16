@@ -16,8 +16,11 @@ failure handling. This is not a real ext4, systemd-freezer, age, or live restore
 
 `image/manifest.lock.json` pins the Ubuntu cloud-image **serial and SHA256**, immutable
 Ubuntu apt snapshot, Node 24.11.1, .NET SDK 10.0.100, Codex 0.169.0 (npm integrity lock),
-T3 0.1.9 / commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`, PostgreSQL major 16,
-and Chromium shared libraries. A browser executable/emulator SDK is intentionally not
+T3 0.1.9 / commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`
+and Chromium shared libraries. The default supplies the coding environment, not an
+application stack: it installs no application database server/client, creates no
+application database/roles, and ships no emulator or preview canary application.
+A browser executable or additional application SDK is intentionally not
 silently downloaded; register an explicit pinned workload extension if needed.
 
 An operator must download and verify the specified base image, then boot it in a
@@ -40,7 +43,7 @@ python3 -B image/build.py generalize \
 The destructive guard requires all of: exact acknowledgement, root-owned builder marker,
 Ubuntu 24.04, actual `/etc/cloud/build.info` serial matching the pinned `20251001` **before
 any package mutation**, x86_64 VM, no enrolled runtime, no mounted workspace or provider volume.
-Generalization erases root/user homes, agent logins, build source, workspace/database data,
+Generalization erases root/user homes, agent logins, build source, workspace and T3 data,
 enrollment/runtime state, cloud-init seed/state/logs, machine IDs, SSH host keys and logs.
 First boot regenerates identity/host keys through systemd/cloud-init. Do not execute more
 interactive build commands after generalization. Capture only after power-off.
@@ -53,10 +56,9 @@ image, not by silently changing an existing image. Toolchain installation happen
 in the builder, never on a workspace boot.
 
 The installed binaries and `systemd/` units use UID/GID **2000:2000** (`coding`, no SSH login).
-Workspace layout assigns both `postgres/` and `postgres/16/` to the separate PostgreSQL
-account before initialization, including with a restrictive root umask.
-The workspace root is explicitly traversable (0755); the coding-owned `emulators/`
-parent is initialized before its private children. No recursive permission changes occur.
+The workspace root is explicitly traversable (0755). User-created application paths
+and data belong to the user; no database-engine directories or accounts are provisioned.
+No recursive permission changes occur.
 The pinned T3 empty Foundation database is recognized only with zero events, projections
 and outbox entries. Native x86-64 stdin-only `pselect6` additionally requires reading and
 rechecking the actual fd set; a freezer-obscured wait requires its cgroup's frozen proof.
@@ -77,7 +79,7 @@ agent/key or provider/control-plane credentials into coding processes.
 The image installs:
 
 * `/opt/minicloud-workspace/{runtime.py,bootstrap.py,issue-t3-session.py,git-credential.py}`
-* `/etc/systemd/system/minicloud{work.slice,-workspace.service,-t3.service,-postgres.service}`
+* `/etc/systemd/system/minicloud{work.slice,-workspace.service,-t3.service}`
 * `/opt/minicloud-workspace/image-manifest.json`
 
 Upload root-owned mode-0600 configuration to `/etc/minicloud-workspace/runtime.json`.
@@ -101,8 +103,7 @@ Example **primary** (replace synthetic values; root fields outside this schema f
     }
   },
   "infrastructureUnits": ["minicloud-t3.service"],
-  "stopUnits": ["minicloud-t3.service", "minicloud-postgres.service"],
-  "emulatorExportCommands": []
+  "stopUnits": ["minicloud-t3.service"]
 }
 ```
 
@@ -191,12 +192,11 @@ its own generation/endpoint checks succeed.
 `/workspace/repos` includes all tracked, untracked and ignored primary edits;
 `/workspace/t3` is T3's `--base-dir`; `/workspace/transcripts` holds explicitly file-backed
 task transcripts; `/workspace/home` holds intentionally selected coding-agent state
-(`CODEX_HOME=/workspace/home/.codex`); `/workspace/postgres/16` is PostgreSQL data;
-`/workspace/emulators/{config,exports}` holds explicit emulator state; `config` and `artifacts`
-hold workspace configuration/publication files. Root home, `/run`, temporary files and caches
-are **not durable**. PostgreSQL major changes require an explicit migration. No emulator
-runtime/export format or transcript API is invented: root-owned `emulatorExportCommands`
-must contain real, idempotent argv adapters that finish successfully before unmount.
+(`CODEX_HOME=/workspace/home/.codex`); `config` and `artifacts` hold workspace
+configuration/publication files. Users choose any additional application directories
+under their workspace. Root home, `/run`, temporary files and caches are **not durable**.
+There is no assumed database engine, emulator export format or application migration.
+Application-specific lifecycle integration must be explicit, not inferred from a path.
 
 `runtime.py serve` owns `/run/minicloud-workspace/control.sock` (0600, root peer UID checked).
 The agent is outside the freezable coding slice. State/atomic fsynced receipts live in
@@ -232,12 +232,11 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
 * `activity`: `source:user-input`, or `source:task-progress` with a live registered `taskId`.
   Keepalives, passive sockets, probes and log streams do not count.
 * `quiesce` (primary), `git-save` (ephemeral), or `discard` (ephemeral): fence admissions,
-  enumerate live work, freeze the coding cgroup, enumerate again, export designated emulator
-  state, stop/flush T3/PostgreSQL/services, verify read-only workspace. Unknown live coding
+  enumerate live work, freeze the coding cgroup, enumerate again, stop/flush T3 and
+  explicitly registered user workloads, verify read-only workspace. Unknown live coding
   processes, active tasks, ambiguous launches or unreachable tools block; no arbitrary user
   task is killed. Primary then fsyncs/unmounts (no forced/lazy unmount).
-  Bootstrap starts workspace-local PostgreSQL for both VM kinds, so the worker includes
-  `minicloud-postgres.service` in both primary and ephemeral graceful-stop registrations.
+  Bootstrap starts the coding environment only, not a database or sample application.
   Requires explicit root-orchestrator attestations `gatewayAdmissionsFenced:true` and
   `unobservableToolsAbsent:true`, plus nonnegative integer `t3SnapshotSequence` from the actual
   authenticated idle T3 HTTP snapshot; do not assert these without actual admission/in-flight
@@ -282,8 +281,9 @@ SIGKILL; unexpected children remain alive and block the receipt rather than bein
 
 Only explicitly registered `minicloud-preview-[a-z0-9-]{1,24}.service` units may join
 `infrastructureUnits`; every infrastructure unit must also appear in `stopUnits`.
-Keep PostgreSQL out of `infrastructureUnits`: its unit uses `User=postgres` / `Group=postgres`,
-not coding UID 2000, and its normal checkpointed stop remains separately designated.
+The default image contains no preview application or preview service unit. Users must
+explicitly create and register a workload; registration does not turn a bundled test
+application into product infrastructure.
 
 Preview admission exempts **only the unit's MainPID**, with all four process UIDs equal to
 2000 and exact cgroup `0::/minicloudwork.slice/<unit>`. The loaded system unit must report
@@ -295,8 +295,8 @@ MainPID exits block; preview ancestry never qualifies an idle terminal shell.
 
 Preview units use the same queued main-only graceful stop, controlled thaw, mandatory
 refreeze and post-stop inventory as T3. Failed stops/refreezes cannot yield a quiescence
-receipt. Fresh bootstrap and authorized resume start registered preview units through
-the same validated service-start path; registration alone does not activate a unit.
+receipt. Fresh bootstrap and authorized resume start only T3. Registration alone
+does not start an application; users choose when to start their workloads.
 
 Registration and a healthy HTTP probe are **not** proof that a general application has no
 in-process work. The operator must explicitly qualify each application: the initial test
@@ -326,7 +326,7 @@ real HTTP snapshot and the independent process guard remain mandatory.
 An inspection failure after freeze leaves `Frozen`, with no deletion receipt. Parent must
 cancel/revoke its deletion intent, `resume` the same operation, then reopen the gateway so
 users can resolve work. Retry of an already completed read-only freeze revalidates the
-recorded final state and does not replay emulator exports or shutdown commands.
+recorded final state and does not replay user workload hooks or shutdown commands.
 
 ### Qualified unused terminals
 
@@ -408,7 +408,7 @@ Restore decryption occurs **on the operator machine**:
    into pinned SSH running `runtime.py restore-import --operation-id <restore-operation>`.
    Only the decrypted application archive crosses this channel; the key never does.
 3. Safe tar extraction rejects traversal/device/unsafe links, preserves the target ownership
-   marker, repairs coding/PostgreSQL ownership, verifies representative hashes, fsyncs and
+   marker, restores the coding workspace ownership, verifies representative hashes, fsyncs and
    returns `PrimaryRestored`. Partial/failed restores cannot be blindly replayed over data.
    Persist the receipt, then bootstrap normally. Live separate-volume restore qualification
    is still required before claiming a backup is operationally recoverable.
