@@ -197,7 +197,7 @@ class Git:
             for name in ("home", ".codex", ".tmp", path.name):
                 directory = os.open(name, flags, dir_fd=directory)
                 descriptors.append(directory)
-            # Codex 0.169.0 --version creates only this empty, unborn scaffold.
+            # Codex 0.169.0 app-server initialization creates this empty, unborn scaffold.
             if set(os.listdir(directory)) != {"HEAD", "objects", "refs"}:
                 return False
             for name in ("objects", "refs"):
@@ -1365,14 +1365,22 @@ def file_hash(path):
     return result.hexdigest()
 
 
+def write_backup_archive(source, stream):
+    lost = Path(source) / "lost+found"
+    require(not lost.is_symlink() and (not lost.exists() or lost.is_dir() and not any(lost.iterdir())),
+            "Backup filesystem metadata is unsafe or contains recovered data")
+    with tarfile.open(fileobj=stream, mode="w|") as archive:
+        archive.add(source, arcname="data", recursive=True, filter=lambda member:
+                    None if member.name in ("data/.minicloud-volume.json", "data/lost+found") else member)
+
+
 def encrypt_archive(source, output, recipient):
     process = None
     try:
         process = subprocess.Popen(["age", "--encrypt", "--recipient", recipient,
                                     "--output", str(output)], stdin=subprocess.PIPE,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        with tarfile.open(fileobj=process.stdin, mode="w|") as archive:
-            archive.add(source, arcname="data", recursive=True)
+        write_backup_archive(source, process.stdin)
         process.stdin.close()
         require(process.wait(timeout=600) == 0, "Age encryption failed")
     except (OSError, subprocess.SubprocessError) as error:

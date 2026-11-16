@@ -737,9 +737,9 @@ class RuntimeTests(unittest.TestCase):
                                        destinationIdentity="operator-offhost-storage", retentionDays=7)
         self.request("bootstrap")
         def fake_encrypt(source, output, recipient):
-            # Only transport/archive orchestration is faked, never claim cryptographic validation.
-            with rt.tarfile.open(output, "w") as archive:
-                archive.add(source, arcname="data")
+            # Use the real archive writer, but do not claim cryptographic validation.
+            with output.open("wb") as stream:
+                rt.write_backup_archive(source, stream)
         with patch.object(rt, "encrypt_archive", side_effect=fake_encrypt):
             self.assert_blocked("quiesce", "off-host acknowledgement", backupRequired=True)
         prepared = self.request("backup")
@@ -778,8 +778,8 @@ class RuntimeTests(unittest.TestCase):
         self.request("resume", deletionNotCommitted=True)
         (self.repo / "file.txt").write_text("new writes after the acknowledged backup\n")
         def fake_encrypt(source, output, recipient):
-            with rt.tarfile.open(output, "w") as archive:
-                archive.add(source, arcname="data")
+            with output.open("wb") as stream:
+                rt.write_backup_archive(source, stream)
         with patch.object(rt, "encrypt_archive", side_effect=fake_encrypt):
             self.assert_blocked("quiesce", "off-host acknowledgement", backupRequired=True)
         prepared = self.request("backup")
@@ -787,14 +787,25 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotEqual(receipt["representativeHashes"], prepared["representativeHashes"])
 
     def test_primary_streaming_backup_ack_and_restore_separate_owned_volume(self):
+        (self.workspace / "lost+found").mkdir()
+        (self.workspace / ".minicloud-volume.json").write_text("source volume ownership")
         state = self.workspace / "user-data/custom-service/state.bin"
         state.parent.mkdir(parents=True)
         state.write_bytes(b"generic application data\0\xff")
+        nested = self.workspace / "user-data/lost+found"
+        nested.mkdir()
+        (nested / ".minicloud-volume.json").write_text("user-owned nested data")
         receipt, archive = self.make_streaming_backup()
+        with rt.tarfile.open(fileobj=io.BytesIO(archive)) as content:
+            self.assertNotIn("data/lost+found", content.getnames())
+            self.assertNotIn("data/.minicloud-volume.json", content.getnames())
         stopped = self.request("quiesce", backupRequired=True)
         self.assertEqual(receipt, stopped["backup"])
         target = self.root / "restore-workspace"
         target.mkdir()
+        (target / "lost+found").mkdir()
+        owner = target / ".minicloud-volume.json"
+        owner.write_text("separate target ownership")
         config = copy.deepcopy(self.runtime.c)
         config["workspace"] = str(target)
         config["volume"]["providerVolumeId"] = "vol-separate-target"
@@ -809,6 +820,27 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual("initial\n", (target / "repos/project/file.txt").read_text())
         self.assertEqual(b"generic application data\0\xff",
                          (target / "user-data/custom-service/state.bin").read_bytes())
+        self.assertEqual("separate target ownership", owner.read_text())
+        self.assertEqual([], list((target / "lost+found").iterdir()))
+        self.assertEqual("user-owned nested data",
+                         (target / "user-data/lost+found/.minicloud-volume.json").read_text())
+
+    def test_backup_rejects_recovered_or_aliased_filesystem_metadata(self):
+        lost = self.workspace / "lost+found"
+        lost.mkdir()
+        (lost / "recovered-file").write_bytes(b"must not silently omit recovered data")
+        with self.assertRaisesRegex(rt.Blocked, "recovered data"):
+            rt.write_backup_archive(self.workspace, io.BytesIO())
+        (lost / "recovered-file").unlink()
+        lost.rmdir()
+        for directory in (False, True):
+            with self.subTest(directory=directory):
+                outside = self.root / ("outside-directory" if directory else "outside-file")
+                outside.mkdir() if directory else outside.write_bytes(b"do not follow")
+                lost.symlink_to(outside, target_is_directory=directory)
+                with self.assertRaisesRegex(rt.Blocked, "metadata"):
+                    rt.write_backup_archive(self.workspace, io.BytesIO())
+                lost.unlink()
 
     def test_restore_rejects_nonempty_target_missing_ack_hash_tamper_and_replay(self):
         receipt, archive = self.make_streaming_backup()
