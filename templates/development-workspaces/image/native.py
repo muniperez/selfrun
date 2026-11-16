@@ -42,6 +42,7 @@ REQUIRED_PROBES = {
     "real-active-foreground-and-unexpected-child", "unfrozen-real-pty-blocked-stdin-proof",
     "frozen-real-pty-blocked-stdin-proof", "root-quiesce-controlled-thaw-stop-refreeze-unmount",
     "loop-readback-user-files", "encrypted-user-file-restore",
+    "codex-empty-git-probes-save-and-reject-data",
 }
 
 
@@ -336,6 +337,7 @@ class Native:
         self.snapshot = None
         self.clean_workspace = False
         self.frozen_by_harness = False
+        self.git_fixture_cleanup = "not-started"
         self.original_workspace_exists = Path("/workspace").exists()
         self.expires = dt.datetime.fromisoformat(authorization["expiresAt"].replace("Z", "+00:00"))
         self.rt = None
@@ -448,6 +450,183 @@ class Native:
                         "runtimeFailureTool": match[1] if match else "redacted"}
             raise ProbeError("UNEXPECTED_ROOT_HOOK_RESULT", evidence)
         return response.get("result") if expect_ok else response
+
+    def codex_git(self):
+        backing = self.directory / "codex-git-fixture.ext4"
+        mountpoint = Path("/var/lib") / ("minicloud-native-git-" + self.run_id)
+        device = None
+        filesystem_uuid = None
+        workspace = mountpoint / "workspace"
+        self.git_fixture_cleanup = "pending"
+        try:
+            check(not mountpoint.exists(), "CODEX_GIT_MOUNTPOINT_ALREADY_EXISTS")
+            mountpoint.mkdir(mode=0o755)
+            with backing.open("xb") as stream:
+                stream.truncate(256 * 1024**2)
+            device = command(["losetup", "--find", "--show", "--nooverlap", str(backing)])
+            guarded_loop(device, backing)
+            command(["mkfs.ext4", "-q", "-F", device])
+            filesystem_uuid = command(["blkid", "-s", "UUID", "-o", "value", device])
+            command(["mount", "-t", "ext4", "-o", "nodev,nosuid", device, str(mountpoint)])
+            mountpoint.chmod(0o755)
+            origin, seed, verification = (mountpoint / name for name in ("origin.git", "seed", "verification"))
+            for path in (origin, seed, verification):
+                path.mkdir(mode=0o700)
+
+            def git(path, *args, input=None):
+                return command(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                    "-c", "protocol.file.allow=always", "-C", str(path), *args], input=input)
+
+            git(origin, "init", "--bare", "--quiet", "--initial-branch=main")
+            git(seed, "init", "--quiet", "--initial-branch=main")
+            (seed / "README.txt").write_text("Explicit native Git fixture; no user credentials.\n")
+            git(seed, "add", "README.txt")
+            git(seed, "-c", "user.name=Native fixture", "-c", "user.email=native@example.invalid",
+                "commit", "--quiet", "-m", "Native fixture")
+            base = git(seed, "rev-parse", "HEAD")
+            git(seed, "push", "--quiet", str(origin), "HEAD:refs/heads/main",
+                "HEAD:refs/heads/native-codex-probe")
+            registration = dict(path=str(workspace / "repos/project"), origin=str(origin), baseSha=base,
+                branch="native-codex-probe", remoteRef="refs/heads/native-codex-probe",
+                pushAuthorized=True, defaultBranches=["main"])
+            config = dict(vmId=self.run_id + "-git", generation=1, kind="ephemeral", uid=2000, gid=2000,
+                workspace=str(workspace), repositories=[registration], ignoredDataAcknowledged=True,
+                startServices=False, infrastructureUnits=[], stopUnits=[])
+            adapter = self.rt.Linux(config)
+            local_git = self.rt.Git(allow_local=True, verification_dir=verification)
+            runtime = self.rt.Runtime(config, self.directory / "git-runtime-state", adapter=adapter, git=local_git)
+
+            def call(action, **extra):
+                return runtime.handle(dict(vmId=config["vmId"], generation=1,
+                    operationId="native-codex-git-save", action=action, **extra))
+
+            check(call("bootstrap")["type"] == "BootstrapReady", "CODEX_GIT_FIXTURE_BOOTSTRAP_FAILED")
+            home = workspace / "home"
+            codex_home = home / ".codex"
+            codex = subprocess.run(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
+                "env", "HOME=" + str(home), "CODEX_HOME=" + str(codex_home), "codex", "--version"],
+                cwd=workspace, capture_output=True, text=True, timeout=30,
+                env={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"})
+            check(codex.returncode == 0 and "0.169.0" in codex.stdout and not codex.stderr.strip(),
+                  "CODEX_GIT_PROBE_VERSION_FAILED")
+            probes = sorted((codex_home / ".tmp").glob("git-*"))
+            check(bool(probes) and all(path.is_dir() and not path.is_symlink() for path in probes),
+                  "ACTUAL_CODEX_EMPTY_GIT_PROBES_NOT_CREATED")
+
+            def probe_tree():
+                result = {}
+                for probe in probes:
+                    for path in (probe, *probe.rglob("*")):
+                        info = path.lstat()
+                        check(not path.is_symlink(), "ACTUAL_CODEX_PROBE_SYMLINK")
+                        check(path.is_dir() or stat.S_ISREG(info.st_mode), "ACTUAL_CODEX_PROBE_SPECIAL_FILE")
+                        result[str(path.relative_to(codex_home))] = (
+                            info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode),
+                            sha(path) if path.is_file() else None)
+                return result
+
+            original = probe_tree()
+            evidence = local_git.inspect([registration], workspace)
+            check(len(evidence) == 1 and call("git-check")["type"] == "GitSaveCandidate",
+                  "ACTUAL_CODEX_PROBES_BLOCKED_REGISTERED_GIT")
+            check(probe_tree() == original, "GIT_INSPECTION_MUTATED_CODEX_PROBES")
+            rejected = []
+
+            def reject(label):
+                try:
+                    call("git-check")
+                except self.rt.Blocked:
+                    rejected.append(label)
+                    return
+                raise ProbeError("CODEX_GIT_UNREGISTERED_DATA_ACCEPTED")
+
+            unregistered = workspace / "artifacts/native-unregistered.git"
+            unregistered.mkdir()
+            try:
+                git(unregistered, "init", "--bare", "--quiet")
+                reject("genuine-unregistered-bare-outside-codex-cache")
+            finally:
+                shutil.rmtree(unregistered)
+            check(local_git.inspect([registration], workspace) == evidence,
+                  "GIT_BASELINE_NOT_RESTORED_AFTER_BARE_NEGATIVE")
+            for kind in ("objects", "refs", "symlink"):
+                candidate = codex_home / ".tmp" / ("git-" + uuid.uuid4().hex[:6])
+                check(not candidate.exists(), "CODEX_GIT_NEGATIVE_ALREADY_EXISTS")
+                shutil.copytree(probes[0], candidate, symlinks=True)
+                try:
+                    for target in (candidate, *candidate.rglob("*")):
+                        info = (probes[0] / target.relative_to(candidate)).stat()
+                        os.chown(target, info.st_uid, info.st_gid, follow_symlinks=False)
+                    check(local_git.inspect([registration], workspace) == evidence,
+                          "EMPTY_CODEX_PROBE_COPY_NOT_ACCEPTED")
+                    if kind == "objects":
+                        command(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups", "env",
+                            "HOME=" + str(home), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+                            "git", "-c", "core.hooksPath=/dev/null", "-C", str(candidate),
+                            "hash-object", "-w", "--stdin"], input="Native real Git object\n")
+                    elif kind == "refs":
+                        ref = candidate / "refs/heads/native-data"
+                        ref.parent.mkdir(parents=True, exist_ok=True)
+                        ref.write_text(base + "\n")
+                        os.chown(ref, 2000, 2000)
+                    else:
+                        info = candidate / "objects/info"
+                        check(info.is_dir() and not info.is_symlink() and not any(info.iterdir()),
+                              "UNEXPECTED_CODEX_PROBE_OBJECT_INFO")
+                        info.rmdir()
+                        info.symlink_to(origin / "objects/info", target_is_directory=True)
+                    reject("codex-shaped-probe-with-" + kind)
+                finally:
+                    shutil.rmtree(candidate)
+                check(local_git.inspect([registration], workspace) == evidence,
+                      "GIT_BASELINE_NOT_RESTORED_AFTER_PROBE_NEGATIVE")
+            command(["systemctl", "start", "minicloudwork.slice"])
+            saved = call("git-save", gatewayAdmissionsFenced=True, unobservableToolsAbsent=True,
+                         t3SnapshotSequence=0)
+            check(saved["type"] == "GitSaved" and saved["repositories"] == evidence,
+                  "CODEX_PROBES_PREVENTED_ACTUAL_GIT_SAVE")
+            check(call("receipt-validate", receiptId=saved["receiptId"])["type"] == "ReceiptValid",
+                  "CODEX_GIT_SAVE_RECEIPT_INVALID")
+            check(probe_tree() == original, "GIT_SAVE_MUTATED_CODEX_PROBES")
+            return {"actualCodexVersionUid": 2000, "actualCodexVersion": "0.169.0",
+                    "actualCodexEmptyProbeCount": len(probes), "registeredCheckoutInspected": True,
+                    "actualRuntimeGitSavedReceipt": True, "actualKernelFrozenReadonlyBind": True,
+                    "probeFilesAndModesUnchanged": True, "rejected": rejected,
+                    "remoteBareOutsideWorkspace": not origin.is_relative_to(workspace),
+                    "allowLocalOnlyForNativeFixture": True, "gitFixtureCommandsRunAsRoot": True,
+                    "ordinaryUserAuthenticatedPushQualified": False,
+                    "scope": "loop-backed synthetic Git fixture; no T3 instance; separate cold T3 probes follow"}
+        finally:
+            try:
+                events = Path("/sys/fs/cgroup/minicloudwork.slice/cgroup.events")
+                if events.exists() and "frozen 1" in events.read_text():
+                    command(["systemctl", "thaw", "minicloudwork.slice"])
+                if os.path.ismount(workspace):
+                    check(command(["findmnt", "-rn", "-M", str(workspace), "-o", "UUID"]) == filesystem_uuid,
+                          "CODEX_GIT_BIND_IDENTITY_CHANGED")
+                    command(["mount", "-o", "remount,bind,rw", str(workspace)])
+                    command(["umount", str(workspace)])
+                if os.path.ismount(mountpoint):
+                    check(command(["findmnt", "-rn", "-M", str(mountpoint), "-o", "UUID"]) == filesystem_uuid,
+                          "CODEX_GIT_MOUNT_IDENTITY_CHANGED")
+                    command(["umount", str(mountpoint)])
+                if device:
+                    guarded_loop(device, backing)
+                    command(["losetup", "--detach", device])
+                if backing.exists():
+                    check(not command(["losetup", "--associated", str(backing)]),
+                          "CODEX_GIT_LOOP_STILL_ATTACHED")
+                    with backing.open("r+b") as output:
+                        for _ in range(256):
+                            output.write(bytes(1024**2))
+                        output.flush()
+                        os.fsync(output.fileno())
+                    backing.unlink()
+                if mountpoint.exists():
+                    mountpoint.rmdir()
+                self.git_fixture_cleanup = "complete"
+            finally:
+                self.report.value["codexGitFixtureCleanup"] = self.git_fixture_cleanup
 
     def prepare(self):
         backing = self.directory / "fixture.ext4"
@@ -931,6 +1110,7 @@ class Native:
             shutil.rmtree(restored)
 
     def cleanup(self):
+        check(self.git_fixture_cleanup in ("not-started", "complete"), "CODEX_GIT_FIXTURE_CLEANUP_INCOMPLETE")
         if self.client:
             try:
                 if self.shell_pid:
@@ -998,6 +1178,8 @@ class Native:
             if not guarded:
                 return
             if not self.report.probe("pristine-tools-only-no-default-apps", self.pristine):
+                return
+            if not self.report.probe("codex-empty-git-probes-save-and-reject-data", self.codex_git):
                 return
             if not self.report.probe("loop-ext4-root-bootstrap", self.prepare):
                 return
