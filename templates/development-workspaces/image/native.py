@@ -3,6 +3,7 @@
 import argparse
 import datetime as dt
 import hashlib
+import http.server
 import importlib.util
 import json
 import os
@@ -12,10 +13,12 @@ import re
 import shutil
 import socket
 import sqlite3
+import ssl
 import stat
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import traceback
 import uuid
@@ -151,6 +154,62 @@ def restore_selected_files(source, expected, destination):
             seen.add(member.name)
     check(seen == set(expected), "USER_BACKUP_MEMBER_MISSING")
     return {"filesRestored": len(seen), "allSha256Matched": True}
+
+
+def bootstrap_with_local_enrollment(config, directory):
+    """Run the real image entrypoint; only its external enrollment peer is synthetic."""
+    certificate, key = directory / "enrollment.crt", directory / "enrollment.key"
+    command(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+             "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+             "-keyout", str(key), "-out", str(certificate)])
+    key.chmod(0o600)
+    token = uuid.uuid4().hex
+    received = []
+
+    class Enrollment(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.path != "/enroll" or not 0 < length <= 65536 or \
+                    self.headers.get("Authorization") != "Bearer " + token:
+                self.send_error(403)
+                return
+            body = json.loads(self.rfile.read(length))
+            if body.get("vmId") != config["vmId"] or body.get("generation") != config["generation"] or \
+                    body.get("bootstrapReceipt", {}).get("type") != "BootstrapReady":
+                self.send_error(400)
+                return
+            received.append(body)
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Enrollment)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certificate, key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    enrollment = directory / "enrollment.json"
+    write_json(enrollment, dict(vmId=config["vmId"], generation=config["generation"],
+               operationId="native-fresh-bootstrap", expiresAt=time.time() + 180,
+               url="https://127.0.0.1:" + str(server.server_port) + "/enroll",
+               caFile=str(certificate), token=token))
+    thread.start()
+    try:
+        result = json.loads(command(["python3", "-B", str(RUNTIME.parent / "bootstrap.py"),
+            "bootstrap", "--enrollment", str(enrollment),
+            "--state-dir", str(directory / "enrollment-state")], timeout=120))
+        check(result.get("ok") is True and len(received) == 1, "FRESH_BOOTSTRAP_ENROLLMENT_FAILED")
+        return received[0]["bootstrapReceipt"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        key.unlink(missing_ok=True)
+        enrollment.unlink(missing_ok=True)
 
 
 class Report:
@@ -397,9 +456,7 @@ class Native:
                                        initializeOwner=True, owner=owner))
         write_json("/etc/minicloud-workspace/runtime.json", self.config)
         self.owns_runtime = True
-        command(["systemctl", "start", "minicloud-workspace.service"])
-        self.wait(lambda: Path("/run/minicloud-workspace/control.sock").exists())
-        result = self.control("bootstrap")
+        result = bootstrap_with_local_enrollment(self.config, self.directory)
         check(result["type"] == "BootstrapReady", "BOOTSTRAP_RECEIPT_REQUIRED")
         check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"]) == fs_uuid,
               "MOUNT_UUID_MISMATCH")
@@ -412,7 +469,9 @@ class Native:
             os.chown(path, 2000, 2000)
         return {"type": result["type"], "filesystemUuid": fs_uuid,
                 "formattedOnlyVerifiedNewLoopDevice": True, "providerPersistenceProof": False,
-                "noApplicationInstalledOrRegistered": True}
+                "noApplicationInstalledOrRegistered": True,
+                "actualImageBootstrapEntrypoint": True,
+                "enrollmentPeer": "synthetic-loopback-verified-TLS-only"}
 
     def wait(self, predicate, seconds=30):
         expires = time.monotonic() + seconds
