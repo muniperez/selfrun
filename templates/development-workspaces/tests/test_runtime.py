@@ -298,6 +298,39 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.adapter.frozen)
         self.assertEqual("Ready", self.runtime.s["phase"])
 
+    def test_refusal_reports_failing_freeze_stage_without_exception_or_command_output(self):
+        failures = [
+            ("verify_t3_snapshot", PermissionError(13, "private bearer", "/private/credential"),
+             "t3-snapshot", "permission_denied", None),
+            ("readonly", subprocess.CalledProcessError(
+                32, ["mount", "/private/credential"], output="private bearer", stderr="private key"),
+             "remount-readonly", "tool_exit", 32),
+        ]
+        for method, error, stage, failure_type, exit_code in failures:
+            with self.subTest(method=method):
+                with patch.object(self.adapter, method, side_effect=error):
+                    response = self.runtime.respond(dict(
+                        vmId="vm-a", generation=3, operationId="operation-a", action="git-save",
+                        gatewayAdmissionsFenced=True, unobservableToolsAbsent=True, t3SnapshotSequence=0))
+                self.assertFalse(response["ok"])
+                self.assertEqual(stage, response["diagnostic"]["stage"])
+                self.assertEqual(failure_type, response["diagnostic"]["failureType"])
+                self.assertEqual(exit_code, response["diagnostic"].get("exitCode"))
+                self.assertNotIn("private", json.dumps(response))
+                self.assertEqual("Frozen", self.runtime.s["phase"])
+                self.assertFalse(any(r["type"] == "GitSaved" for r in self.runtime.s["receipts"].values()))
+                self.request("resume", deletionNotCommitted=True)
+
+    def test_blocked_tool_failure_retains_only_allowlisted_tool_and_subcommand(self):
+        with patch.object(rt.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                1, ["systemctl", "stop", "private.service"], stderr="private bearer")):
+            with self.assertRaises(rt.Blocked) as caught:
+                rt.run(["systemctl", "stop", "private.service"])
+        response = rt.failure_response(caught.exception, "stop-services")
+        self.assertEqual(dict(stage="stop-services", failureType="tool_exit",
+                              tool="systemctl", toolAction="stop", exitCode=1), response["diagnostic"])
+        self.assertNotIn("private", json.dumps(response))
+
     def test_untracked_data_blocks(self):
         (self.repo / "untracked.txt").write_text("unsaved")
         self.assert_blocked("git-save", "untracked")

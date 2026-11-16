@@ -8,6 +8,40 @@ namespace Minicloud.Worker.Tests.DevelopmentWorkspaces;
 public sealed class WorkspaceRuntimeEvidenceTests
 {
     [Theory]
+    [InlineData("""{"ok":false,"state":"private bearer","reason":"/private/key","diagnostic":{"stage":"private bearer","failureType":"/private/key","tool":"private bearer","toolAction":"/private/key","exitCode":99999999999,"errno":-1},"password":"private bearer"}""")]
+    [InlineData("""{"ok":false,"state":{},"reason":[],"diagnostic":{"stage":false,"failureType":{},"tool":[],"exitCode":"13","errno":{}}}""")]
+    [InlineData("""{"ok":false,"diagnostic":"private bearer"}""")]
+    [InlineData("null")]
+    public void RejectionDiagnosticsNeverRetainUnknownTextOrUnboundedNumericFields(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var rejection = WorkspaceRuntimeRejection.Capture("git-save", document.RootElement, DateTimeOffset.UtcNow);
+        Assert.Equal("unrecognized_runtime_rejection", rejection.ReasonCode);
+        Assert.Equal("Unknown", rejection.State);
+        Assert.Equal("unknown", rejection.Stage);
+        Assert.Equal("unknown", rejection.FailureType);
+        Assert.Null(rejection.Tool);
+        Assert.Null(rejection.ToolAction);
+        Assert.Null(rejection.ExitCode);
+        Assert.Null(rejection.Errno);
+        var serialized = JsonSerializer.Serialize(rejection);
+        Assert.DoesNotContain("private", serialized);
+        Assert.True(serialized.Length < 1024);
+    }
+
+    [Fact]
+    public void RejectionDiagnosticsSupportLegacyRuntimeAndKnownT3TableWithoutCopyingRuntimeText()
+    {
+        using var document = JsonDocument.Parse("""
+            {"ok":false,"state":"Blocked","reason":"T3 has active/pending work or an unknown status in orchestration_v2_projection_runtime_requests"}
+            """);
+        var rejection = WorkspaceRuntimeRejection.Capture("git-save", document.RootElement, DateTimeOffset.UtcNow);
+        Assert.Equal("t3_work_not_idle_runtime_requests", rejection.ReasonCode);
+        Assert.Equal("unknown", rejection.Stage);
+        Assert.Equal("Blocked", rejection.State);
+    }
+
+    [Theory]
     [InlineData("{}")]
     [InlineData("""{"activityAt":null}""")]
     public void RuntimeWithoutRecordedActivityHasNoActivityTimestamp(string json)

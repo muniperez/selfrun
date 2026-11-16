@@ -252,6 +252,20 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
   writes/services/admissions reopen. This lets users resolve Awaiting Git save; use a new
   shutdown operation after editing/pushing. Failed partial resumes remain blocked.
 
+Normal stop checkpoints a bounded, sanitized runtime rejection in the operation's
+`providerEvidenceJson.lastRuntimeRejection` **before** attempting to reopen a failed
+freeze. A refused recovery `status`/`resume`/`cancel-drain` is retained separately as
+`lastRuntimeRecoveryRejection`; it does not overwrite the original failure.
+Worker warning logs contain the same safe diagnostic, and a blocked operation's
+error message includes the original reason code. Only allowlisted static reason
+codes, freeze stages, failure categories, tools/subcommands and bounded numeric
+exit/errno values cross this diagnostic boundary. Unknown text is withheld, not
+truncated: no command output, exception messages, paths, credentials or repository
+contents are persisted or logged. Older runtimes still yield known reason codes;
+the updated runtime additionally identifies the failing freeze stage and adapter
+failure category. Missing diagnostics never authorize deletion or bypass SSH,
+generation, task, filesystem, Git-save or provider-ownership checks.
+
 T3 is the known infrastructure main process, **not a quiescence API**. By default child
 terminals, providers/builds and every other coding process block unless finished. Parent must fence
 gateway/session mutation admission and account for in-flight work before requesting freeze;

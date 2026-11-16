@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
 using Minicloud.Common.Providers.Hetzner;
@@ -46,7 +47,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                     {
                         await AwaitGitAsync(op, evidence, ct); break;
                     }
-                    var candidate = await runtime.CallAsync(Target(vm), op.Id, "git-check", null, ct);
+                    var candidate = await CallStopRuntimeAsync(vm, op, evidence, "git-check", null, ct);
                     if (!candidate.TryGetProperty("ok", out var check) || check.ValueKind != JsonValueKind.True)
                     {
                         await AwaitGitAsync(op, evidence, ct); break;
@@ -67,7 +68,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 { await SaveAsync(op, evidence, op.Step, null, ct); break; }
                 await SaveAsync(op, evidence, "quiesce", null, ct); break;
             case "quiesce":
-                var status = Result(await runtime.CallAsync(Target(vm), op.Id, "status", null, ct));
+                var status = Result(await CallStopRuntimeAsync(vm, op, evidence, "status", null, ct));
                 if (status.GetProperty("phase").GetString() == "Ready")
                 {
                     await RefreshRuntimeAsync(workspace, vm, op.Id, ct, publishRoute: false);
@@ -95,7 +96,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                         await ReopenAfterFailedFreezeAsync(workspace, vm, op, evidence, true, ct); break;
                     }
                 }
-                var reply = await runtime.CallAsync(Target(vm), op.Id, action, new
+                var reply = await CallStopRuntimeAsync(vm, op, evidence, action, new
                 {
                     gatewayAdmissionsFenced = true, unobservableToolsAbsent = true,
                     t3SnapshotSequence = evidence.T3SnapshotSequence,
@@ -127,7 +128,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                     }
                 }, ct); break;
             case "detach":
-                Result(await runtime.CallAsync(Target(vm), op.Id, "receipt-validate", new { receiptId = evidence.ReceiptId }, ct));
+                Result(await CallStopRuntimeAsync(vm, op, evidence, "receipt-validate", new { receiptId = evidence.ReceiptId }, ct));
                 var detached = await cloud.DetachWorkspaceVolumeAsync(workspace.ProviderVolumeId!, vm.ProviderServerId!, VolumeLabels(workspace), ct);
                 if (detached is not null) evidence.Actions.Add(detached);
                 await SaveAsync(op, evidence, "detached", (_, fresh, _) =>
@@ -143,7 +144,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
             case "delete-intent":
                 if (vm.Kind == "ephemeral" && vm.GitSavedOperationId == op.Id)
                     await RefreshRepositoryCredentialAsync(vm, ct, force: true);
-                Result(await runtime.CallAsync(Target(vm), op.Id, "receipt-validate", new { receiptId = evidence.ReceiptId }, ct));
+                Result(await CallStopRuntimeAsync(vm, op, evidence, "receipt-validate", new { receiptId = evidence.ReceiptId }, ct));
                 await RevokeRepositoryCredentialAsync(vm, ct);
                 evidence.RepositoryCredentialRevoked = true;
                 await SaveAsync(op, evidence, "commit-delete", null, ct);
@@ -219,11 +220,11 @@ public sealed partial class DevelopmentWorkspaceProcessor
     private async Task ReopenAfterFailedFreezeAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm,
         DevelopmentWorkspaceOperation op, Evidence evidence, bool awaitingGit, CancellationToken ct)
     {
-        var state = Result(await runtime.CallAsync(Target(vm), op.Id, "status", null, ct)).GetProperty("phase").GetString();
+        var state = Result(await CallStopRuntimeAsync(vm, op, evidence, "status", null, ct, recovery: true)).GetProperty("phase").GetString();
         if (state == "Frozen")
-            Result(await runtime.CallAsync(Target(vm), op.Id, "resume", new { deletionNotCommitted = true }, ct));
+            Result(await CallStopRuntimeAsync(vm, op, evidence, "resume", new { deletionNotCommitted = true }, ct, recovery: true));
         else if (state == "Fenced")
-            Result(await runtime.CallAsync(Target(vm), op.Id, "cancel-drain", null, ct));
+            Result(await CallStopRuntimeAsync(vm, op, evidence, "cancel-drain", null, ct, recovery: true));
         else if (state != "Ready") throw new InvalidOperationException("The frozen workspace state cannot safely reopen admission.");
         if (evidence.DeleteCommitted) throw new InvalidOperationException("A committed deletion cannot reopen the old VM.");
         evidence.ReceiptId = null; evidence.T3SnapshotSequence = null; evidence.GatewayRevokedAt = null;
@@ -237,6 +238,22 @@ public sealed partial class DevelopmentWorkspaceProcessor
         await RefreshRuntimeAsync(workspace, vm, op.Id, ct, allowRevive: true);
         if (awaitingGit) await AwaitGitAsync(op, evidence, ct);
         else await SaveAsync(op, evidence, "wait-for-tasks", (_, fresh, _) => fresh.GatewayReady = true, ct);
+    }
+
+    private async Task<JsonElement> CallStopRuntimeAsync(DevelopmentWorkspaceVm vm, DevelopmentWorkspaceOperation op,
+        Evidence evidence, string action, object? arguments, CancellationToken ct, bool recovery = false)
+    {
+        var response = await runtime.CallAsync(Target(vm), op.Id, action, arguments, ct);
+        if (response.ValueKind == JsonValueKind.Object && response.TryGetProperty("ok", out var ok) &&
+            ok.ValueKind == JsonValueKind.True) return response;
+        var rejection = WorkspaceRuntimeRejection.Capture(action, response, Now);
+        if (recovery) evidence.LastRuntimeRecoveryRejection = rejection;
+        else evidence.LastRuntimeRejection = rejection;
+        logger?.LogWarning("Workspace operation {OperationId} runtime rejection: {RuntimeRejection}",
+            op.Id, JsonSerializer.Serialize(rejection, Json));
+        // Checkpoint before a recovery call can fail or clear the runtime's frozen state.
+        await SaveAsync(op, evidence, op.Step, null, ct, release: false);
+        return response;
     }
 
     private static void ValidateReceipt(JsonElement receipt, DevelopmentWorkspaceVm vm, DevelopmentWorkspaceOperation op,

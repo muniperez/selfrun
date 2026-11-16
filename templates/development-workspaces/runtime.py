@@ -29,6 +29,61 @@ class Blocked(Exception):
         self.state = state
 
 
+DIAGNOSTIC_STAGES = frozenset({
+    "request", "git-preflight", "freeze-guard", "idle-before-freeze", "kernel-freeze",
+    "idle-after-freeze", "t3-snapshot", "stop-services", "idle-after-stop",
+    "t3-final-snapshot", "remount-readonly", "verify-fence", "git-inspect",
+    "git-reinspect", "resume", "cancel-drain",
+})
+
+
+def failure_response(error, stage="request"):
+    # Exception messages, filenames, command arguments and tool output are not diagnostics.
+    cause = error
+    for _ in range(4):
+        if cause.__cause__ is None:
+            break
+        cause = cause.__cause__
+    detail = dict(stage=stage if stage in DIAGNOSTIC_STAGES else "request")
+    if isinstance(cause, subprocess.CalledProcessError):
+        detail["failureType"] = "tool_exit"
+        if type(cause.returncode) is int and -255 <= cause.returncode <= 255:
+            detail["exitCode"] = cause.returncode
+    elif isinstance(cause, subprocess.TimeoutExpired):
+        detail["failureType"] = "tool_timeout"
+    elif isinstance(cause, PermissionError):
+        detail["failureType"] = "permission_denied"
+    elif isinstance(cause, FileNotFoundError):
+        detail["failureType"] = "file_missing"
+    elif isinstance(cause, OSError):
+        detail["failureType"] = "filesystem_error"
+    elif isinstance(cause, sqlite3.Error):
+        detail["failureType"] = "sqlite_error"
+    elif isinstance(cause, KeyError):
+        detail["failureType"] = "missing_field"
+    elif isinstance(cause, TypeError):
+        detail["failureType"] = "invalid_type"
+    elif isinstance(cause, ValueError):
+        detail["failureType"] = "invalid_value"
+    elif isinstance(cause, AttributeError):
+        detail["failureType"] = "missing_attribute"
+    else:
+        detail["failureType"] = "blocked" if isinstance(cause, Blocked) else "adapter_error"
+    if isinstance(cause, OSError) and type(cause.errno) is int and 1 <= cause.errno <= 4095:
+        detail["errno"] = cause.errno
+    command = getattr(cause, "cmd", None)
+    if isinstance(command, (list, tuple)) and command and isinstance(command[0], str):
+        tool = Path(command[0]).name
+        if tool in {"systemctl", "mount", "findmnt", "umount", "git", "runuser", "age"}:
+            detail["tool"] = tool
+            if len(command) > 1 and isinstance(command[1], str) and command[1] in {
+                    "show", "stop", "start", "freeze", "thaw"}:
+                detail["toolAction"] = command[1]
+    return dict(ok=False, state=error.state if isinstance(error, Blocked) else "Blocked",
+                reason=str(error) if isinstance(error, Blocked) else "Invalid request or adapter failure",
+                diagnostic=detail)
+
+
 def require(condition, reason):
     if not condition:
         raise Blocked(reason)
@@ -866,6 +921,13 @@ class Runtime:
         require(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request.get("operationId", "")),
                 "Operation ID required")
 
+    def respond(self, request):
+        self.diagnostic_stage = "request"
+        try:
+            return dict(ok=True, result=self.handle(request))
+        except Exception as error:
+            return failure_response(error, self.diagnostic_stage)
+
     def handle(self, request):
         self.validate_request(request)
         action, operation = request["action"], request["operationId"]
@@ -887,6 +949,7 @@ class Runtime:
                                                    reason="Cannot enumerate all live work")
             return result
         if action == "git-check":
+            self.diagnostic_stage = "git-preflight"
             require(self.c["kind"] == "ephemeral" and self.s["phase"] == "Ready",
                     "Git preflight requires an admitting ephemeral runtime")
             try:
@@ -951,6 +1014,7 @@ class Runtime:
             self.save()
             return dict(type="UsefulActivity", **self.identity())
         if action == "cancel-drain":
+            self.diagnostic_stage = "cancel-drain"
             require(self.s["phase"] == "Fenced" and self.s.get("fenceOperation") == operation,
                     "Only an unfrozen pending drain can be cancelled")
             self.adapter.thaw()
@@ -959,6 +1023,7 @@ class Runtime:
             self.save()
             return dict(type="DrainCancelled", **self.identity())
         if action == "resume":
+            self.diagnostic_stage = "resume"
             require(self.s["phase"] == "Frozen" and self.s.get("fenceOperation") == operation and
                     request.get("deletionNotCommitted") is True,
                     "Only an explicitly cancelled, not-delete-committed frozen VM can resume")
@@ -980,6 +1045,7 @@ class Runtime:
             self.save()
             return self.receipt("RuntimeResumed", operation)
         if action in ("quiesce", "git-save", "discard"):
+            self.diagnostic_stage = "freeze-guard"
             require(request.get("gatewayAdmissionsFenced") is True and
                     request.get("unobservableToolsAbsent") is True,
                     "Fence gateway/in-flight mutations and verify no unobservable tools before shutdown")
@@ -1000,10 +1066,13 @@ class Runtime:
             require(type(sequence) is int and sequence >= 0, "Authenticated T3 snapshot sequence required")
             if self.s.get("freezeCompleted"):
                 require(sequence == self.s["freezeHttpSequence"], "Stale freeze snapshot sequence")
+                self.diagnostic_stage = "idle-after-freeze"
                 self.adapter.idle(self.s["tasks"])
+                self.diagnostic_stage = "verify-fence"
                 self.adapter.verify_fence()
                 previous = self.s["frozenT3State"]
                 expected = previous["threadSequence"] if previous else None
+                self.diagnostic_stage = "t3-final-snapshot"
                 require(self.adapter.verify_t3_snapshot(expected) == previous,
                         "Frozen T3 state changed after quiescence")
             else:
@@ -1011,25 +1080,36 @@ class Runtime:
                 self.s["phase"] = "Fenced"
                 self.save()
                 # Check both before and after the kernel freeze to close the task-start race.
+                self.diagnostic_stage = "idle-before-freeze"
                 self.adapter.idle(self.s["tasks"])
+                self.diagnostic_stage = "kernel-freeze"
                 self.adapter.freeze()
                 self.s.update(phase="Frozen", filesystemReadOnly=False, freezeHttpSequence=sequence)
                 self.save()
+                self.diagnostic_stage = "idle-after-freeze"
                 self.adapter.idle(self.s["tasks"])
+                self.diagnostic_stage = "t3-snapshot"
                 self.adapter.verify_t3_snapshot(sequence)
+                self.diagnostic_stage = "stop-services"
                 self.adapter.stop_services()
+                self.diagnostic_stage = "idle-after-stop"
                 self.adapter.idle(self.s["tasks"])
+                self.diagnostic_stage = "t3-final-snapshot"
                 final_t3 = self.adapter.verify_t3_snapshot(None)
                 self.s["filesystemReadOnly"] = True
                 self.save()
+                self.diagnostic_stage = "remount-readonly"
                 self.adapter.readonly()
+                self.diagnostic_stage = "verify-fence"
                 self.adapter.verify_fence()
                 self.s.update(freezeCompleted=True, frozenT3State=final_t3)
                 self.save()
             if action == "git-save":
                 try:
+                    self.diagnostic_stage = "git-inspect"
                     evidence = self.git.inspect(self.c.get("repositories", []), self.c["workspace"])
                     # A second full inspection catches mutations during remote evidence collection.
+                    self.diagnostic_stage = "git-reinspect"
                     require(evidence == self.git.inspect(self.c["repositories"], self.c["workspace"]),
                             "Checkout changed during verification")
                 except Blocked as error:
@@ -1398,11 +1478,9 @@ def serve(config, state_dir, socket_path):
                         with (Path(state_dir) / "control.lock").open("a") as lock:
                             fcntl.flock(lock, fcntl.LOCK_EX)
                             runtime = Runtime(config, state_dir)
-                            response = dict(ok=True, result=runtime.handle(json.loads(data)))
-                    except Blocked as error:
-                        response = dict(ok=False, state=error.state, reason=str(error))
-                    except Exception:
-                        response = dict(ok=False, state="Blocked", reason="Invalid request or adapter failure")
+                            response = runtime.respond(json.loads(data))
+                    except Exception as error:
+                        response = failure_response(error)
                     connection.sendall(json.dumps(response, sort_keys=True).encode() + b"\n")
         finally:
             sock.unlink(missing_ok=True)

@@ -39,6 +39,8 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         public bool DeleteCommitted { get; set; }
         public bool RepositoryCredentialRevoked { get; set; }
         public long? T3SnapshotSequence { get; set; }
+        public WorkspaceRuntimeRejection? LastRuntimeRejection { get; set; }
+        public WorkspaceRuntimeRejection? LastRuntimeRecoveryRejection { get; set; }
     }
 
     public async Task<bool> ProcessNextAsync(CancellationToken ct)
@@ -53,13 +55,14 @@ public sealed partial class DevelopmentWorkspaceProcessor(
             return true;
         }
         var token = operation.LeaseToken!;
+        Evidence? operationEvidence = null;
         try
         {
             var vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == operation.VmId, ct);
             var workspace = await db.DevelopmentWorkspaces.AsNoTracking().SingleAsync(x => x.Id == operation.WorkspaceId, ct);
             var client = await providers.CreateAsync(vm.OrganizationId, operation.ProviderAccountId, ct, allowDisabled: operation.Kind != "start" || vm.ProviderServerId is not null);
             if (client is not IDevelopmentWorkspaceProvider cloud) throw new InvalidOperationException("Workspace provider must be Hetzner.");
-            var evidence = JsonSerializer.Deserialize<Evidence>(operation.ProviderEvidenceJson ?? "{}", Json)!;
+            var evidence = operationEvidence = JsonSerializer.Deserialize<Evidence>(operation.ProviderEvidenceJson ?? "{}", Json)!;
             if (operation.Kind == "start") await StartStepAsync(cloud, workspace, vm, operation, evidence, ct);
             else if (operation.Kind == "stop") await StopStepAsync(cloud, workspace, vm, operation, evidence, ct);
             else throw new InvalidOperationException("Unsupported workspace operation.");
@@ -79,6 +82,8 @@ public sealed partial class DevelopmentWorkspaceProcessor(
                     vm.Phase = "blocked"; vm.GatewayReady = false;
                     vm.ErrorCode = "workspace_reconciliation_required";
                     vm.ErrorMessage = "Provider/runtime state is unconfirmed. Resources remain reserved and billed; inspect the operation before retrying.";
+                    if (operationEvidence?.LastRuntimeRejection is { } rejection)
+                        vm.ErrorMessage += " Last recorded rejection: " + rejection.Summary;
                     op.ErrorCode = vm.ErrorCode; op.ErrorMessage = vm.ErrorMessage;
                     Release(op);
                 }, ct);

@@ -243,6 +243,58 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Equal(0, cloud.Attaches);
     }
 
+    [Theory]
+    [InlineData("none")]
+    [InlineData("resume")]
+    [InlineData("status")]
+    public async Task RuntimeRejectionIsDurableBeforeFreezeRecoveryEvenWhenRecoveryFails(string failureAction)
+    {
+        var recoveryFails = failureAction != "none";
+        var (_, vm, operation) = await SeedStop("quiesce", ephemeral: true);
+        runtime.Phase = "Frozen";
+        runtime.Rejections["git-save"] = JsonSerializer.SerializeToElement(new
+        {
+            ok = false, state = "Blocked", reason = "T3 thread state changed after the HTTP idle snapshot",
+            diagnostic = new { stage = "t3-snapshot", failureType = "blocked", credential = "private bearer" },
+            password = "private bearer", path = "/private/credential"
+        }, Json);
+        var persistedBeforeRecovery = false;
+        runtime.BeforeAction = action =>
+        {
+            if (action is not ("status" or "resume") || !runtime.Actions.Contains("git-save")) return;
+            using var verify = Context();
+            var durable = verify.DevelopmentWorkspaceOperations.AsNoTracking().Single(x => x.Id == operation.Id);
+            persistedBeforeRecovery = durable.ProviderEvidenceJson!.Contains("t3_snapshot_changed");
+            if (action == failureAction)
+                runtime.Rejections[action] = JsonSerializer.SerializeToElement(new
+                    { ok = false, state = "private bearer", reason = "/private/credential" }, Json);
+        };
+        await Hop(recoveryFails ? "quiesce" : "wait-for-tasks");
+        Assert.True(persistedBeforeRecovery);
+        var saved = await CurrentOperation(operation.Id);
+        using var proof = JsonDocument.Parse(saved.ProviderEvidenceJson!);
+        var rejection = proof.RootElement.GetProperty("lastRuntimeRejection");
+        Assert.Equal("git-save", rejection.GetProperty("action").GetString());
+        Assert.Equal("t3_snapshot_changed", rejection.GetProperty("reasonCode").GetString());
+        Assert.Equal("t3-snapshot", rejection.GetProperty("stage").GetString());
+        if (recoveryFails)
+        {
+            Assert.Equal(failureAction, proof.RootElement.GetProperty("lastRuntimeRecoveryRejection").GetProperty("action").GetString());
+            Assert.Contains("t3_snapshot_changed", saved.ErrorMessage);
+            Assert.DoesNotContain("private", saved.ErrorMessage);
+        }
+        Assert.DoesNotContain("private", saved.ProviderEvidenceJson);
+        Assert.DoesNotContain("private", string.Join("\n", diagnostics.Entries.Select(x => x.Message)));
+        Assert.Contains(diagnostics.Entries, x => x.Message.Contains("t3_snapshot_changed"));
+        Assert.Equal(recoveryFails ? "blocked" : "draining", (await CurrentVm(vm.Id)).Phase);
+        Assert.True((await CurrentVm(vm.Id)).ComputeReserved);
+        Assert.Null((await CurrentVm(vm.Id)).QuiescenceReceipt);
+        Assert.Null((await CurrentVm(vm.Id)).GitSaveReceipt);
+        Assert.False(proof.RootElement.GetProperty("deleteCommitted").GetBoolean());
+        Assert.Equal(0, cloud.Deletes);
+        Assert.Equal(0, cloud.Detaches);
+    }
+
     [Fact]
     public async Task ConfirmedPrimaryReceiptDetachesAndDeletesOnlyOwnedComputeThenReleasesReservation()
     {
@@ -632,10 +684,15 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public bool FailStage { get; set; }
         public bool FailRead { get; set; }
         public bool FailReceipt { get; set; }
+        public Dictionary<string, JsonElement> Rejections { get; } = [];
+        public Action<string>? BeforeAction { get; set; }
         public List<string> Actions { get; } = [];
         public Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct)
         {
             Actions.Add(action);
+            BeforeAction?.Invoke(action);
+            if (Rejections.TryGetValue(action, out var rejection)) return Task.FromResult(rejection);
+            if (action is "resume" or "cancel-drain") Phase = "Ready";
             if (action == "receipt-validate" && FailReceipt) throw new InvalidOperationException("Receipt was not confirmed.");
             if (action == "status")
             {
