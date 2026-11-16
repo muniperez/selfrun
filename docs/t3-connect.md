@@ -87,6 +87,14 @@ own CLI authorization; owner-only enrollment is not a shell isolation boundary.
   kernel permits unprivileged binding to 774: otherwise a coding process could
   impersonate a stopped listener and capture its gateway-injected management
   bearer. Do not lower `net.ipv4.ip_unprivileged_port_start` past this port.
+  Before **every** Connect route publication/refresh (including cached OpenBao
+  references), the worker requires a generation-bound admission proof over its
+  host-key-pinned management SSH connection. The root helper rechecks current
+  kernel reservation, immutable root-owned helper/unit files, active root
+  MainPID/cgroup/command, and the loopback listening socket's UID and inode
+  ownership. Credential export independently applies the same checks. HTTP 200
+  alone is never admission; missing or unsafe evidence revokes only Connect's
+  route, leaving ordinary T3 access unchanged.
   Account linking requires T3's hosted
   identity/relay endpoints and cloudflared connectivity (including supported
   outbound QUIC/HTTP2); opening inbound service ports is not a workaround.
@@ -137,7 +145,9 @@ Deterministic tests cover owner/non-owner and generation checks, separate local
 management authorization, exact supported CLI invocation, pending-flow shutdown
 fencing, same-unit activation, redacted status, memory-only approval cleanup,
 remote-deletion uncertainty, pinned relay process recognition and no implicit
-compute/session launches. The disposable native harness now requires a probe
+compute/session launches. Regression fixtures also reject an unprivileged-port
+policy with spoofed HTTP 200, cached credential-reference bypasses, and missing
+or incorrectly owned management listeners. The disposable native harness now requires a probe
 that ordinary gateway credentials cannot access either enrollment management
 or T3's relay APIs. **That native probe has not been run for this change.**
 

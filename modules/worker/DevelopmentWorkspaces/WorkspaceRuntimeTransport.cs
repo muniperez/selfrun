@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +8,7 @@ using Minicloud.Common.Models;
 using Minicloud.Common.Services;
 using Minicloud.Worker.Ssh;
 using Renci.SshNet;
+using Renci.SshNet.Common;
 
 namespace Minicloud.Worker.DevelopmentWorkspaces;
 
@@ -19,6 +21,7 @@ public interface IWorkspaceRuntimeTransport
     Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct);
     Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct);
     Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct);
+    Task<bool> CheckConnectAdmissionAsync(WorkspaceRuntimeTarget target, CancellationToken ct);
     Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct);
     Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct) =>
         throw new NotSupportedException("Repository credential readback is required for safe retirement.");
@@ -186,12 +189,44 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
     public Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
         => ExecuteAsync(target, ConnectCredentialCommand(target), ct);
 
-    internal static string ConnectCredentialCommand(WorkspaceRuntimeTarget target)
+    public async Task<bool> CheckConnectAdmissionAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
+    {
+        try
+        {
+            return IsConnectAdmission(target, await ExecuteAsync(target, ConnectAdmissionCommand(target), ct));
+        }
+        catch (Exception error) when (error is InvalidOperationException or SshException or IOException or SocketException)
+        {
+            return false;
+        }
+    }
+
+    internal static bool IsConnectAdmission(WorkspaceRuntimeTarget target, string response)
+    {
+        try
+        {
+            var proof = Parse(response);
+            return proof.TryGetProperty("type", out var type) && type.GetString() == "ConnectManagementAdmission" &&
+                proof.TryGetProperty("admitted", out var admitted) && admitted.ValueKind == JsonValueKind.True &&
+                proof.TryGetProperty("vmId", out var vm) && vm.GetString() == target.VmId &&
+                proof.TryGetProperty("generation", out var generation) && generation.TryGetInt64(out var value) &&
+                value == target.Generation;
+        }
+        catch (Exception error) when (error is InvalidOperationException or JsonException)
+        {
+            return false;
+        }
+    }
+
+    internal static string ConnectCredentialCommand(WorkspaceRuntimeTarget target) => ConnectManagementCommand(target, "credential");
+    internal static string ConnectAdmissionCommand(WorkspaceRuntimeTarget target) => ConnectManagementCommand(target, "admission");
+
+    private static string ConnectManagementCommand(WorkspaceRuntimeTarget target, string action)
     {
         if (target.Kind != "primary" || target.Generation <= 0 || string.IsNullOrEmpty(target.VmId) ||
             target.VmId.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('_' or '-')))
             throw new InvalidOperationException("Invalid generation credential request.");
-        return $"python3 -B /opt/minicloud-workspace/t3_connect.py credential --vm-id {target.VmId} --generation {WorkspaceBootstrap.Generation(target.Generation)}";
+        return $"python3 -B /opt/minicloud-workspace/t3_connect.py {action} --vm-id {target.VmId} --generation {WorkspaceBootstrap.Generation(target.Generation)}";
     }
 
     private async Task<string> ExecuteAsync(WorkspaceRuntimeTarget target, string commandText, CancellationToken ct)

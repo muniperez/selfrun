@@ -802,6 +802,12 @@ class Native:
     def connect_management(self):
         check(command(["systemctl", "is-active", "minicloud-t3-connect.service"]) == "active",
               "CONNECT_MANAGEMENT_NOT_STARTED")
+        management = ["/usr/bin/python3", "-B", "/opt/minicloud-workspace/t3_connect.py"]
+        binding = ["--vm-id", self.run_id, "--generation", "1"]
+        admission = json.loads(command(management + ["admission", *binding]))
+        check(admission == dict(type="ConnectManagementAdmission", admitted=True,
+                                vmId=self.run_id, generation=1),
+              "CONNECT_TRUSTED_LISTENER_ADMISSION_FAILED")
 
         def request(path, token=None, method="GET", port=774):
             client = http.client.HTTPConnection("127.0.0.1", port, timeout=45)
@@ -822,13 +828,14 @@ class Native:
               "CONNECT_ACCEPTED_ROUTINE_GATEWAY_TOKEN")
         check(request("/api/connect/link-state", routine, port=3773)[0] == 403,
               "ROUTINE_GATEWAY_TOKEN_HAS_RELAY_PERMISSIONS")
-        token = json.loads(Path("/var/lib/minicloud-workspace/connect-credential.json").read_text())["token"]
+        token = command(management + ["credential", *binding])
         status, value = request("/status", token)
         check(status == 200 and value.get("vmId") == self.run_id and value.get("generation") == 1 and
               value.get("linked") is False and value.get("desired") is False,
               "CONNECT_MANAGEMENT_NOT_BOUND_TO_PRISTINE_PRIMARY")
         return dict(anonymousRejected=True, routineGatewayTokenRejected=True,
-                    primaryGenerationChecked=True, noT3AccountApprovalRequested=True)
+                    primaryGenerationChecked=True, trustedListenerAdmission=True,
+                    noT3AccountApprovalRequested=True)
 
     def root_hooks(self):
         before = self.control("status")["activityAt"]

@@ -16,13 +16,15 @@ import subprocess
 import threading
 import urllib.request
 
-from runtime import Git, Runtime, atomic_json, load_config, require, run
+from runtime import Git, Linux, Runtime, atomic_json, load_config, require, run
 
 CONFIG = "/etc/minicloud-workspace/runtime.json"
 STATE = "/var/lib/minicloud-workspace"
 BASE = "/workspace/t3"
 CLOUDFLARED = "/usr/local/bin/cloudflared"
 CLOUDFLARED_SHA256 = "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42"
+MANAGEMENT_UNIT = "minicloud-t3-connect.service"
+MANAGEMENT_SCRIPT = "/opt/minicloud-workspace/t3_connect.py"
 
 
 def command(action):
@@ -47,6 +49,70 @@ def admitted(config, state_dir=STATE):
     return runtime
 
 
+def require_trusted_listener(proc_root=Path("/proc")):
+    properties = dict(line.split("=", 1) for line in run([
+        "systemctl", "show", MANAGEMENT_UNIT, "-p", "ActiveState", "-p", "MainPID",
+        "-p", "FragmentPath", "-p", "DropInPaths", "-p", "User", "-p", "ControlGroup"
+    ]).splitlines() if "=" in line)
+    unit_file = "/etc/systemd/system/" + MANAGEMENT_UNIT
+    require(properties.get("ActiveState") == "active" and properties.get("User") == "root" and
+            properties.get("FragmentPath") == unit_file and properties.get("DropInPaths") == "" and
+            properties.get("ControlGroup") == "/system.slice/" + MANAGEMENT_UNIT,
+            "Untrusted Connect management unit")
+    pid = properties.get("MainPID", "")
+    require(pid.isdecimal() and int(pid) > 0, "Connect management listener is missing")
+    for path in (unit_file, MANAGEMENT_SCRIPT, "/opt/minicloud-workspace/runtime.py"):
+        Linux.verify_unit_file(path)
+    process = proc_root / pid
+    status = dict(line.split(":", 1) for line in (process / "status").read_text().splitlines() if ":" in line)
+    require(status.get("Uid", "").split() == ["0"] * 4 and
+            (process / "cgroup").read_text().strip() == "0::/system.slice/" + MANAGEMENT_UNIT and
+            (process / "cmdline").read_bytes() ==
+            b"/usr/bin/python3\0-B\0" + os.fsencode(MANAGEMENT_SCRIPT) + b"\0serve\0",
+            "Connect management process is not the root-owned helper")
+    executable = process / "exe"
+    Linux.verify_unit_file(str(executable.resolve(strict=True)))
+    sockets = set()
+    for descriptor in (process / "fd").iterdir():
+        try:
+            target = os.readlink(descriptor)
+        except FileNotFoundError:
+            continue
+        if re.fullmatch(r"socket:\[[0-9]+\]", target):
+            sockets.add(target[8:-1])
+    listeners = []
+    for table in ("tcp", "tcp6"):
+        for line in (proc_root / "net" / table).read_text().splitlines()[1:]:
+            fields = line.split()
+            require(len(fields) >= 10, "Unrecognized kernel socket table")
+            if fields[3] == "0A" and int(fields[1].split(":")[1], 16) == 774:
+                listeners.append((table, fields[1], fields[7], fields[9]))
+    require(len(listeners) == 1 and listeners[0][:3] == ("tcp", "0100007F:0306", "0") and
+            listeners[0][3] in sockets, "Connect listener is not owned by the root management helper")
+    require(run(["systemctl", "show", MANAGEMENT_UNIT, "-p", "MainPID", "--value"]) == pid,
+            "Connect management process changed during admission")
+
+
+def trusted_admission(config, state_dir=STATE):
+    runtime = admitted(config, state_dir)
+    require_root_reserved_port()
+    require_trusted_listener()
+    require_root_reserved_port()
+    return runtime
+
+
+def admission_proof(config, state_dir=STATE):
+    with (Path(state_dir) / "control.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            trusted_admission(config, state_dir)
+            accepted = True
+        except Exception:
+            accepted = False
+        return dict(type="ConnectManagementAdmission", admitted=accepted,
+                    vmId=config["vmId"], generation=config["generation"])
+
+
 def activate(config, state_dir=STATE):
     # This independent oneshot survives the management page's own PartOf restart.
     with (Path(state_dir) / "control.lock").open("a") as lock:
@@ -63,7 +129,7 @@ def activate(config, state_dir=STATE):
 def credential(config, state_dir=STATE):
     with (Path(state_dir) / "control.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        runtime = admitted(config, state_dir)
+        runtime = trusted_admission(config, state_dir)
         path = Path(state_dir) / "connect-credential.json"
         if path.exists():
             saved = json.loads(path.read_text())
@@ -289,7 +355,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("serve", "activate", "credential"))
+    parser.add_argument("action", choices=("serve", "activate", "credential", "admission"))
     parser.add_argument("--vm-id")
     parser.add_argument("--generation", type=int)
     args = parser.parse_args()
@@ -297,11 +363,14 @@ def main():
     config = load_config(CONFIG)
     if args.action == "serve" and config["kind"] != "primary":
         return
-    if args.action == "credential":
+    if args.action in ("credential", "admission"):
         require(config["vmId"] == args.vm_id and config["generation"] == args.generation,
                 "Stale VM/generation")
-        require(not os.isatty(1), "Secret capture required")
-        print(credential(config))
+        if args.action == "credential":
+            require(not os.isatty(1), "Secret capture required")
+            print(credential(config))
+        else:
+            print(json.dumps(admission_proof(config)))
     elif args.action == "activate":
         activate(config)
     else:

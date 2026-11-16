@@ -1,4 +1,7 @@
+from contextlib import redirect_stdout
+import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -28,17 +31,91 @@ class ConnectTests(unittest.TestCase):
         self.runtime.save()
 
     def test_credential_is_root_state_only_stable_and_generation_bound(self):
-        token = connect.credential(self.config, self.root)
-        self.assertEqual(len(token), 64)
-        self.assertEqual(connect.credential(self.config, self.root), token)
-        self.assertEqual((self.root / "connect-credential.json").stat().st_mode & 0o777, 0o600)
-        changed = dict(self.config, generation=4)
-        with self.assertRaisesRegex(rt.Blocked, "different generation"):
-            connect.credential(changed, self.root)
-        self.runtime.s["phase"] = "Frozen"
-        self.runtime.save()
-        with self.assertRaisesRegex(rt.Blocked, "fenced"):
-            connect.credential(self.config, self.root)
+        with patch.object(connect, "require_trusted_listener"), patch.object(connect, "require_root_reserved_port"):
+            token = connect.credential(self.config, self.root)
+            self.assertEqual(len(token), 64)
+            self.assertEqual(connect.credential(self.config, self.root), token)
+            self.assertEqual((self.root / "connect-credential.json").stat().st_mode & 0o777, 0o600)
+            changed = dict(self.config, generation=4)
+            with self.assertRaisesRegex(rt.Blocked, "different generation"):
+                connect.credential(changed, self.root)
+            self.runtime.s["phase"] = "Frozen"
+            self.runtime.save()
+            with self.assertRaisesRegex(rt.Blocked, "fenced"):
+                connect.credential(self.config, self.root)
+
+    def test_credential_export_and_cached_proof_fail_closed_when_policy_is_unsafe(self):
+        with patch.object(connect, "require_trusted_listener"), patch.object(connect, "require_root_reserved_port"):
+            token = connect.credential(self.config, self.root)
+        original_read = Path.read_text
+        def read(path, *args, **kwargs):
+            if str(path) == "/proc/sys/net/ipv4/ip_unprivileged_port_start":
+                return "0"
+            return original_read(path, *args, **kwargs)
+        with patch.object(connect.Path, "read_text", read), patch.object(connect, "require_trusted_listener") as listener:
+            with self.assertRaisesRegex(rt.Blocked, "Root-reserved"):
+                connect.credential(self.config, self.root)
+            proof = connect.admission_proof(self.config, self.root)
+            self.assertFalse(proof["admitted"])
+            self.assertNotIn(token, json.dumps(proof))
+            listener.assert_not_called()
+            original_credential = connect.credential
+            output = io.StringIO()
+            with patch.object(connect, "load_config", return_value=self.config), \
+                    patch.object(connect.os, "geteuid", return_value=0), \
+                    patch.object(connect.os, "isatty", return_value=False), \
+                    patch.object(connect, "credential", side_effect=lambda config: original_credential(config, self.root)), \
+                    patch.object(sys, "argv", ["t3_connect.py", "credential", "--vm-id", "primary", "--generation", "3"]), \
+                    redirect_stdout(output), self.assertRaises(rt.Blocked):
+                connect.main()
+            self.assertEqual(output.getvalue(), "")
+        self.assertEqual(json.loads((self.root / "connect-credential.json").read_text())["token"], token)
+
+    def listener_fixture(self):
+        proc = self.root / "proc"
+        process = proc / "123"
+        (process / "fd").mkdir(parents=True)
+        (proc / "net").mkdir()
+        (process / "status").write_text("Uid:\t0\t0\t0\t0\n")
+        (process / "cgroup").write_text("0::/system.slice/minicloud-t3-connect.service\n")
+        (process / "cmdline").write_bytes(b"/usr/bin/python3\0-B\0" +
+                                         os.fsencode(connect.MANAGEMENT_SCRIPT) + b"\0serve\0")
+        (process / "exe").symlink_to(sys.executable)
+        (process / "fd" / "3").symlink_to("socket:[456]")
+        (proc / "net" / "tcp").write_text("header\n 0: 0100007F:0306 00000000:0000 0A 0:0 00:0 0 0 0 456\n")
+        (proc / "net" / "tcp6").write_text("header\n")
+        properties = "\n".join(("ActiveState=active", "MainPID=123", "User=root",
+            "FragmentPath=/etc/systemd/system/minicloud-t3-connect.service", "DropInPaths=",
+            "ControlGroup=/system.slice/minicloud-t3-connect.service"))
+        return proc, properties
+
+    def test_listener_admission_requires_root_service_process_and_its_actual_listening_socket(self):
+        proc, properties = self.listener_fixture()
+        with patch.object(connect, "run", side_effect=lambda argv: "123" if "--value" in argv else properties), \
+                patch.object(connect.Linux, "verify_unit_file"):
+            connect.require_trusted_listener(proc)
+            for path, replacement in (
+                    (proc / "123/status", "Uid:\t2000\t2000\t2000\t2000\n"),
+                    (proc / "123/cgroup", "0::/minicloudwork.slice/minicloud-t3.service\n"),
+                    (proc / "123/cmdline", "/usr/bin/python3\0-B\0/workspace/spoof.py\0serve\0"),
+                    (proc / "net/tcp", "header\n"),
+                    (proc / "net/tcp", "header\n 0: 00000000:0306 00000000:0000 0A 0:0 00:0 0 0 0 456\n"),
+                    (proc / "net/tcp", "header\n 0: 0100007F:0306 00000000:0000 0A 0:0 00:0 0 2000 0 456\n"),
+                    (proc / "net/tcp", "header\n 0: 0100007F:0306 00000000:0000 0A 0:0 00:0 0 0 0 999\n")):
+                before = path.read_text()
+                with self.subTest(path=path, replacement=replacement):
+                    path.write_text(replacement)
+                    with self.assertRaises(rt.Blocked):
+                        connect.require_trusted_listener(proc)
+                    path.write_text(before)
+
+    def test_missing_service_or_listener_blocks_credential_export_and_cached_admission(self):
+        with patch.object(connect, "run", return_value="ActiveState=inactive\nMainPID=0"), \
+                patch.object(connect, "require_root_reserved_port"):
+            with self.assertRaisesRegex(rt.Blocked, "Untrusted"):
+                connect.credential(self.config, self.root)
+            self.assertFalse(connect.admission_proof(self.config, self.root)["admitted"])
+        self.assertFalse((self.root / "connect-credential.json").exists())
 
     def test_management_listener_refuses_a_kernel_policy_that_allows_coding_to_bind_its_port(self):
         for value in ("0", "774", "1024"):

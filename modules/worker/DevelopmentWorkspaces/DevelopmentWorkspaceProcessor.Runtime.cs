@@ -54,10 +54,18 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 .Select(x => x.T3CredentialReference).SingleOrDefaultAsync(ct);
             if (connectCredentialRef is null)
             {
-                var connectCredential = await runtime.ReadConnectCredentialAsync(Target(vm), ct);
-                if (connectCredential.Length is < 32 or > 256 || connectCredential.Any(char.IsWhiteSpace))
-                    throw new InvalidOperationException("Connect management credential is not a bounded opaque bearer.");
-                connectCredentialRef = JsonSerializer.Serialize(await StoreAsync(vm, "connect", connectCredential, ct), Json);
+                try
+                {
+                    var connectCredential = await runtime.ReadConnectCredentialAsync(Target(vm), ct);
+                    if (connectCredential.Length is < 32 or > 256 || connectCredential.Any(char.IsWhiteSpace))
+                        throw new InvalidOperationException("Connect management credential is not a bounded opaque bearer.");
+                    connectCredentialRef = JsonSerializer.Serialize(await StoreAsync(vm, "connect", connectCredential, ct), Json);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                    // The optional receiver can disappear between admission and export; never hide usable T3.
+                    previews.Remove("connect");
+                }
             }
         }
         db.ChangeTracker.Clear();
@@ -150,6 +158,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 if (registration.Port != 774 || registration.SupervisedUnit is not null)
                     throw new InvalidOperationException("Connect is reserved for the managed primary enrollment service.");
                 if (vm.Kind != DevelopmentWorkspaceVmKinds.Primary || vm.DesiredState != "running") continue;
+                // HTTP readiness cannot attest who owns this privileged credential receiver.
+                if (!await runtime.CheckConnectAdmissionAsync(Target(vm), ct)) continue;
             }
             if (service == "t3" || !System.Text.RegularExpressions.Regex.IsMatch(service, "^[a-z][a-z0-9-]{0,19}$") ||
                 service != "connect" && (registration.Port is < 1024 or > 65535 or 3773))
