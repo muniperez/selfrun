@@ -39,18 +39,26 @@ class T3StateTests(unittest.TestCase):
         self.writer.execute("INSERT INTO orchestration_v2_effect_outbox VALUES ('thread-fixture','succeeded')")
         self.writer.commit()
 
-    def test_idle_project_only_global_cursor_is_not_compared_to_thread_http_cursor(self):
+    def test_http_application_cursor_includes_projects_but_thread_projection_does_not(self):
+        self.writer.execute("INSERT INTO orchestration_events VALUES (9,1,'project')")
         self.writer.execute("INSERT INTO orchestration_events VALUES (10,2,'project')")
         self.writer.execute("INSERT INTO orchestration_events VALUES (11,1,'thread')")
-        self.writer.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=10")
         self.writer.execute("INSERT INTO orchestration_v2_projection_metadata VALUES ('unrelated',999,0)")
         self.writer.commit()
         before = hashlib.sha256(self.db.read_bytes()).hexdigest()
-        result = rt.t3_idle_database(self.db, 0)
-        self.assertEqual((0, 10), (result["threadSequence"], result["globalV2Sequence"]))
+        result = rt.t3_idle_database(self.db, 10)
+        self.assertEqual((0, 10, 10), (result["threadSequence"], result["globalV2Sequence"],
+                                       result["applicationSequence"]))
         self.assertEqual(before, hashlib.sha256(self.db.read_bytes()).hexdigest())
+        with self.assertRaisesRegex(rt.Blocked, "application state changed"):
+            rt.t3_idle_database(self.db, 0)
+        self.writer.execute("INSERT INTO orchestration_events VALUES (12,1,'project')")
+        self.writer.commit()
+        self.assertEqual(12, rt.t3_idle_database(self.db, 12)["applicationSequence"])
+        with self.assertRaisesRegex(rt.Blocked, "application state changed"):
+            rt.t3_idle_database(self.db, 10)
 
-    def test_pinned_foundation_version_one_is_idle_only_when_all_state_is_empty(self):
+    def test_pinned_foundation_version_one_allows_projects_but_requires_empty_thread_state(self):
         tables = [name for name, in self.writer.execute(
             "SELECT name FROM sqlite_master WHERE type='table'") if name !=
             "orchestration_v2_projection_metadata"]
@@ -61,7 +69,18 @@ class T3StateTests(unittest.TestCase):
         result = rt.t3_idle_database(self.db, 0)
         self.assertTrue(result["emptyBootstrap"])
         self.assertEqual(1, result["schemaVersion"])
+        self.writer.execute("INSERT INTO orchestration_events VALUES (1,2,'project')")
+        self.writer.execute("INSERT INTO orchestration_events VALUES (2,1,'project')")
+        self.writer.commit()
+        result = rt.t3_idle_database(self.db, 2)
+        self.assertTrue(result["emptyBootstrap"])
+        self.assertEqual((0, 1, 2), (result["threadSequence"], result["globalV2Sequence"],
+                                     result["applicationSequence"]))
+        self.writer.execute("DELETE FROM orchestration_events")
+        self.writer.commit()
         for sql in ("INSERT INTO orchestration_events VALUES (1,1,'thread')",
+                    "INSERT INTO orchestration_events VALUES (1,2,'unknown')",
+                    "INSERT INTO orchestration_events VALUES (1,2,NULL)",
                     "INSERT INTO orchestration_v2_projection_runs VALUES ('old','completed')",
                     "INSERT INTO orchestration_v2_effect_outbox VALUES ('old','succeeded')"):
             with self.subTest(sql=sql):
@@ -78,17 +97,21 @@ class T3StateTests(unittest.TestCase):
         with self.assertRaisesRegex(rt.Blocked, "projection is unknown"):
             rt.t3_idle_database(self.db, 0)
 
-    def test_advanced_thread_cursor_or_global_projection_lag_blocks(self):
+    def test_stale_application_cursor_and_thread_projection_lag_independently_block(self):
         self.writer.execute("INSERT INTO orchestration_events VALUES (1,2,'thread')")
         self.writer.execute("INSERT INTO orchestration_events VALUES (2,2,'project')")
         self.writer.commit()
-        with self.assertRaisesRegex(rt.Blocked, "thread state changed"):
+        with self.assertRaisesRegex(rt.Blocked, "application state changed"):
             rt.t3_idle_database(self.db, 0)
-        with self.assertRaisesRegex(rt.Blocked, "global V2 cursor"):
-            rt.t3_idle_database(self.db, 1)
-        self.writer.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=2")
+        with self.assertRaisesRegex(rt.Blocked, "V2 thread cursor"):
+            rt.t3_idle_database(self.db, 2)
+        self.writer.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=1")
         self.writer.commit()
-        self.assertEqual(1, rt.t3_idle_database(self.db, 1)["threadSequence"])
+        self.assertEqual(1, rt.t3_idle_database(self.db, 2)["threadSequence"])
+        self.writer.execute("INSERT INTO orchestration_events VALUES (3,2,'thread')")
+        self.writer.commit()
+        with self.assertRaisesRegex(rt.Blocked, "V2 thread cursor"):
+            rt.t3_idle_database(self.db, 3)
 
     def test_active_pending_and_unknown_statuses_in_every_verified_work_table_block(self):
         for table, status in (

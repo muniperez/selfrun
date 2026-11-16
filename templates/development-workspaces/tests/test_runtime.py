@@ -80,7 +80,7 @@ class FakeLinux:
 
     def verify_t3_snapshot(self, sequence):
         self.events.append("t3-proof")
-        return dict(type="T3CommittedIdle", threadSequence=0, globalV2Sequence=0)
+        return dict(type="T3CommittedIdle", threadSequence=0, globalV2Sequence=0, applicationSequence=0)
 
     def freeze(self):
         self.events.append("freeze")
@@ -234,10 +234,10 @@ class RuntimeTests(unittest.TestCase):
         self.runtime = rt.Runtime(self.config, self.root / "state", self.adapter, self.g, clock=lambda: 1000)
         self.request("bootstrap")
 
-    def request(self, action, operation="operation-a", **kwargs):
+    def request(self, action, operation="operation-a", sequence=0, **kwargs):
         return self.runtime.handle(dict(vmId="vm-a", generation=3, operationId=operation,
                                         action=action, gatewayAdmissionsFenced=True,
-                                        unobservableToolsAbsent=True, t3SnapshotSequence=0, **kwargs))
+                                        unobservableToolsAbsent=True, t3SnapshotSequence=sequence, **kwargs))
 
     def assert_blocked(self, action, match=None, **kwargs):
         with self.assertRaises(rt.Blocked) as error:
@@ -269,6 +269,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(self.adapter.frozen)
         self.assertNotIn("unmount", self.adapter.events)
         self.assert_blocked("task-start", "fenced", taskId="new", argv=["true"])
+
+    def test_frozen_git_save_retry_uses_application_cursor_after_project_only_use(self):
+        (self.repo / "file.txt").write_text("uncommitted")
+
+        def proof(sequence):
+            rt.require(sequence is None or sequence == 5, "Stale application snapshot")
+            return dict(type="T3CommittedIdle", threadSequence=0, globalV2Sequence=5,
+                        applicationSequence=5)
+
+        with patch.object(self.adapter, "verify_t3_snapshot", side_effect=proof):
+            self.assert_blocked("git-save", "tracked modifications", sequence=5)
+            self.assertTrue(self.runtime.s["freezeCompleted"])
+            self.assert_blocked("git-save", "tracked modifications", sequence=5)
+        self.assertNotIn("unmount", self.adapter.events)
 
     def test_git_preflight_is_advisory_leaves_admissions_open_and_does_not_mutate_checkout(self):
         state = copy.deepcopy(self.runtime.s)

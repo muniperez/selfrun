@@ -60,11 +60,13 @@ internal sealed record WorkspaceRuntimeRejection(
     private static string CodeForStaticReason(string? reason) => reason switch
     {
         "T3 thread state changed after the HTTP idle snapshot" => "t3_snapshot_changed",
+        "T3 application state changed after the HTTP idle snapshot" => "t3_snapshot_changed",
         "Pinned T3 state database is unavailable" => "t3_database_unavailable",
         "Unknown pinned T3 database schema" => "t3_schema_unknown",
         "Unknown pinned T3 database columns/types" => "t3_columns_unknown",
         "Unknown pinned T3 projection table" => "t3_projection_unknown",
         "Pinned T3 thread projection is unknown or not caught up to the global V2 cursor" => "t3_projection_not_current",
+        "Pinned T3 thread projection is unknown or not caught up to the V2 thread cursor" => "t3_projection_not_current",
         "Pinned T3 read-only state inspection failed; keep compute running" => "t3_database_inspection_failed",
         "Frozen T3 state changed after quiescence" => "t3_frozen_state_changed",
         "T3 state database escapes the workspace" => "t3_database_not_owned",

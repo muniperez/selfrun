@@ -498,18 +498,22 @@ def t3_idle_database(path, expected_sequence):
             actual = {row[1]: row[2].upper() for row in connection.execute("PRAGMA table_info(" + name + ")")}
             require(all(actual.get(key) == value for key, value in columns.items()),
                     "Unknown pinned T3 database columns/types")
-        thread_sequence, global_sequence = connection.execute(
-            "SELECT COALESCE(MAX(CASE WHEN aggregate_kind='thread' THEN sequence END),0),"
-            "COALESCE(MAX(sequence),0) FROM orchestration_events WHERE application_event_version=2"
+        thread_sequence, global_sequence, application_sequence = connection.execute(
+            "SELECT COALESCE(MAX(CASE WHEN application_event_version=2 AND aggregate_kind='thread' "
+            "THEN sequence END),0),"
+            "COALESCE(MAX(CASE WHEN application_event_version=2 THEN sequence END),0),"
+            "COALESCE(MAX(CASE WHEN aggregate_kind='project' OR "
+            "(application_event_version=2 AND aggregate_kind='thread') THEN sequence END),0) "
+            "FROM orchestration_events"
         ).fetchone()
-        require(expected_sequence is None or thread_sequence == expected_sequence,
-                "T3 thread state changed after the HTTP idle snapshot")
+        require(expected_sequence is None or application_sequence == expected_sequence,
+                "T3 application state changed after the HTTP idle snapshot")
         metadata = connection.execute(
             "SELECT schema_version,last_sequence FROM orchestration_v2_projection_metadata "
             "WHERE projection_name='thread-projections'").fetchall()
         empty_bootstrap = False
-        if metadata == [(1, 0)] and global_sequence == 0:
-            # The pinned Foundation migration seeds version 1 before any V2 event exists.
+        if metadata == [(1, 0)] and thread_sequence == 0:
+            # Project writes do not advance the pinned Foundation thread projection.
             projections = [name for name, in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' "
                 "AND name GLOB 'orchestration_v2_projection_*'") if
@@ -517,12 +521,13 @@ def t3_idle_database(path, expected_sequence):
             require(all(re.fullmatch(r"orchestration_v2_projection_[a-z_]+", name)
                         for name in projections), "Unknown pinned T3 projection table")
             empty_bootstrap = (
-                connection.execute("SELECT COUNT(*) FROM orchestration_events").fetchone() == (0,) and
+                connection.execute("SELECT COUNT(*) FROM orchestration_events "
+                                   "WHERE aggregate_kind IS NULL OR aggregate_kind!='project'").fetchone() == (0,) and
                 connection.execute("SELECT COUNT(*) FROM orchestration_v2_effect_outbox").fetchone() == (0,) and
                 all(connection.execute("SELECT COUNT(*) FROM " + name).fetchone() == (0,)
                     for name in projections))
-        require(metadata == [(2, global_sequence)] or empty_bootstrap,
-                "Pinned T3 thread projection is unknown or not caught up to the global V2 cursor")
+        require(metadata == [(2, thread_sequence)] or empty_bootstrap,
+                "Pinned T3 thread projection is unknown or not caught up to the V2 thread cursor")
         counts = {}
         for table, allowed in tables.items():
             count = 0
@@ -533,6 +538,7 @@ def t3_idle_database(path, expected_sequence):
         return dict(type="T3CommittedIdle", sourceCommit="24e77473ecf41bc1f7142529c7911c1c1aae1d76",
                     schemaVersion=metadata[0][0], emptyBootstrap=empty_bootstrap,
                     threadSequence=thread_sequence, globalV2Sequence=global_sequence,
+                    applicationSequence=application_sequence,
                     projectionName="thread-projections", rowsChecked=counts)
     except sqlite3.Error as error:
         raise Blocked("Pinned T3 read-only state inspection failed; keep compute running") from error
@@ -1037,7 +1043,7 @@ class Runtime:
                 self.diagnostic_stage = "verify-fence"
                 self.adapter.verify_fence()
                 previous = self.s["frozenT3State"]
-                expected = previous["threadSequence"] if previous else None
+                expected = previous["applicationSequence"] if previous else None
                 self.diagnostic_stage = "t3-final-snapshot"
                 require(self.adapter.verify_t3_snapshot(expected) == previous,
                         "Frozen T3 state changed after quiescence")

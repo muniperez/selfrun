@@ -272,17 +272,19 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("none")]
-    [InlineData("resume")]
-    [InlineData("status")]
-    public async Task RuntimeRejectionIsDurableBeforeFreezeRecoveryEvenWhenRecoveryFails(string failureAction)
+    [InlineData("none", "T3 thread state changed after the HTTP idle snapshot")]
+    [InlineData("none", "T3 application state changed after the HTTP idle snapshot")]
+    [InlineData("resume", "T3 application state changed after the HTTP idle snapshot")]
+    [InlineData("status", "T3 application state changed after the HTTP idle snapshot")]
+    public async Task RuntimeRejectionIsDurableBeforeFreezeRecoveryEvenWhenRecoveryFails(
+        string failureAction, string reason)
     {
         var recoveryFails = failureAction != "none";
         var (_, vm, operation) = await SeedStop("quiesce", ephemeral: true);
         runtime.Phase = "Frozen";
         runtime.Rejections["git-save"] = JsonSerializer.SerializeToElement(new
         {
-            ok = false, state = "Blocked", reason = "T3 thread state changed after the HTTP idle snapshot",
+            ok = false, state = "Blocked", reason,
             diagnostic = new { stage = "t3-snapshot", failureType = "blocked", credential = "private bearer" },
             password = "private bearer", path = "/private/credential"
         }, Json);
