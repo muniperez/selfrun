@@ -2,6 +2,7 @@
 // Native qualification controller; never logs credentials or terminal payloads.
 import fs from "node:fs";
 import readline from "node:readline";
+import { sourceControlEvidence } from "./source-control-probe.mjs";
 
 const origin = "http://127.0.0.1:3773";
 const terminal = { threadId: "native-qualification", terminalId: "native-terminal" };
@@ -150,6 +151,15 @@ async function handle(request) {
       actualProjectMutationAdvancedApplicationCursor: request.createProject === true, ...afterProject };
   }
   if (request.operation === "snapshot") return await snapshot();
+  if (request.operation === "source-control") {
+    const discovery = await rpc(socket, "server.discoverSourceControl", {});
+    const evidence = sourceControlEvidence(discovery, request.versions);
+    await rpc(socket, "terminal.write", { ...terminal,
+      data: "if gh --version >/dev/null 2>&1 && glab --version >/dev/null 2>&1; then "
+        + "printf 'source-control-clis-ok\\n' > /workspace/artifacts/native-source-control-clis; fi\n",
+    });
+    return evidence;
+  }
   if (request.operation === "open") {
     const result = await rpc(socket, "terminal.open", { ...terminal, cwd: "/workspace", cols: 100, rows: 32 });
     requireTrue(result.status === "running" && Number.isInteger(result.pid));

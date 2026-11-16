@@ -16,6 +16,8 @@ failure handling. This is not a real ext4, systemd-freezer, age, or live restore
 
 `image/manifest.lock.json` pins the Ubuntu cloud-image **serial and SHA256**, immutable
 Ubuntu apt snapshot, Node 24.11.1, .NET SDK 10.0.100, Codex 0.169.0 (npm integrity lock),
+GitHub CLI **2.83.1** and GitLab CLI **1.74.0** (official linux/amd64 release
+archives, SHA256-verified before copying only their executables to `/usr/local/bin`),
 T3 0.1.9 / commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`
 and Chromium shared libraries. The default supplies the coding environment, not an
 application stack: it installs no application database server/client, creates no
@@ -73,6 +75,89 @@ Only root key-based SSH is admitted, with no agent forwarding. Provider firewall
 rules **must** deny lateral VM/sibling/control-plane-private access and public service
 ports; this filesystem runtime cannot prove network isolation. Never forward a worker SSH
 agent/key or provider/control-plane credentials into coding processes.
+
+### GitHub and GitLab source control
+
+The T3 service explicitly uses `PATH=/usr/local/bin:/usr/bin:/bin` and
+`HOME=/workspace/home`; its terminals inherit access to `gh` and `glab` as UID 2000.
+No provider sign-in or Git credential setup runs during image build/bootstrap.
+No provider tokens, account configurations, device codes, or test-repository data
+belong in the image, manifest, native reports, CI output, or screenshots. Generalize
+after qualification and before capture; never capture a workspace after user login.
+
+On a fresh workspace, open **T3 → Settings → Source control** and refresh discovery.
+Both providers should be available and signed out, not missing/unknown. From its terminal,
+run `gh --version` and `glab --version`. Use the provider's sign-in action if offered by
+the pinned T3 configuration. Otherwise an operator can provide a sanctioned,
+**non-recorded interactive management session** running the CLI as the workspace user.
+T3 persists terminal output, so do **not** display browser/device codes or enter credentials
+in its recorded terminal. From the approved session, the operator launches one of:
+
+```sh
+setpriv --reuid=2000 --regid=2000 --clear-groups env -i \
+  HOME=/workspace/home PATH=/usr/local/bin:/usr/bin:/bin \
+  gh auth login --hostname github.com --git-protocol https --web
+setpriv --reuid=2000 --regid=2000 --clear-groups env -i \
+  HOME=/workspace/home PATH=/usr/local/bin:/usr/bin:/bin \
+  glab auth login --hostname gitlab.com
+```
+
+The user completes the flow for their own account; never sign in as root or use an
+operator/provider account. Follow the displayed browser/device instructions on your own browser; do not capture
+the terminal/session or paste tokens into commands, chat, logs, or shell history.
+Use only user-authorized accounts and minimal access to a designated test repository.
+For headless GitLab, follow `glab auth login --help` for the supported interactive
+browser/token choices; enter any token only into its hidden prompt, never an argument.
+Refresh Source control and confirm the account/authentication state. Without printing
+credentials, verify read access with `gh repo view OWNER/TEST-REPO` and
+`glab repo view GROUP/TEST-REPO`. Do not push/create repositories as a qualification step.
+
+When GitHub asks whether to authenticate **Git**, decline. Do not run
+`gh auth setup-git`, change global `credential.helper`, or replace Minicloud's staged
+repository-bound Git credentials. CLI sign-in is separate from the root-managed
+`git-credential.py` helper, short-lived token expiry, configured repository allowlist,
+push authorization, and Git-save gates; none are broadened by installing these tools.
+CLI credentials can grant additional access as that user, so sign-in requires explicit
+user authorization. The headless image has no assumed OS keyring: CLI credentials may
+be stored in private files under `/workspace/home/.config/{gh,glab-cli}`. Treat retained
+home/backup data as sensitive; do not copy it to another user/workspace or image.
+Ephemeral workspaces do not retain these sign-ins after deletion.
+
+The native qualification now requires missing-binary/version checks as coding UID 2000
+using the actual running T3 service PATH, execution of both version commands through a
+real T3 terminal, and the authenticated `server.discoverSourceControl` RPC reporting both
+providers available and unauthenticated with matching versions. This is the RPC behind
+the pinned Settings page: upstream commit above, `packages/contracts/src/rpc.ts`,
+`packages/source-control-{github,gitlab}/src/server/*SourceControlProvider.ts`, and
+`apps/web/src/components/settings/SourceControlSettings.tsx`. It never performs sign-in,
+supplies provider credentials, or reports raw auth output. A missing provider blocks the
+native candidate. Source tests use synthetic archives/RPC fixtures, not a hosted login.
+**The updated image/native probes and browser/account/repository checks have not been
+run in a sanctioned hosted environment.** `sourceControlUserSignInQualified` remains
+false; source tests are not evidence of provider authentication or browser qualification.
+
+### Rolling out to existing workspaces
+
+Build, qualify, generalize, power off, capture/register a **new immutable image revision**;
+retain the previous image for rollback. Update the approved image selection for new
+workspaces. Changing a catalog/default image alone does not update an existing VM.
+Do not install packages ad hoc on retained workspaces or change the manifest in place.
+
+For each retained primary, use the authorized lifecycle to fence admissions, finish
+active work, quiesce, obtain/validate the clean-stop receipt, and verify a restorable
+encrypted off-host backup before deleting old compute. Record the volume identity,
+filesystem UUID, owner claim, generation, and old image. Prove old compute is absent
+and exclusive volume ownership before attaching that **same retained volume** to a
+replacement VM on the new image. Re-enroll with a new generation and
+`initializeOwner:false`; never format/reinitialize the volume or clone over its files.
+Preserve all of `/workspace`, including repos (tracked/untracked/ignored files), T3 state,
+home/CLI sign-ins, transcripts, config, artifacts, and user application data. Verify
+the bootstrap receipt, versions, Source control, repository access and retained data
+before reopening admissions. This is an operator procedure, not an automatic migration;
+use the previous image and the same exclusive-ownership/generation fences for rollback.
+For ephemeral workspaces, first complete the normal verified Git-save or explicitly
+authorized discard flow; then create a new workspace on the new image. Root-disk,
+ignored files and local credentials are not retained by that flow.
 
 ## Bootstrap and volume contract (parent worker)
 

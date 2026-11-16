@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import urllib.request
 
 HERE = Path(__file__).resolve().parent
@@ -57,6 +58,29 @@ def install_systemd_units(source_directory, destination_directory):
         destination.chmod(0o644)
 
 
+def install_source_control_clis(lock, cache):
+    for name in ("gh", "glab"):
+        item = lock[name]
+        artifact = cache / (name + ".tar.gz")
+        download(item, artifact)
+        destination = Path("/usr/local/bin") / name
+        # Copy only the pinned executable; never extract archive paths or follow links.
+        with tarfile.open(artifact, "r:gz") as archive:
+            members = [member for member in archive.getmembers() if member.name == item["executable"]]
+            require(len(members) == 1 and members[0].isfile() and
+                    0 < members[0].size <= 256 * 1024**2, "Unexpected source-control CLI archive layout")
+            require(not destination.exists() and not destination.is_symlink(),
+                    "Source-control CLI destination already exists")
+            with archive.extractfile(members[0]) as source, destination.open("xb") as output:
+                shutil.copyfileobj(source, output)
+        os.chown(destination, 0, 0)
+        destination.chmod(0o755)
+        output = run([str(destination), "--version"],
+                     env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(cache), "LC_ALL": "C"})
+        require(re.search(r"(?:^|\s)v?" + re.escape(item["version"]) + r"(?:$|[\s,])", output),
+                "Wrong source-control CLI version")
+
+
 def install(source_revision, builder):
     require(re.fullmatch(r"[a-f0-9]{40}", source_revision), "Exact source commit required")
     require(builder, "Builder provenance identity required")
@@ -97,6 +121,7 @@ def install(source_revision, builder):
     t3 = list(Path("/opt/minicloud-t3").rglob("t3"))
     require(len(t3) == 1 and t3[0].is_file(), "Unexpected T3 release archive layout")
     Path("/usr/local/bin/t3").symlink_to(t3[0])
+    install_source_control_clis(lock, cache)
     monitor = Path("/opt/minicloud-t3") / lock["t3"]["resourceMonitor"]["path"]
     with monitor.open("rb") as binary:
         require(hashlib.file_digest(binary, "sha256").hexdigest() ==
