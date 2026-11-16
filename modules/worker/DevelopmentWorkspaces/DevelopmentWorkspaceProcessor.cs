@@ -41,6 +41,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         public long? T3SnapshotSequence { get; set; }
         public WorkspaceRuntimeRejection? LastRuntimeRejection { get; set; }
         public WorkspaceRuntimeRejection? LastRuntimeRecoveryRejection { get; set; }
+        public DevelopmentWorkspaceGitRecoverySource? GitRecovery { get; set; }
     }
 
     public async Task<bool> ProcessNextAsync(CancellationToken ct)
@@ -79,9 +80,14 @@ public sealed partial class DevelopmentWorkspaceProcessor(
             {
                 await lifecycle.UpdateClaimedOperationAsync(operation.Id, token, (op, vm, _) =>
                 {
+                    var recoveryError = error is DevelopmentWorkspaceException { Code:
+                        "workspace_git_recovery_source_changed" or "workspace_git_recovery_source_unavailable" } recovery
+                        ? recovery.Code : null;
                     vm.Phase = "blocked"; vm.GatewayReady = false;
-                    vm.ErrorCode = "workspace_reconciliation_required";
-                    vm.ErrorMessage = "Provider/runtime state is unconfirmed. Resources remain reserved and billed; inspect the operation before retrying.";
+                    vm.ErrorCode = recoveryError ?? "workspace_reconciliation_required";
+                    vm.ErrorMessage = recoveryError is null
+                        ? "Provider/runtime state is unconfirmed. Resources remain reserved and billed; inspect the operation before retrying."
+                        : "The saved Git remote source changed or could not be verified. Recovery remains reserved and billed; no original-base fallback was performed.";
                     if (operationEvidence?.LastRuntimeRejection is { } rejection)
                         vm.ErrorMessage += " Last recorded rejection: " + rejection.Summary;
                     op.ErrorCode = vm.ErrorCode; op.ErrorMessage = vm.ErrorMessage;
@@ -146,9 +152,18 @@ public sealed partial class DevelopmentWorkspaceProcessor(
     private async Task StartStepAsync(IDevelopmentWorkspaceProvider cloud, DevelopmentWorkspace workspace,
         DevelopmentWorkspaceVm vm, DevelopmentWorkspaceOperation op, Evidence evidence, CancellationToken ct)
     {
+        if (evidence.GitRecovery is { } source &&
+            (vm.Kind != "ephemeral" || source.Repository != vm.Repository || source.Commit != vm.BaseCommit
+             || source.Generation != vm.Generation - 1
+             || vm.WorkBranch != $"minicloud/{vm.Id}/g{vm.Generation}"
+             || source.RemoteRef != $"refs/heads/minicloud/{vm.Id}/g{source.Generation}"))
+            throw new InvalidOperationException("Pinned saved Git source differs from the generation being started.");
+        if (op.Step == "git-recovery-pending" && evidence.GitRecovery is null)
+            throw new InvalidOperationException("Saved Git recovery evidence is missing.");
         switch (op.Step)
         {
             case "pending":
+            case "git-recovery-pending":
                 var image = await cloud.GetWorkspaceImageAsync(op.ProviderImage, ct);
                 if (image is null || image.Status != "available" || image.Type != "snapshot" || image.Architecture != "x86" || image.OsFlavor != "ubuntu")
                     throw new InvalidOperationException("The exact qualified Ubuntu amd64 workspace snapshot is unavailable.");
@@ -261,6 +276,11 @@ public sealed partial class DevelopmentWorkspaceProcessor(
                 await SaveAsync(op, evidence, "bootstrap", (_, fresh, parent) =>
                 { parent.VolumeFilesystemUuid = uuid; fresh.Phase = "bootstrapping"; }, ct); break;
             case "bootstrap":
+                if (evidence.GitRecovery is { } recovery)
+                {
+                    await RefreshRepositoryCredentialAsync(vm, ct, force: true);
+                    await runtime.VerifyGitRecoverySourceAsync(Target(vm), recovery, ct);
+                }
                 if (vm.EnrolledAt is not null)
                 {
                     var recovered = Result(await runtime.CallAsync(Target(vm), op.Id, "status", null, ct));
@@ -270,7 +290,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
                     break;
                 }
                 var identity = JsonSerializer.Deserialize<WorkspaceBootstrapSecret>(await SecretAsync(vm.SshBootstrapSecretRef!, ct), Json)!;
-                await RefreshRepositoryCredentialAsync(vm, ct, force: true);
+                if (evidence.GitRecovery is null) await RefreshRepositoryCredentialAsync(vm, ct, force: true);
                 var endpoint = new Uri(new Uri(options.Value.ApiBaseUrl.TrimEnd('/') + "/"), "api/development-workspaces/runtime/enroll");
                 if (endpoint.Scheme != "https") throw new InvalidOperationException("VM enrollment requires public authenticated HTTPS.");
                 Result(await runtime.BootstrapAsync(Target(vm), RuntimeConfig(workspace, vm, evidence), new

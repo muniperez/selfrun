@@ -95,6 +95,29 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal(0, _handler.Requests.Last().Body.GetProperty("generation").GetInt64());
     }
 
+    [Theory]
+    [InlineData("--base-commit", "a1183a9d0b7697213e3f13af040dd2a66ae3241a")]
+    [InlineData("--base-ref", "refs/heads/main")]
+    [InlineData("--repository", "https://git.example/another.git")]
+    public async Task VmStartCannotSilentlyOverrideVerifiedSavedSource(string option, string value)
+    {
+        Assert.Equal(CliExitCodes.ValidationError, await Run("vm-start", "workspace", "--organization", "org",
+            "--vm", "ephemeral", "--generation", "3", option, value));
+        Assert.DoesNotContain(_handler.Requests, x => x.Method == "POST");
+    }
+
+    [Fact]
+    public async Task VmStartPrintsServerSelectedSavedCommitWithoutSendingAnOriginalBaseOverride()
+    {
+        _handler.RecoveryCommit = "b89a48cd27b1b7a423c5c9749316017ad3192eeb";
+        Assert.Equal(CliExitCodes.Success, await Run("vm-start", "workspace", "--organization", "org",
+            "--vm", "ephemeral", "--generation", "3"));
+        Assert.Single(_handler.Requests.Last().Body.EnumerateObject());
+        Assert.Equal(3, _handler.Requests.Last().Body.GetProperty("generation").GetInt64());
+        Assert.Contains(_handler.RecoveryCommit, string.Join('\n', _console.Messages));
+        Assert.DoesNotContain("a1183a9d0b7697213e3f13af040dd2a66ae3241a", string.Join('\n', _console.Messages));
+    }
+
     [Fact]
     public async Task DiscardRequiresGenerationAndSeparateIrreversibleDataAcknowledgements()
     {
@@ -157,15 +180,21 @@ public sealed class CliWorkspaceTests : IDisposable
     private sealed class Handler : HttpMessageHandler
     {
         public List<Captured> Requests = [];
+        public string? RecoveryCommit { get; set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.PathAndQuery;
             var json = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(ct);
             Requests.Add(new(request.Method.Method, path, JsonDocument.Parse(json).RootElement.Clone()));
+            var vms = RecoveryCommit is not null && path.Contains("/vms/ephemeral/start?")
+                ? new object[] { new { id = "ephemeral", kind = "ephemeral", generation = 4,
+                    phase = "provisioning", repository = "https://git.example/repo.git",
+                    baseRef = "refs/heads/main", baseCommit = RecoveryCommit, workBranch = "minicloud/ephemeral/g4" } }
+                : Vms;
             object body = path == "/api/me" ? CliApiFixtures.Me("org", "other")
                 : path.Contains("/tasks/") ? new { vmId = "ephemeral", taskId = "build", generation = 3, status = "active", expiresAt = DateTimeOffset.UtcNow.AddMinutes(5) }
                 : path.EndsWith("/vms?organizationId=org") ? Vms
-                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms = Vms };
+                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms };
             return new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
         }
         private static readonly object[] Vms = [

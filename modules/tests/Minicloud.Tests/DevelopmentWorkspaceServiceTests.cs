@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -671,6 +673,148 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         Assert.False(await Service().CanDeleteComputeAsync(vm, stop, default));
         vm.GitSavedGeneration = 1; vm.LastHeartbeatAt = null;
         Assert.False(await Service().CanDeleteComputeAsync(vm, stop, default));
+    }
+
+    private const string OriginalGitBase = "a1183a9d0b7697213e3f13af040dd2a66ae3241a";
+    private const string PublishedGitHead = "b89a48cd27b1b7a423c5c9749316017ad3192eeb";
+
+    private async Task<(string Workspace, string Vm, string Stop)> StoppedSavedEphemeral()
+    {
+        var workspace = await Service().LaunchEphemeralAsync((await Workspace()).Id, "org",
+            Launch() with { BaseCommit = OriginalGitBase }, "actor", default);
+        var vm = workspace.Vms.Single(x => x.Kind == "ephemeral");
+        await Ready(vm.Id);
+        await Service().StopVmAsync(workspace.Id, "org", vm.Id, 1, default);
+        var stop = (await Service().ClaimOperationAsync("worker", default))!;
+        await Service().UpdateClaimedOperationAsync(stop.Id, stop.LeaseToken!, (operation, current, _) =>
+        {
+            var receipt = JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1, type = "GitSaved", kind = "ephemeral", vmId = current.Id,
+                generation = current.Generation, operationId = operation.Id, receiptId = new string('a', 64),
+                repositories = new[] { new { path = "/workspace/repos/project", origin = current.Repository,
+                    baseSha = current.BaseCommit, branch = current.WorkBranch, headSha = PublishedGitHead,
+                    remoteRef = "refs/heads/" + current.WorkBranch, remoteSha = PublishedGitHead } }
+            });
+            current.Phase = "stopped"; current.DesiredState = "stopped"; current.ComputeReserved = false;
+            current.QuiescedGeneration = current.Generation; current.QuiescedOperationId = operation.Id;
+            current.QuiescedAt = clock.GetUtcNow(); current.QuiescenceReceipt = receipt;
+            current.GitSavedGeneration = current.Generation; current.GitSavedOperationId = operation.Id;
+            current.GitSavedAt = current.QuiescedAt; current.GitSaveReceipt = receipt;
+            current.FinalHead = PublishedGitHead; current.VerifiedRemoteCommit = PublishedGitHead;
+            current.VerifiedRemoteRef = "refs/heads/" + current.WorkBranch; current.GitStatus = "saved";
+            operation.Status = "completed"; operation.Step = "stopped";
+            operation.LeaseToken = null; operation.LeaseOwner = null; operation.LeaseExpiresAt = null;
+            operation.ProviderEvidenceJson = JsonSerializer.Serialize(new
+                { receiptId = new string('a', 64), repositoryCredentialRevoked = true, deleteCommitted = true });
+        }, default);
+        return (workspace.Id, vm.Id, stop.Id);
+    }
+
+    [Fact]
+    public async Task RecreateCapturesVerifiedSavedHeadBeforeResettingPreviousGeneration()
+    {
+        var (workspaceId, vmId, stopId) = await StoppedSavedEphemeral();
+        var workspace = await Service().StartVmAsync(workspaceId, "org", vmId, 1, default);
+        var vm = workspace.Vms.Single(x => x.Id == vmId);
+        Assert.Equal(PublishedGitHead, vm.BaseCommit);
+        Assert.Equal("refs/heads/main", vm.BaseRef);
+        Assert.Equal($"minicloud/{vmId}/g2", vm.WorkBranch);
+        Assert.Equal(2, vm.Generation);
+        Assert.Null(vm.FinalHead);
+        Assert.Null(vm.GitSaveReceipt);
+        var operation = await db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync(x => x.Id == vm.OperationId);
+        Assert.Equal("git-recovery-pending", operation.Step);
+        var source = JsonNode.Parse(operation.ProviderEvidenceJson!)!["gitRecovery"]!;
+        Assert.Equal(PublishedGitHead, source["commit"]!.GetValue<string>());
+        Assert.Equal($"refs/heads/minicloud/{vmId}/g1", source["remoteRef"]!.GetValue<string>());
+        Assert.Equal(1, source["generation"]!.GetValue<long>());
+        Assert.Equal(stopId, source["operationId"]!.GetValue<string>());
+        Assert.Equal(vm.Repository, source["repository"]!.GetValue<string>());
+        var stopped = await db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync(x => x.Id == stopId);
+        Assert.Equal("completed", stopped.Status);
+    }
+
+    [Theory]
+    [InlineData("unsaved")]
+    [InlineData("missing-receipt")]
+    [InlineData("unverified")]
+    [InlineData("generation")]
+    [InlineData("operation")]
+    [InlineData("old-save")]
+    [InlineData("remote-retarget")]
+    [InlineData("default-branch")]
+    [InlineData("repository-retarget")]
+    [InlineData("receipt-head")]
+    [InlineData("receipt-generation")]
+    [InlineData("receipt-source")]
+    [InlineData("malformed-receipt")]
+    [InlineData("unfinished-stop")]
+    public async Task RecreateRejectsUnverifiedOrRetargetedSavedSourceWithoutErasingEvidence(string failure)
+    {
+        var (workspaceId, vmId, stopId) = await StoppedSavedEphemeral();
+        var vm = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vmId);
+        var stop = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == stopId);
+        var receipt = JsonNode.Parse(vm.GitSaveReceipt!)!;
+        var repository = receipt["repositories"]![0]!;
+        switch (failure)
+        {
+            case "unsaved": vm.GitStatus = "awaiting_save"; break;
+            case "missing-receipt": vm.GitSaveReceipt = null; break;
+            case "unverified": vm.VerifiedRemoteCommit = new('d', 40); break;
+            case "generation": vm.GitSavedGeneration = 0; break;
+            case "operation": vm.GitSavedOperationId = "other-operation"; break;
+            case "old-save": vm.GitSavedAt = vm.QuiescedAt!.Value.AddSeconds(-1); break;
+            case "remote-retarget": vm.VerifiedRemoteRef = "refs/heads/another"; break;
+            case "default-branch":
+                vm.WorkBranch = "main"; vm.VerifiedRemoteRef = "refs/heads/main";
+                repository["branch"] = "main"; repository["remoteRef"] = "refs/heads/main"; break;
+            case "repository-retarget":
+                vm.Repository = "https://git.example.test/team/other.git";
+                policy.Repositories.Add(new() { OrganizationId = "org", Repository = vm.Repository,
+                    AllowedBaseRefs = ["refs/heads/main"], AllowPush = true }); break;
+            case "receipt-head": repository["headSha"] = new string('d', 40); break;
+            case "receipt-generation": receipt["generation"] = 0; break;
+            case "receipt-source": repository["remoteRef"] = "refs/heads/another"; break;
+            case "malformed-receipt": receipt = new JsonObject(); break;
+            case "unfinished-stop": stop.Status = "pending"; break;
+        }
+        if (failure != "missing-receipt")
+            vm.GitSaveReceipt = vm.QuiescenceReceipt = receipt.ToJsonString();
+        var evidence = vm.GitSaveReceipt;
+        await db.SaveChangesAsync();
+
+        await AssertCode("workspace_git_recovery_invalid",
+            () => Service().StartVmAsync(workspaceId, "org", vmId, 1, default));
+
+        vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == vmId);
+        Assert.Equal(1, vm.Generation);
+        Assert.Equal(OriginalGitBase, vm.BaseCommit);
+        Assert.Equal(evidence, vm.GitSaveReceipt);
+        Assert.Equal(PublishedGitHead, vm.FinalHead);
+        Assert.False(vm.ComputeReserved);
+        Assert.Equal(2, await db.DevelopmentWorkspaceOperations.CountAsync());
+    }
+
+    [Fact]
+    public async Task RecreateAfterExplicitVerifiedDiscardKeepsSelectedBaseWithoutInventingSavedHead()
+    {
+        var (workspaceId, vmId, stopId) = await StoppedSavedEphemeral();
+        var vm = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vmId);
+        var receipt = JsonNode.Parse(vm.QuiescenceReceipt!)!;
+        receipt["type"] = "DiscardAuthorized";
+        vm.QuiescenceReceipt = receipt.ToJsonString();
+        vm.GitSaveReceipt = null; vm.GitSavedAt = null; vm.GitSavedGeneration = null; vm.GitSavedOperationId = null;
+        vm.FinalHead = null; vm.VerifiedRemoteCommit = null; vm.VerifiedRemoteRef = null;
+        vm.GitStatus = "awaiting_save";
+        vm.DiscardGeneration = 1; vm.DiscardOperationId = stopId;
+        vm.DiscardRequestedBy = "actor"; vm.DiscardRequestedAt = clock.GetUtcNow();
+        await db.SaveChangesAsync();
+
+        var workspace = await Service().StartVmAsync(workspaceId, "org", vmId, 1, default);
+        vm = workspace.Vms.Single(x => x.Id == vmId);
+        Assert.Equal(OriginalGitBase, vm.BaseCommit);
+        Assert.Equal(2, vm.Generation);
     }
 
     [Fact]

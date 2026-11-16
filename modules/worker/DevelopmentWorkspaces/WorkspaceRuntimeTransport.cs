@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Minicloud.Common.Models;
+using Minicloud.Common.Services;
 using Minicloud.Worker.Ssh;
 using Renci.SshNet;
 
@@ -19,6 +21,8 @@ public interface IWorkspaceRuntimeTransport
     Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct);
     Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct) =>
         throw new NotSupportedException("Repository credential readback is required for safe retirement.");
+    Task VerifyGitRecoverySourceAsync(WorkspaceRuntimeTarget target, DevelopmentWorkspaceGitRecoverySource source, CancellationToken ct) =>
+        throw new NotSupportedException("Saved Git source verification is required before recovery bootstrap.");
 }
 
 public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> options) : IWorkspaceRuntimeTransport
@@ -91,6 +95,45 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
             Upload(sftp, "/run/minicloud-workspace/enrollment.json", enrollment);
         }
         return Parse(await ExecuteAsync(target, "python3 -B /opt/minicloud-workspace/bootstrap.py bootstrap", ct));
+    }
+
+    public async Task VerifyGitRecoverySourceAsync(WorkspaceRuntimeTarget target, DevelopmentWorkspaceGitRecoverySource source, CancellationToken ct)
+    {
+        var result = Parse(await ExecuteAsync(target, GitRecoveryCommand(target, source), ct));
+        if (!result.TryGetProperty("verified", out var verified) || verified.ValueKind != JsonValueKind.True)
+        {
+            var changed = result.TryGetProperty("reasonCode", out var reason) && reason.GetString() == "saved_source_ref_changed";
+            throw new DevelopmentWorkspaceException(changed
+                ? "workspace_git_recovery_source_changed" : "workspace_git_recovery_source_unavailable",
+                "The saved Git source could not be verified; recovery does not fall back to the original base.");
+        }
+    }
+
+    internal static string GitRecoveryCommand(WorkspaceRuntimeTarget target, DevelopmentWorkspaceGitRecoverySource source)
+    {
+        if (target.Kind != "ephemeral" || source.Generation < 1 || source.Generation != target.Generation - 1
+            || source.RemoteRef != $"refs/heads/minicloud/{target.VmId}/g{source.Generation}"
+            || source.Commit.Length != 40 || !source.Commit.All(Uri.IsHexDigit)
+            || !Uri.TryCreate(source.Repository, UriKind.Absolute, out var uri) || uri.Scheme != "https"
+            || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidOperationException("Saved Git source is not bound to the prior generation and exact repository.");
+        var payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(source, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        const string program = """
+            import importlib.util,json,sys
+            source=json.load(sys.stdin)
+            spec=importlib.util.spec_from_file_location("saved_source","/opt/minicloud-workspace/runtime.py")
+            runtime=importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runtime)
+            try:
+                origin=runtime.canonical_remote(source["repository"])
+                actual=runtime.Git().command("/","ls-remote","--refs","--",origin,source["remoteRef"])
+                verified=actual==source["commit"]+"\t"+source["remoteRef"]
+                result={"verified":verified,"reasonCode":None if verified else "saved_source_ref_changed"}
+            except runtime.Blocked:
+                result={"verified":False,"reasonCode":"saved_source_unavailable"}
+            print(json.dumps(result))
+            """;
+        return $"printf '%s' '{payload}' | base64 -d | python3 -B -c '{program}'";
     }
 
     public async Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct)

@@ -303,12 +303,14 @@ public sealed partial class DevelopmentWorkspaceService(
         if (vm.Phase != "stopped" || vm.ComputeReserved || vm.ProviderServerId is not null
             || vm.ProviderFirewallId is not null || vm.ProviderIpId is not null)
             throw Conflict("workspace_transition_in_progress", "Previous generation must finish reconciliation before starting.");
+        var gitRecovery = await SavedGitSourceAsync(vm, ct);
         var imageId = vm.NextImageId ?? vm.ImageId;
         var profile = vm.NextProfile ?? vm.Profile;
         var selection = await SelectAsync(workspace.OrganizationId, imageId, profile, vm.NextPlanId ?? vm.PlanId, ct);
         EnsurePlacement(workspace, selection.Plan);
         await CheckAdmissionAsync(workspace, selection.Profile.ComputeHourlyRate, ct);
         ApplySelection(vm, selection, imageId, profile);
+        if (gitRecovery is not null) vm.BaseCommit = gitRecovery.Commit;
         vm.NextImageId = null; vm.NextProfile = null; vm.NextPlanId = null;
         vm.Generation++; vm.ComputeReserved = true; vm.DesiredState = "running"; vm.Phase = "provisioning";
         vm.StartAfterStop = false; vm.StartRequestedAt = Now;
@@ -332,7 +334,7 @@ public sealed partial class DevelopmentWorkspaceService(
         {
             selection.Plan.ProvisioningLockedAt = Now; selection.Plan.Revision++; selection.Plan.UpdatedAt = Now;
         }
-        AddOperation(workspace, vm, "start");
+        AddOperation(workspace, vm, "start", gitRecovery);
         Touch(vm);
     }
 
@@ -372,14 +374,19 @@ public sealed partial class DevelopmentWorkspaceService(
         Touch(vm);
     }
 
-    private void AddOperation(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string kind)
+    private void AddOperation(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string kind,
+        DevelopmentWorkspaceGitRecoverySource? gitRecovery = null)
     {
         var operation = new DevelopmentWorkspaceOperation
         {
             Id = ids.NewId("workspaceop"), WorkspaceId = workspace.Id, VmId = vm.Id, Generation = vm.Generation,
             Kind = kind, PlanId = vm.PlanId, ProviderAccountId = vm.ProviderAccountId, Region = vm.Region, Sku = vm.Sku,
+            // Older workers must not discard unknown recovery evidence and bootstrap the wrong source.
+            Step = gitRecovery is null ? "pending" : "git-recovery-pending",
             ImageId = vm.ImageId, ProviderImage = vm.ProviderImage, ImageManifestSha256 = vm.ImageManifestSha256,
-            ComputeHourlyRate = vm.ComputeHourlyRate, CreatedAt = Now, UpdatedAt = Now
+            ComputeHourlyRate = vm.ComputeHourlyRate, CreatedAt = Now, UpdatedAt = Now,
+            ProviderEvidenceJson = gitRecovery is null ? null
+                : JsonSerializer.Serialize(new { gitRecovery }, new JsonSerializerOptions(JsonSerializerDefaults.Web))
         };
         db.DevelopmentWorkspaceOperations.Add(operation); vm.OperationId = operation.Id;
         if (kind == "start") vm.AllocationOperationId = operation.Id;

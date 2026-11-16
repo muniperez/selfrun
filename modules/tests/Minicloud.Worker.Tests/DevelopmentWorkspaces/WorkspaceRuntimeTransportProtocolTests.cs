@@ -1,11 +1,25 @@
 using System.Buffers;
 using System.Text.Json;
+using Minicloud.Common.Models;
 using Minicloud.Worker.DevelopmentWorkspaces;
 
 namespace Minicloud.Worker.Tests.DevelopmentWorkspaces;
 
 public sealed class WorkspaceRuntimeTransportProtocolTests
 {
+    [Theory]
+    [InlineData("refs/heads/main", 6)]
+    [InlineData("refs/heads/master", 6)]
+    [InlineData("refs/heads/minicloud/foreign/g6", 6)]
+    [InlineData("refs/heads/minicloud/vm-current/g5", 5)]
+    public void SavedSourceCannotUseDefaultForeignOrStaleGenerationRef(string remoteRef, long generation)
+    {
+        var target = new WorkspaceRuntimeTarget("vm-current", 7, "ephemeral", "203.0.113.8", "");
+        var source = new DevelopmentWorkspaceGitRecoverySource("https://github.com/fixture/repo.git",
+            new('b', 40), remoteRef, generation, "prior-stop", new('a', 64));
+        Assert.Throws<InvalidOperationException>(() => WorkspaceRuntimeTransport.GitRecoveryCommand(target, source));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("first line\nsecond line\r\n'$(synthetic-only)'")]

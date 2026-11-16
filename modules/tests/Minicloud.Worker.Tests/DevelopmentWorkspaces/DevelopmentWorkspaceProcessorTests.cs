@@ -159,6 +159,94 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SavedHeadRecoverySurvivesCheckpointAndRequiresFreshRemoteProofBeforeBootstrap(bool remoteChanged)
+    {
+        var (vm, operation) = await SeedRecovery("git-recovery-pending");
+        vm.BaseCommit = "b89a48cd27b1b7a423c5c9749316017ad3192eeb";
+        var recovery = new DevelopmentWorkspaceGitRecoverySource(vm.Repository!, vm.BaseCommit,
+            $"refs/heads/minicloud/{vm.Id}/g1", 1, "prior-stop", new('a', 64));
+        operation.ProviderEvidenceJson = JsonSerializer.Serialize(new { gitRecovery = recovery }, Json);
+        await db.SaveChangesAsync();
+
+        await Hop("bootstrap-secret");
+
+        var checkpoint = await CurrentOperation(operation.Id);
+        var retained = JsonSerializer.Deserialize<DevelopmentWorkspaceGitRecoverySource>(
+            JsonDocument.Parse(checkpoint.ProviderEvidenceJson!).RootElement.GetProperty("gitRecovery"), Json);
+        Assert.Equal(recovery, retained);
+        var tracked = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == operation.Id);
+        tracked.Step = "bootstrap";
+        vm = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        vm.EnrollmentTokenExpiresAt = clock.GetUtcNow().AddMinutes(30);
+        runtime.RecoverySourceChanged = remoteChanged;
+        await db.SaveChangesAsync();
+
+        await Hop("bootstrap");
+
+        Assert.Equal(recovery, Assert.Single(runtime.VerifiedRecoverySources));
+        if (remoteChanged)
+        {
+            Assert.Null(runtime.BootstrapConfiguration);
+            Assert.Equal("workspace_git_recovery_source_changed", (await CurrentOperation(operation.Id)).ErrorCode);
+        }
+        else
+            Assert.Equal(recovery.Commit, runtime.BootstrapConfiguration!.Value
+                .GetProperty("repositories")[0].GetProperty("baseSha").GetString());
+        Assert.Equal("blocked", (await CurrentVm(vm.Id)).Phase);
+        Assert.Equal(0, cloud.Deletes);
+    }
+
+    [Theory]
+    [InlineData("repository")]
+    [InlineData("commit")]
+    [InlineData("ref")]
+    [InlineData("generation")]
+    [InlineData("branch")]
+    public async Task RetargetedRecoveryEvidenceCannotReachBootstrap(string mismatch)
+    {
+        var (vm, operation) = await SeedRecovery("bootstrap");
+        vm.BaseCommit = new('c', 40);
+        if (mismatch == "branch") vm.WorkBranch = "main";
+        var recovery = new DevelopmentWorkspaceGitRecoverySource(vm.Repository!, vm.BaseCommit,
+            $"refs/heads/minicloud/{vm.Id}/g1", 1, "prior-stop", new('a', 64));
+        recovery = mismatch switch
+        {
+            "repository" => recovery with { Repository = "https://github.com/fixture-owner/another.git" },
+            "commit" => recovery with { Commit = new('d', 40) },
+            "ref" => recovery with { RemoteRef = "refs/heads/main" },
+            "generation" => recovery with { Generation = 0 },
+            _ => recovery
+        };
+        operation.ProviderEvidenceJson = JsonSerializer.Serialize(new { gitRecovery = recovery }, Json);
+        await db.SaveChangesAsync();
+
+        await Hop("bootstrap");
+
+        Assert.Empty(runtime.VerifiedRecoverySources);
+        Assert.Null(runtime.BootstrapConfiguration);
+        Assert.Equal("blocked", (await CurrentVm(vm.Id)).Phase);
+        Assert.Equal(0, cloud.Deletes);
+    }
+
+    [Fact]
+    public async Task RecoveryStartCannotAdvanceWhenItsPinnedSourceEvidenceIsMissing()
+    {
+        var (vm, operation) = await SeedRecovery("git-recovery-pending");
+        await db.SaveChangesAsync();
+
+        await Hop("git-recovery-pending");
+
+        Assert.Equal("blocked", (await CurrentVm(vm.Id)).Phase);
+        Assert.Null(runtime.BootstrapConfiguration);
+        Assert.Empty(runtime.VerifiedRecoverySources);
+        Assert.Equal(0, cloud.Deletes);
+        Assert.Equal("pending", (await CurrentOperation(operation.Id)).Status);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task ReconciliationLogsSafeCauseWithoutExceptionOrProviderBody(bool providerFailure)
@@ -718,6 +806,24 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    private async Task<(DevelopmentWorkspaceVm Vm, DevelopmentWorkspaceOperation Operation)> SeedRecovery(string step)
+    {
+        var (workspace, vm, previous) = await Seed(step, ephemeral: true);
+        previous.Status = "completed";
+        var operation = new DevelopmentWorkspaceOperation
+        {
+            Id = "recovery-start", WorkspaceId = workspace.Id, VmId = vm.Id, Generation = 2,
+            Kind = "start", Step = step, PlanId = previous.PlanId, ProviderAccountId = previous.ProviderAccountId,
+            Region = previous.Region, Sku = previous.Sku, ImageId = previous.ImageId,
+            ProviderImage = previous.ProviderImage, ImageManifestSha256 = previous.ImageManifestSha256,
+            ComputeHourlyRate = previous.ComputeHourlyRate, CreatedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow()
+        };
+        db.DevelopmentWorkspaceOperations.Add(operation);
+        vm.Generation = 2; vm.SshHostKeyGeneration = 2; vm.WorkBranch = $"minicloud/{vm.Id}/g2";
+        vm.OperationId = vm.AllocationOperationId = operation.Id;
+        return (vm, operation);
+    }
+
     private async Task<(DevelopmentWorkspace Workspace, DevelopmentWorkspaceVm Vm, DevelopmentWorkspaceOperation Operation)> Seed(string step, bool ephemeral = false)
     {
         var workspace = await lifecycle.CreateAsync(new("org", "Worker fixture", "image", "standard", "plan", 20, "create"), "actor", default);
@@ -835,6 +941,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public bool FailRead { get; set; }
         public bool FailReceipt { get; set; }
         public JsonElement? BootstrapConfiguration { get; private set; }
+        public bool RecoverySourceChanged { get; set; }
+        public List<DevelopmentWorkspaceGitRecoverySource> VerifiedRecoverySources { get; } = [];
         public Dictionary<string, JsonElement> Rejections { get; } = [];
         public Action<string>? BeforeAction { get; set; }
         public List<string> Actions { get; } = [];
@@ -882,6 +990,13 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         {
             BootstrapConfiguration = JsonSerializer.SerializeToElement(config, Json);
             throw new InvalidOperationException("Bootstrap was not expected in this stage.");
+        }
+        public Task VerifyGitRecoverySourceAsync(WorkspaceRuntimeTarget target, DevelopmentWorkspaceGitRecoverySource source, CancellationToken ct)
+        {
+            VerifiedRecoverySources.Add(source);
+            if (RecoverySourceChanged) throw new DevelopmentWorkspaceException(
+                "workspace_git_recovery_source_changed", "Synthetic changed saved source.");
+            return Task.CompletedTask;
         }
         public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct)
         {

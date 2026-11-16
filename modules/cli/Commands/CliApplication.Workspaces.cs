@@ -90,6 +90,12 @@ public sealed partial class CliApplication
         {
             var vm = Required("--vm");
             var operation = action["vm-".Length..];
+            if (operation == "start")
+            {
+                if (args.Any(x => x is "--base-commit" or "--base-ref" or "--repository"))
+                    throw WorkspaceUsage("vm-start uses the recorded verified saved Git source; repository/base overrides are not supported.");
+                _console.WriteLine("Stopped Git-only VMs recover their verified saved remote HEAD, not the original base. No commit or push is performed.");
+            }
             object body;
             if (operation == "discard")
             {

@@ -326,6 +326,7 @@ public sealed partial class CliApplication
                 _console.WriteLine("  minicloud workspaces vm-discard <workspace-id> --vm <id> --generation <n> --discard-local-data --acknowledge-ignored-data-loss");
                 _console.WriteLine("  minicloud workspaces <task-renew|task-complete> <workspace-id> --vm <id> --generation <n> --task <id> [--cancelled]");
                 _console.WriteLine("All commands accept --organization <id>; required with multiple organizations. Ephemeral roots are Git-only; ignored/untracked data is not retained. Stop-all enumerates VMs and retains independent Git-save guards.");
+                _console.WriteLine("vm-start recreates a normally saved Git-only VM at its verified saved commit/ref on a new generation branch; invalid saved evidence or a changed remote blocks recovery. Explicitly discarded generations reuse their selected base. No commit/push is automatic.");
                 _console.WriteLine("Provisioning requires operator-enabled image/profile/rate policy. Stopped compute does not stop retained-volume charges.");
                 return CliExitCodes.Success;
             case "plans":
