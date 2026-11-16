@@ -84,22 +84,53 @@ public sealed class GatewayRelayTests
         Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
     }
 
-    [Fact]
-    public async Task WebSocketForwardsProtocolTwoTicketAndDisconnectsOnRevocation()
+    [Theory]
+    [InlineData("/ws?wsTicket=ticket-only&orchestrationProtocol=2")]
+    [InlineData("/ws?orchestrationProtocol=2")]
+    public async Task WebSocketUsesUpstreamBearerWithOptionalTicketAndDisconnectsOnRevocation(string path)
     {
         await using var fixture = await Fixture.StartAsync();
-        using var socket = await fixture.ConnectAsync("/ws?wsTicket=ticket-only&orchestrationProtocol=2");
+        using var socket = await fixture.ConnectAsync(path);
         await socket.SendAsync("terminal-input"u8.ToArray(), WebSocketMessageType.Text, true, CancellationToken.None);
         var bytes = new byte[128];
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var result = await socket.ReceiveAsync(bytes, timeout.Token);
         Assert.Equal("terminal-input", Encoding.UTF8.GetString(bytes, 0, result.Count));
-        Assert.Contains("wsTicket=ticket-only", fixture.LastWebSocketQuery);
-        Assert.Contains("orchestrationProtocol=2", fixture.LastWebSocketQuery);
+        Assert.Equal(path[path.IndexOf('?')..], fixture.LastWebSocketQuery);
+        Assert.Equal("Bearer secret-t3", fixture.LastWebSocketAuthorization);
+        Assert.True(string.IsNullOrEmpty(fixture.LastWebSocketCookie));
         fixture.Control.Target = null;
         var close = await socket.ReceiveAsync(bytes, timeout.Token);
         Assert.Equal(WebSocketMessageType.Close, close.MessageType);
         Assert.Equal(WebSocketCloseStatus.PolicyViolation, close.CloseStatus);
+    }
+
+    [Theory]
+    [InlineData("/other?orchestrationProtocol=2")]
+    [InlineData("/ws")]
+    [InlineData("/ws?orchestrationProtocol=1")]
+    [InlineData("/ws?orchestrationProtocol=2&orchestrationProtocol=2")]
+    [InlineData("/ws?orchestrationProtocol=2&wsTicket=")]
+    [InlineData("/ws?orchestrationProtocol=2&wsTicket=one&wsTicket=two")]
+    public async Task WebSocketStillRejectsInvalidProtocolRoutesAndSuppliedTickets(string path)
+    {
+        await using var fixture = await Fixture.StartAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.ConnectAsync(path));
+        Assert.Null(fixture.LastWebSocketQuery);
+    }
+
+    [Theory]
+    [InlineData(false, null, false)]
+    [InlineData(true, "https://evil.example", false)]
+    [InlineData(true, null, true)]
+    public async Task TicketlessWebSocketStillRequiresAuthorizedSameOriginSession(
+        bool authenticated, string? origin, bool revoked)
+    {
+        await using var fixture = await Fixture.StartAsync();
+        if (revoked) fixture.Control.Target = null;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.ConnectAsync("/ws?orchestrationProtocol=2", authenticated, origin));
+        Assert.Null(fixture.LastWebSocketQuery);
     }
 
     [Fact]
@@ -329,6 +360,8 @@ public sealed class GatewayRelayTests
         public string Host { get; private set; } = "";
         public string Cookie => $"{WorkspaceGatewayRelay.CookieName}={Session}";
         public string? LastWebSocketQuery { get; private set; }
+        public string? LastWebSocketAuthorization { get; private set; }
+        public string? LastWebSocketCookie { get; private set; }
         public HttpClient Client { get; private set; } = null!;
         public FakeControl Control { get; private set; } = null!;
         public TaskCompletionSource AssetStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -367,6 +400,8 @@ public sealed class GatewayRelayTests
                 if (context.WebSockets.IsWebSocketRequest)
                 {
                     fixture.LastWebSocketQuery = context.Request.QueryString.Value;
+                    fixture.LastWebSocketAuthorization = context.Request.Headers.Authorization;
+                    fixture.LastWebSocketCookie = context.Request.Headers.Cookie;
                     using var socket = await context.WebSockets.AcceptWebSocketAsync();
                     var buffer = new byte[4096];
                     try
@@ -407,10 +442,14 @@ public sealed class GatewayRelayTests
             return Client.SendAsync(request);
         }
 
-        public Task<WebSocket> ConnectAsync(string path)
+        public Task<WebSocket> ConnectAsync(string path, bool authenticated = true, string? origin = null)
         {
             var client = gateway.CreateWebSocketClient();
-            client.ConfigureRequest = request => request.Headers["Cookie"] = Cookie;
+            client.ConfigureRequest = request =>
+            {
+                if (authenticated) request.Headers["Cookie"] = Cookie;
+                request.Headers["Origin"] = origin ?? "https://" + Host;
+            };
             return client.ConnectAsync(new Uri("wss://" + Host + path), CancellationToken.None);
         }
 

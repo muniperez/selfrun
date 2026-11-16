@@ -99,8 +99,9 @@ public sealed class WorkspaceGatewayRelay : IDisposable
                 if (!HttpMethods.IsGet(context.Request.Method))
                 { context.Response.StatusCode = 400; return; }
                 if (target!.Bearer is not null && (context.Request.Path != "/ws" ||
-                    context.Request.Query["orchestrationProtocol"] != "2" || context.Request.Query["wsTicket"].Count != 1 ||
-                    string.IsNullOrEmpty(context.Request.Query["wsTicket"])))
+                    context.Request.Query["orchestrationProtocol"] != "2" ||
+                    (context.Request.Query.ContainsKey("wsTicket") &&
+                     (context.Request.Query["wsTicket"].Count != 1 || string.IsNullOrEmpty(context.Request.Query["wsTicket"])))))
                 { context.Response.StatusCode = 400; return; }
                 await RelayWebSocketAsync(context, target!, host, session, lifetime);
             }
