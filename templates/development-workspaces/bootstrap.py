@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-from runtime import Blocked, atomic_json, canonical_remote, load_config, require, run
+from runtime import Blocked, Linux, atomic_json, canonical_remote, load_config, require, run
 
 
 GIT_CREDENTIAL_HELPER = "/opt/minicloud-workspace/git-credential.py"
@@ -76,7 +76,7 @@ def bootstrap(config_path, enrollment_path, state_dir):
     ready = call(request)
     configure_user_git(c)
     if c.get("startServices", True):
-        run(["systemctl", "start", "minicloud-postgres.service", "minicloud-t3.service"])
+        Linux(c).start_services()
         database_ready = False
         for attempt in range(30):
             try:

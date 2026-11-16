@@ -295,7 +295,8 @@ MainPID exits block; preview ancestry never qualifies an idle terminal shell.
 
 Preview units use the same queued main-only graceful stop, controlled thaw, mandatory
 refreeze and post-stop inventory as T3. Failed stops/refreezes cannot yield a quiescence
-receipt. Authorized resume also restarts registered preview units.
+receipt. Fresh bootstrap and authorized resume start registered preview units through
+the same validated service-start path; registration alone does not activate a unit.
 
 Registration and a healthy HTTP probe are **not** proof that a general application has no
 in-process work. The operator must explicitly qualify each application: the initial test

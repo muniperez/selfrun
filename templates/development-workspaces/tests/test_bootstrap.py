@@ -94,7 +94,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotEqual(credentials("https://elsewhere.invalid/example/selected.git").returncode, 0)
         self.assertNotIn("fixture-only", (home / ".gitconfig").read_text())
 
-    def execute(self, opener):
+    def execute(self, opener, process_effect=None):
         def load(path):
             return self.envelope if Path(path) == self.enrollment else self.config
         read_text = Path.read_text
@@ -109,13 +109,56 @@ class BootstrapTests(unittest.TestCase):
             return read_bytes(path)
         with patch.object(bootstrap, "load_config", side_effect=load), \
              patch.object(bootstrap, "call", return_value={"type": "BootstrapReady"}), \
-             patch.object(bootstrap, "run") as process, \
+             patch.object(bootstrap, "run", side_effect=process_effect) as process, \
              patch.object(Path, "read_text", read), \
              patch.object(Path, "read_bytes", read_raw), \
              patch.object(bootstrap.urllib.request, "build_opener", return_value=opener):
             result = bootstrap.bootstrap(self.root / "config.json", self.enrollment, self.root / "state")
-        self.assertTrue(all(call.args[0][0] == "systemctl" for call in process.call_args_list))
+        if self.config.get("startServices") is False:
+            self.assertTrue(all(call.args[0][0] == "systemctl" for call in process.call_args_list))
         return result
+
+    def preview_startup(self, safe=True):
+        self.config.update(workspace=str(self.root), uid=2000, gid=2000,
+            infrastructureUnits=["minicloud-t3.service", "minicloud-preview-canary.service"],
+            stopUnits=["minicloud-t3.service", "minicloud-postgres.service",
+                       "minicloud-preview-canary.service"])
+        self.config.pop("startServices")
+        started = []
+        def process(argv, **kwargs):
+            if argv[:2] == ["systemctl", "start"]:
+                started.extend(argv[2:])
+            if argv[:2] == ["systemctl", "show"]:
+                return ("LoadState=loaded\nFragmentPath=/etc/systemd/system/minicloud-preview-canary.service\n"
+                        "DropInPaths=\nKillMode=" + ("process" if safe else "control-group") +
+                        "\nSendSIGKILL=no\nSlice=minicloudwork.slice")
+            return ""
+        class Opener:
+            def open(inner, request, timeout):
+                body = (b'{"serverVersion":"0.1.9","orchestrationProtocolVersion":2}'
+                        if isinstance(request, str) else b"{}")
+                return contextlib.nullcontext(SimpleNamespace(status=200, read=lambda n: body))
+        return started, process, Opener()
+
+    def test_fresh_bootstrap_starts_registered_preview_without_resume(self):
+        started, process, opener = self.preview_startup()
+        with patch.object(runtime, "run", side_effect=process), \
+                patch.object(runtime.Linux, "verify_unit_file") as unit_file:
+            result = self.execute(opener, process)
+        self.assertEqual("EnrollmentAccepted", result["type"])
+        self.assertIn("minicloud-preview-canary.service", started)
+        self.assertIn("minicloud-postgres.service", started)
+        self.assertIn("minicloud-t3.service", started)
+        unit_file.assert_called_once_with("/etc/systemd/system/minicloud-preview-canary.service")
+
+    def test_unsafe_preview_blocks_fresh_bootstrap_before_services_or_enrollment(self):
+        started, process, opener = self.preview_startup(safe=False)
+        with patch.object(runtime, "run", side_effect=process), \
+                patch.object(runtime.Linux, "verify_unit_file"):
+            with self.assertRaisesRegex(runtime.Blocked, "KillMode=process"):
+                self.execute(opener, process)
+        self.assertEqual(["minicloud-workspace.service"], started)
+        self.assertFalse((self.root / "state/enrollment-intent.json").exists())
 
     def test_enrollment_bound_once_with_no_toolchain_install_or_token_persistence(self):
         response = SimpleNamespace(status=200, read=lambda n: b"{}")
