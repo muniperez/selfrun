@@ -39,10 +39,11 @@ public sealed class CliProviderImportTests
             var path = Path.Combine(directory.FullName, "manifest.json");
             var handler = new Handler(); var console = new Console();
             var application = Application(directory.FullName, handler, console);
-            await File.WriteAllTextAsync(path, """{"organizationId":"org","providerAccountId":"provider_a","appBindings":[{"appId":"app_a","planName":"Small"}],"retainedVolumeIds":[]}""");
+            await File.WriteAllTextAsync(path, """{"organizationId":"org","providerAccountId":"provider_a","appBindings":[{"appId":"app_a","planName":"Small","allowFailedDeletion":true}],"retainedVolumeIds":[]}""");
             Assert.Equal(CliExitCodes.Success, await application.RunAsync(["providers", "import-legacy", "--manifest", path], default));
             Assert.Equal("/api/providers/provider_a/import-legacy", handler.Path);
             Assert.Equal("app_a", handler.Body!.RootElement.GetProperty("appBindings")[0].GetProperty("appId").GetString());
+            Assert.True(handler.Body.RootElement.GetProperty("appBindings")[0].GetProperty("allowFailedDeletion").GetBoolean());
             handler.Path = null;
             await File.WriteAllTextAsync(path, """{"organizationId":"org","providerAccountId":"provider_a","appBindings":[]}""");
             Assert.Equal(CliExitCodes.ValidationError, await application.RunAsync(["providers", "import-legacy", "--manifest", path], default));

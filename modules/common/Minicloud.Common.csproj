@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\redaction\Minicloud.Redaction.csproj" />
     <ProjectReference Include="..\contracts\Minicloud.Contracts.csproj" />
   </ItemGroup>
 </Project>

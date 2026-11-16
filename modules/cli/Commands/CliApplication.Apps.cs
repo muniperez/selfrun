@@ -37,6 +37,10 @@ public sealed partial class CliApplication
         foreach (var app in apps)
         {
             _console.WriteLine($"{app.Slug}\t{app.Id}\t{app.Environments.Count} environments");
+            if (app.DeletionStatus is not null)
+                _console.WriteLine($"  Application deletion: {app.DeletionStatus}{DeletionErrorSuffix(app.DeletionError)}");
+            foreach (var environment in app.Environments.Where(x => x.DeletionStatus is not null))
+                _console.WriteLine($"  Environment '{environment.Name}' deletion: {environment.DeletionStatus}{DeletionErrorSuffix(environment.DeletionError)}");
         }
 
         return CliExitCodes.Success;
@@ -245,8 +249,11 @@ public sealed partial class CliApplication
     private static void EnsureApplicationActive(ApplicationResponse application)
     {
         if (application.DeletionStatus is not null)
-            throw new CliCommandException(CliExitCodes.ValidationError, $"Application '{application.Name}' is being deleted or requires deletion recovery.");
+            throw new CliCommandException(CliExitCodes.ValidationError, $"Application '{application.Name}' is being deleted or requires deletion recovery.{DeletionErrorSuffix(application.DeletionError)}");
     }
+
+    private static string DeletionErrorSuffix(string? error) =>
+        string.IsNullOrWhiteSpace(error) ? string.Empty : $" {error}";
 
     private Task<IReadOnlyList<ApplicationResponse>> GetApplicationChoicesAsync(string organizationId, CancellationToken ct) =>
         _apiClient.GetApplicationsAsync(organizationId, ct);
@@ -262,7 +269,7 @@ public sealed partial class CliApplication
         {
             var active = environments.Where(x => x.DeletionStatus is null).ToArray();
             if (active.Length == 0)
-                throw new CliCommandException(CliExitCodes.ValidationError, $"Environment '{environments[0].Name}' is being deleted or failed deletion and is blocked until cleanup succeeds.");
+                throw new CliCommandException(CliExitCodes.ValidationError, $"Environment '{environments[0].Name}' is being deleted or failed deletion and is blocked until cleanup succeeds.{DeletionErrorSuffix(environments[0].DeletionError)}");
             if (active.Length != 1)
                 throw new CliCommandException(CliExitCodes.ValidationError, $"Choose an environment with --environment <name>. Available: {string.Join(", ", active.Select(x => x.Name))}");
             selected = active[0];
@@ -272,13 +279,13 @@ public sealed partial class CliApplication
             throw new CliCommandException(CliExitCodes.ValidationError, $"Unknown environment '{name}'. Available: {string.Join(", ", environments.Select(x => x.Name))}");
         if (selected.DeletionStatus is not null)
             throw new CliCommandException(CliExitCodes.ValidationError, selected.DeletionStatus == "failed"
-                ? $"Environment '{selected.Name}' failed deletion and is blocked until cleanup succeeds."
-                : $"Environment '{selected.Name}' is being deleted.");
+                ? $"Environment '{selected.Name}' failed deletion and is blocked until cleanup succeeds.{DeletionErrorSuffix(selected.DeletionError)}"
+                : $"Environment '{selected.Name}' is being deleted.{DeletionErrorSuffix(selected.DeletionError)}");
         var environment = await _apiClient.GetEnvironmentAsync(selected.Id, ct);
         if (environment.ApplicationId != application.Id)
             throw new CliCommandException(CliExitCodes.ValidationError, "The selected environment does not belong to this application.");
         if (environment.DeletionStatus is not null)
-            throw new CliCommandException(CliExitCodes.ValidationError, $"Environment '{selected.Name}' is being deleted or requires deletion recovery.");
+            throw new CliCommandException(CliExitCodes.ValidationError, $"Environment '{selected.Name}' is being deleted or requires deletion recovery.{DeletionErrorSuffix(environment.DeletionError)}");
         return environment with { Name = application.Name };
     }
 

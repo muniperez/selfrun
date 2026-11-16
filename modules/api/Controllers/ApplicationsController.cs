@@ -874,26 +874,43 @@ public sealed class ApplicationsController : ControllerBase
             .Select(x => x.AppId)
             .Distinct()
             .ToListAsync(ct);
-        var deployments = await db.Deployments.AsNoTracking().Where(x => envIds.Contains(x.AppId))
+        var deployments = await db.Deployments.AsNoTracking()
+            .Where(x => envIds.Contains(x.AppId) &&
+                (x.ProviderAccountId != null ||
+                 x.Status == DeploymentStatus.Queued || x.Status == DeploymentStatus.WaitingForBuild ||
+                 x.Status == DeploymentStatus.Provisioning || x.Status == DeploymentStatus.Deploying ||
+                 x.Status == DeploymentStatus.Verifying ||
+                 x.ProviderCreationAttempted || x.SshRegistrationState == "unknown" ||
+                 x.SshRegistrationState == "registering" ||
+                 (x.SshSnapshotTakenAt != null &&
+                  (x.Status == DeploymentStatus.Dispatching ||
+                   x.Status == DeploymentStatus.Queued || x.Status == DeploymentStatus.WaitingForBuild ||
+                   x.Status == DeploymentStatus.Provisioning || x.Status == DeploymentStatus.Deploying ||
+                   x.Status == DeploymentStatus.Verifying))))
             .Select(x => new
             {
-                x.AppId, x.ProviderAccountId, x.ProviderCreationAttempted, x.SshRegistrationState,
-                x.SshSnapshotTakenAt, x.Status
-            }).ToListAsync(ct);
+                x.AppId,
+                Placement = x.ProviderAccountId != null ||
+                    x.Status == DeploymentStatus.Queued || x.Status == DeploymentStatus.WaitingForBuild ||
+                    x.Status == DeploymentStatus.Provisioning || x.Status == DeploymentStatus.Deploying ||
+                    x.Status == DeploymentStatus.Verifying,
+                SshSelection = x.ProviderCreationAttempted || x.SshRegistrationState == "unknown" ||
+                    x.SshRegistrationState == "registering" ||
+                    (x.SshSnapshotTakenAt != null &&
+                     (x.Status == DeploymentStatus.Dispatching ||
+                      x.Status == DeploymentStatus.Queued || x.Status == DeploymentStatus.WaitingForBuild ||
+                      x.Status == DeploymentStatus.Provisioning || x.Status == DeploymentStatus.Deploying ||
+                      x.Status == DeploymentStatus.Verifying))
+            })
+            .Distinct()
+            .ToListAsync(ct);
 
         var placement = serverEnvIds
             .Concat(runtimeEnvIds)
-            .Concat(deployments.Where(x => x.ProviderAccountId is not null ||
-                x.Status == DeploymentStatus.Queued || x.Status == DeploymentStatus.WaitingForBuild ||
-                x.Status == DeploymentStatus.Provisioning || x.Status == DeploymentStatus.Deploying ||
-                x.Status == DeploymentStatus.Verifying).Select(x => x.AppId))
+            .Concat(deployments.Where(x => x.Placement).Select(x => x.AppId))
             .ToHashSet(StringComparer.Ordinal);
         var sshSelection = serverEnvIds.Concat(runtimeEnvIds)
-            .Concat(deployments.Where(x => x.ProviderCreationAttempted || x.SshRegistrationState is "unknown" or "registering" ||
-                (x.SshSnapshotTakenAt is not null &&
-                 (x.Status is DeploymentStatus.Queued or DeploymentStatus.WaitingForBuild or DeploymentStatus.Dispatching or
-                  DeploymentStatus.Provisioning or DeploymentStatus.Deploying or DeploymentStatus.Verifying)))
-                .Select(x => x.AppId))
+            .Concat(deployments.Where(x => x.SshSelection).Select(x => x.AppId))
             .ToHashSet(StringComparer.Ordinal);
         return (placement, sshSelection);
     }

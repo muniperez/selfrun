@@ -7,11 +7,53 @@ using Minicloud.Worker.Pipeline;
 using Minicloud.Common.Providers;
 using Minicloud.Common.Providers.Dns;
 using Minicloud.Common.Providers.Models;
+using Minicloud.Common.Services;
 
 namespace Minicloud.Worker.Tests;
 
 public sealed class AppDeletionTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PersistsOnlySafeOwnershipFailure(bool importRequired)
+    {
+        await using var harness = new WorkerSqliteTestHarness();
+        await harness.InitializeAsync();
+        var (org, app) = await harness.SeedOrgAndAppAsync();
+        await using var db = harness.CreateDbContext();
+        app = await db.Apps.SingleAsync();
+        app.EnvironmentName = "production";
+        app.DeletionStatus = "queued";
+        var application = new MinicloudApplication { Id = "application", OrganizationId = org.Id, Name = "Demo", Slug = "demo", NormalizedSlug = "demo", DeletionStatus = "queued" };
+        db.Applications.Add(application);
+        app.ApplicationId = application.Id;
+        db.ServerInstances.Add(new ServerInstance { Id = "server", AppId = app.Id, OrganizationId = org.Id,
+            Provider = "hetzner", ProviderServerId = "owned", Region = "test", Status = "ready", BootstrapStatus = "ready" });
+        await db.SaveChangesAsync();
+        var provider = new FakeProvider();
+        var processor = new AppDeletionProcessor(db, _ => throw new ProviderCatalogException(
+            importRequired ? AppDeletionErrors.ImportRequired : "unexpected", "RAW EXCEPTION synthetic private detail"),
+            new Dns(), NullLogger<AppDeletionProcessor>.Instance);
+        Assert.True(await processor.ProcessNextAsync(default));
+        Assert.Empty(provider.Deleted);
+        var failed = await db.Apps.SingleAsync();
+        Assert.Equal("failed", failed.DeletionStatus);
+        Assert.DoesNotContain("RAW EXCEPTION", failed.DeletionError);
+        if (importRequired)
+        {
+            Assert.Contains(AppDeletionErrors.ImportRequired, failed.DeletionError);
+            Assert.Contains("production", failed.DeletionError);
+            Assert.Contains("import-legacy", failed.DeletionError);
+        }
+        else
+        {
+            Assert.Equal("Application cleanup failed. Retry deletion; contact support if it continues.", failed.DeletionError);
+        }
+        Assert.Equal(failed.DeletionError, (await db.Applications.SingleAsync()).DeletionError);
+        Assert.Single(await db.ServerInstances.ToListAsync());
+    }
+
     [Theory]
     [InlineData(false, true)]
     [InlineData(true, true)]

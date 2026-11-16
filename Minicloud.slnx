@@ -6,6 +6,9 @@
   <Folder Name="/modules/common/">
     <Project Path="modules/common/Minicloud.Common.csproj" />
   </Folder>
+  <Folder Name="/modules/redaction/">
+    <Project Path="modules/redaction/Minicloud.Redaction.csproj" />
+  </Folder>
   <Folder Name="/modules/telemetry/">
     <Project Path="modules/telemetry/Minicloud.Telemetry.csproj" />
   </Folder>
