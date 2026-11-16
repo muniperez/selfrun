@@ -124,6 +124,34 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     private DevelopmentWorkspaceProcessor Processor() => ActivatorUtilities.CreateInstance<DevelopmentWorkspaceProcessor>(services);
 
     [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task BootstrapSchedulesGracefulPostgresStopForEveryVmKind(bool ephemeral, bool preview)
+    {
+        var (_, vm, _) = await Seed("bootstrap", ephemeral);
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        vm.EnrollmentTokenExpiresAt = clock.GetUtcNow().AddMinutes(30);
+        if (preview)
+            workerOptions.PreviewServices["web"] = new()
+                { Port = 8080, SupervisedUnit = "minicloud-preview-static.service" };
+        await db.SaveChangesAsync();
+
+        await Hop("bootstrap");
+
+        Assert.NotNull(runtime.BootstrapConfiguration);
+        var config = runtime.BootstrapConfiguration.Value;
+        var stops = config.GetProperty("stopUnits").EnumerateArray().Select(x => x.GetString()).ToArray();
+        Assert.Contains("minicloud-postgres.service", stops);
+        Assert.Contains("minicloud-t3.service", stops);
+        Assert.Equal(preview, stops.Contains("minicloud-preview-static.service"));
+        Assert.Equal(!ephemeral, config.TryGetProperty("volume", out _));
+        Assert.Equal(0, cloud.Deletes);
+        Assert.Equal(0, cloud.Detaches);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task ReconciliationLogsSafeCauseWithoutExceptionOrProviderBody(bool providerFailure)
@@ -684,6 +712,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public bool FailStage { get; set; }
         public bool FailRead { get; set; }
         public bool FailReceipt { get; set; }
+        public JsonElement? BootstrapConfiguration { get; private set; }
         public Dictionary<string, JsonElement> Rejections { get; } = [];
         public Action<string>? BeforeAction { get; set; }
         public List<string> Actions { get; } = [];
@@ -725,8 +754,11 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         }
         public Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct) =>
             throw new InvalidOperationException("Volume probe was not expected in this stage.");
-        public Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct) =>
+        public Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct)
+        {
+            BootstrapConfiguration = JsonSerializer.SerializeToElement(config, Json);
             throw new InvalidOperationException("Bootstrap was not expected in this stage.");
+        }
         public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct) =>
             Task.FromResult(new string('t', 48));
         public Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct)

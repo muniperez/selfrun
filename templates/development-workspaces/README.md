@@ -236,6 +236,8 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
   state, stop/flush T3/PostgreSQL/services, verify read-only workspace. Unknown live coding
   processes, active tasks, ambiguous launches or unreachable tools block; no arbitrary user
   task is killed. Primary then fsyncs/unmounts (no forced/lazy unmount).
+  Bootstrap starts workspace-local PostgreSQL for both VM kinds, so the worker includes
+  `minicloud-postgres.service` in both primary and ephemeral graceful-stop registrations.
   Requires explicit root-orchestrator attestations `gatewayAdmissionsFenced:true` and
   `unobservableToolsAbsent:true`, plus nonnegative integer `t3SnapshotSequence` from the actual
   authenticated idle T3 HTTP snapshot; do not assert these without actual admission/in-flight
