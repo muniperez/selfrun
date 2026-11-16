@@ -201,6 +201,11 @@ export function AppsModule() {
                               {app.name}
                             </Link>
                             <p className="text-xs text-muted-foreground">{app.slug}</p>
+                            {app.deletionStatus === "failed" ? (
+                              <p role="alert" className="text-xs text-destructive">
+                                {app.deletionError || "Application deletion failed. Review application settings."}
+                              </p>
+                            ) : null}
                             <p className="text-xs text-muted-foreground">
                               {app.environmentCount}{" "}
                               {app.environmentCount === 1 ? "environment" : "environments"}
@@ -300,7 +305,7 @@ function LatestDeploymentCell({
     return (
       <div className="space-y-1">
         <StatusBadge status="Deletion failed" />
-        <p className="text-xs text-destructive">{env.deletionError ?? "Environment deletion failed."}</p>
+        <p role="alert" className="text-xs text-destructive">{env.deletionError || "Environment deletion failed."}</p>
         <Link
           className="text-xs text-primary hover:underline"
           to={appSettingsPath(app.id)}

@@ -8,7 +8,8 @@ public sealed record ProviderLegacyImportRequest(
     IReadOnlyList<ProviderLegacyAppBinding> AppBindings,
     IReadOnlyList<string> RetainedVolumeIds);
 
-public sealed record ProviderLegacyAppBinding(string AppId, string? PlanName = null, string? BuildPlatform = null);
+public sealed record ProviderLegacyAppBinding(string AppId, string? PlanName = null, string? BuildPlatform = null,
+    bool AllowFailedDeletion = false);
 
 public sealed record ProviderLegacyImportResult(
     int CreatedPlans,

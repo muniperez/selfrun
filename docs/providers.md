@@ -108,6 +108,13 @@ The default API and worker configuration requires explicit account bindings.
 bridge for an installation still using its old global credentials. Leave it
 disabled after import; custom named plans never fall back to global credentials.
 
+Application and environment deletion checks registered server and runtime account
+bindings before canceling deployments or cleaning up stored data and access.
+`legacy_provider_import_required` identifies an environment that needs the
+import/reconciliation workflow below; retrying deletion cannot establish ownership.
+Worker ownership checks remain independent, and this blocker is also shown in
+deletion status if an already queued cleanup encounters it.
+
 Add an account in the portal, or import an existing locally configured credential
 without passing its value in a command argument:
 
@@ -151,6 +158,18 @@ Volumes belonging to those apps are included automatically. List orphaned retain
 volume registry IDs explicitly in `retainedVolumeIds`. Mismatched ownership,
 missing resources, active work and unverifiable scope stop import without changing
 ownership. The same manifest can be rerun without duplicating plans or bindings.
+
+If deletion stopped because a legacy server has no provider-account binding,
+pause admissions and deletion retries, then set `"allowFailedDeletion": true`
+on that environment's entry in `appBindings` and run the same import command.
+This opt-in accepts only terminal `deletion_status = failed`, with no active
+deployment or owned deployment lease; queued/preparing deletion still blocks
+import. Import and deletion retry serialize on the environment row lock.
+All account, resource identity and placement checks still apply. Import preserves
+the original server and volumes and leaves the deletion status and error unchanged,
+so the environment remains fenced. Inspect the resulting bindings, then explicitly
+retry deletion through the normal app/environment deletion command when ready.
+Do not clear deletion state or edit provider-account IDs directly in the database.
 
 Verify all live resource bindings before reopening admissions. Once account-aware
 allocations begin, old workers are not a safe rollback target.

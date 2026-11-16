@@ -217,6 +217,12 @@ The import manifest is non-secret JSON. Both resource lists must be supplied exp
 
 Use the account and organization that actually own those resources. Set each binding's `buildPlatform` to its verified `linux/amd64` or `linux/arm64` architecture when the server has no recorded platform observation. The API verifies the selected provider scope and refuses unresolved ownership; it does not create replacement resources or select another account. Run imports after pausing legacy admissions and draining active work.
 
+For an environment stuck in terminal failed deletion, pause deletion retries and add
+`"allowFailedDeletion": true` to its `appBindings` entry. Active deployments and
+queued/preparing deletion still block import. Verification binds existing resources
+without clearing the failed-deletion fence or deleting servers/volumes. Inspect the
+bindings before explicitly retrying normal deletion. See [provider recovery](providers.md).
+
 Legacy installations may retain these imported plan names during migration. They are no longer the catalog of all available plans; imported mappings preserve each installation's effective configuration:
 
 | Plan | Provider | Region | Provider SKU | Provider cost basis |
@@ -607,6 +613,11 @@ A deployment number is only unique within its organization, so the CLI always se
 
 `apps inspect` prints the latest deployment and the active service inventory,
 including public/private state, port, runtime state, and assigned domains.
+`apps list` also shows application and environment deletion status and any stored
+safe deletion error. When deletion blocks `apps inspect`, its error includes the
+stored recovery guidance (when available). Follow that guidance to import or
+reconcile the affected environment before retrying deletion in the dashboard;
+the CLI does not provide a delete command.
 
 ## Service Subdomains
 

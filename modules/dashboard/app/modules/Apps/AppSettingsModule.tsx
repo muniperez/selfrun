@@ -319,7 +319,7 @@ function EnvironmentRow({
           </Link>
           {isDefault ? <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">Dashboard default</span> : null}
           {env.deletionStatus ? <span className="ml-2"><StatusBadge status={env.deletionStatus === "failed" ? "Deletion failed" : "Deleting"} /></span> : null}
-          {env.deletionError ? <p className="text-xs text-destructive">{env.deletionError}</p> : null}
+          {env.deletionError ? <p role="alert" className="text-xs text-destructive">{env.deletionError}</p> : null}
           {renaming ? (
             <div className="flex max-w-64 flex-wrap items-center gap-2 pt-1">
               <Input
