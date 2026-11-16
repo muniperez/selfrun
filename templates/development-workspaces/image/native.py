@@ -871,9 +871,13 @@ class Native:
             config.unlink()
             state = Path("/var/lib/minicloud-workspace")
             if state.exists():
-                check(json.loads((state / "state.json").read_text())["identity"]["vmId"] == self.run_id,
-                      "CLEANUP_STATE_CHANGED")
-                shutil.rmtree(state)
+                if (state / "state.json").exists():
+                    check(json.loads((state / "state.json").read_text())["identity"]["vmId"] == self.run_id,
+                          "CLEANUP_STATE_CHANGED")
+                    shutil.rmtree(state)
+                else:
+                    check(not any(state.iterdir()), "UNKNOWN_PARTIAL_RUNTIME_STATE")
+                    state.rmdir()
             if not self.original_workspace_exists and Path("/workspace").exists():
                 Path("/workspace").rmdir()
         if self.alias:
