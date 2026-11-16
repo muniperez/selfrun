@@ -512,6 +512,11 @@ class Native:
             probes = sorted((codex_home / ".tmp").glob("git-*"))
             check(bool(probes) and all(path.is_dir() and not path.is_symlink() for path in probes),
                   "ACTUAL_CODEX_EMPTY_GIT_PROBES_NOT_CREATED")
+            for probe in probes:
+                check(set(path.name for path in probe.iterdir()) == {"HEAD", "objects", "refs"} and
+                      (probe / "HEAD").read_bytes() == b"ref: refs/heads/main\n" and
+                      not any((probe / "objects").iterdir()) and not any((probe / "refs").iterdir()),
+                      "ACTUAL_CODEX_PROBE_FORMAT_CHANGED")
 
             def probe_tree():
                 result = {}
@@ -562,19 +567,20 @@ class Native:
                     if kind == "objects":
                         command(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups", "env",
                             "HOME=" + str(home), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-                            "git", "-c", "core.hooksPath=/dev/null", "-C", str(candidate),
+                            "git", "-c", "core.hooksPath=/dev/null", "--git-dir=" + str(candidate),
                             "hash-object", "-w", "--stdin"], input="Native real Git object\n")
                     elif kind == "refs":
                         ref = candidate / "refs/heads/native-data"
                         ref.parent.mkdir(parents=True, exist_ok=True)
                         ref.write_text(base + "\n")
+                        os.chown(ref.parent, 2000, 2000)
                         os.chown(ref, 2000, 2000)
                     else:
-                        info = candidate / "objects/info"
-                        check(info.is_dir() and not info.is_symlink() and not any(info.iterdir()),
-                              "UNEXPECTED_CODEX_PROBE_OBJECT_INFO")
-                        info.rmdir()
-                        info.symlink_to(origin / "objects/info", target_is_directory=True)
+                        objects = candidate / "objects"
+                        check(objects.is_dir() and not objects.is_symlink() and not any(objects.iterdir()),
+                              "UNEXPECTED_CODEX_PROBE_OBJECTS")
+                        objects.rmdir()
+                        objects.symlink_to(origin / "objects", target_is_directory=True)
                     reject("codex-shaped-probe-with-" + kind)
                 finally:
                     shutil.rmtree(candidate)
@@ -590,6 +596,7 @@ class Native:
             check(probe_tree() == original, "GIT_SAVE_MUTATED_CODEX_PROBES")
             return {"actualCodexVersionUid": 2000, "actualCodexVersion": "0.169.0",
                     "actualCodexEmptyProbeCount": len(probes), "registeredCheckoutInspected": True,
+                    "actualCodexExactThreeEntryEmptyProbeFormat": True,
                     "actualRuntimeGitSavedReceipt": True, "actualKernelFrozenReadonlyBind": True,
                     "probeFilesAndModesUnchanged": True, "rejected": rejected,
                     "remoteBareOutsideWorkspace": not origin.is_relative_to(workspace),
