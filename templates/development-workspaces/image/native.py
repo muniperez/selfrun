@@ -32,7 +32,7 @@ ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
 UNITS = ("minicloud-t3.service", "minicloud-workspace.service")
 UNIT_HASHES = {
-    "minicloud-t3.service": "9af71ecb2b1790e6dbff98acc4a74d7b77ca9d07701d4875b9d0d510e8865850",
+    "minicloud-t3.service": "6d191e239d85ab94792b57542cda24a39c139c616e2f9bfe81f1550e653ffcb9",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
 }
@@ -46,6 +46,7 @@ REQUIRED_PROBES = {
     "loop-readback-user-files", "encrypted-user-file-restore",
     "codex-empty-git-probes-save-and-reject-data",
     "copilot-stdio-provider-setup",
+    "source-control-cli-service-terminal-and-discovery",
 }
 
 
@@ -262,6 +263,17 @@ def initialize_codex_without_credentials(workspace, home):
         process.stdout.close()
 
 
+def source_control_versions(path, lock):
+    check(path == "/usr/local/bin:/usr/bin:/bin", "UNEXPECTED_T3_SERVICE_PATH")
+    for name in ("gh", "glab"):
+        output = command(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
+                          "env", "-i", "HOME=/workspace/home", "PATH=" + path,
+                          "LC_ALL=C", name, "--version"], cwd="/workspace")
+        check(re.search(r"(?:^|\s)v?" + re.escape(lock[name]["version"]) + r"(?:$|[\s,])", output),
+              "SOURCE_CONTROL_CLI_VERSION_MISMATCH")
+    return {"codingUid": 2000, "githubVersionMatched": True, "gitlabVersionMatched": True}
+
+
 class Report:
     def __init__(self, path, run_id, authorize=None):
         self.path = path
@@ -276,10 +288,12 @@ class Report:
             "runtimeQualifiedNative": False, "terminalInputObservedNative": False,
             "terminalIdleKernelQualifiedNative": False,
             "productionGatewayUsefulActivityQualified": False, "browserQualified": False,
+            "sourceControlUserSignInQualified": False,
             "nativeRuntimeScope": "isolated-loop-ext4-root-hooks-and-stop; NOT unused-terminal-opt-in/provider/browser",
             "probes": [], "cleanup": "not-started",
             "externalBlockers": ["REAL_MINICLOUD_GATEWAY_USEFUL_ACTIVITY_AND_ADMISSION_DRAIN_NOT_EXERCISED",
                                  "UNUSED_TERMINAL_ROOT_OPT_IN_FLOW_REQUIRES_REAL_GATEWAY_QUALIFICATION",
+                                 "SOURCE_CONTROL_USER_SIGN_IN_AND_REPOSITORY_ACCESS_NOT_EXERCISED",
                                  "PROVIDER_VOLUME_CYCLES_AND_ENCRYPTED_OFFHOST_RESTORE_SEPARATE_E2E"],
         }
 
@@ -858,6 +872,30 @@ class Native:
                 "passiveObserveResizePingRoundTrips": passive["roundTrips"],
                 "rootHookActivityAdvancedOnlyAfterExplicitInputCall": True,
                 "productionGatewayObserverExercised": False}
+
+    def source_control(self):
+        main_pid = int(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]))
+        check(main_pid > 0, "SOURCE_CONTROL_T3_SERVICE_NOT_RUNNING")
+        environment = dict(entry.split("=", 1) for entry in
+                           Path("/proc", str(main_pid), "environ").read_text().split("\0") if "=" in entry)
+        check(not any(environment.get(name) for name in
+                      ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+                       "GLAB_TOKEN", "GITLAB_TOKEN", "OAUTH_TOKEN",
+                       "GH_CONFIG_DIR", "GLAB_CONFIG_DIR")),
+              "SOURCE_CONTROL_ENVIRONMENT_NOT_PRISTINE")
+        check(environment.get("HOME") == "/workspace/home", "WRONG_SOURCE_CONTROL_SERVICE_HOME")
+        for name in (".config/gh/hosts.yml", ".config/glab-cli/config.yml"):
+            check(not (Path("/workspace/home") / name).exists(), "SOURCE_CONTROL_CONFIG_NOT_PRISTINE")
+        lock = json.loads((HERE / "manifest.lock.json").read_text())
+        versions = source_control_versions(environment.get("PATH"), lock)
+        result = self.client.call("source-control", versions={name: lock[name]["version"]
+                                                            for name in ("gh", "glab")})
+        marker = Path("/workspace/artifacts/native-source-control-clis")
+        self.wait(marker.exists)
+        check(marker.read_text() == "source-control-clis-ok\n" and marker.stat().st_uid == 2000,
+              "SOURCE_CONTROL_TERMINAL_BINARIES_UNAVAILABLE")
+        return {**versions, **result, "servicePathChecked": True, "terminalVersionsExecuted": True,
+                "providerCredentialsSupplied": False, "userSignInQualified": False}
 
     def shell_proof(self):
         check(Path("/workspace/artifacts/native-input-seen").is_file(), "GENUINE_INPUT_NOT_YET_OBSERVED")
@@ -1448,6 +1486,8 @@ class Native:
                 return
             self.report.probe("authenticated-generation-task-and-activity-hooks", self.root_hooks)
             if not self.report.probe("real-terminal-input-and-passive-root-hook", self.terminals):
+                return
+            if not self.report.probe("source-control-cli-service-terminal-and-discovery", self.source_control):
                 return
             self.report.probe("actual-pinned-t3-sqlite-idle", self.sqlite)
             self.report.probe("actual-schema-copy-wal-and-fail-closed", self.sqlite_negatives)

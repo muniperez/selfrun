@@ -47,3 +47,27 @@ export function getWorkspaceLaunchUrl(id: string, vmId: string, organizationId: 
     { method: "POST", body: { generation, service } },
   );
 }
+
+export type WorkspaceSelectionOption = {
+  imageId: string;
+  imageName: string;
+  profile: string;
+  planId: string;
+  planName: string;
+  providerAccountName: string;
+  region: string;
+  sku: string;
+};
+
+export type WorkspaceSelections = {
+  available: boolean;
+  unavailableReason?: string | null;
+  options: WorkspaceSelectionOption[];
+};
+
+export function getWorkspaceSelections(organizationId: string, workspaceId?: string,
+  signal?: AbortSignal): Promise<WorkspaceSelections> {
+  const query = new URLSearchParams({ organizationId });
+  if (workspaceId !== undefined) query.set("workspaceId", workspaceId);
+  return apiRequest<WorkspaceSelections>(`/api/development-workspaces/selections?${query}`, { signal });
+}
