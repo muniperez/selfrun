@@ -550,7 +550,7 @@ class Native:
                 secret.write(token)
             tokens[name] = str(path)
         self.client = T3Client(self.directory)
-        result = self.client.call("init", tokenFiles=tokens)
+        result = self.client.call("init", tokenFiles=tokens, createProject=True)
         self.snapshot = result["snapshotSequence"]
         return {**result, "tokenFilesRootOnly": True, "freshBootstrapStartedT3WithoutManualStart": True}
 
@@ -679,6 +679,7 @@ class Native:
         self.snapshot = snapshot["snapshotSequence"]
         check(evidence["type"] == "T3CommittedIdle", "ACTUAL_T3_DATABASE_NOT_IDLE")
         return {"actualPinnedT3Database": True, "threadSequence": evidence["threadSequence"],
+                "applicationSequence": evidence["applicationSequence"],
                 "globalV2Sequence": evidence["globalV2Sequence"],
                 "rowsChecked": evidence["rowsChecked"]}
 
@@ -696,22 +697,47 @@ class Native:
             next_sequence = copied.execute(
                 "SELECT COALESCE(MAX(sequence),0)+1 FROM orchestration_events").fetchone()[0]
             synthetic_row(copied, "orchestration_events",
+                          dict(sequence=next_sequence, application_event_version=1, aggregate_kind="project"))
+            copied.commit()
+            legacy_project = self.rt.t3_idle_database(target, next_sequence)
+            check(legacy_project["applicationSequence"] == next_sequence and
+                  legacy_project["threadSequence"] == base["threadSequence"] and
+                  legacy_project["globalV2Sequence"] == base["globalV2Sequence"],
+                  "LEGACY_PROJECT_APPLICATION_CURSOR_FAILED")
+            next_sequence += 1
+            synthetic_row(copied, "orchestration_events",
                           dict(sequence=next_sequence, application_event_version=2, aggregate_kind="project"))
             copied.execute("UPDATE orchestration_v2_projection_metadata SET schema_version=2,last_sequence=? "
                            "WHERE projection_name='thread-projections'", (next_sequence,))
             copied.commit()
             check(Path(str(target) + "-wal").stat().st_size > 32, "COMMITTED_WAL_NOT_PRESENT")
-            current = self.rt.t3_idle_database(target, base["threadSequence"])
+            current = self.rt.t3_idle_database(target, next_sequence)
             check(current["globalV2Sequence"] == next_sequence and
+                  current["applicationSequence"] == next_sequence and
                   current["threadSequence"] == base["threadSequence"], "READONLY_WAL_OR_GLOBAL_CURSOR_FAILED")
+            next_sequence += 1
+            synthetic_row(copied, "orchestration_events",
+                          dict(sequence=next_sequence, application_event_version=2, aggregate_kind="thread"))
+            copied.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=? "
+                           "WHERE projection_name='thread-projections'", (next_sequence,))
+            copied.commit()
+            threaded = self.rt.t3_idle_database(target, next_sequence)
+            check(threaded["applicationSequence"] == threaded["threadSequence"] ==
+                  threaded["globalV2Sequence"] == next_sequence, "V2_THREAD_APPLICATION_CURSOR_FAILED")
+            synthetic_row(copied, "orchestration_events",
+                          dict(sequence=next_sequence + 1, application_event_version=1, aggregate_kind="thread"))
+            copied.commit()
+            check(self.rt.t3_idle_database(target, next_sequence)["applicationSequence"] == next_sequence,
+                  "LEGACY_THREAD_INCORRECTLY_ADVANCED_APPLICATION_CURSOR")
             blocked = []
-            def expect_blocked(label):
+            def expect_blocked(label, snapshot_sequence=None):
                 try:
-                    self.rt.t3_idle_database(target, None)
+                    self.rt.t3_idle_database(target, snapshot_sequence)
                 except self.rt.Blocked:
                     blocked.append(label)
                     return
                 raise ProbeError("UNSAFE_SQLITE_COPY_ACCEPTED")
+            expect_blocked("stale-http-application-cursor", base["applicationSequence"])
             copied.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=? "
                            "WHERE projection_name='thread-projections'", (next_sequence - 1,))
             copied.commit()
@@ -727,7 +753,12 @@ class Native:
             copied.commit()
             expect_blocked("unknown-work-status")
             return {"basis": "SQLite backup of actual native T3 DB; corruption ONLY in private copy",
-                    "committedWalObserved": True, "projectGlobalCursorNotThreadCursor": True,
+                    "committedWalObserved": True,
+                    "applicationCursorContract": "all-project-events-or-v2-thread-events",
+                    "legacyProjectAdvancesApplicationCursor": True,
+                    "v2ProjectAndThreadAdvanceApplicationCursor": True,
+                    "legacyThreadDoesNotAdvanceApplicationCursor": True,
+                    "projectionLagIndependentlyRejected": True,
                     "blockersRejected": blocked, "actualT3DatabaseMutated": False}
         finally:
             copied.close()

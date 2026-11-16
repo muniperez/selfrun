@@ -129,9 +129,25 @@ async function handle(request) {
     requireTrue(missingProtocolRejected);
     socket = await openSocket(await ticket(bearer));
     attach(socket);
+    let afterProject = await snapshot();
+    if (request.createProject === true) {
+      const beforeProject = afterProject;
+      const created = await http("/api/projects/mutate", bearer, "POST", {
+        type: "project.create", commandId: crypto.randomUUID(), projectId: crypto.randomUUID(),
+        title: "Native qualification fixture", workspaceRoot: "/workspace",
+      });
+      requireTrue([200, 201].includes(created.status));
+      for (let attempt = 0; attempt < 50; attempt++) {
+        afterProject = await snapshot();
+        if (afterProject.snapshotSequence > beforeProject.snapshotSequence) break;
+        await timeout(100);
+      }
+      requireTrue(afterProject.snapshotSequence > beforeProject.snapshotSequence);
+    }
     return { descriptorProtocol: 2, actualSessionScopesChecked: true, unauthorizedHttpDenied: true,
       readonlyHttpMutationDenied: true, readonlyTerminalMutationDenied: true,
-      protocolMissingWsDenied: true, realTicketWebSocketOpened: true, ...await snapshot() };
+      protocolMissingWsDenied: true, realTicketWebSocketOpened: true,
+      actualProjectMutationAdvancedApplicationCursor: request.createProject === true, ...afterProject };
   }
   if (request.operation === "snapshot") return await snapshot();
   if (request.operation === "open") {
