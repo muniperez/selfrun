@@ -1154,6 +1154,15 @@ class Native:
             check(json.loads(source_owner) == self.config["volume"]["owner"],
                   "SOURCE_RESTORE_FIXTURE_OWNER_CHANGED")
             expected = {name: sha(mounted / name) for name in names}
+            source_links = {str(path.relative_to(mounted)): os.readlink(path)
+                            for path in mounted.rglob("*") if path.is_symlink()}
+            codex_links = {name: target for name, target in source_links.items()
+                           if name.startswith("home/.codex/tmp/arg0-linux/")}
+            check({Path(name).name for name in codex_links} >=
+                  {"codex-linux-sandbox", "apply_patch", "applypatch"} and
+                  all(os.path.isabs(target) for target in codex_links.values()),
+                  "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING")
+            self.rt.validate_backup_tree(mounted)
             command(["age-keygen", "--output", str(key)])
             recipient = command(["age-keygen", "-y", str(key)])
             check(recipient.startswith("age1"), "INVALID_SYNTHETIC_AGE_RECIPIENT")
@@ -1164,11 +1173,17 @@ class Native:
                                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             try:
                 members = set()
+                archived_links = {}
                 with tarfile.open(fileobj=inspect_archive.stdout, mode="r|") as archive:
                     for member in archive:
                         check(len(members) < 10000 and len(member.name) <= 1024,
                               "NATIVE_ARCHIVE_UNEXPECTEDLY_LARGE")
                         members.add(member.name)
+                        if member.issym():
+                            relative = member.name.removeprefix("data/")
+                            check(relative in source_links and member.linkname == source_links[relative]
+                                  and member.size == 0, "SYMLINK_TARGET_CONTENT_ARCHIVED")
+                            archived_links[relative] = member.linkname
                 inspect_archive.stdout.read()
                 check(inspect_archive.wait(timeout=10) == 0, "BACKUP_ARCHIVE_DECRYPTION_FAILED")
             finally:
@@ -1179,6 +1194,7 @@ class Native:
             check(not {"data/lost+found", "data/.minicloud-volume.json"} & members,
                   "PRODUCTION_WRITER_INCLUDED_ROOT_FILESYSTEM_METADATA")
             check(all("data/" + name in members for name in names), "NESTED_USER_DATA_OMITTED")
+            check(archived_links == source_links, "SOURCE_SYMLINK_METADATA_NOT_ARCHIVED")
             with backing.open("xb") as stream:
                 stream.truncate(512 * 1024**2)
             target_device = command(["losetup", "--find", "--show", "--nooverlap", str(backing)])
@@ -1255,6 +1271,13 @@ class Native:
                   "PRODUCTION_RESTORE_IMPORT_RECEIPT_MISSING")
             check(all(sha(restored / name) == digest for name, digest in expected.items()),
                   "RESTORED_REPRESENTATIVE_USER_HASH_MISMATCH")
+            check(all((restored / name).stat().st_uid == (restored / name).stat().st_gid == 2000
+                      for name in expected), "RESTORED_USER_FILE_OWNERSHIP_MISMATCH")
+            for name, target in source_links.items():
+                link = restored / name
+                check(link.is_symlink() and os.readlink(link) == target and
+                      link.lstat().st_uid == link.lstat().st_gid == 2000,
+                      "RESTORED_SYMLINK_METADATA_OR_OWNERSHIP_MISMATCH")
             check(target_marker.read_bytes() == target_owner and
                   (target_marker.stat().st_ino, target_marker.stat().st_uid,
                    stat.S_IMODE(target_marker.stat().st_mode)) == marker_identity,
@@ -1269,6 +1292,18 @@ class Native:
                     "sourceAndTargetAreDistinctLoopExt4": True,
                     "rootFilesystemMetadataOmitted": True, "nestedMetadataNamesPreserved": True,
                     "targetOwnerAndLostFoundPreserved": True, "rejected": rejected,
+                    "productionBackupTreeValidationUsed": True,
+                    "allWorkspaceSymlinkMetadataRestored": True,
+                    "actualCodexSymlinkCount": len(codex_links),
+                    "actualCodexSymlinkMetadataRestored": True,
+                    "symlinkTargetBytesNotArchived": True, "symlinkUidsAllCoding": True,
+                    "representativeUserFilesAllCodingOwned": True,
+                    "actualCodexSymlinkEvidence": [
+                        {"relativePath": name, "target": target,
+                         "targetTextSha256": hashlib.sha256(os.fsencode(target)).hexdigest(),
+                         "archiveEntryType": "symlink", "archivedContentBytes": 0,
+                         "restoredUid": 2000, "restoredGid": 2000}
+                        for name, target in sorted(codex_links.items())],
                     "recoveryKeyOutsideSourceAndTarget": True, "recoveryKeyOffVm": False,
                     "plaintextArchivePersisted": False, "preAdmittedLocalImportFixture": True,
                     "restoreAdmissionQualified": False,
