@@ -59,6 +59,23 @@ vi.mock("./AppConsolePanel", () => ({
 }));
 
 describe("AppDetailModule", () => {
+  it.each([
+    ["legacy_provider_import_required: Import or reconcile production before retrying deletion.", "legacy_provider_import_required: Import or reconcile production before retrying deletion."],
+    [null, "Environment deletion failed. Review environment settings for recovery."],
+  ])("shows stored environment deletion failure or a failure fallback (%s)", async (deletionError, expected) => {
+    vi.mocked(getEnvironmentDetail).mockResolvedValue({
+      id: "app_123", organizationId: "org_123", name: "Demo", slug: "demo",
+      plan: "p0", database: "sqlite", domains: [], branches: [], latestDeployment: null,
+      deletionStatus: "failed", deletionError,
+    });
+    render(<MemoryRouter initialEntries={["/apps/application_123/environments/app_123/overview"]}><Routes>
+      <Route path="/apps/:applicationId/environments/:environmentId/:tab" element={<AppDetailModule />} />
+    </Routes></MemoryRouter>);
+
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(/Deleting this environment and its resources/)).not.toBeInTheDocument();
+  });
+
   afterEach(() => {
     cleanup();
     vi.useRealTimers();

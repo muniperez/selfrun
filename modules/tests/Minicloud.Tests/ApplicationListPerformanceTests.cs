@@ -76,9 +76,13 @@ public sealed class ApplicationListPerformanceTests
         };
 
         reads.Count = 0;
+        reads.Statements.Clear();
         var first = await ReadAsync();
         var firstReads = reads.Count;
         var serialized = JsonSerializer.Serialize(first);
+        var deploymentLockQuery = Assert.Single(reads.Statements, sql =>
+            sql.Contains("provider_creation_attempted", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("SELECT DISTINCT", deploymentLockQuery, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(firstReads, reads.Count);
         Assert.InRange(firstReads, 1, 9);
         Assert.Empty(db.ChangeTracker.Entries());
@@ -135,10 +139,12 @@ public sealed class ApplicationListPerformanceTests
     private sealed class ReadCounter : DbCommandInterceptor
     {
         public int Count { get; set; }
+        public List<string> Statements { get; } = [];
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
             Count++;
+            Statements.Add(command.CommandText);
             return ValueTask.FromResult(result);
         }
     }

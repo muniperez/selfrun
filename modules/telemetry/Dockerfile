@@ -2,11 +2,13 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY modules/contracts/Minicloud.Contracts.csproj modules/contracts/
+COPY modules/redaction/Minicloud.Redaction.csproj modules/redaction/
 COPY modules/common/Minicloud.Common.csproj modules/common/
 COPY modules/telemetry/Minicloud.Telemetry.csproj modules/telemetry/
 RUN dotnet restore modules/telemetry/Minicloud.Telemetry.csproj
 
 COPY modules/contracts modules/contracts
+COPY modules/redaction modules/redaction
 COPY modules/common modules/common
 COPY modules/telemetry modules/telemetry
 RUN dotnet publish modules/telemetry/Minicloud.Telemetry.csproj \

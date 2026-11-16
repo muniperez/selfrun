@@ -550,9 +550,11 @@ function ScopedAppDetail() {
               : "text-sm text-muted-foreground"
           }
         >
-          {app.deletionError ??
-            actionError ??
-            "Deleting this application and its resources. You can leave this page while cleanup runs."}
+          {app.deletionError ||
+            actionError ||
+            (app.deletionStatus === "failed"
+              ? "Environment deletion failed. Review environment settings for recovery."
+              : "Deleting this environment and its resources. You can leave this page while cleanup runs.")}
         </p>
       ) : null}
       {deploymentError ? <p role="status" className="text-destructive">{deploymentError}</p> : null}
