@@ -504,6 +504,115 @@ class RuntimeTests(unittest.TestCase):
         git(self.repo, "worktree", "add", "-b", "extra", str(outside), "HEAD")
         self.assert_blocked("git-save", "Unregistered Git worktree")
 
+    def codex_probe(self, relative="home/.codex/.tmp/git-A0bC9z"):
+        probe = self.workspace / relative
+        probe.mkdir(parents=True)
+        (probe / "objects").mkdir()
+        (probe / "refs").mkdir()
+        (probe / "HEAD").write_bytes(b"ref: refs/heads/main\n")
+        (probe / "HEAD").chmod(0o600)
+        return probe
+
+    def test_exact_empty_codex_probes_allow_git_save_without_mutation(self):
+        probes = [self.codex_probe("home/.codex/.tmp/" + name)
+                  for name in ("git-A0bC9z", "git-ZvtwGU", "git-U4CEZ5")]
+        def snapshot():
+            return {str(path): (path.lstat().st_mode, path.lstat().st_mtime_ns,
+                               path.read_bytes() if path.is_file() else None)
+                    for probe in probes for path in (probe, *probe.rglob("*"))}
+        before = snapshot()
+
+        self.assertEqual("GitSaveCandidate", self.request("git-check")["type"])
+        receipt = self.request("git-save")
+        self.assertEqual("GitSaved", receipt["type"])
+        self.assertEqual(self.base, receipt["repositories"][0]["remoteSha"])
+        self.assertEqual("ReceiptValid", self.request("receipt-validate", receiptId=receipt["receiptId"])["type"])
+        self.assertEqual(before, snapshot())
+
+    def test_codex_probe_with_git_data_or_unknown_layout_remains_blocked(self):
+        for case in ("commit", "loose-object", "ref", "packed-refs", "alternates", "worktrees",
+                     "reflog", "config", "unknown-file", "empty-object-subdir", "detached-head", "other-unborn-head"):
+            with self.subTest(case=case):
+                probe = self.codex_probe()
+                if case == "commit":
+                    git(probe, "--bare", "fetch", str(self.repo), "HEAD:refs/heads/saved")
+                elif case == "loose-object":
+                    git(probe, "--bare", "hash-object", "-w", str(self.repo / "file.txt"))
+                elif case == "ref":
+                    (probe / "refs/saved").write_text(self.base + "\n")
+                elif case == "packed-refs":
+                    (probe / "packed-refs").write_text(self.base + " refs/heads/saved\n")
+                elif case == "alternates":
+                    (probe / "objects/info").mkdir()
+                    (probe / "objects/info/alternates").write_text(str(self.repo / ".git/objects") + "\n")
+                elif case == "worktrees":
+                    (probe / "worktrees").mkdir()
+                    (probe / "worktrees/gitdir").write_text(str(self.repo / ".git") + "\n")
+                elif case == "reflog":
+                    (probe / "logs").mkdir()
+                    (probe / "logs/HEAD").write_text(self.base + " retained recovery data\n")
+                elif case == "config":
+                    (probe / "config").write_text('[remote "origin"]\n url=https://example.invalid/recovery.git\n')
+                elif case == "unknown-file":
+                    (probe / "recoverable-data").write_text("retain this data\n")
+                elif case == "empty-object-subdir":
+                    (probe / "objects/pack").mkdir()
+                elif case == "detached-head":
+                    (probe / "HEAD").write_text(self.base + "\n")
+                else:
+                    (probe / "HEAD").write_text("ref: refs/heads/recovery\n")
+                before = {str(path.relative_to(probe)): path.read_bytes()
+                          for path in probe.rglob("*") if path.is_file()}
+                try:
+                    with self.assertRaisesRegex(rt.Blocked, "Unregistered bare repository"):
+                        self.g.inspect([self.registration], self.workspace)
+                    self.assertEqual(before, {str(path.relative_to(probe)): path.read_bytes()
+                                              for path in probe.rglob("*") if path.is_file()})
+                finally:
+                    shutil.rmtree(probe)
+
+    def test_bare_inventory_outside_exact_codex_probe_scope_remains_blocked(self):
+        for relative in ("repos/git-A0bC9z", "home/.codex/git-A0bC9z",
+                         "home/.codex/.tmp/nested/git-A0bC9z", "home/.codex/.tmp/git-A0bC9z-extra",
+                         "home/.codex/.tmp/git-ABC_de"):
+            with self.subTest(relative=relative):
+                probe = self.codex_probe(relative)
+                try:
+                    with self.assertRaisesRegex(rt.Blocked, "Unregistered bare repository"):
+                        self.g.inspect([self.registration], self.workspace)
+                finally:
+                    shutil.rmtree(probe)
+        nested = self.workspace / "home/.codex/user-checkout"
+        git(self.workspace, "clone", str(self.remote), str(nested))
+        with self.assertRaisesRegex(rt.Blocked, "inventory"):
+            self.g.inspect([self.registration], self.workspace)
+
+    def test_codex_probe_symlinks_and_linked_metadata_remain_blocked(self):
+        for case in ("HEAD", "objects", "refs", "probe", ".tmp", ".codex", "home", "hardlinked-head"):
+            with self.subTest(case=case):
+                probe = self.codex_probe()
+                outside = self.root / ("external-probe-" + case.replace(".", ""))
+                if case in ("HEAD", "hardlinked-head"):
+                    outside.write_bytes((probe / "HEAD").read_bytes())
+                    (probe / "HEAD").unlink()
+                    if case == "HEAD":
+                        (probe / "HEAD").symlink_to(outside)
+                    else:
+                        os.link(outside, probe / "HEAD")
+                else:
+                    target = probe / case if case in ("objects", "refs") else (
+                        probe if case == "probe" else self.workspace / (
+                            "home/.codex/.tmp" if case == ".tmp" else "home/.codex" if case == ".codex" else "home"))
+                    target.rename(outside)
+                    target.symlink_to(outside, target_is_directory=True)
+                try:
+                    with self.assertRaises(rt.Blocked):
+                        self.g.inspect([self.registration], self.workspace)
+                    self.assertTrue(outside.exists())
+                finally:
+                    home = self.workspace / "home"
+                    home.unlink() if home.is_symlink() else shutil.rmtree(home)
+
     def test_expired_live_task_is_not_killed(self):
         self.request("task-start", taskId="task-a", argv=["sleep", "100"], leaseSeconds=1)
         self.runtime.clock = lambda: 9999

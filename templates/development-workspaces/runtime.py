@@ -182,16 +182,62 @@ class Git:
                          item["origin"], str(path))
             self.command(path, "checkout", "--no-track", "-b", item["branch"], item["baseSha"])
 
+    @staticmethod
+    def empty_codex_probe(path, workspace):
+        cache = workspace / "home/.codex/.tmp"
+        if path.parent != cache or re.fullmatch(r"git-[A-Za-z0-9]{6}", path.name) is None:
+            return False
+        descriptors = []
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            if workspace.resolve(strict=True) != workspace.absolute():
+                return False
+            directory = os.open(workspace, flags)
+            descriptors.append(directory)
+            for name in ("home", ".codex", ".tmp", path.name):
+                directory = os.open(name, flags, dir_fd=directory)
+                descriptors.append(directory)
+            # Codex 0.169.0 --version creates only this empty, unborn scaffold.
+            if set(os.listdir(directory)) != {"HEAD", "objects", "refs"}:
+                return False
+            for name in ("objects", "refs"):
+                child = os.open(name, flags, dir_fd=directory)
+                descriptors.append(child)
+                if os.listdir(child):
+                    return False
+            head = os.open("HEAD", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            descriptors.append(head)
+            info = os.fstat(head)
+            expected = b"ref: refs/heads/main\n"
+            return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and
+                    info.st_size == len(expected) and os.read(head, len(expected) + 1) == expected)
+        except (OSError, RuntimeError):
+            return False
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
     def inspect(self, registrations, workspace):
         require(registrations, "No registered checkouts")
+        workspace = Path(workspace)
+        cache = workspace / "home/.codex/.tmp"
+        component = workspace
+        for name in ("home", ".codex", ".tmp"):
+            component /= name
+            require(not component.is_symlink(), "Symlink Codex probe path is unsupported")
         discovered = set()
         # Detect unregistered nested checkouts, linked worktrees and bare Git directories.
         for root, dirs, files in os.walk(workspace, followlinks=False):
+            for name in dirs + files:
+                path = Path(root) / name
+                if path.parent == cache and re.fullmatch(r"git-[A-Za-z0-9]{6}", name):
+                    require(self.empty_codex_probe(path, workspace), "Unregistered bare repository")
             if ".git" in dirs or ".git" in files:
                 discovered.add(str(Path(root).resolve()))
                 if ".git" in dirs:
                     dirs.remove(".git")
-            require(not ("HEAD" in files and "objects" in dirs and "refs" in dirs),
+            require(not ("HEAD" in files and "objects" in dirs and "refs" in dirs) or
+                    self.empty_codex_probe(Path(root), workspace),
                     "Unregistered bare repository")
         expected = {str(Path(item["path"]).resolve()) for item in registrations}
         require(discovered == expected, "Registered checkout inventory differs from filesystem")
