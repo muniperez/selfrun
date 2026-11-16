@@ -9,14 +9,14 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
 {
     private async Task<JsonDocument> InspectAsync(CancellationToken cancellationToken)
     {
-        var list = await processRunner.RunAsync("docker", ["ps", "-aq", "--filter", $"label=com.docker.compose.project={config.ComposeProject}"], cancellationToken);
+        var list = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", ["ps", "-aq", "--filter", $"label=com.docker.compose.project={config.ComposeProject}"], cancellationToken);
         RequireSuccess(list, "container discovery");
         var ids = Lines(list.Stdout).ToArray();
         if (ids.Length == 0)
         {
             return JsonDocument.Parse("[]");
         }
-        var inspect = await processRunner.RunAsync("docker", new[] { "inspect" }.Concat(ids).ToArray(), cancellationToken);
+        var inspect = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", new[] { "inspect" }.Concat(ids).ToArray(), cancellationToken);
         RequireSuccess(inspect, "container inspection");
         return JsonDocument.Parse(inspect.Stdout);
     }
@@ -29,7 +29,7 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
         foreach (var container in containers.RootElement.EnumerateArray())
         {
             var service = ServiceName(container);
-            var logs = await processRunner.RunAsync("docker", ["logs", "--timestamps", "--since", "20s", "--tail", "100", container.GetProperty("Id").GetString()!], cancellationToken);
+            var logs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", ["logs", "--timestamps", "--since", "20s", "--tail", "100", container.GetProperty("Id").GetString()!], cancellationToken);
             if (logs.ExitCode != 0)
             {
                 records.Add(SelfLog("minicloud-agent", $"Log collection failed for {service}.", now));
@@ -45,12 +45,14 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
                 }
             }
         }
-        var caddyLogs = await processRunner.RunAsync("journalctl", ["-u", "caddy", "--since", "20 seconds ago", "--output", "short-iso", "--no-pager"], cancellationToken);
+        var caddyLogs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "journalctl", ["-u", "caddy", "--since", "20 seconds ago", "--output", "short-iso", "--no-pager"], cancellationToken);
         foreach (var line in Lines(caddyLogs.ExitCode == 0 ? caddyLogs.Stdout : caddyLogs.Stderr))
         {
             records.AddRange(LogParsing.ParseJournalLine("caddy", "caddy", StableSequence(line), line, now));
         }
-        return records.GroupBy(x => new { x.Source, x.Cursor, x.ObservedAt }).Select(x => x.First()).Take(AgentRuntimeLimits.MaxBatchRecords).ToArray();
+        var result = records.GroupBy(x => new { x.Source, x.Cursor, x.ObservedAt }).Select(x => x.First()).Take(AgentRuntimeLimits.MaxBatchRecords).ToArray();
+        RuntimeAgentDiagnostics.RecordRecords("logs", result.Length);
+        return result;
     }
 
     public async Task<RuntimeStatusIngestRequest> CollectStatusAsync(string agentVersion, CancellationToken cancellationToken)
@@ -64,7 +66,7 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
                 state.TryGetProperty("Health", out var health) ? health.GetProperty("Status").GetString() : null,
                 container.GetProperty("Config").GetProperty("Image").GetString(), container.GetProperty("RestartCount").GetInt32());
         }).ToArray();
-        var caddy = await processRunner.RunAsync("systemctl", ["is-active", "caddy"], cancellationToken);
+        var caddy = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "systemctl", ["is-active", "caddy"], cancellationToken);
         return new RuntimeStatusIngestRequest(agentVersion, DateTimeOffset.UtcNow, config.ComposeProject, statuses,
             new RuntimeCaddyStatusDto(caddy.ExitCode == 0 && caddy.Stdout.Trim() == "active"));
     }

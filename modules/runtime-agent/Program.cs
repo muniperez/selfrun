@@ -29,7 +29,8 @@ while (true)
         var desired = await api.GetRoutingAsync(CancellationToken.None);
         var results = await routing.ApplyAsync(desired, CancellationToken.None);
         await api.SendRoutingApplyResultsAsync(new RuntimeRoutingApplyResultsRequest(desired.Version, results), CancellationToken.None);
-    });
+        return results;
+    }, results => results.Any(result => result.ApplyStatus == "failed"));
     await AgentOperations.TryAsync("logs", async () =>
     {
         var logs = await collector.CollectLogsAsync(CancellationToken.None);
