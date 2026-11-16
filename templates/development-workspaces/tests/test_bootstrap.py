@@ -73,6 +73,7 @@ class BootstrapTests(unittest.TestCase):
         config = dict(kind="ephemeral", workspace=str(self.root), uid=2000, gid=2000,
                       repositories=[dict(origin=origin)])
         def execute(argv, **kwargs):
+            self.assertEqual(kwargs["cwd"], str(home))
             self.assertEqual((kwargs.pop("user"), kwargs.pop("group"), kwargs.pop("extra_groups")),
                              (2000, 2000, []))
             subprocess.run(argv, check=True, capture_output=True, **kwargs)

@@ -52,7 +52,7 @@ def configure_user_git(config):
                 ("--replace-all", prefix + ".helper", ""),
                 ("--add", prefix + ".helper", GIT_CREDENTIAL_HELPER),
                 ("--replace-all", prefix + ".useHttpPath", "true")):
-            run(["git", "config", "--global", operation, key, value], env=environment,
+            run(["git", "config", "--global", operation, key, value], env=environment, cwd=environment["HOME"],
                 user=config["uid"], group=config["gid"], extra_groups=[])
 
 
