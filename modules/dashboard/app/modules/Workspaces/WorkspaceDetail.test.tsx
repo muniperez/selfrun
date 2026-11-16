@@ -5,6 +5,7 @@ import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/cont
 import { WorkspaceDetail } from "./WorkspaceDetail";
 
 const vmCards = vi.hoisted(() => vi.fn());
+const releasedCards = vi.hoisted(() => vi.fn());
 const auth = vi.hoisted(() => ({
   profile: { id: "creator" },
   selectedOrganization: { id: "org-a", role: "owner" },
@@ -16,6 +17,7 @@ vi.mock("./WorkspaceVmCard", () => ({
     workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm; currency: string; canManage: boolean;
     variant?: "primary" | "embedded"; retainedStorage?: { sizeGb: number; status?: string | null; estimatedMonthlyStorage: number };
   }) => {
+    useEffect(() => () => releasedCards(props.vm.id), [props.vm.id]);
     vmCards(props);
     const { workspaceId, organizationId, vm, currency, canManage } = props;
     return <article aria-label={`VM ${vm.id}`}>
@@ -115,6 +117,16 @@ it("fences Connect ownership against organization context and read-only manageme
   auth.selectedOrganization.id = "org-a";
   view.rerender(detail(workspace({ createdBy: "creator" }), false));
   expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
+});
+
+it("releases the previous primary management context when the signed-in actor changes, even between organization owners", () => {
+  const item = workspace();
+  const view = render(detail(item));
+  expect(releasedCards).not.toHaveBeenCalled();
+  auth.profile = { id: "another-owner" };
+  view.rerender(detail(item));
+  expect(releasedCards).toHaveBeenCalledWith("primary");
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: true }));
 });
 
 it("resolves the primary by identity and passes observed state and retained storage into one unified card without starting compute", () => {
@@ -303,3 +315,4 @@ it("keeps read-only metadata and costs available and discards launch state on or
   expect(within(nextForm).getByLabelText("Selections for org-c/workspace")).toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
+import { useEffect } from "react";

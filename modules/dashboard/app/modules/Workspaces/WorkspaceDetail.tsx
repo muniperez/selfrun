@@ -118,7 +118,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
       </div>
       <TabsContent value="overview" className="space-y-8 pt-4">
         <section aria-label="Primary VM">
-          {primary ? <WorkspaceVmCard key={`${primary.id}:${primary.generation}`} workspaceId={item.id} organizationId={organizationId}
+          {primary ? <WorkspaceVmCard key={`${primary.id}:${primary.generation}:${profile?.id ?? ""}`} workspaceId={item.id} organizationId={organizationId}
             vm={primary} currency={item.currency} refresh={refresh} canManage={canManage} canManageConnect={canManageConnect} variant="primary"
             retainedStorage={{ sizeGb: item.volumeSizeGb, status: item.volumeStatus, estimatedMonthlyStorage: item.estimatedMonthlyStorage }} />
             : <Card><CardContent className="space-y-2 p-6 text-sm">
