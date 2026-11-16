@@ -28,6 +28,23 @@ native = load("generic_native_qualification", "native.py")
 
 
 class ImageTests(unittest.TestCase):
+    def test_copilot_install_verifies_pin_and_uses_credential_free_initialize(self):
+        lock = json.loads((HERE / "image/manifest.lock.json").read_text())
+        with patch.object(builder, "download") as download, \
+                patch.object(builder, "run") as run, \
+                patch.object(builder.Path, "mkdir"), patch.object(builder.Path, "is_file", return_value=True), \
+                patch.object(builder.Path, "write_text") as write, patch.object(builder.Path, "chmod"), \
+                patch.object(builder, "probe_copilot", return_value={"version": "1.0.114"}) as probe:
+            builder.install_copilot(lock, Path("/synthetic-build-cache"))
+        download.assert_called_once_with(lock["copilot"], Path("/synthetic-build-cache/copilot.tar.gz"))
+        run.assert_called_once_with(["tar", "--no-same-owner", "-xf",
+                                     "/synthetic-build-cache/copilot.tar.gz", "-C", "/opt/minicloud-copilot"])
+        self.assertIn('exec /opt/minicloud-copilot/copilot "$@"', write.call_args.args[0])
+        self.assertIn("COPILOT_AUTO_UPDATE=false", write.call_args.args[0])
+        probe.assert_called_once_with(expected_version=lock["copilot"]["version"],
+                                      environment={"PATH": "/usr/local/bin:/usr/bin:/bin",
+                                                   "HOME": "/synthetic-build-cache"})
+
     def test_native_source_control_versions_use_coding_uid_and_service_path(self):
         lock = json.loads((HERE / "image/manifest.lock.json").read_text())
         with patch.object(native, "command", side_effect=["gh version " + lock["gh"]["version"],

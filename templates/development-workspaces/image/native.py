@@ -34,7 +34,7 @@ SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "termi
 UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
          "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service")
 UNIT_HASHES = {
-    "minicloud-t3.service": "9e72ff32dea7305f0d9c239eeb7f22b44953c1922dcec5c46395628aa71e8d5a",
+    "minicloud-t3.service": "d9aaea0ce50d3364ee488bab796e3bca5c90142743c64ca0ab750775b612dded",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
     "minicloud-t3-connect.service": "788796e55235f9cac13bcbfaf1267840f5e729d30bf753cd04274aa0a5906c03",
@@ -50,6 +50,7 @@ REQUIRED_PROBES = {
     "loop-readback-user-files", "encrypted-user-file-restore",
     "codex-empty-git-probes-save-and-reject-data",
     "connect-management-rejects-routine-t3-token",
+    "copilot-stdio-provider-setup",
     "source-control-cli-service-terminal-and-discovery",
 }
 
@@ -783,6 +784,32 @@ class Native:
             time.sleep(0.2)
         raise ProbeError("EXPECTED_NATIVE_STATE_TIMEOUT")
 
+    def copilot_provider(self):
+        settings_path = Path("/workspace/t3/userdata/settings.json")
+        before = settings_path.read_bytes()
+        settings = json.loads(before)
+        provider = settings.get("providerInstances", {}).get("minicloud-copilot", {})
+        check(provider.get("driver") == "acpRegistry" and provider.get("enabled") is True and
+              provider.get("config") == {"source": "local", "commandPath": "/usr/local/bin/copilot",
+                                         "commandArgs": ["--acp", "--stdio"]},
+              "COPILOT_LOCAL_PROVIDER_NOT_SEEDED")
+        for action in ("configure", "probe"):
+            result = json.loads(command([
+                "setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
+                "env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/workspace/home",
+                "python3", "-B", "/opt/minicloud-workspace/copilot_provider.py", action],
+                cwd="/workspace"))
+            check(result.get("state") == ("AlreadyConfigured" if action == "configure" else "Compatible"),
+                  "COPILOT_CODING_USER_SETUP_FAILED")
+            if action == "probe":
+                check(result.get("version") == "1.0.114" and
+                      result.get("authentication") == "NotChecked", "COPILOT_WRONG_ACP_VERSION")
+        check(json.loads(settings_path.read_bytes()).get("providerInstances", {}) ==
+              settings["providerInstances"], "COPILOT_REAPPLY_CHANGED_PROVIDER_INSTANCES")
+        return {"stdioInitializeAsCodingUser": True, "version": "1.0.114",
+                "providerSeededBeforeT3Start": True, "providerReapplyIdempotent": True,
+                "authenticatedPromptAndFollowupQualified": False}
+
     def start_services(self):
         check(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]) != "0",
               "FRESH_BOOTSTRAP_DID_NOT_START_T3")
@@ -1499,6 +1526,8 @@ class Native:
             if not self.report.probe("native-http-scopes-tickets-websocket", self.start_services):
                 return
             self.report.probe("connect-management-rejects-routine-t3-token", self.connect_management)
+            if not self.report.probe("copilot-stdio-provider-setup", self.copilot_provider):
+                return
             self.report.probe("authenticated-generation-task-and-activity-hooks", self.root_hooks)
             if not self.report.probe("real-terminal-input-and-passive-root-hook", self.terminals):
                 return
