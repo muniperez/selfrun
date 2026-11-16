@@ -13,6 +13,11 @@ continues to use only terminal/orchestration read and operate permissions.
    this management route. Existing unqualified images do not expose this service:
    an operator must qualify the updated image/runtime before offering it. This
    feature never silently replaces or upgrades a running VM.
+   The redesigned primary VM card shows this control only to that workspace's
+   creator or an organization Owner; ephemeral cards never offer it. Organization,
+   VM generation, readiness/revision and ownership changes discard pending launch
+   responses instead of opening a stale account-management page. The API and
+   gateway independently enforce ownership; hiding the control is not authorization.
 2. Read the independent-access disclosure and choose **Link my T3 account**.
    The private page shows T3's device-approval URL and code. Open it on your own
    device, verify the code matches and approve with your own T3 account. Do not

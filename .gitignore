@@ -53,7 +53,7 @@ minicloud-dev.db-*
 .env
 .env.*
 !.env.example
-node_modules/
+node_modules
 dist/
 *.tsbuildinfo
 __pycache__/

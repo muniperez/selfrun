@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Minicloud.Api.Auth;
@@ -16,6 +17,20 @@ public sealed class DevelopmentWorkspacesController(
     {
         if (!await CanAsync(organizationId, OrganizationAction.ReadApps, ct)) return EndpointResults.Forbidden();
         return Results.Ok((await workspaces.ListAsync(organizationId, ct)).Select(workspaces.ToResponse));
+    }
+
+    [HttpGet("selections")]
+    public async Task<IResult> Selections([FromQuery] string organizationId, [FromQuery] string? workspaceId, CancellationToken ct)
+    {
+        if (!await CanAsync(organizationId, OrganizationAction.ReadApps, ct)) return EndpointResults.Forbidden();
+        Response.Headers.CacheControl = "no-store";
+        try { return Results.Ok(await workspaces.GetSelectionsAsync(organizationId, workspaceId, ct)); }
+        catch (DevelopmentWorkspaceException error) { return Error(error); }
+        catch (Exception error) when (error is DbException or TimeoutException)
+        {
+            return Results.Json(new ErrorResponse(new ErrorBody("workspace_selections_unavailable",
+                "Workspace choices could not be loaded. Try again later.", [])), statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     [HttpGet("{id}")]

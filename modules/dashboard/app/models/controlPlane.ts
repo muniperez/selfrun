@@ -398,6 +398,7 @@ export type AppStorageVolume = { name: string; provider: string; providerVolumeI
 export type DevelopmentWorkspace = {
   id: string;
   organizationId: string;
+  createdBy?: string | null;
   name: string;
   imageId: string;
   profile: string;

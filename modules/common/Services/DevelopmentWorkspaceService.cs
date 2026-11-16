@@ -273,7 +273,8 @@ public sealed partial class DevelopmentWorkspaceService(
             primary.ErrorCode, primary.ErrorMessage, primary.LastActivityAt, primary.ShutdownDeadline, primary.LastReadyAt,
             workspace.Vms.Where(x => x.ComputeReserved).Sum(x => x.ComputeHourlyRate * 720m), workspace.StorageMonthlyRate,
             workspace.Currency, workspace.PricingUpdatedAt, workspace.Revision, workspace.CreatedAt, workspace.UpdatedAt,
-            workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus);
+            workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus,
+            workspace.CreatedBy);
     }
 
     public DevelopmentWorkspaceVmResponse ToVmResponse(DevelopmentWorkspaceVm vm) =>
@@ -420,26 +421,23 @@ public sealed partial class DevelopmentWorkspaceService(
     private async Task<Selection> SelectAsync(string organizationId, string imageId, string profileId, string planId, CancellationToken ct)
     {
         ValidateText(imageId, 128); ValidateText(profileId, 32); ValidateText(planId, 128);
-        if (!Policy.Images.TryGetValue(imageId, out var image) || !image.Enabled || !image.RuntimeQualified
-            || image.QualifiedAt is null || image.QualifiedAt > Now || !Sha(image.ManifestSha256, 64) || string.IsNullOrWhiteSpace(image.ProviderImageId)
-            || image.Architecture != "linux/amd64")
+        if (!Policy.Images.TryGetValue(imageId, out var image) || !EligibleImage(image))
             throw Invalid("workspace_image_invalid", "Image must be explicitly enabled and runtime-qualified with an amd64 manifest.");
-        if (!Policy.Profiles.TryGetValue(profileId, out var profile) || profile.MemoryGiB is not (8 or 16)
-            || profile.CpuCount <= 0 || profile.ComputeHourlyRate <= 0 || !profile.AllowedPlanIds.Contains(planId, StringComparer.Ordinal))
+        if (!Policy.Profiles.TryGetValue(profileId, out var profile) || !EligibleProfile(profile, planId))
             throw Invalid("workspace_profile_invalid", "Profile is not approved for this immutable plan.");
         var plan = await db.ProviderPlans.Include(x => x.ProviderAccount).SingleOrDefaultAsync(
             x => x.OrganizationId == organizationId && x.Id == planId, ct);
-        if (plan is null || !plan.Enabled || !plan.ProviderAccount.Enabled || plan.ProviderAccount.ProviderType != CloudProvider.Hetzner
-            || plan.ProviderAccount.OrganizationId != organizationId || plan.BuildPlatform != "linux/amd64"
-            || image.ProviderAccountId != plan.ProviderAccountId || !image.AllowedRegions.Contains(plan.Region, StringComparer.Ordinal)
-            || !profile.AllowedSkus.Contains(plan.Sku, StringComparer.Ordinal) || !profile.AllowedRegions.Contains(plan.Region, StringComparer.Ordinal))
+        if (plan is null || !EligiblePlan(organizationId, image, profile, new SelectionPlan(
+                plan.Id, plan.Name, plan.OrganizationId, plan.ProviderAccountId, plan.Region, plan.Sku, plan.BuildPlatform,
+                plan.Enabled, plan.ProviderAccount.Name, plan.ProviderAccount.OrganizationId,
+                plan.ProviderAccount.Enabled, plan.ProviderAccount.ProviderType)))
             throw Invalid("workspace_plan_invalid", "Plan, image, account, region, SKU and architecture must match the explicit policy.");
         return new(plan, profile, image);
     }
 
     private static void EnsurePlacement(DevelopmentWorkspace workspace, ProviderPlan plan)
     {
-        if (workspace.ProviderAccountId != plan.ProviderAccountId || workspace.Region != plan.Region)
+        if (!MatchesPlacement(workspace, plan.ProviderAccountId, plan.Region))
             throw Invalid("workspace_placement_invalid", "All workspace generations must use the retained volume's account and region.");
     }
 
@@ -581,9 +579,11 @@ public sealed partial class DevelopmentWorkspaceService(
     private static bool Sha(string? value, int length) => value?.Length == length && value.All(Uri.IsHexDigit);
     private static void ValidateText(string? value, int length)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > length || value.Any(char.IsControl))
+        if (!ValidText(value, length))
             throw Invalid("workspace_request_invalid", "Required value is empty, oversized or contains control characters.");
     }
+    private static bool ValidText(string? value, int length) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= length && !value.Any(char.IsControl);
     private static DevelopmentWorkspaceException Invalid(string code, string message) => new(code, message);
     private static DevelopmentWorkspaceException Conflict(string code, string message) => new(code, message, true);
     private sealed record Selection(ProviderPlan Plan, DevelopmentWorkspaceProfile Profile, DevelopmentWorkspaceImage Image);

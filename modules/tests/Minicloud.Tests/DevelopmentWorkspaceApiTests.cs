@@ -58,6 +58,7 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
         client.DefaultRequestHeaders.Add("X-Organization-Id", "org");
         client.DefaultRequestHeaders.Add("X-Actor-Id", "admin");
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync($"{Root}?organizationId=org")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync($"{Root}/selections?organizationId=org")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(Root, Request())).StatusCode);
         await AssertNoCompute();
     }
@@ -70,7 +71,8 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
         var vm = workspace.Vms!.Single();
         using var other = Client(otherToken);
         var prefix = $"{Root}/{workspace.Id}";
-        foreach (var url in new[] { $"{Root}?organizationId=org", $"{prefix}?organizationId=org", $"{prefix}/vms?organizationId=org" })
+        foreach (var url in new[] { $"{Root}?organizationId=org", $"{prefix}?organizationId=org", $"{prefix}/vms?organizationId=org",
+            $"{Root}/selections?organizationId=org", $"{Root}/selections?organizationId=org&workspaceId={workspace.Id}" })
             Assert.Equal(HttpStatusCode.Forbidden, (await other.GetAsync(url)).StatusCode);
         foreach (var action in new[] { "start", "stop", "stop-all", "cancel-idle-stop" })
             Assert.Equal(HttpStatusCode.Forbidden, (await other.PostAsync($"{prefix}/{action}?organizationId=org", null)).StatusCode);
@@ -80,6 +82,110 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
             new DevelopmentWorkspaceDiscardRequest(0, true, true))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PutAsJsonAsync($"{prefix}/vms/{vm.Id}/tasks/task/lease?organizationId=org",
             new DevelopmentWorkspaceGenerationRequest(0))).StatusCode);
+        await AssertNoCompute();
+    }
+
+    [Fact]
+    public async Task DiscoveryNeedsOnlyReadPermissionAndReturnsPublicMetadataWithoutAllocating()
+    {
+        string readToken, noReadToken;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            readToken = AddKey(db, scope.ServiceProvider.GetRequiredService<IApiKeyTokenService>(), "org", [ApiKeyScopes.AppsRead]);
+            noReadToken = AddKey(db, scope.ServiceProvider.GetRequiredService<IApiKeyTokenService>(), "org", [ApiKeyScopes.PlansRead]);
+            await db.SaveChangesAsync();
+        }
+        factory.Policy.Images["image"].DisplayName = "Development tools";
+        using var noRead = Client(noReadToken);
+        Assert.Equal(HttpStatusCode.Forbidden, (await noRead.GetAsync($"{Root}/selections?organizationId=org")).StatusCode);
+        using var client = Client(readToken);
+        for (var i = 0; i < 2; i++)
+        {
+            var response = await client.GetAsync($"{Root}/selections?organizationId=org");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.True(response.Headers.CacheControl?.NoStore);
+            var choices = (await response.Content.ReadFromJsonAsync<WorkspaceSelections>())!;
+            Assert.True(choices.Available);
+            Assert.Null(choices.UnavailableReason);
+            Assert.Equal(new WorkspaceSelectionOption("image", "Development tools", "standard", "plan",
+                "Standard", "Synthetic", "nbg1", "cx-test"), Assert.Single(choices.Options));
+            var raw = await response.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("sensitive", raw);
+            Assert.DoesNotContain("credential", raw, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("manifest", raw, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(Root, Request())).StatusCode);
+        await AssertNoCompute();
+        await using var verify = factory.Services.CreateAsyncScope();
+        var context = verify.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        Assert.Empty(await context.DevelopmentWorkspaces.ToListAsync());
+        Assert.Null((await context.ProviderPlans.SingleAsync()).ProvisioningLockedAt);
+    }
+
+    [Fact]
+    public async Task DiscoveryHidesForeignWorkspaceAndDistinguishesEmptyAndDisabledConfiguration()
+    {
+        using var owner = Client(token);
+        var workspace = await Create(owner);
+        var scoped = await owner.GetFromJsonAsync<WorkspaceSelections>($"{Root}/selections?organizationId=org&workspaceId={workspace.Id}");
+        Assert.Single(scoped!.Options);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await owner.GetAsync($"{Root}/selections?organizationId=org&workspaceId=missing")).StatusCode);
+        using var other = Client(otherToken);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await other.GetAsync($"{Root}/selections?organizationId=other&workspaceId={workspace.Id}")).StatusCode);
+        var empty = (await other.GetFromJsonAsync<WorkspaceSelections>($"{Root}/selections?organizationId=other"))!;
+        Assert.True(empty.Available);
+        Assert.Null(empty.UnavailableReason);
+        Assert.Empty(empty.Options);
+        factory.Policy.Enabled = false;
+        var disabled = (await owner.GetFromJsonAsync<WorkspaceSelections>($"{Root}/selections?organizationId=org"))!;
+        Assert.False(disabled.Available);
+        Assert.Contains("disabled", disabled.UnavailableReason);
+        Assert.Empty(disabled.Options);
+        factory.Policy.Enabled = true;
+        factory.Policy.PricingUpdatedAt = DateTimeOffset.UtcNow.AddDays(-100);
+        var invalid = (await owner.GetFromJsonAsync<WorkspaceSelections>($"{Root}/selections?organizationId=org"))!;
+        Assert.False(invalid.Available);
+        Assert.Contains("pricing", invalid.UnavailableReason);
+        await AssertNoCompute();
+    }
+
+    [Fact]
+    public async Task DiscoveryReadFailureIsSanitizedUnavailableNotAnEmptyCatalog()
+    {
+        await using (var scope = factory.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<MinicloudDbContext>().Database.ExecuteSqlRawAsync("DROP TABLE provider_plans");
+        using var client = Client(token);
+        var response = await client.GetAsync($"{Root}/selections?organizationId=org");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var error = (await response.Content.ReadFromJsonAsync<ErrorResponse>())!;
+        Assert.Equal("workspace_selections_unavailable", error.Error.Code);
+        var raw = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("provider_plans", raw);
+        Assert.DoesNotContain("SQLite", raw);
+        await AssertNoCompute();
+    }
+
+    [Fact]
+    public async Task CreateAndResizeRejectSelectionWhosePolicyChangedSinceDiscovery()
+    {
+        using var client = Client(token);
+        var workspace = await Create(client);
+        var choices = (await client.GetFromJsonAsync<WorkspaceSelections>($"{Root}/selections?organizationId=org"))!;
+        var choice = Assert.Single(choices.Options);
+        factory.Policy.Images[choice.ImageId].RuntimeQualified = false;
+        var create = await client.PostAsJsonAsync(Root, Request() with { Name = "Second", IdempotencyKey = "second" });
+        Assert.Equal(HttpStatusCode.BadRequest, create.StatusCode);
+        Assert.Equal("workspace_image_invalid", (await create.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        var resize = await client.PostAsJsonAsync($"{Root}/{workspace.Id}/resize?organizationId=org",
+            new DevelopmentWorkspaceResizeRequest(0, choice.ImageId, choice.Profile, choice.PlanId));
+        Assert.Equal(HttpStatusCode.BadRequest, resize.StatusCode);
+        Assert.Equal("workspace_image_invalid", (await resize.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        var empty = (await client.GetFromJsonAsync<WorkspaceSelections>($"{Root}/selections?organizationId=org"))!;
+        Assert.True(empty.Available);
+        Assert.Empty(empty.Options);
         await AssertNoCompute();
     }
 
