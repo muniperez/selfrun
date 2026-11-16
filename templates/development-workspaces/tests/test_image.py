@@ -1,9 +1,11 @@
 import hashlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +26,15 @@ native = load("generic_native_qualification", "native.py")
 
 
 class ImageTests(unittest.TestCase):
+    def test_native_command_retains_safe_exception_identity_without_raw_stderr(self):
+        with self.assertRaises(native.ProbeError) as caught:
+            native.command([sys.executable, "-c",
+                            "raise FileNotFoundError(2, 'synthetic-sensitive-error-value')"])
+        evidence = caught.exception.evidence
+        self.assertEqual(evidence["exceptionClass"], "FileNotFoundError")
+        self.assertEqual(evidence["errno"], 2)
+        self.assertNotIn("synthetic-sensitive-error-value", json.dumps(evidence))
+
     def test_install_does_not_request_a_workspace_database(self):
         class PackagesObserved(Exception):
             pass

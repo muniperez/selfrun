@@ -74,8 +74,18 @@ def command(argv, *, input=None, timeout=120, cwd=None):
     except (OSError, subprocess.SubprocessError):
         raise ProbeError("COMMAND_UNAVAILABLE_OR_TIMEOUT") from None
     if result.returncode:
+        exception_classes = {
+            "FileNotFoundError", "ConnectionRefusedError", "ConnectionResetError",
+            "PermissionError", "TimeoutError", "OSError", "ValueError",
+        }
+        exceptions = re.findall(r"^([A-Za-z]+Error):", result.stderr, re.MULTILINE)
+        errnos = re.findall(r"\[Errno ([0-9]{1,3})\]", result.stderr)
         raise ProbeError("COMMAND_FAILED", {"tool": Path(argv[0]).name,
                                            "exitCode": result.returncode,
+                                           "exceptionClass": next(
+                                               (name for name in reversed(exceptions)
+                                                if name in exception_classes), None),
+                                           "errno": int(errnos[-1]) if errnos else None,
                                            "errorCategories": [word for word in (
                                                "permission denied", "eacces", "enoent", "sqlite",
                                                "database is locked", "duration", "ttl", "scope",
@@ -410,11 +420,19 @@ class Native:
         check(not any(name.startswith(("postgresql", "libpq")) for name in installed),
               "UNREQUESTED_DATABASE_PACKAGES_INSTALLED")
         for name in ("/opt/minicloud-preview", "/var/lib/postgresql",
+                     "/etc/postgresql", "/var/log/postgresql",
                      "/etc/systemd/system/minicloud-postgres.service",
                      "/etc/systemd/system/minicloud-preview-canary.service"):
             path = Path(name)
             check(not path.exists() and not path.is_symlink(), "UNREQUESTED_DEFAULT_APP_PRESENT")
+        try:
+            pwd.getpwnam("postgres")
+        except KeyError:
+            pass
+        else:
+            raise ProbeError("UNREQUESTED_DATABASE_ACCOUNT_PRESENT")
         return {"defaultApplicationsAbsent": True, "postgresPackagesAbsent": True,
+                "postgresAccountAbsent": True, "databaseDirectoriesAbsent": True,
                 "defaultWorkload": "T3-and-coding-environment-only"}
 
     def control(self, action, operation="native-control", expect_ok=True, **extra):
@@ -456,8 +474,10 @@ class Native:
                                        initializeOwner=True, owner=owner))
         write_json("/etc/minicloud-workspace/runtime.json", self.config)
         self.owns_runtime = True
-        command(["systemctl", "start", "minicloud-workspace.service"])
-        self.wait(lambda: Path("/run/minicloud-workspace/control.sock").exists())
+        check(command(["systemctl", "show", "minicloud-workspace.service", "-p", "MainPID", "--value"]) == "0",
+              "SUPERVISOR_ALREADY_RUNNING_BEFORE_IMAGE_BOOTSTRAP")
+        check(not Path("/run/minicloud-workspace/control.sock").exists(),
+              "SUPERVISOR_SOCKET_PRESENT_BEFORE_IMAGE_BOOTSTRAP")
         check(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]) == "0",
               "T3_STARTED_BEFORE_IMAGE_BOOTSTRAP")
         result = bootstrap_with_local_enrollment(self.config, self.directory)
@@ -475,6 +495,8 @@ class Native:
                 "formattedOnlyVerifiedNewLoopDevice": True, "providerPersistenceProof": False,
                 "noApplicationInstalledOrRegistered": True,
                 "actualImageBootstrapEntrypoint": True,
+                "supervisorInitiallyInactive": True, "supervisorSocketInitiallyAbsent": True,
+                "noManualSupervisorOrT3Start": True,
                 "enrollmentPeer": "synthetic-loopback-verified-TLS-only"}
 
     def wait(self, predicate, seconds=30):
