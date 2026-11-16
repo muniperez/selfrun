@@ -456,6 +456,10 @@ class Native:
                                        initializeOwner=True, owner=owner))
         write_json("/etc/minicloud-workspace/runtime.json", self.config)
         self.owns_runtime = True
+        command(["systemctl", "start", "minicloud-workspace.service"])
+        self.wait(lambda: Path("/run/minicloud-workspace/control.sock").exists())
+        check(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]) == "0",
+              "T3_STARTED_BEFORE_IMAGE_BOOTSTRAP")
         result = bootstrap_with_local_enrollment(self.config, self.directory)
         check(result["type"] == "BootstrapReady", "BOOTSTRAP_RECEIPT_REQUIRED")
         check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"]) == fs_uuid,
