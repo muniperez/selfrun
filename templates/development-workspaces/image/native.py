@@ -486,6 +486,16 @@ class Native:
               "MOUNT_UUID_MISMATCH")
         check(not Path("/workspace/postgres").exists() and not Path("/workspace/emulators").exists(),
               "UNREQUESTED_DEFAULT_WORKLOAD_DIRECTORY")
+        codex_home = Path("/workspace/home/.codex")
+        check(codex_home.is_dir() and not codex_home.is_symlink() and
+              codex_home.stat().st_uid == 2000 and codex_home.stat().st_gid == 2000 and
+              stat.S_IMODE(codex_home.stat().st_mode) == 0o700, "INVALID_CODING_CODEX_HOME")
+        codex = subprocess.run(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
+            "env", "HOME=/workspace/home", "CODEX_HOME=" + str(codex_home), "codex", "--version"],
+            cwd="/workspace", capture_output=True, text=True, timeout=30,
+            env={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"})
+        check(codex.returncode == 0 and "0.169.0" in codex.stdout and not codex.stderr.strip(),
+              "CODEX_VERSION_NOT_WARNING_FREE_AS_CODING_USER")
         for name, value in (("config/native-user.json", '{"userCreated":true}\n'),
                             ("transcripts/native-user.txt", "representative-user-data\n")):
             path = Path("/workspace") / name
@@ -497,6 +507,9 @@ class Native:
                 "actualImageBootstrapEntrypoint": True,
                 "supervisorInitiallyInactive": True, "supervisorSocketInitiallyAbsent": True,
                 "noManualSupervisorOrT3Start": True,
+                "codexHomeExists": True, "codexHomeUid": 2000, "codexHomeGid": 2000,
+                "codexHomeMode": "0700", "codexVersionAsCodingUid": "0.169.0",
+                "codexVersionStderrEmpty": True, "codexLoginNotRequiredForVersionProof": True,
                 "enrollmentPeer": "synthetic-loopback-verified-TLS-only"}
 
     def wait(self, predicate, seconds=30):
