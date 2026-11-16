@@ -49,6 +49,14 @@ def download(item, target):
     require(checksum.hexdigest() == item[algorithm], "Pinned artifact checksum mismatch")
 
 
+def install_systemd_units(source_directory, destination_directory):
+    for source in source_directory.iterdir():
+        destination = destination_directory / source.name
+        shutil.copy2(source, destination)
+        os.chown(destination, 0, 0)
+        destination.chmod(0o644)
+
+
 def install(source_revision, builder):
     require(re.fullmatch(r"[a-f0-9]{40}", source_revision), "Exact source commit required")
     require(builder, "Builder provenance identity required")
@@ -108,8 +116,7 @@ def install(source_revision, builder):
     for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
-    for source in (HERE.parent / "systemd").iterdir():
-        shutil.copy2(source, Path("/etc/systemd/system") / source.name)
+    install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))
     Path("/var/cache/minicloud-workspace/verification").mkdir(parents=True, exist_ok=True, mode=0o711)
     Path("/var/cache/minicloud-workspace").chmod(0o711)
     Path("/etc/minicloud-workspace").mkdir(mode=0o700, exist_ok=True)

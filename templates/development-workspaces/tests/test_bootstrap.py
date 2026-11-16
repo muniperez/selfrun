@@ -44,6 +44,24 @@ class BootstrapTests(unittest.TestCase):
         self.manifest = dict(architecture="linux/amd64", provenance=dict(toolArtifactsVerified=True))
         self.manifest_bytes = (json.dumps(self.manifest, indent=2) + "\n").encode()
 
+    def test_installed_systemd_units_are_root_owned_and_not_checkout_writable(self):
+        source = self.root / "systemd-source"
+        destination = self.root / "systemd-installed"
+        source.mkdir()
+        destination.mkdir()
+        for name, mode in (("runtime.service", 0o664), ("work.slice", 0o775)):
+            path = source / name
+            path.write_text("[Unit]\nDescription=Disposable fixture\n")
+            path.chmod(mode)
+        with patch.object(builder.os, "chown") as chown:
+            builder.install_systemd_units(source, destination)
+        self.assertEqual(chown.call_count, 2)
+        for path in source.iterdir():
+            installed = destination / path.name
+            self.assertEqual(installed.read_bytes(), path.read_bytes())
+            self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
+            self.assertIn(unittest.mock.call(installed, 0, 0), chown.call_args_list)
+
     def execute(self, opener):
         def load(path):
             return self.envelope if Path(path) == self.enrollment else self.config
