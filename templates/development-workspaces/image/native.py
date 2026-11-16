@@ -651,8 +651,12 @@ class Native:
                 events = Path("/sys/fs/cgroup/minicloudwork.slice/cgroup.events")
                 if events.exists() and "frozen 1" in events.read_text():
                     command(["systemctl", "thaw", "minicloudwork.slice"])
-                if os.path.ismount(workspace):
-                    check(command(["findmnt", "-rn", "-M", str(workspace), "-o", "UUID"]) == filesystem_uuid,
+                # ismount() misses a bind mount whose parent is on the same filesystem.
+                bound = subprocess.run(["findmnt", "-rn", "-M", str(workspace), "-o", "UUID"],
+                                       capture_output=True, text=True, timeout=30)
+                check(bound.returncode in (0, 1), "CODEX_GIT_BIND_MOUNT_STATUS_UNKNOWN")
+                if bound.returncode == 0:
+                    check(bound.stdout.strip() == filesystem_uuid,
                           "CODEX_GIT_BIND_IDENTITY_CHANGED")
                     command(["mount", "-o", "remount,bind,rw", str(workspace)])
                     command(["umount", str(workspace)])
