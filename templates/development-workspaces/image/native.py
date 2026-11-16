@@ -5,6 +5,7 @@ import datetime as dt
 import hashlib
 import http.server
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -375,6 +376,7 @@ class Native:
         self.clean_workspace = False
         self.frozen_by_harness = False
         self.git_fixture_cleanup = "not-started"
+        self.restore_fixture_cleanup = "not-started"
         self.original_workspace_exists = Path("/workspace").exists()
         self.expires = dt.datetime.fromisoformat(authorization["expiresAt"].replace("Z", "+00:00"))
         self.rt = None
@@ -730,8 +732,13 @@ class Native:
         check(codex.returncode == 0 and "0.169.0" in codex.stdout and not codex.stderr.strip(),
               "CODEX_VERSION_NOT_WARNING_FREE_AS_CODING_USER")
         for name, value in (("config/native-user.json", '{"userCreated":true}\n'),
-                            ("transcripts/native-user.txt", "representative-user-data\n")):
+                            ("transcripts/native-user.txt", "representative-user-data\n"),
+                            ("config/lost+found/.minicloud-volume.json", "nested user metadata-like file\n"),
+                            ("artifacts/lost+found", "nested user filename, not filesystem metadata\n"),
+                            ("transcripts/.minicloud-volume.json", "nested transcript metadata-like file\n")):
             path = Path("/workspace") / name
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chown(path.parent, 2000, 2000)
             path.write_text(value)
             os.chown(path, 2000, 2000)
         return {"type": result["type"], "filesystemUuid": fs_uuid,
@@ -1123,48 +1130,184 @@ class Native:
             command(["umount", str(directory)])
 
     def encrypted_restore(self):
-        names = ("artifacts/native-input-seen", "config/native-user.json", "transcripts/native-user.txt")
+        names = ("artifacts/native-input-seen", "config/native-user.json", "transcripts/native-user.txt",
+                 "config/lost+found/.minicloud-volume.json", "artifacts/lost+found",
+                 "transcripts/.minicloud-volume.json")
         mounted = self.directory / "restore-readback"
-        restored = self.directory / "restored-user-files"
+        restored = self.directory / "restore-target"
+        backing = self.directory / "restore-target.ext4"
         key = self.directory / "restore.agekey"
         ciphertext = self.directory / "user-files.tar.age"
+        target_device = None
+        target_alias = None
+        target_uuid = None
+        self.restore_fixture_cleanup = "pending"
         mounted.mkdir(mode=0o700)
         restored.mkdir(mode=0o700)
         guarded_loop(self.device, self.directory / "fixture.ext4")
         command(["mount", "-t", "ext4", "-o", "ro,noload,nodev,nosuid", self.device, str(mounted)])
         try:
+            check((mounted / "lost+found").is_dir() and not (mounted / "lost+found").is_symlink()
+                  and not any((mounted / "lost+found").iterdir()),
+                  "SOURCE_STANDARD_EXT4_LOST_FOUND_NOT_EMPTY")
+            source_owner = (mounted / ".minicloud-volume.json").read_bytes()
+            check(json.loads(source_owner) == self.config["volume"]["owner"],
+                  "SOURCE_RESTORE_FIXTURE_OWNER_CHANGED")
             expected = {name: sha(mounted / name) for name in names}
             command(["age-keygen", "--output", str(key)])
             recipient = command(["age-keygen", "-y", str(key)])
             check(recipient.startswith("age1"), "INVALID_SYNTHETIC_AGE_RECIPIENT")
-            archive = subprocess.Popen(["tar", "-C", str(mounted), "-cf", "-", *names],
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self.rt.encrypt_archive(mounted, ciphertext, recipient)
+            check(ciphertext.is_file() and ciphertext.stat().st_size > 0,
+                  "PRODUCTION_BACKUP_CIPHERTEXT_MISSING")
+            inspect_archive = subprocess.Popen(["age", "--decrypt", "--identity", str(key), str(ciphertext)],
+                                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             try:
-                encrypted = subprocess.run(["age", "--recipient", recipient, "--output", str(ciphertext)],
-                                           stdin=archive.stdout, capture_output=True, timeout=60)
+                members = set()
+                with tarfile.open(fileobj=inspect_archive.stdout, mode="r|") as archive:
+                    for member in archive:
+                        check(len(members) < 10000 and len(member.name) <= 1024,
+                              "NATIVE_ARCHIVE_UNEXPECTEDLY_LARGE")
+                        members.add(member.name)
+                inspect_archive.stdout.read()
+                check(inspect_archive.wait(timeout=10) == 0, "BACKUP_ARCHIVE_DECRYPTION_FAILED")
             finally:
-                archive.stdout.close()
-            check(encrypted.returncode == 0 and archive.wait(timeout=10) == 0,
-                  "SYNTHETIC_USER_FILE_ENCRYPTION_FAILED")
+                inspect_archive.stdout.close()
+                if inspect_archive.poll() is None:
+                    inspect_archive.terminate()
+                    inspect_archive.wait(timeout=10)
+            check(not {"data/lost+found", "data/.minicloud-volume.json"} & members,
+                  "PRODUCTION_WRITER_INCLUDED_ROOT_FILESYSTEM_METADATA")
+            check(all("data/" + name in members for name in names), "NESTED_USER_DATA_OMITTED")
+            with backing.open("xb") as stream:
+                stream.truncate(512 * 1024**2)
+            target_device = command(["losetup", "--find", "--show", "--nooverlap", str(backing)])
+            guarded_loop(target_device, backing)
+            command(["mkfs.ext4", "-q", "-F", target_device])
+            target_uuid = command(["blkid", "-s", "UUID", "-o", "value", target_device])
+            check(target_uuid != self.config["volume"]["filesystemUuid"], "RESTORE_TARGET_UUID_REUSED")
+            target_alias = Path("/dev/disk/by-id") / ("minicloud-native-restore-" + self.run_id)
+            check(not target_alias.exists() and not target_alias.is_symlink(), "RESTORE_ALIAS_ALREADY_EXISTS")
+            target_alias.symlink_to(target_device)
+            target_volume_id = self.run_id + "-restore-target"
+            target_claim = dict(device=str(target_alias), providerDeviceId=target_alias.name,
+                providerVolumeId=target_volume_id, filesystemUuid=target_uuid, initializeOwner=True,
+                owner={**self.config["volume"]["owner"], "providerVolumeId": target_volume_id})
+            config = {**self.config, "vmId": self.run_id + "-restore", "workspace": str(restored),
+                      "volume": target_claim}
+            runtime = self.rt.Runtime(config, self.directory / "restore-runtime-state")
+            runtime.adapter.mount(target_claim)
+            target_marker = restored / ".minicloud-volume.json"
+            target_owner = target_marker.read_bytes()
+            check(target_owner != source_owner, "RESTORE_TARGET_OWNER_NOT_INDEPENDENT")
+            lost = restored / "lost+found"
+            check(lost.is_dir() and not lost.is_symlink() and not any(lost.iterdir()),
+                  "TARGET_STANDARD_EXT4_LOST_FOUND_NOT_EMPTY")
+            lost_identity = (lost.stat().st_ino, lost.stat().st_uid, lost.stat().st_gid,
+                             stat.S_IMODE(lost.stat().st_mode))
+            marker_identity = (target_marker.stat().st_ino, target_marker.stat().st_uid,
+                               stat.S_IMODE(target_marker.stat().st_mode))
+            rejected = []
+
+            def reject_metadata(label):
+                output = io.BytesIO()
+                try:
+                    self.rt.write_backup_archive(restored, output)
+                except self.rt.Blocked:
+                    check(output.getvalue() == b"", "UNSAFE_METADATA_PARTIALLY_ARCHIVED")
+                    rejected.append(label)
+                    return
+                raise ProbeError("PRODUCTION_WRITER_ACCEPTED_UNSAFE_FILESYSTEM_METADATA")
+
+            recovered = lost / "native-recovered-data"
+            recovered.write_bytes(b"Do not silently discard recovered native fixture data\n")
+            try:
+                reject_metadata("nonempty-lost-found")
+                check(recovered.read_bytes() == b"Do not silently discard recovered native fixture data\n",
+                      "RECOVERED_DATA_MUTATED_DURING_REJECTION")
+            finally:
+                recovered.unlink()
+            preserved_lost = restored / "native-preserved-lost-found"
+            lost.rename(preserved_lost)
+            try:
+                lost.symlink_to(preserved_lost, target_is_directory=True)
+                reject_metadata("aliased-lost-found")
+            finally:
+                lost.unlink()
+                preserved_lost.rename(lost)
+            # Only import is under test: no fabricated provider/off-host admission or durability claim.
+            operation = "native-local-restore-import"
+            runtime.s.update(phase="RestoreReady", restoreOperation=operation,
+                restoreSource=dict(receiptId="native-local-import-fixture", representativeHashes=expected))
+            runtime.save()
             decrypted = subprocess.Popen(["age", "--decrypt", "--identity", str(key), str(ciphertext)],
                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             try:
-                result = restore_selected_files(decrypted.stdout, expected, restored)
+                result = runtime.restore_import(operation, decrypted.stdout)
                 decrypted.stdout.read()
+                check(decrypted.wait(timeout=10) == 0, "SYNTHETIC_USER_FILE_DECRYPTION_FAILED")
             finally:
                 decrypted.stdout.close()
-            check(decrypted.wait(timeout=10) == 0, "SYNTHETIC_USER_FILE_DECRYPTION_FAILED")
-            return {**result, "encryptedWithAge": True, "plaintextArchivePersisted": False,
-                    "scope": "representative user files only; local loop fixture",
+                if decrypted.poll() is None:
+                    decrypted.terminate()
+                    decrypted.wait(timeout=10)
+            check(result["type"] == "PrimaryRestored" and result["representativeHashesVerified"],
+                  "PRODUCTION_RESTORE_IMPORT_RECEIPT_MISSING")
+            check(all(sha(restored / name) == digest for name, digest in expected.items()),
+                  "RESTORED_REPRESENTATIVE_USER_HASH_MISMATCH")
+            check(target_marker.read_bytes() == target_owner and
+                  (target_marker.stat().st_ino, target_marker.stat().st_uid,
+                   stat.S_IMODE(target_marker.stat().st_mode)) == marker_identity,
+                  "TARGET_OWNERSHIP_METADATA_REPLACED")
+            check(not any(lost.iterdir()) and
+                  (lost.stat().st_ino, lost.stat().st_uid, lost.stat().st_gid,
+                   stat.S_IMODE(lost.stat().st_mode)) == lost_identity, "TARGET_LOST_FOUND_REPLACED")
+            runtime.adapter.verify_owner(target_claim)
+            return {"filesRestored": len(expected), "allSha256Matched": True,
+                    "encryptedWithAge": True, "productionArchiveWriterUsed": True,
+                    "actualRuntimeRestoreImport": True, "restoreReceiptType": result["type"],
+                    "sourceAndTargetAreDistinctLoopExt4": True,
+                    "rootFilesystemMetadataOmitted": True, "nestedMetadataNamesPreserved": True,
+                    "targetOwnerAndLostFoundPreserved": True, "rejected": rejected,
+                    "recoveryKeyOutsideSourceAndTarget": True, "recoveryKeyOffVm": False,
+                    "plaintextArchivePersisted": False, "preAdmittedLocalImportFixture": True,
+                    "restoreAdmissionQualified": False,
+                    "scope": "production writer/age/import on separate loop-ext4; NOT provider/off-host restore",
                     "providerOrOffHostRestoreQualified": False}
         finally:
-            command(["umount", str(mounted)])
-            key.unlink(missing_ok=True)
-            ciphertext.unlink(missing_ok=True)
-            shutil.rmtree(restored)
+            try:
+                if os.path.ismount(restored):
+                    check(command(["findmnt", "-rn", "-M", str(restored), "-o", "UUID"]) == target_uuid,
+                          "RESTORE_TARGET_MOUNT_IDENTITY_CHANGED")
+                    command(["umount", str(restored)])
+                if target_alias:
+                    check(target_alias.is_symlink() and os.readlink(target_alias) == target_device,
+                          "RESTORE_TARGET_ALIAS_CHANGED")
+                    target_alias.unlink()
+                if target_device:
+                    guarded_loop(target_device, backing)
+                    command(["losetup", "--detach", target_device])
+                if backing.exists():
+                    check(not command(["losetup", "--associated", str(backing)]),
+                          "RESTORE_TARGET_LOOP_STILL_ATTACHED")
+                    with backing.open("r+b") as output:
+                        for _ in range(512):
+                            output.write(bytes(1024**2))
+                        output.flush()
+                        os.fsync(output.fileno())
+                    backing.unlink()
+                command(["umount", str(mounted)])
+                key.unlink(missing_ok=True)
+                ciphertext.unlink(missing_ok=True)
+                restored.rmdir()
+                mounted.rmdir()
+                self.restore_fixture_cleanup = "complete"
+            finally:
+                self.report.value["restoreFixtureCleanup"] = self.restore_fixture_cleanup
 
     def cleanup(self):
         check(self.git_fixture_cleanup in ("not-started", "complete"), "CODEX_GIT_FIXTURE_CLEANUP_INCOMPLETE")
+        check(self.restore_fixture_cleanup in ("not-started", "complete"), "RESTORE_FIXTURE_CLEANUP_INCOMPLETE")
         if self.client:
             try:
                 if self.shell_pid:
