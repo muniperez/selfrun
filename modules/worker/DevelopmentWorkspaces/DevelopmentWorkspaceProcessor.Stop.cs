@@ -31,11 +31,15 @@ public sealed partial class DevelopmentWorkspaceProcessor
                     { fresh.ProviderServerId = discovered.Id; fresh.ProviderIpId = discovered.PrimaryIpId; fresh.IpAddress = discovered.Ipv4; }, ct);
                     break;
                 }
-                await RefreshRuntimeAsync(workspace, vm, op.Id, ct);
+                var publishRoute = !await db.DevelopmentWorkspaceGatewayRoutes.AnyAsync(x =>
+                    x.VmId == vm.Id && x.Generation == vm.Generation && x.Service == "t3" &&
+                    x.RevokedAt != null, ct);
+                await RefreshRuntimeAsync(workspace, vm, op.Id, ct, publishRoute: publishRoute);
+                vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == vm.Id, ct);
                 if (await lifecycle.HasUnresolvedTasksAsync(vm, ct) || !await IsRuntimeIdleAsync(vm, op.Id, ct))
                 {
                     await SaveAsync(op, evidence, "wait-for-tasks", (_, fresh, _) =>
-                    { fresh.Phase = "draining"; fresh.GatewayReady = true; fresh.LastHeartbeatAt = Now; }, ct);
+                    { fresh.Phase = "draining"; fresh.GatewayReady = publishRoute; fresh.LastHeartbeatAt = Now; }, ct);
                     break;
                 }
                 var discard = vm.DiscardGeneration == vm.Generation && vm.DiscardOperationId == op.Id &&
@@ -58,9 +62,9 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 {
                     fresh.GatewayReady = false; fresh.Phase = "draining"; fresh.LastHeartbeatAt = Now;
                     foreach (var route in db.DevelopmentWorkspaceGatewayRoutes.Where(x => x.VmId == fresh.Id && x.Generation == fresh.Generation))
-                        route.RevokedAt = Now;
+                        route.RevokedAt ??= Now;
                     foreach (var session in db.DevelopmentWorkspaceGatewaySessions.Where(x => x.VmId == fresh.Id && x.Generation == fresh.Generation))
-                        session.RevokedAt = Now;
+                        session.RevokedAt ??= Now;
                 }, ct); break;
             case "gateway-drain":
                 if (evidence.GatewayRevokedAt is null) throw new InvalidOperationException("Gateway admission fence has no durable receipt.");

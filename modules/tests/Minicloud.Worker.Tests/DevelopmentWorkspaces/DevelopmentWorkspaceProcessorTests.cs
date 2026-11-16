@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -36,6 +37,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     private readonly FakeTunnels tunnels = new();
     private readonly GitHubHandler github = new();
     private readonly DiagnosticLogger diagnostics = new();
+    private readonly List<string> shellAuthorizations = [];
+    private long t3SnapshotSequence = 7;
     private readonly DevelopmentWorkspaceWorkerOptions workerOptions = new()
     {
         ApiBaseUrl = "https://control.example.test", ManagementAddresses = ["198.51.100.1/32"],
@@ -102,8 +105,12 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         t3.MapGet("/api/auth/session", () => Results.Json(new
             { authenticated = true, expiresAt = clock.GetUtcNow().AddMinutes(30).ToString("O") }));
         t3.MapPost("/api/auth/websocket-ticket", () => Results.Json(new { ticket = "fixture-ticket" }));
-        t3.MapGet("/api/orchestration/shell", () => Results.Json(new
-            { schemaVersion = 1, snapshotSequence = 7, threads = Array.Empty<object>(), archivedThreads = Array.Empty<object>() }));
+        t3.MapGet("/api/orchestration/shell", (HttpContext context) =>
+        {
+            shellAuthorizations.Add(context.Request.Headers.Authorization.ToString());
+            return Results.Json(new { schemaVersion = 1, snapshotSequence = t3SnapshotSequence,
+                threads = Array.Empty<object>(), archivedThreads = Array.Empty<object>() });
+        });
         t3.MapGet("/", () => Results.Ok());
         t3.Map("/ws", async context =>
         {
@@ -269,6 +276,116 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Equal(0, cloud.Detaches);
         Assert.Equal(0, cloud.VolumeCreates);
         Assert.Equal(0, cloud.Attaches);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task StopRetryRefreshesPrivateRuntimeWithoutRevivingExistingGatewayFence(bool ephemeral, bool busy)
+    {
+        var (_, vm, operation) = await SeedStop("wait-for-tasks", ephemeral);
+        if (ephemeral) await EnableGitHubCredentials(vm);
+        var tracked = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+        tracked.Phase = "blocked"; tracked.GatewayReady = false;
+        tracked.RuntimeTokenExpiresAt = clock.GetUtcNow().AddSeconds(-1);
+        if (ephemeral)
+        {
+            tracked.DiscardGeneration = vm.Generation; tracked.DiscardOperationId = operation.Id;
+            tracked.DiscardRequestedAt = clock.GetUtcNow(); tracked.DiscardRequestedBy = "actor";
+        }
+        operation = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == operation.Id);
+        operation.ProviderEvidenceJson = "{}";
+        var revokedAt = clock.GetUtcNow().AddMinutes(-2);
+        var route = await db.DevelopmentWorkspaceGatewayRoutes.SingleAsync();
+        route.RevokedAt = revokedAt;
+        var fencedCredentialReference = route.T3CredentialReference;
+        var fencedRouteExpiry = route.ExpiresAt;
+        var session = await db.DevelopmentWorkspaceGatewaySessions.SingleAsync();
+        session.RevokedAt = revokedAt;
+        workerOptions.PreviewServices["web"] = new() { Port = 8080 };
+        db.DevelopmentWorkspaceGatewayRoutes.Add(new()
+        {
+            Id = "preview-route", OrganizationId = "org", WorkspaceId = vm.WorkspaceId,
+            VmId = vm.Id, Generation = vm.Generation, Service = "web", LoopbackPort = 8080,
+            RegisteredAt = revokedAt, ExpiresAt = clock.GetUtcNow().AddMinutes(30), RevokedAt = revokedAt
+        });
+        await db.SaveChangesAsync();
+        runtime.IssuedSessionToken = new string('p', 48);
+        runtime.TaskRunning = busy;
+        runtime.WorkBranch = vm.WorkBranch ?? "";
+
+        async Task AssertGatewayRemainsFenced()
+        {
+            Assert.False((await CurrentVm(vm.Id)).GatewayReady);
+            var routes = await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().ToListAsync();
+            Assert.Equal(2, routes.Count);
+            Assert.All(routes, current => Assert.Equal(revokedAt, current.RevokedAt));
+            var fencedRoute = routes.Single(current => current.Service == "t3");
+            Assert.Equal(fencedCredentialReference, fencedRoute.T3CredentialReference);
+            Assert.Equal(fencedRouteExpiry, fencedRoute.ExpiresAt);
+            Assert.Equal(revokedAt, (await db.DevelopmentWorkspaceGatewaySessions.AsNoTracking().SingleAsync()).RevokedAt);
+            Assert.DoesNotContain((8080, "web"), tunnels.Requests);
+        }
+
+        await Hop(busy ? "wait-for-tasks" : "gateway-drain");
+        var refreshed = await CurrentVm(vm.Id);
+        Assert.Equal("draining", refreshed.Phase);
+        Assert.True(refreshed.RuntimeTokenExpiresAt > clock.GetUtcNow().AddMinutes(10));
+        Assert.Equal(1, runtime.SessionsIssued);
+        Assert.True(tunnels.WebSocketConnections > 0);
+        await AssertGatewayRemainsFenced();
+        if (busy)
+        {
+            Assert.Empty(shellAuthorizations);
+            Assert.DoesNotContain("discard", runtime.Actions);
+            Assert.Equal(0, cloud.Deletes);
+            return;
+        }
+
+        Assert.Equal("Bearer " + runtime.IssuedSessionToken, Assert.Single(shellAuthorizations));
+        clock.Advance(TimeSpan.FromSeconds(76));
+        await Hop("quiesce");
+        t3SnapshotSequence = 23;
+        await Hop(ephemeral ? "delete-intent" : "detach");
+        var quiesced = await CurrentVm(vm.Id);
+        Assert.Equal(vm.Generation, quiesced.QuiescedGeneration);
+        Assert.Equal(operation.Id, quiesced.QuiescedOperationId);
+        Assert.Contains(ephemeral ? "discard" : "quiesce", runtime.Actions);
+        Assert.Equal(t3SnapshotSequence, runtime.LastStopArguments!.Value.GetProperty("t3SnapshotSequence").GetInt64());
+        Assert.Equal(3, shellAuthorizations.Count);
+        Assert.All(shellAuthorizations, authorization => Assert.Equal("Bearer " + runtime.IssuedSessionToken, authorization));
+        await AssertGatewayRemainsFenced();
+        Assert.Equal(0, cloud.Deletes);
+    }
+
+    [Fact]
+    public async Task PublishingRefreshCannotRepublishRevokedGatewayRouteWithoutExplicitRevival()
+    {
+        var (workspace, vm, operation) = await SeedStop("wait-for-tasks");
+        var tracked = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+        tracked.Phase = "ready"; tracked.DesiredState = "running"; tracked.GatewayReady = false;
+        var heartbeat = tracked.LastHeartbeatAt;
+        var revokedAt = clock.GetUtcNow().AddMinutes(-2);
+        (await db.DevelopmentWorkspaceGatewayRoutes.SingleAsync()).RevokedAt = revokedAt;
+        (await db.DevelopmentWorkspaceGatewaySessions.SingleAsync()).RevokedAt = revokedAt;
+        await db.SaveChangesAsync();
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        var refresh = typeof(DevelopmentWorkspaceProcessor).GetMethod("RefreshRuntimeAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            (Task)refresh.Invoke(Processor(), [workspace, vm, operation.Id, CancellationToken.None, false, true])!);
+
+        Assert.Equal("A fenced workspace route cannot be revived by monitoring.", error.Message);
+        var current = await CurrentVm(vm.Id);
+        Assert.False(current.GatewayReady);
+        Assert.Equal(heartbeat, current.LastHeartbeatAt);
+        Assert.Equal(revokedAt, (await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync()).RevokedAt);
+        Assert.Equal(revokedAt, (await db.DevelopmentWorkspaceGatewaySessions.AsNoTracking().SingleAsync()).RevokedAt);
+        Assert.True(tunnels.WebSocketConnections > 0);
+        Assert.Empty(shellAuthorizations);
+        Assert.Equal(0, cloud.Deletes);
     }
 
     [Theory]
@@ -710,6 +827,9 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public string ReceiptFilesystemUuid { get; set; } = "filesystem-retained";
         public int ReceiptGenerationDelta { get; set; }
         public string WorkBranch { get; set; } = "";
+        public string IssuedSessionToken { get; set; } = new string('t', 48);
+        public int SessionsIssued { get; private set; }
+        public JsonElement? LastStopArguments { get; private set; }
         public JsonElement? Credential { get; set; }
         public bool FailStage { get; set; }
         public bool FailRead { get; set; }
@@ -722,6 +842,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         {
             Actions.Add(action);
             BeforeAction?.Invoke(action);
+            if (action is "quiesce" or "git-save" or "discard")
+                LastStopArguments = JsonSerializer.SerializeToElement(arguments, Json);
             if (Rejections.TryGetValue(action, out var rejection)) return Task.FromResult(rejection);
             if (action is "resume" or "cancel-drain") Phase = "Ready";
             if (action == "receipt-validate" && FailReceipt) throw new InvalidOperationException("Receipt was not confirmed.");
@@ -761,8 +883,11 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             BootstrapConfiguration = JsonSerializer.SerializeToElement(config, Json);
             throw new InvalidOperationException("Bootstrap was not expected in this stage.");
         }
-        public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct) =>
-            Task.FromResult(new string('t', 48));
+        public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct)
+        {
+            SessionsIssued++;
+            return Task.FromResult(IssuedSessionToken);
+        }
         public Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct)
         {
             Actions.Add("stage:" + credential.GetProperty("password").GetString());
