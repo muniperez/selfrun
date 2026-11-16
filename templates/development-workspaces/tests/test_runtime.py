@@ -139,25 +139,33 @@ class LayoutTests(unittest.TestCase):
                         self.assertEqual(path.stat().st_mode & 0o777, 0o700)
                         self.assertTrue(os.access(path, os.X_OK))
                         chown.assert_any_call(path, os.getuid(), os.getgid())
+                    codex = workspace / "home/.codex"
+                    self.assertTrue(codex.is_dir())
+                    self.assertEqual(codex.stat().st_mode & 0o777, 0o700)
+                    chown.assert_any_call(codex, os.getuid(), os.getgid())
                     self.assertEqual(b"arbitrary user application state\0", marker.read_bytes())
                     process.assert_not_called()
                 finally:
                     os.umask(previous)
 
     def test_managed_home_symlink_is_rejected_without_touching_user_data(self):
-        with tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
-            root = Path(directory)
-            workspace = root / "workspace"
-            workspace.mkdir()
-            outside = root / "outside"
-            outside.mkdir()
-            (workspace / "home").symlink_to(outside, target_is_directory=True)
-            adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
-            with patch.object(rt.os, "chown"), patch.object(rt, "run") as run:
-                with self.assertRaisesRegex(rt.Blocked, "Workspace layout symlink"):
-                    adapter.layout()
-            self.assertEqual([], list(outside.iterdir()))
-            run.assert_not_called()
+        for relative in ("home", "home/.codex"):
+            with self.subTest(relative=relative), \
+                    tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
+                root = Path(directory)
+                workspace = root / "workspace"
+                workspace.mkdir()
+                outside = root / "outside"
+                outside.mkdir()
+                link = workspace / relative
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(outside, target_is_directory=True)
+                adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
+                with patch.object(rt.os, "chown"), patch.object(rt, "run") as run:
+                    with self.assertRaisesRegex(rt.Blocked, "Workspace layout symlink"):
+                        adapter.layout()
+                self.assertEqual([], list(outside.iterdir()))
+                run.assert_not_called()
 
     def test_restore_assigns_generic_user_data_to_coding_identity_only(self):
         with tempfile.TemporaryDirectory(prefix="ownership-", dir=ARTIFACTS) as directory:

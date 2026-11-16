@@ -609,7 +609,7 @@ class Linux:
     def layout(self):
         require(self.workspace.is_dir() and not self.workspace.is_symlink(), "Workspace layout symlink")
         self.workspace.chmod(0o755)
-        for relative in ("repos", "t3", "transcripts", "artifacts", "config", "home"):
+        for relative in ("repos", "t3", "transcripts", "artifacts", "config", "home", "home/.codex"):
             directory = self.workspace / relative
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             require(not directory.is_symlink(), "Workspace layout symlink")
