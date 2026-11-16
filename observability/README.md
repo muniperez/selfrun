@@ -36,9 +36,12 @@ Rules:
 ```text
 repo:
   compose.observability.yml            # dev/local stack (merge with compose.dev.yml)
+  compose.profiling.yml                # optional private operator profiling overlay
   observability/loki/loki.yml         # reviewed Loki template
   observability/grafana/grafana.ini   # reviewed Grafana template
-  observability/grafana/provisioning/ # intentionally empty; T20 provisions dynamically
+  observability/grafana/provisioning/ # tenant Grafana remains dynamically provisioned
+  observability/profiling/            # private collector, Prometheus, and Tempo templates
+  observability/profiling/grafana-provisioning/ # operator-only static datasources
   observability/README.md             # this file
 
 VPS (/var/lib/minicloud/observability, separate mounted volume):
@@ -147,6 +150,97 @@ promised in beta.
 - T20 moves the Grafana server-admin credential into OpenBao/operator
   secret storage; until then the `grafana-admin-password` file is part of
   every backup.
+
+## Optional operator profiling (local/dev)
+
+The separate `compose.profiling.yml` overlay adds a private OTel Collector,
+Prometheus, short-retention Tempo, and a separate operator-only Grafana. It is
+not part of the application-log gateway or production deploy. The existing
+tenant Grafana provisioning, Loki query proxy, application quotas, and
+credentials are unchanged.
+
+The worker's `deployment.pipeline` operation emits one structured summary per
+minute with service, operation, outcome, window duration, count, total
+duration, artifact bytes, failures, and the most recent sampled trace ID.
+Failure/recovery transitions are logged once per state transition rather than
+per failed deployment. The same operation records a duration histogram and a
+trace span. Metric collection does not depend on trace sampling; the pilot uses
+a fixed 5% head-sampling rate.
+
+The collector receiver accepts only bearer-authenticated requests. It has no
+published OTLP port; container producers reach it only over a private Compose
+bridge. Logs are limited both at the worker exporter and in the collector to the
+`Minicloud.OperatorDiagnostics` category; collector transforms keep only
+approved numeric fields, fixed service/operation/outcome values, and trace
+metadata. Export requests always receive the reserved `operator` Loki tenant
+header from the collector; inbound tenant headers and arbitrary resource/log
+attributes are not forwarded. No HTTP, database, or logging-exporter
+instrumentation is enabled, avoiding recursive export and sensitive payload
+capture. Collector memory and exporter queues are bounded, retries stop after
+30 seconds, and normal application logging remains on its existing provider.
+
+Start the optional stores with throwaway local credentials:
+
+```bash
+export MINICLOUD_OPERATOR_OTLP_TOKEN="$(openssl rand -hex 32)"
+export MINICLOUD_OPERATOR_GRAFANA_PASSWORD="$(openssl rand -hex 24)"
+docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml config
+docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml \
+  up -d loki grafana-operator otel-collector prometheus tempo worker
+```
+
+The compose profile requires both variables and does not provide committed
+credentials. The operator Grafana is available at
+`http://127.0.0.1:3101` (user `operator`); Prometheus, Tempo, the collector
+receiver/metrics endpoints, and backend ports are not published to the host.
+Profiling images are pinned to multi-platform manifest digests:
+OTel Collector Contrib 0.120.0
+(`sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917`),
+Prometheus 2.55.1
+(`sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3`),
+and Tempo 2.7.2
+(`sha256:4b0277a9b572a4b1fa43b01468e58911ec214dd69d033f2cd476596d14de9fe3`).
+
+After at least one deployment pipeline completes, the operator Grafana
+datasources can verify the pilot:
+
+- Explore **Minicloud Operator Logs** with
+  `{service_name="minicloud-worker"}`. A summary includes
+  `Operation="deployment.pipeline"` and the structured fields
+  `Service`, `Outcome`, `WindowDurationMs`, `Count`, `TotalDurationMs`,
+  `Bytes`, `Failures`, and `TraceId`.
+- Explore **Minicloud Operator Metrics** with
+  `histogram_quantile(0.95, sum by (le, service, operation) (rate(minicloud_worker_deployment_pipeline_duration_seconds_bucket[5m])))`.
+  The explicit histogram boundaries are 0.1, 0.5, 1, 2.5, 5, 10, 30, 60,
+  120, and 300 seconds.
+- Explore **Minicloud Operator Traces**, select
+  `service.name="minicloud-worker"`, and open a sampled
+  `deployment.pipeline` span. The sampling rate is 5%; low-volume pilots may
+  need several operations before a trace appears.
+
+To confirm receiver authorization, send the same OTLP request once without a
+bearer token and once with a wrong token; both must be rejected. During a Loki
+or Tempo outage, the collector retries only for the configured 30-second
+window and drops new data when its bounded queue fills; it does not block the
+worker or the tenant-facing telemetry gateway. The collector's filter and
+transform prevent export-path logs or arbitrary inbound tenant/identity
+attributes from feeding back into Loki.
+
+Stop and remove only the profiling services, leaving the tenant observability
+stack running:
+
+```bash
+docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml \
+  stop worker grafana-operator otel-collector prometheus tempo
+docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml \
+  rm -f worker grafana-operator otel-collector prometheus tempo
+docker volume rm minicloud-operator-prometheus-dev minicloud-operator-tempo-dev \
+  minicloud-operator-grafana-dev
+```
+
+Remove `compose.profiling.yml` from the Compose command and unset the worker's
+`OperatorProfiling__Enabled` setting before restarting it to resume normal
+non-exporting behavior.
 
 ## Disk-pressure recovery
 

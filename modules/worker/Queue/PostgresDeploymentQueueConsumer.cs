@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Services;
+using Minicloud.Worker.Diagnostics;
 using Minicloud.Worker.Pipeline;
 using Minicloud.Worker.Ssh;
 
@@ -19,13 +21,15 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<PostgresDeploymentQueueConsumer> _logger;
     private readonly MaintenanceParticipant _maintenance;
+    private readonly OperatorDiagnostics? _operatorDiagnostics;
 
     public PostgresDeploymentQueueConsumer(
         IServiceScopeFactory scopeFactory,
         IOptions<WorkerOptions> options,
         TimeProvider timeProvider,
         ILogger<PostgresDeploymentQueueConsumer> logger,
-        MaintenanceParticipant? maintenance = null)
+        MaintenanceParticipant? maintenance = null,
+        OperatorDiagnostics? operatorDiagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(options);
@@ -42,6 +46,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
         _timeProvider = timeProvider;
         _logger = logger;
         _maintenance = maintenance ?? new MaintenanceParticipant(scopeFactory, "worker", null, timeProvider, logger);
+        _operatorDiagnostics = operatorDiagnostics;
     }
 
     public async Task<Deployment?> TryClaimNextDeploymentAsync(CancellationToken cancellationToken)
@@ -192,6 +197,13 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var ownershipLostCts = new CancellationTokenSource();
         using var userCancellationCts = new CancellationTokenSource();
+        var artifactBytes = _operatorDiagnostics is null
+            ? 0
+            : deployment.Services.Sum(service =>
+                Math.Max(0, service.Artifact?.SizeBytes ?? service.Artifact?.ExpectedSizeBytes ?? 0));
+        using var activity = _operatorDiagnostics is null ? null : OperatorDiagnostics.StartDeploymentPipeline();
+        var operationStarted = _operatorDiagnostics is null ? 0 : _timeProvider.GetTimestamp();
+        var outcome = "succeeded";
         var cancellationTask = WatchCancellationAsync(deployment.Id, deployment.OwnershipToken, pipelineCts, userCancellationCts, heartbeatCts.Token);
         var heartbeatTask = RunHeartbeatLoopAsync(
             deployment.Id, deployment.OwnershipToken, pipelineCts, ownershipLostCts, heartbeatCts.Token);
@@ -208,6 +220,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
         }
         catch (OperationCanceledException)
         {
+            outcome = "canceled";
             if (!cancellationToken.IsCancellationRequested && !ownershipLostCts.IsCancellationRequested &&
                 (userCancellationCts.IsCancellationRequested || await IsCancellationRequestedAsync(deployment.Id, deployment.OwnershipToken)))
             {
@@ -227,6 +240,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
         }
         catch (Exception ex)
         {
+            outcome = "failed";
             _logger.LogError(ex, "Deployment {DeploymentId} failed during pipeline execution", deployment.Id);
             await MarkDeploymentFailedAsync(
                 deployment.Id,
@@ -239,14 +253,28 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
         }
         finally
         {
-            await heartbeatCts.CancelAsync();
             try
             {
+                await heartbeatCts.CancelAsync();
                 await Task.WhenAll(heartbeatTask, cancellationTask);
             }
             catch (OperationCanceledException)
             {
                 // Expected when cancelling heartbeat loop
+            }
+            finally
+            {
+                if (_operatorDiagnostics is not null)
+                {
+                    activity?.SetTag("outcome", outcome);
+                    if (outcome == "failed")
+                    {
+                        activity?.SetStatus(ActivityStatusCode.Error);
+                    }
+                    _operatorDiagnostics.RecordDeploymentPipeline(
+                        _timeProvider.GetElapsedTime(operationStarted), artifactBytes, outcome,
+                        activity?.TraceId.ToHexString());
+                }
             }
         }
     }
