@@ -12,7 +12,10 @@ import time
 import urllib.error
 import urllib.request
 
-from runtime import Blocked, atomic_json, load_config, require, run
+from runtime import Blocked, atomic_json, canonical_remote, load_config, require, run
+
+
+GIT_CREDENTIAL_HELPER = "/opt/minicloud-workspace/git-credential.py"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -35,6 +38,24 @@ def call(request, socket_path="/run/minicloud-workspace/control.sock"):
         return response["result"]
 
 
+def configure_user_git(config):
+    if config["kind"] != "ephemeral" or not config.get("repositories"):
+        return
+    environment = dict(PATH="/usr/bin:/bin", HOME=str(Path(config["workspace"]) / "home"),
+                       GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    for repository in config.get("repositories", []):
+        origin = canonical_remote(repository["origin"])
+        if not origin.startswith("https://"):
+            continue
+        prefix = "credential." + origin
+        for operation, key, value in (
+                ("--replace-all", prefix + ".helper", ""),
+                ("--add", prefix + ".helper", GIT_CREDENTIAL_HELPER),
+                ("--replace-all", prefix + ".useHttpPath", "true")):
+            run(["git", "config", "--global", operation, key, value], env=environment,
+                user=config["uid"], group=config["gid"], extra_groups=[])
+
+
 def bootstrap(config_path, enrollment_path, state_dir):
     c, enrollment = load_config(config_path), load_config(enrollment_path)
     require(enrollment["vmId"] == c["vmId"] and enrollment["generation"] == c["generation"],
@@ -53,6 +74,7 @@ def bootstrap(config_path, enrollment_path, state_dir):
                    operationId=enrollment["operationId"], action="bootstrap")
     run(["systemctl", "start", "minicloud-workspace.service"])
     ready = call(request)
+    configure_user_git(c)
     if c.get("startServices", True):
         run(["systemctl", "start", "minicloud-postgres.service", "minicloud-t3.service"])
         database_ready = False

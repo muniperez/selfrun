@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -61,6 +62,36 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(installed.read_bytes(), path.read_bytes())
             self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
             self.assertIn(unittest.mock.call(installed, 0, 0), chown.call_args_list)
+
+    def test_user_git_uses_only_selected_repository_helper_without_operator_flags(self):
+        home = self.root / "home"
+        home.mkdir()
+        helper = self.root / "selected-helper"
+        helper.write_text("#!/bin/sh\nprintf 'username=synthetic\\npassword=fixture-only\\n\\n'\n")
+        helper.chmod(0o700)
+        origin = "https://github.com/example/selected.git"
+        config = dict(kind="ephemeral", workspace=str(self.root), uid=2000, gid=2000,
+                      repositories=[dict(origin=origin)])
+        def execute(argv, **kwargs):
+            self.assertEqual((kwargs.pop("user"), kwargs.pop("group"), kwargs.pop("extra_groups")),
+                             (2000, 2000, []))
+            subprocess.run(argv, check=True, capture_output=True, **kwargs)
+        with patch.object(bootstrap, "GIT_CREDENTIAL_HELPER", str(helper)), \
+                patch.object(bootstrap, "run", side_effect=execute):
+            bootstrap.configure_user_git(config)
+            bootstrap.configure_user_git(config)
+        environment = dict(PATH="/usr/bin:/bin", HOME=str(home), GIT_CONFIG_NOSYSTEM="1",
+                           GIT_TERMINAL_PROMPT="0")
+        def credentials(url):
+            return subprocess.run(["git", "credential", "fill"], input="url=" + url + "\n\n",
+                                  env=environment, capture_output=True, text=True)
+        selected = credentials(origin)
+        self.assertEqual(selected.returncode, 0)
+        self.assertIn("password=fixture-only", selected.stdout)
+        self.assertIn("path=example/selected.git", selected.stdout)
+        self.assertNotEqual(credentials("https://github.com/example/other.git").returncode, 0)
+        self.assertNotEqual(credentials("https://elsewhere.invalid/example/selected.git").returncode, 0)
+        self.assertNotIn("fixture-only", (home / ".gitconfig").read_text())
 
     def execute(self, opener):
         def load(path):
