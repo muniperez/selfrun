@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-from runtime import Blocked, Linux, atomic_json, canonical_remote, load_config, require, run
+from runtime import Blocked, atomic_json, canonical_remote, load_config, require, run
 
 
 GIT_CREDENTIAL_HELPER = "/opt/minicloud-workspace/git-credential.py"
@@ -76,23 +76,7 @@ def bootstrap(config_path, enrollment_path, state_dir):
     ready = call(request)
     configure_user_git(c)
     if c.get("startServices", True):
-        Linux(c).start_services()
-        database_ready = False
-        for attempt in range(30):
-            try:
-                run(["pg_isready", "--host=/run/minicloud-postgres", "--dbname=postgres"])
-                database_ready = True
-                break
-            except Blocked:
-                time.sleep(1)
-        require(database_ready, "Workspace PostgreSQL is not ready")
-        # Peer-authenticated local role only: no passwords or superuser grant for coding tasks.
-        sql = ("SELECT 'CREATE ROLE coding LOGIN CREATEDB' WHERE NOT EXISTS "
-               "(SELECT FROM pg_roles WHERE rolname='coding')\\gexec\n"
-               "SELECT 'CREATE DATABASE workspace OWNER coding' WHERE NOT EXISTS "
-               "(SELECT FROM pg_database WHERE datname='workspace')\\gexec\n")
-        run(["runuser", "-u", "postgres", "--", "psql", "--host=/run/minicloud-postgres",
-             "--dbname=postgres", "--set=ON_ERROR_STOP=1"], input=sql)
+        run(["systemctl", "start", "minicloud-t3.service"])
         descriptor = None
         for attempt in range(30):
             try:

@@ -399,7 +399,7 @@ class PreviewServiceTests(unittest.TestCase):
 
     def test_invalid_names_or_missing_stop_registration_block(self):
         for name in ("minicloud-preview-.service", "minicloud-preview-UPPER.service",
-                     "minicloud-preview-" + "x" * 25 + ".service", "postgresql.service"):
+                     "minicloud-preview-" + "x" * 25 + ".service", "unrelated-system.service"):
             with self.subTest(name=name):
                 self.config["infrastructureUnits"] = [name]
                 with self.assertRaisesRegex(rt.Blocked, "allowlist"):
@@ -462,12 +462,24 @@ class PreviewServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(rt.Blocked, "unregistered children"):
                 self.inspect()
 
-    def test_registered_previews_restart_on_authorized_resume(self):
+    def test_resume_restarts_only_managed_tooling_not_registered_user_applications(self):
         with patch.object(rt, "run", side_effect=self.systemctl), \
                 patch.object(self.adapter, "verify_unit_file"):
             self.adapter.start_services()
-        self.assertEqual(self.calls[-1], ["systemctl", "start", "minicloud-postgres.service",
-                                         "minicloud-t3.service", self.unit])
+        self.assertEqual(self.calls[-1], ["systemctl", "start", "minicloud-t3.service"])
+
+    def test_default_shutdown_stops_only_tooling_and_leaves_user_file_data_untouched(self):
+        self.config.pop("infrastructureUnits")
+        self.config.pop("stopUnits")
+        self.adapter.workspace.mkdir()
+        state = self.adapter.workspace / "custom-application.pid"
+        state.write_bytes(b"user-owned data, not a lifecycle control file")
+        with patch.object(rt, "run", side_effect=self.systemctl), \
+                patch.object(self.adapter, "thaw"), patch.object(self.adapter, "freeze"):
+            self.adapter.stop_services()
+        stopped = [call[-1] for call in self.calls if call[:2] == ["systemctl", "stop"]]
+        self.assertEqual(["minicloud-t3.service", "minicloud-t3.service"], stopped)
+        self.assertEqual(b"user-owned data, not a lifecycle control file", state.read_bytes())
 
 
 if __name__ == "__main__":

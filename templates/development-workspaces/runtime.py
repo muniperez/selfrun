@@ -609,37 +609,18 @@ class Linux:
     def layout(self):
         require(self.workspace.is_dir() and not self.workspace.is_symlink(), "Workspace layout symlink")
         self.workspace.chmod(0o755)
-        for relative in ("repos", "t3", "transcripts", "postgres", "postgres/16", "emulators", "emulators/exports",
-                         "emulators/config", "artifacts", "config", "home"):
+        for relative in ("repos", "t3", "transcripts", "artifacts", "config", "home"):
             directory = self.workspace / relative
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             require(not directory.is_symlink(), "Workspace layout symlink")
-            uid = self.config["uid"]
-            gid = self.config["gid"]
-            if relative.startswith("postgres"):
-                import pwd
-                uid = pwd.getpwnam("postgres").pw_uid
-                gid = pwd.getpwnam("postgres").pw_gid
-            os.chown(directory, uid, gid)
-        postgres = self.workspace / "postgres/16"
-        if not (postgres / "PG_VERSION").exists():
-            require(not any(postgres.iterdir()), "Unknown PostgreSQL data format")
-            run(["runuser", "-u", "postgres", "--", "/usr/lib/postgresql/16/bin/initdb",
-                 "-D", str(postgres), "--auth-local=peer", "--auth-host=scram-sha-256",
-                 "--encoding=UTF8", "--no-locale"])
-        require((postgres / "PG_VERSION").read_text().strip() == "16",
-                "PostgreSQL major mismatch; explicit migration required")
+            os.chown(directory, self.config["uid"], self.config["gid"])
         # Dedicated subdirectories retain ignored/untracked files. Root home is disposable.
 
     def restore_ownership(self):
-        import pwd
-        postgres = pwd.getpwnam("postgres")
         for path in self.workspace.rglob("*"):
             if path.name in (".minicloud-volume.json", "lost+found"):
                 continue
-            is_postgres = under(path, self.workspace / "postgres")
-            os.chown(path, postgres.pw_uid if is_postgres else self.config["uid"],
-                     postgres.pw_gid if is_postgres else self.config["gid"], follow_symlinks=False)
+            os.chown(path, self.config["uid"], self.config["gid"], follow_symlinks=False)
 
     def launch(self, task_id, argv):
         unit = "minicloud-task-" + hashlib.sha256(task_id.encode()).hexdigest()[:24]
@@ -684,11 +665,7 @@ class Linux:
 
     def start_services(self):
         if self.config.get("startServices", True):
-            previews = [unit for unit in self.infrastructure_units()
-                        if unit != "minicloud-t3.service"]
-            for unit in previews:
-                self.verify_preview_unit(unit)
-            run(["systemctl", "start", "minicloud-postgres.service", "minicloud-t3.service", *previews])
+            run(["systemctl", "start", "minicloud-t3.service"])
 
     def infrastructure_units(self):
         units = self.config.get("infrastructureUnits", ["minicloud-t3.service"])
@@ -697,9 +674,9 @@ class Linux:
                  re.fullmatch(r"minicloud-preview-[a-z0-9-]{1,24}\.service", unit))
                 for unit in units), "Unsupported infrastructure allowlist")
         require(len(set(units)) == len(units), "Duplicate infrastructure registration")
-        stops = self.config.get("stopUnits", ["minicloud-t3.service", "minicloud-postgres.service"])
+        stops = self.config.get("stopUnits", ["minicloud-t3.service"])
         require(isinstance(stops, list) and all(isinstance(unit, str) and
-                (unit in ("minicloud-t3.service", "minicloud-postgres.service") or unit in units)
+                (unit == "minicloud-t3.service" or unit in units)
                 for unit in stops), "Stop service is not explicitly registered")
         require(all(unit in stops for unit in units),
                 "Registered infrastructure must have a designated graceful stop")
@@ -801,33 +778,22 @@ class Linux:
 
     def stop_services(self):
         self.infrastructure_units()
-        for unit in self.config.get("stopUnits", ["minicloud-t3.service", "minicloud-postgres.service"]):
-            if unit not in ("minicloud-t3.service", "minicloud-postgres.service"):
+        for unit in self.config.get("stopUnits", ["minicloud-t3.service"]):
+            if unit != "minicloud-t3.service":
                 self.verify_preview_unit(unit)
-        for argv in self.config.get("emulatorExportCommands", []):
-            require(isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv),
-                    "Invalid emulator export command")
-            run(argv)
-        for unit in self.config.get("stopUnits", ["minicloud-t3.service", "minicloud-postgres.service"]):
+        for unit in self.config.get("stopUnits", ["minicloud-t3.service"]):
             require(re.fullmatch(r"[A-Za-z0-9@_.-]+\.service", unit), "Invalid service unit")
-            if unit != "minicloud-postgres.service":
-                if unit != "minicloud-t3.service":
-                    self.verify_preview_unit(unit)
-                # Queue TERM while frozen, then allow the known infrastructure main process
-                # to flush. Its unit never kills child tasks; the post-stop inventory blocks them.
-                run(["systemctl", "stop", "--no-block", unit])
-                try:
-                    self.thaw()
-                    run(["systemctl", "stop", unit])
-                finally:
-                    self.freeze()
-            else:
+            if unit != "minicloud-t3.service":
+                self.verify_preview_unit(unit)
+            # Only explicitly managed infrastructure can stop; unknown work still blocks.
+            run(["systemctl", "stop", "--no-block", unit])
+            try:
+                self.thaw()
                 run(["systemctl", "stop", unit])
+            finally:
+                self.freeze()
             state = run(["systemctl", "show", unit, "-p", "ActiveState", "--value"])
             require(state == "inactive", "Designated service did not stop cleanly")
-        # pg_ctlcluster --foreground postgres service uses fast (checkpointed) stop, never immediate.
-        if (self.workspace / "postgres/16/postmaster.pid").exists():
-            raise Blocked("PostgreSQL still running; refuse quiescence")
 
     def readonly(self):
         if self.config["kind"] == "primary":
@@ -871,7 +837,7 @@ class Runtime:
         self.clock = clock
         allowed = {"vmId", "generation", "kind", "uid", "gid", "workspace", "volume", "backup",
                    "restore", "requireFreshBackup", "ignoredDataAcknowledged", "repositories",
-                   "infrastructureUnits", "stopUnits", "emulatorExportCommands", "forbiddenPaths",
+                   "infrastructureUnits", "stopUnits", "forbiddenPaths",
                    "startServices", "observedTerminalInputs"}
         require(not set(config) - allowed, "Unknown runtime configuration field; reject implicit credentials")
         require(config["kind"] in ("primary", "ephemeral"), "Invalid VM kind")
@@ -880,7 +846,7 @@ class Runtime:
         require(Path(config["workspace"]).is_absolute(), "Absolute workspace path required")
         if config["kind"] == "ephemeral":
             require(not any(config.get(key) for key in
-                            ("volume", "backup", "restore", "emulatorExportCommands")),
+                            ("volume", "backup", "restore")),
                     "Ephemeral has forbidden storage/backup/export configuration")
             require(config.get("ignoredDataAcknowledged") is True,
                     "Acknowledge loss of ignored files and all non-Git root data at launch")

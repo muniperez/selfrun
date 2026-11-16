@@ -308,7 +308,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         if (units.Any(unit => !System.Text.RegularExpressions.Regex.IsMatch(unit!, "^minicloud-preview-[a-z0-9-]{1,24}\\.service$")))
             throw new InvalidOperationException("Preview supervision requires an explicitly registered Minicloud preview unit.");
         config["infrastructureUnits"] = new[] { "minicloud-t3.service" }.Concat(units!).ToArray();
-        config["stopUnits"] = new[] { "minicloud-t3.service", "minicloud-postgres.service" }.Concat(units!).ToArray();
+        config["stopUnits"] = new[] { "minicloud-t3.service" }.Concat(units!).ToArray();
         if (vm.Kind == "primary")
         {
             config["volume"] = new

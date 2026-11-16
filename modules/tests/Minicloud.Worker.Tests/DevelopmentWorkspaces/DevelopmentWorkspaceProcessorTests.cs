@@ -128,7 +128,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     [InlineData(true, true)]
     [InlineData(false, false)]
     [InlineData(false, true)]
-    public async Task BootstrapSchedulesGracefulPostgresStopForEveryVmKind(bool ephemeral, bool preview)
+    public async Task BootstrapConfigStopsOnlyToolingAndExplicitlyRegisteredUserWork(bool ephemeral, bool preview)
     {
         var (_, vm, _) = await Seed("bootstrap", ephemeral);
         vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
@@ -143,9 +143,9 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.NotNull(runtime.BootstrapConfiguration);
         var config = runtime.BootstrapConfiguration.Value;
         var stops = config.GetProperty("stopUnits").EnumerateArray().Select(x => x.GetString()).ToArray();
-        Assert.Contains("minicloud-postgres.service", stops);
-        Assert.Contains("minicloud-t3.service", stops);
-        Assert.Equal(preview, stops.Contains("minicloud-preview-static.service"));
+        Assert.Equal(preview
+            ? new[] { "minicloud-t3.service", "minicloud-preview-static.service" }
+            : ["minicloud-t3.service"], stops);
         Assert.Equal(!ephemeral, config.TryGetProperty("volume", out _));
         Assert.Equal(0, cloud.Deletes);
         Assert.Equal(0, cloud.Detaches);

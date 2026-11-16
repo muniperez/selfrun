@@ -114,58 +114,68 @@ class FakeLinux:
 
 
 class LayoutTests(unittest.TestCase):
-    def test_postgres_parent_and_data_are_owned_before_initdb_under_private_umask(self):
-        for existing_parent in (False, True):
-            with self.subTest(existing_parent=existing_parent), \
+    def test_layout_prepares_only_tooling_and_preserves_user_application_data(self):
+        for existing_home in (False, True):
+            with self.subTest(existing_home=existing_home), \
                     tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
                 workspace = Path(directory)
-                parent = workspace / "postgres"
-                if existing_parent:
-                    parent.mkdir(mode=0o700)
-                account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+                application = workspace / "user-data"
+                application.mkdir(mode=0o700)
+                marker = application / "state.bin"
+                marker.write_bytes(b"arbitrary user application state\0")
+                if existing_home:
+                    (workspace / "home").mkdir(mode=0o700)
                 adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
-
-                def initdb(argv):
-                    self.assertEqual(argv[:4], ["runuser", "-u", "postgres", "--"])
-                    for path in (parent, parent / "16"):
-                        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
-                        self.assertEqual((path.stat().st_uid, path.stat().st_gid),
-                                         (account.pw_uid, account.pw_gid))
-                        self.assertTrue(os.access(path, os.X_OK))
-                    (parent / "16/PG_VERSION").write_text("16\n")
-                    return ""
-
                 previous = os.umask(0o077)
                 try:
-                    with patch("pwd.getpwnam", return_value=account), \
-                            patch.object(rt.os, "chown", wraps=os.chown) as chown, \
-                            patch.object(rt, "run", side_effect=initdb):
+                    with patch.object(rt.os, "chown", wraps=os.chown) as chown, \
+                            patch.object(rt, "run") as process:
                         adapter.layout()
                     self.assertEqual(workspace.stat().st_mode & 0o777, 0o755)
-                    for relative in ("repos", "home", "emulators", "emulators/exports", "emulators/config"):
+                    managed = {"repos", "t3", "transcripts", "artifacts", "config", "home"}
+                    self.assertEqual(managed | {"user-data"}, {p.name for p in workspace.iterdir()})
+                    for relative in managed:
                         path = workspace / relative
                         self.assertEqual(path.stat().st_mode & 0o777, 0o700)
                         self.assertTrue(os.access(path, os.X_OK))
                         chown.assert_any_call(path, os.getuid(), os.getgid())
-                    chown.assert_any_call(parent, account.pw_uid, account.pw_gid)
-                    chown.assert_any_call(parent / "16", account.pw_uid, account.pw_gid)
+                    self.assertEqual(b"arbitrary user application state\0", marker.read_bytes())
+                    process.assert_not_called()
                 finally:
                     os.umask(previous)
 
-    def test_postgres_parent_symlink_is_rejected_before_creating_data(self):
+    def test_managed_home_symlink_is_rejected_without_touching_user_data(self):
         with tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
             root = Path(directory)
             workspace = root / "workspace"
             workspace.mkdir()
             outside = root / "outside"
             outside.mkdir()
-            (workspace / "postgres").symlink_to(outside, target_is_directory=True)
+            (workspace / "home").symlink_to(outside, target_is_directory=True)
             adapter = rt.Linux(dict(workspace=str(workspace), uid=os.getuid(), gid=os.getgid()))
             with patch.object(rt.os, "chown"), patch.object(rt, "run") as run:
                 with self.assertRaisesRegex(rt.Blocked, "Workspace layout symlink"):
                     adapter.layout()
-            self.assertFalse((outside / "16").exists())
+            self.assertEqual([], list(outside.iterdir()))
             run.assert_not_called()
+
+    def test_restore_assigns_generic_user_data_to_coding_identity_only(self):
+        with tempfile.TemporaryDirectory(prefix="ownership-", dir=ARTIFACTS) as directory:
+            workspace = Path(directory)
+            data = workspace / "custom-application" / "state"
+            data.mkdir(parents=True)
+            marker = data / "durable.bin"
+            marker.write_bytes(b"engine-independent data")
+            owner = workspace / ".minicloud-volume.json"
+            owner.write_text("{}")
+            adapter = rt.Linux(dict(workspace=str(workspace), uid=2000, gid=2000))
+            with patch.object(rt.os, "chown") as chown:
+                adapter.restore_ownership()
+            self.assertEqual({workspace / "custom-application", data, marker},
+                             {call.args[0] for call in chown.call_args_list})
+            for call in chown.call_args_list:
+                self.assertEqual(call.args[1:], (2000, 2000))
+                self.assertFalse(call.kwargs["follow_symlinks"])
 
     def test_workspace_symlink_is_rejected_without_changing_target_permissions(self):
         with tempfile.TemporaryDirectory(prefix="layout-", dir=ARTIFACTS) as directory:
@@ -557,7 +567,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(receipt, self.request("quiesce"))
 
     def test_ephemeral_rejects_all_storage_claims(self):
-        for field in ("volume", "backup", "restore", "emulatorExportCommands"):
+        for field in ("volume", "backup", "restore"):
             with self.subTest(field=field), self.assertRaisesRegex(rt.Blocked, "forbidden"):
                 rt.Runtime(dict(self.config, **{field: {"anything": True}}),
                            self.root / ("bad-" + field), self.adapter, self.g)
@@ -646,6 +656,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotEqual(receipt["representativeHashes"], prepared["representativeHashes"])
 
     def test_primary_streaming_backup_ack_and_restore_separate_owned_volume(self):
+        state = self.workspace / "user-data/custom-service/state.bin"
+        state.parent.mkdir(parents=True)
+        state.write_bytes(b"generic application data\0\xff")
         receipt, archive = self.make_streaming_backup()
         stopped = self.request("quiesce", backupRequired=True)
         self.assertEqual(receipt, stopped["backup"])
@@ -663,6 +676,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual("PrimaryRestored", restored["type"])
         self.assertTrue(restored["representativeHashesVerified"])
         self.assertEqual("initial\n", (target / "repos/project/file.txt").read_text())
+        self.assertEqual(b"generic application data\0\xff",
+                         (target / "user-data/custom-service/state.bin").read_bytes())
 
     def test_restore_rejects_nonempty_target_missing_ack_hash_tamper_and_replay(self):
         receipt, archive = self.make_streaming_backup()

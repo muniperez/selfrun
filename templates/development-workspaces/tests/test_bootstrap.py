@@ -120,16 +120,15 @@ class BootstrapTests(unittest.TestCase):
 
     def preview_startup(self, safe=True):
         self.config.update(workspace=str(self.root), uid=2000, gid=2000,
-            infrastructureUnits=["minicloud-t3.service", "minicloud-preview-canary.service"],
-            stopUnits=["minicloud-t3.service", "minicloud-postgres.service",
-                       "minicloud-preview-canary.service"])
+            infrastructureUnits=["minicloud-t3.service", "minicloud-preview-user-app.service"],
+            stopUnits=["minicloud-t3.service", "minicloud-preview-user-app.service"])
         self.config.pop("startServices")
         started = []
         def process(argv, **kwargs):
             if argv[:2] == ["systemctl", "start"]:
                 started.extend(argv[2:])
             if argv[:2] == ["systemctl", "show"]:
-                return ("LoadState=loaded\nFragmentPath=/etc/systemd/system/minicloud-preview-canary.service\n"
+                return ("LoadState=loaded\nFragmentPath=/etc/systemd/system/minicloud-preview-user-app.service\n"
                         "DropInPaths=\nKillMode=" + ("process" if safe else "control-group") +
                         "\nSendSIGKILL=no\nSlice=minicloudwork.slice")
             return ""
@@ -140,25 +139,22 @@ class BootstrapTests(unittest.TestCase):
                 return contextlib.nullcontext(SimpleNamespace(status=200, read=lambda n: body))
         return started, process, Opener()
 
-    def test_fresh_bootstrap_starts_registered_preview_without_resume(self):
+    def test_fresh_bootstrap_starts_only_tooling_not_registered_user_applications(self):
         started, process, opener = self.preview_startup()
         with patch.object(runtime, "run", side_effect=process), \
                 patch.object(runtime.Linux, "verify_unit_file") as unit_file:
             result = self.execute(opener, process)
         self.assertEqual("EnrollmentAccepted", result["type"])
-        self.assertIn("minicloud-preview-canary.service", started)
-        self.assertIn("minicloud-postgres.service", started)
-        self.assertIn("minicloud-t3.service", started)
-        unit_file.assert_called_once_with("/etc/systemd/system/minicloud-preview-canary.service")
+        self.assertEqual(["minicloud-workspace.service", "minicloud-t3.service"], started)
+        unit_file.assert_not_called()
 
-    def test_unsafe_preview_blocks_fresh_bootstrap_before_services_or_enrollment(self):
+    def test_unstarted_user_service_is_not_implicitly_activated_or_needed_for_tooling(self):
         started, process, opener = self.preview_startup(safe=False)
         with patch.object(runtime, "run", side_effect=process), \
                 patch.object(runtime.Linux, "verify_unit_file"):
-            with self.assertRaisesRegex(runtime.Blocked, "KillMode=process"):
-                self.execute(opener, process)
-        self.assertEqual(["minicloud-workspace.service"], started)
-        self.assertFalse((self.root / "state/enrollment-intent.json").exists())
+            result = self.execute(opener, process)
+        self.assertEqual("EnrollmentAccepted", result["type"])
+        self.assertEqual(["minicloud-workspace.service", "minicloud-t3.service"], started)
 
     def test_enrollment_bound_once_with_no_toolchain_install_or_token_persistence(self):
         response = SimpleNamespace(status=200, read=lambda n: b"{}")
