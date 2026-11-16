@@ -25,6 +25,12 @@
     "integrity": "sha512-KhzYlkKPxoNssR8CEm45IjqnFWn7UtlF4CiD3tOJPea51xBs7MaHy0UQG9GSbCqk6Lrjn5QdJDV0QD1/FgWlGw==",
     "dependencyLock": "tools/package-lock.json"
   },
+  "copilot": {
+    "version": "1.0.114",
+    "source": "https://github.com/github/copilot-cli/releases/tag/v1.0.114",
+    "url": "https://github.com/github/copilot-cli/releases/download/v1.0.114/copilot-linux-x64.tar.gz",
+    "sha256": "b91a96f2257297cfb67ed6784a2a658609a6b8c2ee2ded18af9c9abe8cc790ae"
+  },
   "t3": {
     "version": "0.1.9",
     "source": "https://github.com/pingdotgg/t3code",

@@ -74,11 +74,92 @@ rules **must** deny lateral VM/sibling/control-plane-private access and public s
 ports; this filesystem runtime cannot prove network isolation. Never forward a worker SSH
 agent/key or provider/control-plane credentials into coding processes.
 
+## GitHub Copilot CLI in T3
+
+The recipe pins the official Linux x64 Copilot CLI **1.0.114** release archive and SHA-256
+alongside the existing Codex installation. `/usr/local/bin/copilot` is a root-owned launcher
+for `/opt/minicloud-copilot/copilot`, with automatic updates disabled so a user cache cannot
+silently replace the qualified version. Terminal commands and the T3 service use this same
+executable and coding user's home, `/workspace/home`. No login is included in the image.
+
+Before each T3 start, `copilot_provider.py configure` runs as `coding`. It adds
+`minicloud-copilot` to `/workspace/t3/userdata/settings.json`, using the pinned T3
+`acpRegistry` driver with `source: local`, `commandPath: /usr/local/bin/copilot`, and
+literal `commandArgs: ["--acp", "--stdio"]`. This is the documented **Local ACP command**
+path, not an invented Copilot driver. The card is named **GitHub Copilot CLI** under
+**Settings → Providers**. Available models come from the agent after sign-in; none are
+hard-coded or promised before authentication. Its only environment override is the nonsecret
+`COPILOT_AUTO_UPDATE=false`, also applied by T3 to the agent's sign-in command.
+
+Setup preserves unrelated settings, Codex, native Copilot credentials, and T3 threads.
+Reapplying it leaves an existing local Copilot ACP instance (including a custom ID, home,
+or disabled state) untouched instead of duplicating it. A conflicting managed ID or invalid
+settings produces a sanitized setup error in the service journal; the pre-start failure
+does not prevent Codex/T3 from starting. Repair the settings or ID before retrying setup.
+Do not run `configure` against a live T3 settings writer: use the managed service's next
+start, after safely stopping active work. Existing workspaces require an explicit prepared
+image rollout preserving their workspace volume; this recipe does not patch running hosts.
+
+### Headless sign-in and diagnostics
+
+Use an authorized, **unrecorded management SSH terminal**, not a CI log or a recorded T3
+terminal (T3 retains terminal output). Do not use the provider's in-app terminal sign-in
+for this private flow. On the workspace host:
+
+```sh
+# As the workspace operator; no tokens in command arguments or environment.
+umask 077
+runuser -u coding -- env -i HOME=/workspace/home PATH=/usr/local/bin:/usr/bin:/bin \
+  copilot login --device-code
+# Separately check the actual pinned stdio transport, without opening a thread:
+runuser -u coding -- env -i HOME=/workspace/home PATH=/usr/local/bin:/usr/bin:/bin \
+  python3 -B /opt/minicloud-workspace/copilot_provider.py probe
+```
+
+Open the displayed GitHub URL on your own browser and enter the short-lived code privately.
+An existing login in the coding user's home is reused; do **not** log out, delete
+`~/.copilot`, replace the home, or sign in as root to enable the provider. On a headless
+host without a credential store, Copilot may store its token under `~/.copilot`; treat the
+entire home and workspace backups as sensitive. Never capture device codes/tokens in build
+logs, screenshots, support bundles or exported provider configuration.
+
+The probe reports `Compatible` only after an actual ACP v1 `initialize` response identifies
+the pinned Copilot version. It explicitly reports authentication as **NotChecked**: it does
+not send prompts, create sessions, export credentials, or assert model access. Missing,
+incompatible, malformed and unresponsive installations report actionable `SetupRequired`;
+rebuild/roll out the pinned image instead of installing an unverified latest CLI. When
+signed out, the pinned agent advertises `copilot-login` terminal authentication; T3's ACP
+provider health/sign-in state remains authoritative. Complete the private management-terminal
+login above and retry/reconnect the provider before choosing a model.
+
+Automatic managed setup needs no T3 bearer. Normal gateway session scopes remain unchanged;
+do not grant settings-management access to routine coding sessions. Any manual provider
+configuration must use a separately authorized T3 settings session.
+
+Qualification references:
+[pinned T3 local-command guide](https://github.com/pingdotgg/t3code/blob/24e77473ecf41bc1f7142529c7911c1c1aae1d76/docs/user/providers-acp.md#add-a-local-command),
+its `packages/provider-acp-registry/src/settings.ts` and `packages/contracts/src/providerInstance.ts`,
+and [GitHub ACP stdio reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server).
+The issue's guide URL omits `c1` from the commit; the manifest's full 40-character SHA is used.
+
+Deterministic tests cover seeding/reapplication, existing settings/login/thread preservation,
+transport/version errors and artifact installation. CLI 1.0.114 `--acp --stdio` initialization
+was also exercised locally against the installed release. The opt-in disposable-image native
+harness checks seeded settings and stdio initialization as UID 2000, but **has not been run
+for this recipe**. No new provider image is qualified by these tests.
+
+**Remaining hosted acceptance:** build/generalize/register the image, start a fresh workspace,
+use a sanctioned authenticated remote browser to confirm the provider card and sign-in state,
+select an agent-reported model, send a project prompt and a follow-up in the same thread.
+Also verify Codex chat, then reapply setup/restart safely on an already signed-in volume and
+confirm both providers and existing threads still work. No authenticated browser prompt,
+follow-up, or hosted Codex result is claimed without that session.
+
 ## Bootstrap and volume contract (parent worker)
 
 The image installs:
 
-* `/opt/minicloud-workspace/{runtime.py,bootstrap.py,issue-t3-session.py,git-credential.py}`
+* `/opt/minicloud-workspace/{runtime.py,bootstrap.py,issue-t3-session.py,git-credential.py,copilot_provider.py}`
 * `/etc/systemd/system/minicloud{work.slice,-workspace.service,-t3.service}`
 * `/opt/minicloud-workspace/image-manifest.json`
 

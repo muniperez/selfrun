@@ -14,6 +14,7 @@ import urllib.request
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from runtime import Blocked, atomic_json, require, run
+from copilot_provider import probe as probe_copilot
 
 
 def builder_guard(acknowledgement):
@@ -55,6 +56,23 @@ def install_systemd_units(source_directory, destination_directory):
         shutil.copy2(source, destination)
         os.chown(destination, 0, 0)
         destination.chmod(0o644)
+
+
+def install_copilot(lock, cache):
+    artifact = cache / "copilot.tar.gz"
+    download(lock["copilot"], artifact)
+    destination = Path("/opt/minicloud-copilot")
+    destination.mkdir(parents=True, exist_ok=True)
+    destination.chmod(0o755)
+    run(["tar", "--no-same-owner", "-xf", str(artifact), "-C", str(destination)])
+    require((destination / "copilot").is_file(), "Unexpected Copilot release archive layout")
+    (destination / "copilot").chmod(0o755)
+    wrapper = Path("/usr/local/bin/copilot")
+    wrapper.write_text("#!/bin/sh\nexport COPILOT_AUTO_UPDATE=false\n"
+                       'exec /opt/minicloud-copilot/copilot "$@"\n')
+    wrapper.chmod(0o755)
+    return probe_copilot(expected_version=lock["copilot"]["version"],
+                         environment=dict(PATH="/usr/local/bin:/usr/bin:/bin", HOME=str(cache)))
 
 
 def install(source_revision, builder):
@@ -108,12 +126,15 @@ def install(source_revision, builder):
     run(["npm", "ci", "--prefix", str(tools), "--ignore-scripts", "--omit=dev"],
         env=dict(os.environ, HOME=str(cache), npm_config_cache=str(cache / "npm")), timeout=600)
     Path("/usr/local/bin/codex").symlink_to(tools / "node_modules/.bin/codex")
+    # ACP initialize needs no credentials and never creates a coding thread.
+    copilot = install_copilot(lock, cache)
     run(["groupadd", "--gid", "2000", "coding"])
     run(["useradd", "--uid", "2000", "--gid", "2000", "--home-dir", "/workspace/home",
          "--no-create-home", "--shell", "/usr/sbin/nologin", "coding"])
     runtime = Path("/opt/minicloud-workspace")
     runtime.mkdir(exist_ok=True)
-    for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py"):
+    for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py",
+                 "copilot_provider.py"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
     install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))
@@ -140,6 +161,7 @@ def install(source_revision, builder):
     lock["provenance"].update(sourceRevision=source_revision, builderIdentity=builder,
                               installedPackages=run(["dpkg-query", "-W", "-f=${Package}=${Version}\n"]),
                               toolArtifactsVerified=True, headlessAuthOptionsChecked=True)
+    lock["provenance"]["copilotStdioAcpVersionChecked"] = copilot["version"]
     atomic_json("/opt/minicloud-workspace/image-manifest.json", lock)
     shutil.rmtree(cache)
 
