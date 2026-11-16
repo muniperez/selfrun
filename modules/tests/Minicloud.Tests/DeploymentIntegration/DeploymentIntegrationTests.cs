@@ -18,6 +18,13 @@ public sealed class DeploymentIntegrationTests
     }
 
     [Fact]
+    public async Task PackagedBackendReadinessRejectsPartialMigrationHistory()
+    {
+        var result = await RunPythonAsync("test_component_smoke.py", TimeSpan.FromMinutes(1));
+        Assert.True(result.ExitCode == 0, result.Output);
+    }
+
+    [Fact]
     public async Task PackagedBackendWorkersClaimAndRecoverPostgresJobs()
     {
         var runId = Guid.NewGuid().ToString("N")[..12];
