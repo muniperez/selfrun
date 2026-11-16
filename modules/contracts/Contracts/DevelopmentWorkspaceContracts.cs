@@ -1,5 +1,12 @@
 namespace Minicloud.Common.Contracts;
 
+public sealed record WorkspaceSelectionOption(
+    string ImageId, string ImageName, string Profile, string PlanId, string PlanName,
+    string ProviderAccountName, string Region, string Sku);
+
+public sealed record WorkspaceSelections(
+    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options);
+
 public sealed record CreateDevelopmentWorkspaceRequest(
     string OrganizationId,
     string Name,

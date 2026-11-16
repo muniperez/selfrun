@@ -67,6 +67,144 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     private static DevelopmentWorkspaceVm Primary(DevelopmentWorkspace workspace) => workspace.Vms.Single(x => x.Kind == "primary");
 
     [Fact]
+    public async Task DiscoveryReturnsStableCompatibleSubmissionIdsAndLabelsWithoutTrackingOrMutating()
+    {
+        db.ChangeTracker.Clear();
+        var choices = await Service().GetSelectionsAsync("org", null, default);
+        Assert.True(choices.Available);
+        Assert.Null(choices.UnavailableReason);
+        Assert.Equal(2, choices.Options.Count);
+        var standard = Assert.Single(choices.Options, x => x.Profile == "standard");
+        Assert.Equal(new WorkspaceSelectionOption("qualified", "qualified", "standard", "plan",
+            "Standard", "Test", "nbg1", "cx-test"), standard);
+        Assert.Empty(db.ChangeTracker.Entries());
+        Assert.Empty(await db.DevelopmentWorkspaces.ToListAsync());
+        Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
+        Assert.All(await db.ProviderPlans.ToListAsync(), x => Assert.Null(x.ProvisioningLockedAt));
+
+        policy.Images["qualified"].DisplayName = "  Qualified development image  ";
+        var renamed = await Service().GetSelectionsAsync("org", null, default);
+        Assert.All(renamed.Options, x => Assert.Equal("Qualified development image", x.ImageName));
+        Assert.Equal(choices.Options.Select(x => (x.ImageId, x.Profile, x.PlanId)),
+            renamed.Options.Select(x => (x.ImageId, x.Profile, x.PlanId)));
+        policy.Images["qualified"].DisplayName = " ";
+        Assert.All((await Service().GetSelectionsAsync("org", null, default)).Options,
+            x => Assert.Equal("qualified", x.ImageName));
+        foreach (var choice in choices.Options)
+        {
+            var workspace = await Service().CreateAsync(Create(choice.Profile, choice.Profile) with
+                { ImageId = choice.ImageId, Profile = choice.Profile, PlanId = choice.PlanId }, "actor", default);
+            Assert.Equal(choice.PlanId, Primary(workspace).PlanId);
+        }
+    }
+
+    [Fact]
+    public async Task DiscoveryDistinguishesEmptyDisabledAndInvalidConfiguration()
+    {
+        var foreign = await Service().GetSelectionsAsync("other", null, default);
+        Assert.True(foreign.Available);
+        Assert.Null(foreign.UnavailableReason);
+        Assert.Empty(foreign.Options);
+        policy.Enabled = false;
+        var disabled = await Service().GetSelectionsAsync("org", null, default);
+        Assert.False(disabled.Available);
+        Assert.Contains("disabled", disabled.UnavailableReason);
+        Assert.Empty(disabled.Options);
+        policy.Enabled = true;
+        policy.PricingUpdatedAt = clock.GetUtcNow().AddDays(-100);
+        var invalid = await Service().GetSelectionsAsync("org", null, default);
+        Assert.False(invalid.Available);
+        Assert.Contains("pricing", invalid.UnavailableReason);
+        Assert.Empty(invalid.Options);
+        Assert.Empty(await db.DevelopmentWorkspaces.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ExistingWorkspaceDiscoveryAndWritesRespectFixedAccountRegionAndOrganization()
+    {
+        var workspace = await Workspace();
+        db.ProviderAccounts.AddRange(
+            new ProviderAccount { Id = "second-account", OrganizationId = "org", Name = "Second",
+                CredentialPath = "synthetic", CredentialGeneration = "test" },
+            new ProviderAccount { Id = "foreign-account", OrganizationId = "other", Name = "Foreign secret name",
+                CredentialPath = "synthetic", CredentialGeneration = "test" });
+        foreach (var (id, account, organization, region) in new[]
+        {
+            ("remote-region", "account", "org", "hel1"), ("second-plan", "second-account", "org", "nbg1"),
+            ("foreign-plan", "foreign-account", "other", "nbg1")
+        })
+            db.ProviderPlans.Add(new ProviderPlan { Id = id, Name = id, NormalizedName = id,
+                ProviderAccountId = account, OrganizationId = organization, Region = region, Sku = "cx-test" });
+        await db.SaveChangesAsync();
+        policy.Profiles["standard"].AllowedPlanIds = ["plan", "remote-region", "second-plan", "foreign-plan"];
+        policy.Profiles["standard"].AllowedRegions = ["nbg1", "hel1"];
+        policy.Images["qualified"].AllowedRegions = ["nbg1", "hel1"];
+        foreach (var account in new[] { "second-account", "foreign-account" })
+            policy.Images[account] = new() { Enabled = true, RuntimeQualified = true, QualifiedAt = clock.GetUtcNow().AddMinutes(-1),
+                ProviderAccountId = account, ProviderImageId = "123", AllowedRegions = ["nbg1"], ManifestSha256 = new('a', 64) };
+
+        var all = await Service().GetSelectionsAsync("org", null, default);
+        Assert.Contains(all.Options, x => x.PlanId == "remote-region");
+        Assert.Contains(all.Options, x => x.PlanId == "second-plan");
+        Assert.DoesNotContain(all.Options, x => x.ProviderAccountName == "Foreign secret name");
+        var fixedChoices = await Service().GetSelectionsAsync("org", workspace.Id, default);
+        Assert.Equal(2, fixedChoices.Options.Count);
+        Assert.All(fixedChoices.Options, x =>
+        {
+            Assert.Equal("Test", x.ProviderAccountName);
+            Assert.Equal("nbg1", x.Region);
+        });
+        await AssertCode("workspace_not_found", () => Service().GetSelectionsAsync("other", workspace.Id, default));
+        await AssertCode("workspace_not_found", () => Service().GetSelectionsAsync("org", "missing", default));
+        foreach (var choice in all.Options.Where(x => x.PlanId is "remote-region" or "second-plan"))
+        {
+            await AssertCode("workspace_placement_invalid", () => Service().ResizeAsync(workspace.Id, "org", null,
+                new(0, choice.ImageId, choice.Profile, choice.PlanId), default));
+            await AssertCode("workspace_placement_invalid", () => Service().LaunchEphemeralAsync(workspace.Id, "org",
+                Launch() with { ImageId = choice.ImageId, Profile = choice.Profile, PlanId = choice.PlanId }, "actor", default));
+        }
+        Assert.Single((await Service().GetAsync(workspace.Id, "org", default))!.Vms);
+        Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
+    }
+
+    [Fact]
+    public async Task WritesRevalidatePolicyAfterDiscoveryIncludingPreviouslyScheduledResize()
+    {
+        var workspace = await Workspace();
+        Assert.NotEmpty((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options);
+        var plan = await db.ProviderPlans.SingleAsync(x => x.Id == "plan");
+        plan.Enabled = false;
+        await db.SaveChangesAsync();
+        await AssertCode("workspace_plan_invalid", () => Service().CreateAsync(Create("Second", "second"), "actor", default));
+        await AssertCode("workspace_plan_invalid", () => Service().ResizeAsync(workspace.Id, "org", null,
+            new(0, "qualified", "standard", "plan"), default));
+        await AssertCode("workspace_plan_invalid", () => Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default));
+        await AssertCode("workspace_plan_invalid", () => Service().StartAsync(workspace.Id, "org", default));
+        await Service().ResizeAsync(workspace.Id, "org", null, new(0, "qualified", "heavy", "heavy-plan"), default);
+        policy.Profiles["heavy"].AllowedSkus = [];
+        await AssertCode("workspace_plan_invalid", () => Service().StartAsync(workspace.Id, "org", default));
+        Assert.Empty((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options);
+        Assert.Single(await db.DevelopmentWorkspaceVms.ToListAsync());
+        Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DiscoveryDoesNotReserveSpendOrBypassCurrentAdmission()
+    {
+        var workspace = await Workspace();
+        Assert.NotEmpty((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options);
+        policy.MaxEstimatedMonthlySpendPerOrganization = 3;
+        await AssertCode("workspace_spend_limit", () => Service().CreateAsync(Create("Second", "second"), "actor", default));
+        await AssertCode("workspace_spend_limit", () => Service().StartAsync(workspace.Id, "org", default));
+        await AssertCode("workspace_spend_limit", () => Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default));
+        policy.MaxEstimatedMonthlySpendPerOrganization = 5000;
+        await Service().StartAsync(workspace.Id, "org", default);
+        policy.MaxVmsPerWorkspace = 1;
+        Assert.NotEmpty((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options);
+        await AssertCode("workspace_admission_limit", () => Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default));
+    }
+
+    [Fact]
     public async Task CreateIsStoppedIdempotentAndDoesNotAllocateOrTouchHostedApps()
     {
         db.Apps.Add(new MinicloudApp { Id = "hosted", OrganizationId = "org", Name = "Hosted", Slug = "hosted" });
@@ -207,6 +345,17 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     [InlineData("sku")]
     [InlineData("provider")]
     [InlineData("disabled")]
+    [InlineData("disabled-account")]
+    [InlineData("disabled-image")]
+    [InlineData("future-qualification")]
+    [InlineData("manifest")]
+    [InlineData("provider-image")]
+    [InlineData("plan-architecture")]
+    [InlineData("profile-region")]
+    [InlineData("profile-plan")]
+    [InlineData("profile-memory")]
+    [InlineData("profile-cpu")]
+    [InlineData("profile-rate")]
     public async Task UnsupportedOrUnqualifiedSelectionsFailClosed(string failure)
     {
         switch (failure)
@@ -218,8 +367,22 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
             case "sku": policy.Profiles["standard"].AllowedSkus = ["other"]; break;
             case "provider": (await db.ProviderAccounts.SingleAsync()).ProviderType = CloudProvider.DigitalOcean; break;
             case "disabled": (await db.ProviderPlans.SingleAsync(x => x.Id == "plan")).Enabled = false; break;
+            case "disabled-account": (await db.ProviderAccounts.SingleAsync()).Enabled = false; break;
+            case "disabled-image": policy.Images["qualified"].Enabled = false; break;
+            case "future-qualification": policy.Images["qualified"].QualifiedAt = clock.GetUtcNow().AddHours(1); break;
+            case "manifest": policy.Images["qualified"].ManifestSha256 = "unverified"; break;
+            case "provider-image": policy.Images["qualified"].ProviderImageId = ""; break;
+            case "plan-architecture": (await db.ProviderPlans.SingleAsync(x => x.Id == "plan")).BuildPlatform = "linux/arm64"; break;
+            case "profile-region": policy.Profiles["standard"].AllowedRegions = ["other"]; break;
+            case "profile-plan": policy.Profiles["standard"].AllowedPlanIds = []; break;
+            case "profile-memory": policy.Profiles["standard"].MemoryGiB = 4; break;
+            case "profile-cpu": policy.Profiles["standard"].CpuCount = 0; break;
+            case "profile-rate": policy.Profiles["standard"].ComputeHourlyRate = 0; break;
         }
         await db.SaveChangesAsync();
+        var choices = await Service().GetSelectionsAsync("org", null, default);
+        Assert.True(choices.Available);
+        Assert.DoesNotContain(choices.Options, x => x.Profile == "standard" && x.PlanId == "plan");
         await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => Workspace());
         Assert.Empty(await db.DevelopmentWorkspaces.ToListAsync());
     }
