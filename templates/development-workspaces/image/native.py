@@ -746,7 +746,7 @@ class Native:
             next_sequence += 1
             synthetic_row(copied, "orchestration_events",
                           dict(sequence=next_sequence, application_event_version=2, aggregate_kind="thread"))
-            copied.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=? "
+            copied.execute("UPDATE orchestration_v2_projection_metadata SET schema_version=2,last_sequence=? "
                            "WHERE projection_name='thread-projections'", (next_sequence,))
             copied.commit()
             threaded = self.rt.t3_idle_database(target, next_sequence)
