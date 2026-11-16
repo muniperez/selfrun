@@ -413,6 +413,14 @@ Restore decryption occurs **on the operator machine**:
    Persist the receipt, then bootstrap normally. Live separate-volume restore qualification
    is still required before claiming a backup is operationally recoverable.
 
+Symlinks are saved as metadata, never followed: data outside the workspace is not backed up.
+Restore defers all symlinks until regular-file extraction, hash verification, ownership and
+layout are complete. Archive writes beneath a link, conflicting links and hardlinks to
+volume metadata or unresolved links are rejected. This preserves ordinary tool/virtualenv
+links without following them during privileged extraction or excluding user tool directories.
+The source volume's ownership marker and empty root `lost+found` are not restored over the
+target's metadata; nonempty recovery data blocks backup instead of being silently omitted.
+
 ## T3 session issuance / outstanding qualification
 
 `t3 serve --host 127.0.0.1 --port 3773 --base-dir /workspace/t3 --no-browser`; no base-path

@@ -174,12 +174,16 @@ class LayoutTests(unittest.TestCase):
             data.mkdir(parents=True)
             marker = data / "durable.bin"
             marker.write_bytes(b"engine-independent data")
+            nested = data / "lost+found"
+            nested.mkdir()
+            nested_owner = nested / ".minicloud-volume.json"
+            nested_owner.write_text("user-owned nested file")
             owner = workspace / ".minicloud-volume.json"
             owner.write_text("{}")
             adapter = rt.Linux(dict(workspace=str(workspace), uid=2000, gid=2000))
             with patch.object(rt.os, "chown") as chown:
                 adapter.restore_ownership()
-            self.assertEqual({workspace / "custom-application", data, marker},
+            self.assertEqual({workspace / "custom-application", data, marker, nested, nested_owner},
                              {call.args[0] for call in chown.call_args_list})
             for call in chown.call_args_list:
                 self.assertEqual(call.args[1:], (2000, 2000))
@@ -841,6 +845,102 @@ class RuntimeTests(unittest.TestCase):
                 with self.assertRaisesRegex(rt.Blocked, "metadata"):
                     rt.write_backup_archive(self.workspace, io.BytesIO())
                 lost.unlink()
+
+    def test_backup_restore_preserves_unfollowed_tool_and_virtualenv_symlinks(self):
+        os.link(self.repo / "file.txt", self.repo / "hardlinked.txt")
+        outside = self.root / "outside-image-files"
+        outside.mkdir()
+        executable = outside / "tool"
+        executable.write_bytes(b"external bytes must not enter the archive")
+        links = {}
+        for name in ("codex-linux-sandbox", "apply_patch", "applypatch"):
+            links["home/.codex/tmp/arg0-linux/codex-arg0fixture/" + name] = str(executable)
+        links[".venv/bin/python"] = os.path.relpath(executable, self.workspace / ".venv/bin")
+        links["external-directory"] = str(outside)
+        links["project-link"] = "repos/project"
+        for relative, destination in links.items():
+            path = self.workspace / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(destination)
+        rt.validate_backup_tree(self.workspace)
+        receipt, archive = self.make_streaming_backup()
+        with rt.tarfile.open(fileobj=io.BytesIO(archive)) as content:
+            self.assertTrue(all(content.getmember("data/" + path).issym() for path in links))
+            self.assertNotIn("data/external-directory/tool", content.getnames())
+        target = self.root / "restore-links"
+        target.mkdir()
+        config = copy.deepcopy(self.runtime.c)
+        config["workspace"] = str(target)
+        config["volume"].update(providerVolumeId="separate-links", filesystemUuid="target-fs")
+        self.adapter.uuid = "target-fs"
+        self.runtime = rt.Runtime(config, self.root / "restore-links-state", self.adapter, self.g)
+        self.request("restore", authorizedRestore=True, independentRecoveryKeyConfirmed=True,
+                     backupReceipt=receipt)
+        with patch.object(rt.os, "chown") as chown:
+            self.runtime.restore_import("operation-a", io.BytesIO(archive))
+        for relative, destination in links.items():
+            self.assertEqual(destination, os.readlink(target / relative))
+            chown.assert_any_call(target / relative, 2000, 2000, follow_symlinks=False)
+        self.assertEqual(b"external bytes must not enter the archive", executable.read_bytes())
+        self.assertEqual("initial\n", (target / "project-link/file.txt").read_text())
+        self.assertEqual((target / "repos/project/file.txt").stat().st_ino,
+                         (target / "repos/project/hardlinked.txt").stat().st_ino)
+
+    def test_restore_never_writes_through_deferred_links_or_links_volume_metadata(self):
+        receipt, archive = self.make_streaming_backup()
+        config = copy.deepcopy(self.runtime.c)
+        outside = self.root / "outside-restore"
+        outside.mkdir()
+        for case in ("link-first", "file-first", "nested-links", "hardlink-to-link",
+                     "traversal", "hardlink-to-owner"):
+            with self.subTest(case=case):
+                injected = io.BytesIO()
+                with rt.tarfile.open(fileobj=injected, mode="w") as output:
+                    with rt.tarfile.open(fileobj=io.BytesIO(archive)) as original:
+                        for member in original:
+                            output.addfile(member, original.extractfile(member) if member.isfile() else None)
+                    link = rt.tarfile.TarInfo("data/trap")
+                    link.type = rt.tarfile.SYMTYPE
+                    link.linkname = str(outside)
+                    file = rt.tarfile.TarInfo("data/trap/escaped")
+                    file.size = 6
+                    if case == "file-first":
+                        output.addfile(file, io.BytesIO(b"unsafe"))
+                    if case == "traversal":
+                        link.name = "data/../escaped-link"
+                    if case != "hardlink-to-owner":
+                        output.addfile(link)
+                    if case == "link-first":
+                        output.addfile(file, io.BytesIO(b"unsafe"))
+                    if case == "nested-links":
+                        child = rt.tarfile.TarInfo("data/trap/child")
+                        child.type = rt.tarfile.SYMTYPE
+                        child.linkname = str(outside / "escaped")
+                        output.addfile(child)
+                    if case in ("hardlink-to-link", "hardlink-to-owner"):
+                        hardlink = rt.tarfile.TarInfo("data/alias")
+                        hardlink.type = rt.tarfile.LNKTYPE
+                        hardlink.linkname = ("data/trap" if case == "hardlink-to-link"
+                                             else "data/repos/../.minicloud-volume.json")
+                        output.addfile(hardlink)
+                target = self.root / ("restore-" + case)
+                target.mkdir()
+                owner = target / ".minicloud-volume.json"
+                owner.write_text("unchanged target owner")
+                current = copy.deepcopy(config)
+                current["workspace"] = str(target)
+                current["volume"].update(providerVolumeId="separate-" + case, filesystemUuid="target-fs")
+                self.adapter.uuid = "target-fs"
+                self.runtime = rt.Runtime(current, self.root / ("state-" + case), self.adapter, self.g)
+                self.request("restore", authorizedRestore=True, independentRecoveryKeyConfirmed=True,
+                             backupReceipt=receipt)
+                with self.assertRaises((rt.Blocked, rt.tarfile.TarError)):
+                    self.runtime.restore_import("operation-a", io.BytesIO(injected.getvalue()))
+                self.assertEqual("RestoreFailed", self.runtime.s["phase"])
+                self.assertEqual([], list(outside.iterdir()))
+                self.assertFalse((self.root / "escaped-link").exists())
+                self.assertFalse((self.root / "escaped-link").is_symlink())
+                self.assertEqual("unchanged target owner", owner.read_text())
 
     def test_restore_rejects_nonempty_target_missing_ack_hash_tamper_and_replay(self):
         receipt, archive = self.make_streaming_backup()

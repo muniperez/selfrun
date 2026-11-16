@@ -670,7 +670,7 @@ class Linux:
 
     def restore_ownership(self):
         for path in self.workspace.rglob("*"):
-            if path.name in (".minicloud-volume.json", "lost+found"):
+            if path in (self.workspace / ".minicloud-volume.json", self.workspace / "lost+found"):
                 continue
             os.chown(path, self.config["uid"], self.config["gid"], follow_symlinks=False)
 
@@ -1313,6 +1313,7 @@ class Runtime:
         self.s["phase"] = "Restoring"
         self.save()  # A partial restore is never automatically replayed over nonempty data.
         try:
+            links = {}
             with tarfile.open(fileobj=stream, mode="r|") as archive:
                 for member in archive:
                     require(member.name.startswith("data/") or member.name == "data",
@@ -1320,19 +1321,43 @@ class Runtime:
                     member.name = member.name.removeprefix("data").lstrip("/")
                     if not member.name or member.name == ".minicloud-volume.json":
                         continue
-                    require(member.name != "lost+found", "Archive contains filesystem metadata")
+                    require(Path(member.name).parts and Path(member.name).parts[0] != "lost+found",
+                            "Archive contains filesystem metadata")
+                    if member.issym():
+                        # Validate the destination without following the archived link target.
+                        checked = tarfile.data_filter(member.replace(linkname="."), workspace)
+                        path = (workspace / checked.name).resolve()
+                        require(under(path, workspace) and path not in links and member.linkname,
+                                "Invalid or duplicate archive symlink")
+                        links[path] = member.linkname
+                        continue
                     if member.islnk():
                         require(member.linkname.startswith("data/"), "Unexpected hardlink target")
                         member.linkname = member.linkname.removeprefix("data/")
-                        require(member.linkname not in (".minicloud-volume.json", "lost+found"),
+                        linked_file = (workspace / member.linkname).resolve()
+                        require(under(linked_file, workspace) and linked_file.relative_to(workspace).parts and
+                                linked_file.relative_to(workspace).parts[0] not in
+                                (".minicloud-volume.json", "lost+found"),
                                 "Archive hardlink targets volume ownership metadata")
+                        require(linked_file.is_file() and not (workspace / member.linkname).is_symlink(),
+                                "Archive hardlink must reference an already restored regular file")
                     archive.extract(member, workspace, filter="data")
             for relative, expected in source["representativeHashes"].items():
                 file = workspace / relative
                 require(under(file, workspace) and not file.is_symlink() and
                         file_hash(file) == expected, "Restored representative file hash mismatch")
+            require(all(not path.exists() and not path.is_symlink() and
+                        not any(parent in links for parent in path.parents) for path in links),
+                    "Archive symlink conflicts with restored data or another link")
+            for path in links:
+                path.parent.mkdir(parents=True, exist_ok=True)
             self.adapter.restore_ownership()
             self.adapter.layout()
+            require(all(not path.exists() and not path.is_symlink() for path in links),
+                    "Archive symlink conflicts with managed workspace layout")
+            for path, link_target in links.items():
+                os.symlink(link_target, path)
+                os.chown(path, self.c["uid"], self.c["gid"], follow_symlinks=False)
             os.sync()
             self.s["phase"] = "New"
             self.save()
@@ -1396,8 +1421,6 @@ def validate_backup_tree(source):
         mode = path.lstat().st_mode
         require(stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode),
                 "Backup contains unsupported live socket/device/FIFO")
-        if path.is_symlink():
-            require(under(path, source), "Backup symlink escapes the durable workspace")
 
 
 def representative_hashes(root):
