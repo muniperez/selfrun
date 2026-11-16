@@ -678,9 +678,24 @@ class Native:
                 c.close()
         self.snapshot = snapshot["snapshotSequence"]
         check(evidence["type"] == "T3CommittedIdle", "ACTUAL_T3_DATABASE_NOT_IDLE")
+        connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            metadata = connection.execute(
+                "SELECT schema_version,last_sequence FROM orchestration_v2_projection_metadata "
+                "WHERE projection_name='thread-projections'").fetchall()
+            project_events = connection.execute(
+                "SELECT COUNT(*) FROM orchestration_events WHERE aggregate_kind='project'").fetchone()[0]
+            check(project_events > 0 and evidence["applicationSequence"] == self.snapshot and
+                  evidence["threadSequence"] == 0 and metadata == [(1, 0)],
+                  "ACTUAL_PROJECT_ONLY_FOUNDATION_STATE_NOT_PROVEN")
+        finally:
+            connection.close()
         return {"actualPinnedT3Database": True, "threadSequence": evidence["threadSequence"],
                 "applicationSequence": evidence["applicationSequence"],
                 "globalV2Sequence": evidence["globalV2Sequence"],
+                "actualProjectEventCount": project_events,
+                "projectOnlyFoundationMetadata": metadata,
+                "httpCursorMatchesApplicationNotThreadCursor": True,
                 "rowsChecked": evidence["rowsChecked"]}
 
     def sqlite_negatives(self):
@@ -694,6 +709,14 @@ class Native:
             copied.execute("PRAGMA foreign_keys=OFF")
             copied.execute("PRAGMA ignore_check_constraints=ON")
             base = self.rt.t3_idle_database(target, None)
+            blocked = []
+            def expect_blocked(label, snapshot_sequence=None):
+                try:
+                    self.rt.t3_idle_database(target, snapshot_sequence)
+                except self.rt.Blocked:
+                    blocked.append(label)
+                    return
+                raise ProbeError("UNSAFE_SQLITE_COPY_ACCEPTED")
             next_sequence = copied.execute(
                 "SELECT COALESCE(MAX(sequence),0)+1 FROM orchestration_events").fetchone()[0]
             synthetic_row(copied, "orchestration_events",
@@ -707,14 +730,19 @@ class Native:
             next_sequence += 1
             synthetic_row(copied, "orchestration_events",
                           dict(sequence=next_sequence, application_event_version=2, aggregate_kind="project"))
-            copied.execute("UPDATE orchestration_v2_projection_metadata SET schema_version=2,last_sequence=? "
-                           "WHERE projection_name='thread-projections'", (next_sequence,))
             copied.commit()
             check(Path(str(target) + "-wal").stat().st_size > 32, "COMMITTED_WAL_NOT_PRESENT")
             current = self.rt.t3_idle_database(target, next_sequence)
             check(current["globalV2Sequence"] == next_sequence and
                   current["applicationSequence"] == next_sequence and
                   current["threadSequence"] == base["threadSequence"], "READONLY_WAL_OR_GLOBAL_CURSOR_FAILED")
+            for kind in ("thread", "unknown-native-kind"):
+                synthetic_row(copied, "orchestration_events",
+                              dict(sequence=next_sequence + 1, application_event_version=1, aggregate_kind=kind))
+                copied.commit()
+                expect_blocked("foundation-nonproject-" + kind, next_sequence)
+                copied.execute("DELETE FROM orchestration_events WHERE sequence=?", (next_sequence + 1,))
+                copied.commit()
             next_sequence += 1
             synthetic_row(copied, "orchestration_events",
                           dict(sequence=next_sequence, application_event_version=2, aggregate_kind="thread"))
@@ -724,26 +752,22 @@ class Native:
             threaded = self.rt.t3_idle_database(target, next_sequence)
             check(threaded["applicationSequence"] == threaded["threadSequence"] ==
                   threaded["globalV2Sequence"] == next_sequence, "V2_THREAD_APPLICATION_CURSOR_FAILED")
+            thread_sequence = next_sequence
+            next_sequence += 1
             synthetic_row(copied, "orchestration_events",
-                          dict(sequence=next_sequence + 1, application_event_version=1, aggregate_kind="thread"))
+                          dict(sequence=next_sequence, application_event_version=2, aggregate_kind="project"))
             copied.commit()
-            check(self.rt.t3_idle_database(target, next_sequence)["applicationSequence"] == next_sequence,
-                  "LEGACY_THREAD_INCORRECTLY_ADVANCED_APPLICATION_CURSOR")
-            blocked = []
-            def expect_blocked(label, snapshot_sequence=None):
-                try:
-                    self.rt.t3_idle_database(target, snapshot_sequence)
-                except self.rt.Blocked:
-                    blocked.append(label)
-                    return
-                raise ProbeError("UNSAFE_SQLITE_COPY_ACCEPTED")
+            after_project = self.rt.t3_idle_database(target, next_sequence)
+            check(after_project["applicationSequence"] == after_project["globalV2Sequence"] == next_sequence
+                  and after_project["threadSequence"] == thread_sequence,
+                  "PROJECT_EVENT_INCORRECTLY_ADVANCED_THREAD_PROJECTION_REQUIREMENT")
             expect_blocked("stale-http-application-cursor", base["applicationSequence"])
             copied.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=? "
-                           "WHERE projection_name='thread-projections'", (next_sequence - 1,))
+                           "WHERE projection_name='thread-projections'", (thread_sequence - 1,))
             copied.commit()
             expect_blocked("projection-lag")
             copied.execute("UPDATE orchestration_v2_projection_metadata SET last_sequence=?,schema_version=999 "
-                           "WHERE projection_name='thread-projections'", (next_sequence,))
+                           "WHERE projection_name='thread-projections'", (thread_sequence,))
             copied.commit()
             expect_blocked("unknown-schema-version")
             copied.execute("UPDATE orchestration_v2_projection_metadata SET schema_version=2 "
@@ -757,7 +781,8 @@ class Native:
                     "applicationCursorContract": "all-project-events-or-v2-thread-events",
                     "legacyProjectAdvancesApplicationCursor": True,
                     "v2ProjectAndThreadAdvanceApplicationCursor": True,
-                    "legacyThreadDoesNotAdvanceApplicationCursor": True,
+                    "foundationRejectsEveryNonProjectEvent": True,
+                    "v2MetadataComparedOnlyWithThreadCursor": True,
                     "projectionLagIndependentlyRejected": True,
                     "blockersRejected": blocked, "actualT3DatabaseMutated": False}
         finally:
