@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import io
@@ -10,7 +11,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -29,6 +30,79 @@ def module(name, path):
 
 builder = module("image_builder", HERE / "image/build.py")
 issuer = module("session_issuer", HERE / "issue-t3-session.py")
+
+
+class ControlSocketTests(unittest.TestCase):
+    def client(self):
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.recv.return_value = b'{"ok":true,"result":{"type":"BootstrapReady"}}\n'
+        return client
+
+    def test_initial_missing_and_refused_socket_connects_then_sends_exactly_once(self):
+        clients = [self.client() for _ in range(3)]
+        clients[0].connect.side_effect = FileNotFoundError(errno.ENOENT, "private path")
+        clients[1].connect.side_effect = ConnectionRefusedError(errno.ECONNREFUSED, "private path")
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        with patch.object(bootstrap.socket, "socket", side_effect=clients) as factory, \
+                patch.object(bootstrap.time, "monotonic", side_effect=lambda: now[0]), \
+                patch.object(bootstrap.time, "sleep", side_effect=sleep):
+            result = bootstrap.call({"action": "bootstrap", "operationId": "fixture"})
+        self.assertEqual("BootstrapReady", result["type"])
+        self.assertEqual(3, factory.call_count)
+        clients[0].sendall.assert_not_called()
+        clients[1].sendall.assert_not_called()
+        clients[2].sendall.assert_called_once_with(
+            b'{"action": "bootstrap", "operationId": "fixture"}\n')
+        self.assertGreater(now[0], 0)
+        self.assertLess(now[0], 30)
+
+    def test_other_connect_errors_fail_closed_without_retry_or_sensitive_reason(self):
+        for error in (PermissionError(errno.EACCES, "private path"),
+                      OSError(errno.EIO, "private credential"), TimeoutError("private timeout")):
+            with self.subTest(error=type(error).__name__):
+                client = self.client()
+                client.connect.side_effect = error
+                with patch.object(bootstrap.socket, "socket", return_value=client) as factory, \
+                        patch.object(bootstrap.time, "sleep") as sleep:
+                    with self.assertRaises(runtime.Blocked) as blocked:
+                        bootstrap.call({"action": "bootstrap"})
+                self.assertNotIn("private", str(blocked.exception))
+                self.assertIn("not retried", str(blocked.exception))
+                self.assertEqual(1, factory.call_count)
+                client.sendall.assert_not_called()
+                sleep.assert_not_called()
+
+    def test_readiness_deadline_retains_only_safe_final_connect_reason(self):
+        for number, name in ((errno.ENOENT, "ENOENT"), (errno.ECONNREFUSED, "ECONNREFUSED")):
+            with self.subTest(errno=number):
+                client = self.client()
+                client.connect.side_effect = OSError(number, "private path")
+                with patch.object(bootstrap.socket, "socket", return_value=client), \
+                        patch.object(bootstrap.time, "monotonic", side_effect=[0, 0, 30]), \
+                        patch.object(bootstrap.time, "sleep") as sleep:
+                    with self.assertRaisesRegex(runtime.Blocked, "30 seconds.*" + name) as blocked:
+                        bootstrap.call({"action": "bootstrap"})
+                self.assertNotIn("private", str(blocked.exception))
+                client.sendall.assert_not_called()
+                sleep.assert_not_called()
+
+    def test_failure_after_connection_never_reconnects_or_replays_request(self):
+        for phase in ("sendall", "recv"):
+            with self.subTest(phase=phase):
+                client = self.client()
+                getattr(client, phase).side_effect = ConnectionRefusedError(
+                    errno.ECONNREFUSED, "ambiguous post-connect failure")
+                with patch.object(bootstrap.socket, "socket", return_value=client) as factory, \
+                        patch.object(bootstrap.time, "sleep") as sleep:
+                    with self.assertRaises(ConnectionRefusedError):
+                        bootstrap.call({"action": "bootstrap"})
+                self.assertEqual(1, factory.call_count)
+                client.connect.assert_called_once()
+                client.sendall.assert_called_once()
+                sleep.assert_not_called()
 
 
 class BootstrapTests(unittest.TestCase):

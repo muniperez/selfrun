@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-shot prepared-image bootstrap. Never installs tools or formats storage."""
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -24,18 +25,38 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def call(request, socket_path="/run/minicloud-workspace/control.sock"):
-    with socket.socket(socket.AF_UNIX) as client:
-        client.settimeout(600)
-        client.connect(socket_path)
-        client.sendall(json.dumps(request).encode() + b"\n")
-        data = b""
-        while not data.endswith(b"\n"):
-            part = client.recv(65536)
-            require(part and len(data) + len(part) <= 1048576, "Invalid runtime response")
-            data += part
-        response = json.loads(data)
-        require(response.get("ok"), response.get("reason", "Runtime blocked"))
-        return response["result"]
+    deadline = time.monotonic() + 30
+    last_reason = "not attempted"
+    while True:
+        remaining = deadline - time.monotonic()
+        require(remaining > 0,
+                f"Runtime control socket readiness timed out after 30 seconds ({last_reason})")
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(min(remaining, 1))
+            try:
+                client.connect(socket_path)
+            except OSError as error:
+                if error.errno not in (errno.ENOENT, errno.ECONNREFUSED):
+                    code = error.errno if type(error.errno) is int and 0 < error.errno < 4096 else "unknown"
+                    raise Blocked(f"Runtime control socket connection failed (errno {code}); not retried") from None
+                last_reason = "ENOENT" if error.errno == errno.ENOENT else "ECONNREFUSED"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Blocked(
+                        f"Runtime control socket readiness timed out after 30 seconds ({last_reason})") from None
+                time.sleep(min(0.1, remaining))
+                continue
+            # Never reconnect once any request bytes may have been sent.
+            client.settimeout(600)
+            client.sendall(json.dumps(request).encode() + b"\n")
+            data = b""
+            while not data.endswith(b"\n"):
+                part = client.recv(65536)
+                require(part and len(data) + len(part) <= 1048576, "Invalid runtime response")
+                data += part
+            response = json.loads(data)
+            require(response.get("ok"), response.get("reason", "Runtime blocked"))
+            return response["result"]
 
 
 def configure_user_git(config):
