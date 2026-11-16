@@ -7,6 +7,7 @@ import { useAuth } from "@/core/auth/AuthProvider";
 import { createDevelopmentWorkspace, listDevelopmentWorkspaces } from "@/api/environmentsApi";
 import { getWorkspace, getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceOperation, workspaceTask } from "@/api/workspacesApi";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import { WorkspaceT3Connect } from "./WorkspaceT3Connect";
 
 type Selection = { imageId: string; profile: string; planId: string };
 const initialSelection: Selection = { imageId: "", profile: "Standard", planId: "" };
@@ -212,6 +213,8 @@ function VmCard({ workspaceId, organizationId, vm, currency, refresh }: {
     <p>Estimated compute: {vm.computeHourlyRate.toFixed(4)} {currency}/hour · {vm.estimatedMonthlyCompute.toFixed(2)} {currency}/month · {vm.computeReserved ? "reserved / charges may continue" : "not reserved"}</p>
     <p>Last activity: {vm.lastActivityAt ?? "unavailable"} · Idle stop deadline: {vm.shutdownDeadline ?? "none"}</p>
     {vm.kind === "primary" && <p>Only data on the retained workspace volume survives compute replacement; root-disk files are disposable. A retained volume is not a backup.</p>}
+    {vm.kind === "primary" && <WorkspaceT3Connect key={`${vm.id}:${vm.generation}`} workspaceId={workspaceId}
+      vmId={vm.id} organizationId={organizationId} generation={vm.generation} ready={ready} />}
     {vm.kind === "ephemeral" && <><p>{lossDisclosure}</p><p>Repository: {vm.repository} · {vm.baseRef}@{vm.baseCommit} · work branch: {vm.workBranch ?? "pending"} · Git save: {vm.gitStatus}</p>
       {vm.verifiedRemoteCommit && <p>Verified remote: {vm.verifiedRemoteRef}@{vm.verifiedRemoteCommit}</p>}</>}
     {vm.phase === "awaiting_git_save" && <p role="alert">Awaiting Git save. Resolve the remote, authentication or conflict reason below, then retry Stop compute. Keep compute until Git save succeeds, or explicitly discard this generation's local data.</p>}

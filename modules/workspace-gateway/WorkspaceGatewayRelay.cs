@@ -20,9 +20,10 @@ public sealed class WorkspaceGatewayRelay : IDisposable
     private readonly SemaphoreSlim certificateAdmissions = new(8);
     private int connections;
     private static readonly HashSet<string> RequestHeaders = new(StringComparer.OrdinalIgnoreCase)
-    { "Accept", "Accept-Language", "Content-Type", "Range", "If-None-Match", "If-Modified-Since", "User-Agent" };
+    { "Accept", "Accept-Language", "Content-Type", "Range", "If-None-Match", "If-Modified-Since", "User-Agent", "X-Minicloud-Connect" };
     private static readonly HashSet<string> ResponseHeaders = new(StringComparer.OrdinalIgnoreCase)
-    { "Content-Type", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified", "Vary" };
+    { "Content-Type", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified", "Vary",
+      "Content-Security-Policy", "Referrer-Policy", "X-Content-Type-Options" };
     private static readonly HashSet<string> PrivateHeaders = new(StringComparer.OrdinalIgnoreCase)
     { "Host", "Cookie", "Origin", "Referer", "Forwarded", "X-Real-IP", "Content-Length", "Connection",
       "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "Proxy-Authenticate", "Proxy-Authorization" };

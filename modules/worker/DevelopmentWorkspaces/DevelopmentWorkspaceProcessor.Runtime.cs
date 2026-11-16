@@ -46,6 +46,20 @@ public sealed partial class DevelopmentWorkspaceProcessor
             throw new InvalidOperationException("The actual T3 bearer session is not ready.");
         await VerifyWebSocketAsync(http, port, ct);
         var previews = publishRoute ? await ProbePreviewsAsync(vm, ct) : new Dictionary<string, int>();
+        string? connectCredentialRef = null;
+        if (previews.ContainsKey("connect"))
+        {
+            connectCredentialRef = await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking()
+                .Where(x => x.VmId == vm.Id && x.Generation == vm.Generation && x.Service == "connect")
+                .Select(x => x.T3CredentialReference).SingleOrDefaultAsync(ct);
+            if (connectCredentialRef is null)
+            {
+                var connectCredential = await runtime.ReadConnectCredentialAsync(Target(vm), ct);
+                if (connectCredential.Length is < 32 or > 256 || connectCredential.Any(char.IsWhiteSpace))
+                    throw new InvalidOperationException("Connect management credential is not a bounded opaque bearer.");
+                connectCredentialRef = JsonSerializer.Serialize(await StoreAsync(vm, "connect", connectCredential, ct), Json);
+            }
+        }
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await maintenance.EnsureCommitAuthorityAsync(db, ct);
@@ -118,7 +132,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
                     Service = service, RegisteredAt = Now };
                 db.DevelopmentWorkspaceGatewayRoutes.Add(preview);
             }
-            preview.LoopbackPort = previewPort; preview.T3CredentialReference = null;
+            preview.LoopbackPort = previewPort;
+            preview.T3CredentialReference = service == "connect" ? connectCredentialRef : null;
             preview.ExpiresAt = route.ExpiresAt; preview.RevokedAt = null;
         }
         await db.SaveChangesAsync(ct);
@@ -130,8 +145,14 @@ public sealed partial class DevelopmentWorkspaceProcessor
         var healthy = new Dictionary<string, int>();
         foreach (var (service, registration) in options.Value.PreviewServices)
         {
+            if (service == "connect")
+            {
+                if (registration.Port != 774 || registration.SupervisedUnit is not null)
+                    throw new InvalidOperationException("Connect is reserved for the managed primary enrollment service.");
+                if (vm.Kind != DevelopmentWorkspaceVmKinds.Primary || vm.DesiredState != "running") continue;
+            }
             if (service == "t3" || !System.Text.RegularExpressions.Regex.IsMatch(service, "^[a-z][a-z0-9-]{0,19}$") ||
-                registration.Port is < 1024 or > 65535 or 3773)
+                service != "connect" && (registration.Port is < 1024 or > 65535 or 3773))
                 throw new InvalidOperationException("Preview routes require explicit named, unprivileged services separate from T3.");
             try
             {

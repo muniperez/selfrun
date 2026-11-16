@@ -8,6 +8,34 @@ namespace Minicloud.Worker.Tests.DevelopmentWorkspaces;
 public sealed class WorkspaceRuntimeTransportProtocolTests
 {
     [Theory]
+    [InlineData("connect", 774, true)]
+    [InlineData("connect", 3774, false)]
+    [InlineData("preview", 774, false)]
+    [InlineData("t3", 774, false)]
+    [InlineData("preview", 8080, true)]
+    [InlineData("t3", 3773, true)]
+    public void ManagementForwardingCannotUseACodingOwnedListener(string service, int port, bool permitted) =>
+        Assert.Equal(permitted, WorkspaceTunnelManager.IsPermittedRemotePort(service, port));
+
+    [Theory]
+    [InlineData("primary", 7, "vm-current", true)]
+    [InlineData("ephemeral", 7, "vm-current", false)]
+    [InlineData("primary", 0, "vm-current", false)]
+    [InlineData("primary", 7, "vm; echo forged", false)]
+    public void ConnectManagementCredentialIsOnlyIssuedForAnExactPrimaryGeneration(
+        string kind, long generation, string vmId, bool allowed)
+    {
+        var target = new WorkspaceRuntimeTarget(vmId, generation, kind, "203.0.113.8", "");
+        if (!allowed)
+        {
+            Assert.Throws<InvalidOperationException>(() => WorkspaceRuntimeTransport.ConnectCredentialCommand(target));
+            return;
+        }
+        Assert.Equal("python3 -B /opt/minicloud-workspace/t3_connect.py credential --vm-id vm-current --generation 7",
+            WorkspaceRuntimeTransport.ConnectCredentialCommand(target));
+    }
+
+    [Theory]
     [InlineData("refs/heads/main", 6)]
     [InlineData("refs/heads/master", 6)]
     [InlineData("refs/heads/minicloud/foreign/g6", 6)]

@@ -3,6 +3,7 @@
 import argparse
 import datetime as dt
 import hashlib
+import http.client
 import http.server
 import importlib.util
 import io
@@ -30,11 +31,14 @@ RUNTIME = Path("/opt/minicloud-workspace/runtime.py")
 EXPECTED_RUNTIME_SHA256 = None
 ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
-UNITS = ("minicloud-t3.service", "minicloud-workspace.service")
+UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
+         "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service")
 UNIT_HASHES = {
-    "minicloud-t3.service": "b2d02c7eff28545dc6a15f0960fe2e9aab347cb5b1bd5150623b64ea86b29029",
+    "minicloud-t3.service": "882358574a2e7fd18e6086f4aa43f625d9e09eeb32114913679aec6b15b39e05",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
+    "minicloud-t3-connect.service": "788796e55235f9cac13bcbfaf1267840f5e729d30bf753cd04274aa0a5906c03",
+    "minicloud-t3-connect-activate.service": "57992a035b9bcedf2e018b2bfa6bcfeee26e9a9a6d61ff24721b98300e84ced7",
 }
 REQUIRED_PROBES = {
     "target-and-toolchain-guard", "pristine-tools-only-no-default-apps", "loop-ext4-root-bootstrap",
@@ -45,6 +49,7 @@ REQUIRED_PROBES = {
     "frozen-real-pty-blocked-stdin-proof", "root-quiesce-controlled-thaw-stop-refreeze-unmount",
     "loop-readback-user-files", "encrypted-user-file-restore",
     "codex-empty-git-probes-save-and-reject-data",
+    "connect-management-rejects-routine-t3-token",
 }
 
 
@@ -418,7 +423,7 @@ class Native:
             check(command(["systemctl", "show", unit, "-p", "DropInPaths", "--value"]) == "",
                   "UNQUALIFIED_UNIT_DROPINS")
         check(shutil.disk_usage(HERE).free >= 3 * 1024**3, "THREE_GIB_FREE_DISK_REQUIRED")
-        for port in (3773,):
+        for port in (3773, 774):
             with socket.socket() as test:
                 check(test.connect_ex(("127.0.0.1", port)) != 0,                 "PREEXISTING_T3_LISTENER")
         manifest = json.loads(Path("/opt/minicloud-workspace/image-manifest.json").read_text())
@@ -793,6 +798,37 @@ class Native:
         result = self.client.call("init", tokenFiles=tokens, createProject=True)
         self.snapshot = result["snapshotSequence"]
         return {**result, "tokenFilesRootOnly": True, "freshBootstrapStartedT3WithoutManualStart": True}
+
+    def connect_management(self):
+        check(command(["systemctl", "is-active", "minicloud-t3-connect.service"]) == "active",
+              "CONNECT_MANAGEMENT_NOT_STARTED")
+
+        def request(path, token=None, method="GET", port=774):
+            client = http.client.HTTPConnection("127.0.0.1", port, timeout=45)
+            try:
+                headers = {"Authorization": "Bearer " + token} if token else {}
+                client.request(method, path, headers=headers)
+                response = client.getresponse()
+                body = response.read(65537)
+                check(len(body) <= 65536, "OVERSIZED_CONNECT_MANAGEMENT_RESPONSE")
+                return response.status, json.loads(body)
+            finally:
+                client.close()
+
+        check(request("/status")[0] == 403, "CONNECT_ACCEPTED_ANONYMOUS_LOCAL_CALLER")
+        routine = (self.directory / "operate.secret").read_text()
+        check(request("/status", routine)[0] == 403 and
+              request("/link", routine, "POST")[0] == 403,
+              "CONNECT_ACCEPTED_ROUTINE_GATEWAY_TOKEN")
+        check(request("/api/connect/link-state", routine, port=3773)[0] == 403,
+              "ROUTINE_GATEWAY_TOKEN_HAS_RELAY_PERMISSIONS")
+        token = json.loads(Path("/var/lib/minicloud-workspace/connect-credential.json").read_text())["token"]
+        status, value = request("/status", token)
+        check(status == 200 and value.get("vmId") == self.run_id and value.get("generation") == 1 and
+              value.get("linked") is False and value.get("desired") is False,
+              "CONNECT_MANAGEMENT_NOT_BOUND_TO_PRISTINE_PRIMARY")
+        return dict(anonymousRejected=True, routineGatewayTokenRejected=True,
+                    primaryGenerationChecked=True, noT3AccountApprovalRequested=True)
 
     def root_hooks(self):
         before = self.control("status")["activityAt"]
@@ -1417,6 +1453,7 @@ class Native:
                 return
             if not self.report.probe("native-http-scopes-tickets-websocket", self.start_services):
                 return
+            self.report.probe("connect-management-rejects-routine-t3-token", self.connect_management)
             self.report.probe("authenticated-generation-task-and-activity-hooks", self.root_hooks)
             if not self.report.probe("real-terminal-input-and-passive-root-hook", self.terminals):
                 return

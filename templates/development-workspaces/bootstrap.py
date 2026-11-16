@@ -112,6 +112,12 @@ def bootstrap(config_path, enrollment_path, state_dir):
                 time.sleep(1)
         require(descriptor and descriptor.get("orchestrationProtocolVersion") == 2 and
                 descriptor.get("serverVersion") == "0.1.9", "Pinned protocol-2 T3 is not ready")
+        if c["kind"] == "primary":
+            try:
+                run(["systemctl", "start", "minicloud-t3-connect.service"], timeout=15)
+            except Blocked:
+                # Optional enrollment readiness is probed separately; never break routine Open T3.
+                pass
     # Enrollment means runtime ready, not T3 gateway authenticated. Parent registers the gateway later.
     body = dict(schemaVersion=1, vmId=c["vmId"], generation=c["generation"], kind=c["kind"],
                 operationId=enrollment["operationId"],

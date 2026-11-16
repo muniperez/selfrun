@@ -18,6 +18,7 @@ public interface IWorkspaceRuntimeTransport
     Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct);
     Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct);
     Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct);
+    Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct);
     Task StageRepositoryCredentialAsync(WorkspaceRuntimeTarget target, JsonElement credential, CancellationToken ct);
     Task<JsonElement?> ReadRepositoryCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct) =>
         throw new NotSupportedException("Repository credential readback is required for safe retirement.");
@@ -180,6 +181,17 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
             throw new InvalidOperationException("Invalid generation session request.");
         return ExecuteAsync(target,
             $"python3 -B /opt/minicloud-workspace/issue-t3-session.py --vm-id {target.VmId} --generation {WorkspaceBootstrap.Generation(target.Generation)} --operation-id {operationId} --subject minicloud-gateway --ttl {ttlSeconds} --scope terminal:operate --scope orchestration:operate --scope terminal:read --scope orchestration:read", ct);
+    }
+
+    public Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
+        => ExecuteAsync(target, ConnectCredentialCommand(target), ct);
+
+    internal static string ConnectCredentialCommand(WorkspaceRuntimeTarget target)
+    {
+        if (target.Kind != "primary" || target.Generation <= 0 || string.IsNullOrEmpty(target.VmId) ||
+            target.VmId.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('_' or '-')))
+            throw new InvalidOperationException("Invalid generation credential request.");
+        return $"python3 -B /opt/minicloud-workspace/t3_connect.py credential --vm-id {target.VmId} --generation {WorkspaceBootstrap.Generation(target.Generation)}";
     }
 
     private async Task<string> ExecuteAsync(WorkspaceRuntimeTarget target, string commandText, CancellationToken ct)

@@ -97,6 +97,9 @@ def install(source_revision, builder):
     t3 = list(Path("/opt/minicloud-t3").rglob("t3"))
     require(len(t3) == 1 and t3[0].is_file(), "Unexpected T3 release archive layout")
     Path("/usr/local/bin/t3").symlink_to(t3[0])
+    relay = Path("/usr/local/bin/cloudflared")
+    download(lock["t3"]["relayClient"], relay)
+    relay.chmod(0o755)
     monitor = Path("/opt/minicloud-t3") / lock["t3"]["resourceMonitor"]["path"]
     with monitor.open("rb") as binary:
         require(hashlib.file_digest(binary, "sha256").hexdigest() ==
@@ -113,7 +116,8 @@ def install(source_revision, builder):
          "--no-create-home", "--shell", "/usr/sbin/nologin", "coding"])
     runtime = Path("/opt/minicloud-workspace")
     runtime.mkdir(exist_ok=True)
-    for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py"):
+    for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py",
+                 "t3_connect.py", "t3-connect.html", "t3-connect.js"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
     install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))
@@ -137,6 +141,9 @@ def install(source_revision, builder):
     require(all(option in help_text for option in
                 ("--token-only", "--ttl", "--subject", "--scope", "--base-dir")),
             "Installed T3 lacks required headless session issuance")
+    connect_help = run(["t3", "connect", "link", "--help"])
+    require(all(option in connect_help for option in ("--headless", "--base-dir")),
+            "Installed T3 lacks supported non-service-installing Connect enrollment")
     lock["provenance"].update(sourceRevision=source_revision, builderIdentity=builder,
                               installedPackages=run(["dpkg-query", "-W", "-f=${Package}=${Version}\n"]),
                               toolArtifactsVerified=True, headlessAuthOptionsChecked=True)
@@ -147,7 +154,8 @@ def install(source_revision, builder):
 def generalize():
     # Guard is applied by main before either install or this destructive operation.
     os.chdir("/")
-    for unit in ("minicloud-workspace.service", "minicloud-t3.service"):
+    for unit in ("minicloud-workspace.service", "minicloud-t3.service",
+                 "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service"):
         subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=120, check=False)
     require(not os.path.ismount("/workspace"), "Never erase an attached workspace")
     for path in ("/workspace", "/root/.codex", "/root/.t3", "/root/.config", "/root/.cache",

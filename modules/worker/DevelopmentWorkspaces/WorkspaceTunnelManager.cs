@@ -15,11 +15,14 @@ public sealed class WorkspaceTunnelManager(WorkspaceRuntimeTransport transport, 
     private readonly Dictionary<string, (SshClient Client, ForwardedPortLocal Forward, int Port)> tunnels = [];
     private readonly SemaphoreSlim gate = new(1, 1);
 
+    internal static bool IsPermittedRemotePort(string service, int port) =>
+        service == "connect" ? port == 774 : port is >= 1024 and <= 65535;
+
     public async Task<int> EnsureAsync(WorkspaceRuntimeTarget target, CancellationToken ct, int remotePort = 3773, string service = "t3")
     {
-        if (remotePort is < 1024 or > 65535 || service.Length is < 1 or > 20 ||
+        if (!IsPermittedRemotePort(service, remotePort) || service.Length is < 1 or > 20 ||
             service.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))
-            throw new InvalidOperationException("A registered workspace service and unprivileged loopback port are required.");
+            throw new InvalidOperationException("A registered workspace service and permitted loopback port are required.");
         await gate.WaitAsync(ct);
         try
         {

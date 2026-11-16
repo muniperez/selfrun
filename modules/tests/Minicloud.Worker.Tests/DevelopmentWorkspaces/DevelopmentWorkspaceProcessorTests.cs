@@ -998,6 +998,9 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
                 "workspace_git_recovery_source_changed", "Synthetic changed saved source.");
             return Task.CompletedTask;
         }
+        public Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct) =>
+            Task.FromResult(new string('c', 64));
+
         public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct)
         {
             SessionsIssued++;
