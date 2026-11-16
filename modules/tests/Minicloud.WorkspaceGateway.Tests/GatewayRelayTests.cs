@@ -198,6 +198,25 @@ public sealed class GatewayRelayTests
         Assert.Equal(HttpStatusCode.GatewayTimeout, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HttpReleasesUpstreamForwardingConnectionsWithoutClosingBrowserConnection(bool preview)
+    {
+        await using var fixture = await Fixture.StartAsync();
+        if (preview) fixture.Control.Target = fixture.Control.Target! with { Bearer = null };
+        using var first = await fixture.SendAsync("/", authenticated: true);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal("close", fixture.LastHttpConnectionHeader);
+        Assert.NotEqual(true, first.Headers.ConnectionClose);
+        var firstConnection = fixture.LastHttpConnectionId;
+        using var second = await fixture.SendAsync("/", authenticated: true);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal("close", fixture.LastHttpConnectionHeader);
+        Assert.NotEqual(firstConnection, fixture.LastHttpConnectionId);
+        Assert.NotEqual(true, second.Headers.ConnectionClose);
+    }
+
     [Fact]
     public async Task RegisteredPreviewForwardsOnlyItsOwnCookiesAndNoT3Bearer()
     {
@@ -362,6 +381,8 @@ public sealed class GatewayRelayTests
         public string? LastWebSocketQuery { get; private set; }
         public string? LastWebSocketAuthorization { get; private set; }
         public string? LastWebSocketCookie { get; private set; }
+        public string? LastHttpConnectionHeader { get; private set; }
+        public string? LastHttpConnectionId { get; private set; }
         public HttpClient Client { get; private set; } = null!;
         public FakeControl Control { get; private set; } = null!;
         public TaskCompletionSource AssetStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -391,6 +412,8 @@ public sealed class GatewayRelayTests
             fixture.upstream.UseWebSockets();
             fixture.upstream.Run(async context =>
             {
+                fixture.LastHttpConnectionHeader = context.Request.Headers.Connection;
+                fixture.LastHttpConnectionId = context.Connection.Id;
                 if (context.Request.Path == "/assets/held.js")
                 {
                     fixture.AssetStarted.TrySetResult();

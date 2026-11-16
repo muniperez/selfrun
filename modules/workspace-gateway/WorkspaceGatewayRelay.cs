@@ -258,6 +258,8 @@ public sealed class WorkspaceGatewayRelay : IDisposable
                 !header.Key.StartsWith("Sec-WebSocket-", StringComparison.OrdinalIgnoreCase)) &&
                 !upstream.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
                 upstream.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+        // Idle upstream sockets pin blocking SSH forwarding channels; do not pool this hop.
+        upstream.Headers.ConnectionClose = true;
         upstream.Headers.Host = request.Host.Value;
         upstream.Headers.Add("X-Forwarded-Proto", "https");
         upstream.Headers.Add("X-Forwarded-Host", request.Host.Value);
