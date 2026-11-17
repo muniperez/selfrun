@@ -67,6 +67,8 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
     public DbSet<MaintenanceAuthorityRecord> MaintenanceAuthorities => Set<MaintenanceAuthorityRecord>();
     public DbSet<MaintenanceActivity> MaintenanceActivities => Set<MaintenanceActivity>();
     public DbSet<MaintenanceParticipantRecord> MaintenanceParticipants => Set<MaintenanceParticipantRecord>();
+    public DbSet<DevelopmentWorkspace> DevelopmentWorkspaces => Set<DevelopmentWorkspace>();
+    public DbSet<DevelopmentWorkspaceTaskLease> DevelopmentWorkspaceTaskLeases => Set<DevelopmentWorkspaceTaskLease>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +109,43 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.Property(x => x.Role).HasMaxLength(32);
             entity.Property(x => x.HostId).HasMaxLength(128);
             entity.HasIndex(x => x.LastSeenAt);
+        });
+        modelBuilder.Entity<DevelopmentWorkspace>(entity =>
+        {
+            entity.ToTable("development_workspaces");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique();
+            entity.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique()
+                .HasFilter("idempotency_key IS NOT NULL");
+            entity.HasIndex(x => new { x.DesiredState, x.Phase, x.ShutdownDeadline });
+            entity.HasIndex(x => new { x.ProviderAccountId, x.ProviderServerId }).IsUnique();
+            entity.Property(x => x.Revision).IsConcurrencyToken();
+            entity.Property(x => x.Name).HasMaxLength(128);
+            entity.Property(x => x.ImageId).HasMaxLength(128);
+            entity.Property(x => x.Profile).HasMaxLength(32);
+            entity.Property(x => x.Region).HasMaxLength(64);
+            entity.Property(x => x.Sku).HasMaxLength(64);
+            entity.Property(x => x.ProviderImage).HasMaxLength(128);
+            entity.Property(x => x.DesiredState).HasMaxLength(16);
+            entity.Property(x => x.Phase).HasMaxLength(24);
+            entity.Property(x => x.ErrorCode).HasMaxLength(96);
+            entity.Property(x => x.ErrorMessage).HasMaxLength(512);
+            entity.Property(x => x.ShutdownReason).HasMaxLength(16);
+            entity.HasOne<Organization>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ProviderPlan>().WithMany().HasForeignKey(x => new { x.OrganizationId, x.PlanId })
+                .HasPrincipalKey(x => new { x.OrganizationId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ProviderAccount>().WithMany().HasForeignKey(x => new { x.OrganizationId, x.ProviderAccountId })
+                .HasPrincipalKey(x => new { x.OrganizationId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<DevelopmentWorkspaceTaskLease>(entity =>
+        {
+            entity.ToTable("development_workspace_task_leases");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.WorkspaceId, x.TaskId }).IsUnique();
+            entity.HasIndex(x => new { x.WorkspaceId, x.Generation, x.Status, x.ExpiresAt });
+            entity.Property(x => x.TaskId).HasMaxLength(128);
+            entity.Property(x => x.Status).HasMaxLength(16);
+            entity.HasOne<DevelopmentWorkspace>().WithMany().HasForeignKey(x => x.WorkspaceId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<ManagedDatabaseNetwork>(entity =>
         {

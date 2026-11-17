@@ -394,3 +394,33 @@ export type CustomDomainRegistrationResponse = {
 };
 
 export type AppStorageVolume = { name: string; provider: string; providerVolumeId: string | null; region: string; sizeGb: number; uid: number; gid: number; status: "registered" | "creation_unresolved" | "pending" };
+
+export type DevelopmentWorkspace = {
+  id: string;
+  organizationId: string;
+  name: string;
+  imageId: string;
+  profile: string;
+  planId: string;
+  providerAccountId: string;
+  region: string;
+  sku: string;
+  volumeSizeGb: number;
+  desiredState: "running" | "stopped";
+  phase: string;
+  generation: number;
+  providerServerId?: string | null;
+  providerVolumeId?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  lastActivityAt?: string | null;
+  shutdownDeadline?: string | null;
+  lastReadyAt?: string | null;
+  estimatedMonthlyCompute: number;
+  estimatedMonthlyStorage: number;
+  currency: string;
+  pricingUpdatedAt?: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
