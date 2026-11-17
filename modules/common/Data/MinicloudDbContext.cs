@@ -70,6 +70,7 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureGitHubApps(modelBuilder);
         modelBuilder.Entity<MaintenanceAuthorityRecord>(entity =>
         {
             entity.ToTable("maintenance_authority", table => table.HasCheckConstraint(

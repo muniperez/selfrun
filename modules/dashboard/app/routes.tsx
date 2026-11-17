@@ -17,6 +17,7 @@ import { SignInModule } from "./modules/Auth/SignInModule";
 import { AccountFlowForm } from "./modules/Auth/AccountFlowForm";
 import { ProviderContinuationModule } from "./modules/Auth/ProviderContinuationModule";
 import { TeamSettingsModule } from "./modules/Settings/TeamSettingsModule";
+import { GitHubCallbackModule, GitHubSettingsModule } from "./modules/Settings/GitHubSettingsModule";
 import { CliLoginModule } from "./modules/CliLogin/CliLoginModule";
 import { SetupModule } from "./modules/Setup/SetupModule";
 import { ProviderPlanGuide } from "./modules/Setup/ProviderPlanGuide";
@@ -24,6 +25,8 @@ import { ProviderPlanGuide } from "./modules/Setup/ProviderPlanGuide";
 import { ProviderAccountsModule, ProvidersModule } from "./modules/Providers/ProvidersModule";
 
 export const routes: RouteObject[] = [
+  { path: "/settings/github/callback", element: <GitHubCallbackModule /> },
+  { path: "/settings/github/installed", element: <GitHubCallbackModule /> },
   { path: "/setup", element: <SetupModule /> },
   {
     element: <AuthLayout />,
@@ -54,7 +57,8 @@ export const routes: RouteObject[] = [
       { path: "/deployments/:deploymentNumber", element: <DeploymentDetailModule /> },
       { path: "/settings/api-keys", element: <ApiKeysModule /> },
       { path: "/settings/account", element: <AccountFlowForm kind="settings" returnTo="/settings/account" /> },
-      { path: "/settings/team", element: <TeamSettingsModule /> }
+      { path: "/settings/team", element: <TeamSettingsModule /> },
+      { path: "/settings/github", element: <GitHubSettingsModule /> }
     ]
   },
   { path: "*", element: <Navigate to="/apps" replace /> }

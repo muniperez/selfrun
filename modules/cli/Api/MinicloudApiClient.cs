@@ -275,6 +275,18 @@ public sealed class MinicloudApiClient
     public Task<CliLoginSessionCreateResponse> CreateCliLoginSessionAsync(CancellationToken cancellationToken) =>
         SendUnauthenticatedAsync<CliLoginSessionCreateResponse>(HttpMethod.Post, "/api/cli-login-sessions", null, cancellationToken);
 
+    public Task<GitHubAppSetupUrl> GetGitHubSetupUrlAsync(string organizationId, CancellationToken ct) =>
+        SendAsync<GitHubAppSetupUrl>(HttpMethod.Get, "/api/github-apps/setup-url?organizationId=" + Uri.EscapeDataString(organizationId), null, ct);
+
+    public Task<GitHubAppStatus> GetGitHubStatusAsync(string organizationId, CancellationToken ct) =>
+        SendAsync<GitHubAppStatus>(HttpMethod.Get, "/api/github-apps?organizationId=" + Uri.EscapeDataString(organizationId), null, ct);
+
+    public Task<IReadOnlyList<GitHubRepository>> GetGitHubRepositoriesAsync(string connectionId, CancellationToken ct) =>
+        SendAsync<IReadOnlyList<GitHubRepository>>(HttpMethod.Get, "/api/github-apps/" + Uri.EscapeDataString(connectionId) + "/repositories", null, ct);
+
+    public Task<GitHubAppStatus> MutateGitHubAsync(string connectionId, string action, CancellationToken ct) =>
+        SendAsync<GitHubAppStatus>(HttpMethod.Post, "/api/github-apps/" + Uri.EscapeDataString(connectionId) + "/" + Uri.EscapeDataString(action), null, ct);
+
     public Task<CliLoginSessionExchangeResponse?> ExchangeCliLoginSessionAsync(string sessionId, CancellationToken cancellationToken) =>
         SendUnauthenticatedMaybeAcceptedAsync<CliLoginSessionExchangeResponse>(HttpMethod.Post, $"/api/cli-login-sessions/{Uri.EscapeDataString(sessionId)}/exchange", null, cancellationToken);
 

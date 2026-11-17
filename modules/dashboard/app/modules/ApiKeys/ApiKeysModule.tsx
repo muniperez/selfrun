@@ -63,6 +63,8 @@ const scopes: ApiKeyScope[] = [
   "providers:write",
   "plans:read",
   "plans:write",
+  "github:read",
+  "github:write",
 ];
 
 export function ApiKeysModule() {

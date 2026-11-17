@@ -20,6 +20,7 @@ function defineRoute(route: DashboardRouteDefinition) {
 }
 
 export const dashboardRoutes = {
+  github: defineRoute({ key: "github", name: "GitHub", path: "/settings/github", layout: "main", nav: { label: "GitHub", icon: KeyRound, group: "settings" } }),
   setup: defineRoute({ key: "setup", name: "First operator setup", path: "/setup", layout: "standalone" }),
   gettingStarted: defineRoute({ key: "gettingStarted", name: "Provider and plan guide", path: "/getting-started", layout: "main" }),
   signIn: defineRoute({ key: "signIn", name: "Sign in", path: "/sign-in", layout: "guest" }),
