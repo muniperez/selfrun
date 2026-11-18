@@ -24,6 +24,26 @@ describe("AppsModule", () => {
   });
   const mount = () => render(<MemoryRouter><AppsModule /></MemoryRouter>);
 
+  it("shows stored application and environment deletion recovery guidance", async () => {
+    const app = appsFixtureApplications()[0];
+    const appError = "provider_resource_identity_missing: Import or reconcile production before retrying application deletion.";
+    const envError = "provider_resource_identity_missing: Import or reconcile staging before retrying environment deletion.";
+    vi.mocked(listApplications).mockResolvedValue([{
+      ...app,
+      deletionStatus: "failed",
+      deletionError: appError,
+      environments: app.environments.map((env) => env.name === "staging"
+        ? { ...env, deletionStatus: "failed", deletionError: envError }
+        : env),
+    }]);
+
+    mount();
+
+    expect(await screen.findByText(appError)).toHaveAttribute("role", "alert");
+    expect(screen.getByText(envError)).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("link", { name: "Review & retry" })).toHaveAttribute("href", `/apps/${app.id}/settings`);
+  });
+
   it("shows each application once with environment subrows and no Plan/Runtime columns or filters", async () => {
     mount();
     await screen.findByText("MuniPages");

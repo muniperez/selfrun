@@ -108,6 +108,13 @@ The default API and worker configuration requires explicit account bindings.
 bridge for an installation still using its old global credentials. Leave it
 disabled after import; custom named plans never fall back to global credentials.
 
+Application and environment deletion checks registered server and runtime account
+bindings before canceling deployments or cleaning up stored data and access.
+`legacy_provider_import_required` identifies an environment that needs the
+import/reconciliation workflow below; retrying deletion cannot establish ownership.
+Worker ownership checks remain independent, and this blocker is also shown in
+deletion status if an already queued cleanup encounters it.
+
 Add an account in the portal, or import an existing locally configured credential
 without passing its value in a command argument:
 

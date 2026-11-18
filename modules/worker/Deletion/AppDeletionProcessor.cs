@@ -137,7 +137,9 @@ public sealed class AppDeletionProcessor(
                 db.ChangeTracker.Clear();
                 var failed = await db.Apps.SingleAsync(x => x.Id == app.Id, ct);
                 failed.DeletionStatus = "failed";
-                failed.DeletionError = "Application cleanup failed. Retry deletion; contact support if it continues.";
+                failed.DeletionError = ex is ProviderCatalogException { Code: AppDeletionErrors.ImportRequired }
+                    ? $"{AppDeletionErrors.ImportRequired}: {AppDeletionErrors.ImportRequiredMessage(failed)}"
+                    : "Application cleanup failed. Retry deletion; contact support if it continues.";
                 if (failed.ApplicationId is not null)
                 {
                     var failedApplication = await db.Applications.SingleOrDefaultAsync(x => x.Id == failed.ApplicationId, ct);
@@ -195,7 +197,7 @@ public sealed class AppDeletionProcessor(
         foreach (var target in targets)
         {
             if (app.PlanId is not null && target.AccountId is null)
-            { throw new InvalidOperationException("Registered server has no provider account; reconcile ownership before deletion."); }
+            { throw new ProviderCatalogException(AppDeletionErrors.ImportRequired, AppDeletionErrors.ImportRequiredMessage(app)); }
             var client = target.AccountId is null ? providers(target.Provider) :
                 await (accountClients ?? throw new InvalidOperationException("Account client resolution is unavailable."))
                     .CreateAsync(app.OrganizationId, target.AccountId, ct);

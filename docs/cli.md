@@ -607,6 +607,11 @@ A deployment number is only unique within its organization, so the CLI always se
 
 `apps inspect` prints the latest deployment and the active service inventory,
 including public/private state, port, runtime state, and assigned domains.
+`apps list` also shows application and environment deletion status and any stored
+safe deletion error. When deletion blocks `apps inspect`, its error includes the
+stored recovery guidance (when available). Follow that guidance to import or
+reconcile the affected environment before retrying deletion in the dashboard;
+the CLI does not provide a delete command.
 
 ## Service Subdomains
 

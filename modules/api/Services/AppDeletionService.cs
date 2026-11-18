@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Minicloud.Api.Auth;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
@@ -12,7 +13,8 @@ public sealed class AppDeletionService(
     AppServiceSecretService secrets,
     TelemetryService telemetry,
     AuditEventService audit,
-    DeploymentArtifactStorageService artifacts)
+    DeploymentArtifactStorageService artifacts,
+    IOptions<ProviderCatalogOptions> providerOptions)
 {
     public async Task<(int Status, string Code, string Message)?> RequestApplicationDeletionAsync(
         ControlPlanePrincipal principal, string applicationId, string confirmation, CancellationToken ct)
@@ -61,7 +63,6 @@ public sealed class AppDeletionService(
                 return null;
             }
 
-            application.DeletionStatus = "preparing";
             var error = await PrepareTargetsForDeletionAsync(apps, ct);
             if (error is not null)
             {
@@ -190,6 +191,12 @@ public sealed class AppDeletionService(
         var ids = apps.Select(x => x.Id).ToArray();
         foreach (var target in apps)
         {
+            if ((!providerOptions.Value.AllowLegacyConfiguration || target.PlanId is not null) &&
+                (await db.ServerInstances.AnyAsync(x => x.AppId == target.Id && x.ProviderAccountId == null, ct) ||
+                 await db.RuntimeServers.AnyAsync(x => x.AppId == target.Id && x.ProviderAccountId == null, ct)))
+            {
+                return (409, AppDeletionErrors.ImportRequired, AppDeletionErrors.ImportRequiredMessage(target));
+            }
             var blocker = await DatabaseLifecycleGuards.AppDeletionBlockerAsync(db, target.Id, ct);
             if (blocker is not null)
             {

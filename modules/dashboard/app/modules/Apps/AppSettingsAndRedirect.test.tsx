@@ -13,6 +13,7 @@ import {
 } from "../../api/applicationsApi";
 import { listPlans, type ProviderPlan } from "../../api/providersApi";
 import type { Application } from "../../models/application";
+import { ApiError } from "../../models/controlPlane";
 
 vi.mock("../../api/applicationsApi", () => ({
   getApplication: vi.fn(),
@@ -210,6 +211,51 @@ describe("AppLandingRedirect & AppSettingsModule", () => {
     expect(screen.queryByRole("button", { name: "Add environment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change plan" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
+  });
+
+  it("shows stored safe deletion errors for applications and affected environments", async () => {
+    const app = sampleApplication();
+    const appError = "provider_resource_identity_missing: Import or reconcile production before retrying application deletion.";
+    const envError = "provider_resource_identity_missing: Import or reconcile staging before retrying environment deletion.";
+    vi.mocked(getApplication).mockResolvedValue({
+      ...app, deletionStatus: "failed", deletionError: appError,
+      environments: app.environments.map((env) => env.name === "staging"
+        ? { ...env, deletionStatus: "failed", deletionError: envError }
+        : env),
+    });
+    const router = createMemoryRouter([
+      { path: "/apps/:applicationId/settings", element: <AppSettingsModule /> },
+    ], { initialEntries: ["/apps/appl_munipages/settings"] });
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByText(appError)).toHaveAttribute("role", "alert");
+    expect(screen.getByText(envError)).toHaveAttribute("role", "alert");
+    expect(screen.queryByRole("button", { name: "Save name" })).not.toBeInTheDocument();
+  });
+
+  it.each(["application", "environment"])("retains immediate %s deletion API errors inline", async (scope) => {
+    vi.mocked(getApplication).mockResolvedValue(sampleApplication());
+    const error = "provider_resource_identity_missing: Import or reconcile production before retrying deletion.";
+    const apiError = new ApiError(409, { code: "provider_resource_identity_missing", message: error, details: [] });
+    vi.mocked(deleteApplication).mockRejectedValueOnce(apiError);
+    vi.mocked(deleteEnvironment).mockRejectedValueOnce(apiError);
+    const router = createMemoryRouter([
+      { path: "/apps/:applicationId/settings", element: <AppSettingsModule /> },
+    ], { initialEntries: ["/apps/appl_munipages/settings"] });
+    render(<RouterProvider router={router} />);
+    await screen.findByText("MuniPages settings");
+
+    if (scope === "application") {
+      fireEvent.change(screen.getByLabelText("Type munipages to confirm"), { target: { value: "munipages" } });
+      fireEvent.click(screen.getByRole("button", { name: "Permanently delete application" }));
+    } else {
+      fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
+      fireEvent.change(screen.getByLabelText("Confirm deletion of production"), { target: { value: "production" } });
+      fireEvent.click(screen.getByRole("button", { name: "Delete environment" }));
+    }
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(error);
+    expect(router.state.location.pathname).toBe("/apps/appl_munipages/settings");
   });
 
   it("retains environment creation input and URL after a rejected write", async () => {
