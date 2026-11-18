@@ -215,8 +215,8 @@ describe("AppLandingRedirect & AppSettingsModule", () => {
 
   it("shows stored safe deletion errors for applications and affected environments", async () => {
     const app = sampleApplication();
-    const appError = "provider_resource_identity_missing: Import or reconcile production before retrying application deletion.";
-    const envError = "provider_resource_identity_missing: Import or reconcile staging before retrying environment deletion.";
+    const appError = "legacy_provider_import_required: Import or reconcile production before retrying application deletion.";
+    const envError = "legacy_provider_import_required: Import or reconcile staging before retrying environment deletion.";
     vi.mocked(getApplication).mockResolvedValue({
       ...app, deletionStatus: "failed", deletionError: appError,
       environments: app.environments.map((env) => env.name === "staging"
@@ -235,8 +235,8 @@ describe("AppLandingRedirect & AppSettingsModule", () => {
 
   it.each(["application", "environment"])("retains immediate %s deletion API errors inline", async (scope) => {
     vi.mocked(getApplication).mockResolvedValue(sampleApplication());
-    const error = "provider_resource_identity_missing: Import or reconcile production before retrying deletion.";
-    const apiError = new ApiError(409, { code: "provider_resource_identity_missing", message: error, details: [] });
+    const error = "legacy_provider_import_required: Import or reconcile production before retrying deletion.";
+    const apiError = new ApiError(409, { code: "legacy_provider_import_required", message: error, details: [] });
     vi.mocked(deleteApplication).mockRejectedValueOnce(apiError);
     vi.mocked(deleteEnvironment).mockRejectedValueOnce(apiError);
     const router = createMemoryRouter([

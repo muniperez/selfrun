@@ -26,8 +26,8 @@ describe("AppsModule", () => {
 
   it("shows stored application and environment deletion recovery guidance", async () => {
     const app = appsFixtureApplications()[0];
-    const appError = "provider_resource_identity_missing: Import or reconcile production before retrying application deletion.";
-    const envError = "provider_resource_identity_missing: Import or reconcile staging before retrying environment deletion.";
+    const appError = "legacy_provider_import_required: Import or reconcile production before retrying application deletion.";
+    const envError = "legacy_provider_import_required: Import or reconcile staging before retrying environment deletion.";
     vi.mocked(listApplications).mockResolvedValue([{
       ...app,
       deletionStatus: "failed",

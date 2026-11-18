@@ -10,7 +10,7 @@ namespace Minicloud.Tests;
 
 public sealed class CliAppDeletionDiagnosticsTests
 {
-    private const string Recovery = "provider_resource_identity_missing: Environment 'production' requires provider import or reconciliation before retrying deletion.";
+    private const string Recovery = "legacy_provider_import_required: Environment 'production' requires provider import or reconciliation before retrying deletion.";
 
     [Theory]
     [InlineData(true)]

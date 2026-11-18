@@ -60,7 +60,7 @@ vi.mock("./AppConsolePanel", () => ({
 
 describe("AppDetailModule", () => {
   it.each([
-    ["provider_resource_identity_missing: Import or reconcile production before retrying deletion.", "provider_resource_identity_missing: Import or reconcile production before retrying deletion."],
+    ["legacy_provider_import_required: Import or reconcile production before retrying deletion.", "legacy_provider_import_required: Import or reconcile production before retrying deletion."],
     [null, "Environment deletion failed. Review environment settings for recovery."],
   ])("shows stored environment deletion failure or a failure fallback (%s)", async (deletionError, expected) => {
     vi.mocked(getEnvironmentDetail).mockResolvedValue({
