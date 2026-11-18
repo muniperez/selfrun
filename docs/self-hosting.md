@@ -219,7 +219,8 @@ Worker pipeline-step spans are separate work.
 
 Exported spans allow only `http.request.method`, `http.response.status_code`,
 `http.route`, `network.protocol.version`, `operation` and `outcome`. SQL,
-parameters, URLs, query strings, headers and exception details are not exported.
+parameters, URLs, query strings, headers, trace state and exception details are
+not exported.
 HTTP span names are normalized to `HTTP`; route templates remain available as
 an attribute. Configure resource attributes and collector-side processing
 without secrets or tenant identifiers. Existing application and proxy logging

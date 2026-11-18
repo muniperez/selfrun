@@ -128,6 +128,7 @@ internal sealed class SafeActivityProcessor : BaseProcessor<Activity>
     {
         foreach (var tag in activity.TagObjects.ToArray())
             if (!AllowedTags.Contains(tag.Key)) activity.SetTag(tag.Key, null);
+        activity.TraceStateString = string.Empty;
         if (activity.Source.Name != OperatorDiagnostics.Name)
             activity.DisplayName = "HTTP";
         if (activity.Status == ActivityStatusCode.Error)

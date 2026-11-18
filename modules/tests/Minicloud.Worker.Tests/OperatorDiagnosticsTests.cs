@@ -12,6 +12,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Minicloud.Common.Diagnostics;
 using OpenTelemetry;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
 namespace Minicloud.Worker.Tests;
@@ -22,8 +23,9 @@ public sealed class OperatorDiagnosticsTests
     public async Task SyntheticRequestProducesSafeCorrelatedHttpAndDatabaseMeasurements()
     {
         const string secret = "synthetic-secret-DO-NOT-EXPORT";
-        var spans = new ConcurrentBag<(string Name, string TraceId, string SpanId, string Parent, string Tags)>();
+        var spans = new ConcurrentBag<(string Name, string TraceId, string SpanId, string Parent, string Tags, string? TraceState)>();
         var measurements = new ConcurrentBag<(string Name, string Tags)>();
+        var exportedMetrics = new ConcurrentBag<(string Name, string Tags)>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
@@ -45,6 +47,8 @@ public sealed class OperatorDiagnosticsTests
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddOperatorDiagnostics(builder.Configuration, "test", true);
         builder.Services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddProcessor(new CaptureProcessor(spans)));
+        builder.Services.ConfigureOpenTelemetryMeterProvider(metrics =>
+            metrics.AddReader(new PeriodicExportingMetricReader(new CaptureMetricExporter(exportedMetrics), 60000)));
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
         builder.Services.AddDbContext<TestDb>((provider, options) => options.UseSqlite(connection)
@@ -53,6 +57,8 @@ public sealed class OperatorDiagnosticsTests
         app.MapGet("/synthetic/{id}", async (TestDb db) =>
         {
             await db.Database.ExecuteSqlInterpolatedAsync($"SELECT {secret}");
+            try { await db.Database.ExecuteSqlRawAsync("SELECT nonexistent_synthetic_secret"); }
+            catch (SqliteException) { }
             return Results.Ok();
         });
         app.MapGet("/health", () => Results.Ok());
@@ -61,22 +67,34 @@ public sealed class OperatorDiagnosticsTests
         using var client = new HttpClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{address}/synthetic/{secret}?token={secret}");
         request.Headers.Add("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01");
+        request.Headers.Add("tracestate", $"vendor={secret}");
         using (SuppressInstrumentationScope.Begin())
             Assert.True((await client.SendAsync(request)).IsSuccessStatusCode);
         using var health = new HttpRequestMessage(HttpMethod.Get, $"{address}/health");
         health.Headers.Add("traceparent", "00-fedcba9876543210fedcba9876543210-0123456789abcdef-01");
         using (SuppressInstrumentationScope.Begin())
             await client.SendAsync(health);
+        app.Services.GetRequiredService<MeterProvider>().ForceFlush();
         await app.StopAsync();
 
         Assert.Contains(measurements, m => m.Name == "http.server.request.duration" && m.Tags.Contains("/synthetic/{id}"));
         Assert.Contains(measurements, m => m.Name == "minicloud.db.command.duration" && m.Tags.Contains("outcome=success"));
+        Assert.Contains(measurements, m => m.Name == "minicloud.db.command.duration" && m.Tags.Contains("outcome=error"));
+        Assert.Contains(exportedMetrics, m => m.Name == "http.server.request.duration" && m.Tags.Contains("/synthetic/{id}"));
+        Assert.Contains(exportedMetrics, m => m.Name == "dotnet.gc.heap.total_allocated");
+        Assert.Contains(exportedMetrics, m => m.Name == "dotnet.gc.pause.time");
+        Assert.Contains(exportedMetrics, m => m.Name == "dotnet.thread_pool.queue.length");
+        Assert.Contains(exportedMetrics, m => m.Name == "dotnet.process.cpu.time");
+        Assert.Contains(exportedMetrics, m => m.Name == "dotnet.process.memory.working_set");
+        Assert.DoesNotContain(exportedMetrics, metric => metric.Tags.Contains(secret));
         var server = Assert.Single(spans, s => s.Name == "HTTP" && s.TraceId == "0123456789abcdef0123456789abcdef");
-        var dbSpan = Assert.Single(spans, s => s.Name == "db.command" && s.TraceId == server.TraceId);
-        Assert.Equal(server.SpanId, dbSpan.Parent);
+        var dbSpans = spans.Where(s => s.Name == "db.command" && s.TraceId == server.TraceId).ToArray();
+        Assert.Equal(2, dbSpans.Length);
+        Assert.All(dbSpans, span => Assert.Equal(server.SpanId, span.Parent));
         Assert.DoesNotContain(spans, span => span.TraceId == "fedcba9876543210fedcba9876543210");
         Assert.DoesNotContain(spans, span => span.Tags.Contains(secret));
         Assert.DoesNotContain(spans, span => span.Tags.Contains("url", StringComparison.OrdinalIgnoreCase));
+        Assert.All(spans, span => Assert.True(string.IsNullOrEmpty(span.TraceState)));
     }
 
     [Fact]
@@ -103,10 +121,25 @@ public sealed class OperatorDiagnosticsTests
 
     private sealed class TestDb(DbContextOptions<TestDb> options) : DbContext(options);
 
-    private sealed class CaptureProcessor(ConcurrentBag<(string Name, string TraceId, string SpanId, string Parent, string Tags)> spans) : BaseProcessor<Activity>
+    private sealed class CaptureProcessor(ConcurrentBag<(string Name, string TraceId, string SpanId, string Parent, string Tags, string? TraceState)> spans) : BaseProcessor<Activity>
     {
         public override void OnEnd(Activity activity) => spans.Add((activity.DisplayName, activity.TraceId.ToString(),
             activity.SpanId.ToString(), activity.ParentSpanId.ToString(),
-            string.Join(";", activity.TagObjects.Select(t => $"{t.Key}={t.Value}"))));
+            string.Join(";", activity.TagObjects.Select(t => $"{t.Key}={t.Value}")), activity.TraceStateString));
+    }
+
+    private sealed class CaptureMetricExporter(ConcurrentBag<(string Name, string Tags)> metrics) : BaseExporter<Metric>
+    {
+        public override ExportResult Export(in Batch<Metric> batch)
+        {
+            foreach (var metric in batch)
+                foreach (ref readonly var point in metric.GetMetricPoints())
+                {
+                    var tags = new List<string>();
+                    foreach (var tag in point.Tags) tags.Add($"{tag.Key}={tag.Value}");
+                    metrics.Add((metric.Name, string.Join(";", tags)));
+                }
+            return ExportResult.Success;
+        }
     }
 }
