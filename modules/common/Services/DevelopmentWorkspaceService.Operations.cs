@@ -73,7 +73,7 @@ public sealed partial class DevelopmentWorkspaceService
         AtomicAsync(async () =>
         {
             var (operation, vm) = await RequireClaimAsync(operationId, leaseToken, ct);
-            var workspace = await FindAsync(vm.WorkspaceId, vm.OrganizationId, ct);
+            var workspace = await FindAsync(vm.WorkspaceId, vm.OrganizationId, ct, allowDeletion: operation.Kind == "delete-workspace");
             update(operation, vm, workspace);
             if (vm.Generation != operation.Generation || vm.OperationId != operation.Id)
                 throw Conflict("workspace_generation_stale", "Operation no longer targets this generation.");

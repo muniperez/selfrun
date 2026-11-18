@@ -127,6 +127,20 @@ public sealed partial class HetznerClient : IDevelopmentWorkspaceProvider
         return new(volume, action, next);
     }
 
+    public async Task DeleteWorkspaceVolumeAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
+    {
+        if (!labels.TryGetValue("managed-by", out var manager) || manager != "minicloud-workspaces"
+            || !labels.TryGetValue("kind", out var kind) || kind != "primary"
+            || !labels.ContainsKey("workspace") || !labels.ContainsKey("organization"))
+            throw new InvalidOperationException("Complete retained workspace ownership labels are required.");
+        var volume = await GetWorkspaceVolumeAsync(id, ct);
+        if (volume is null) return;
+        RequireWorkspaceOwnership(volume.Labels, labels);
+        if (volume.Id != id || volume.ServerId is not null)
+            throw new InvalidOperationException("Refusing to delete an unexpected or attached workspace volume.");
+        using var deleted = await WorkspaceRequestAsync(HttpMethod.Delete, "volumes/" + NumericWorkspaceId(id), null, ct);
+    }
+
     public async Task<WorkspaceCloudAction?> AttachWorkspaceVolumeAsync(
         string id, string serverId, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
     {
@@ -278,7 +292,7 @@ public sealed partial class HetznerClient : IDevelopmentWorkspaceProvider
     private static WorkspaceCloudVolume ReadWorkspaceVolume(JsonElement value) =>
         new(NumericJsonId(value.GetProperty("id")), value.GetProperty("name").GetString()!, value.GetProperty("size").GetInt32(),
             value.GetProperty("location").GetProperty("name").GetString()!,
-            value.TryGetProperty("server", out var server) && server.ValueKind != JsonValueKind.Null ? NumericJsonId(server) : null,
+            value.GetProperty("server") is { ValueKind: not JsonValueKind.Null } server ? NumericJsonId(server) : null,
             value.TryGetProperty("format", out var format) ? format.GetString() : null,
             value.GetProperty("linux_device").GetString()!, WorkspaceLabels(value));
 

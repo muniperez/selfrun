@@ -1593,7 +1593,8 @@ namespace Minicloud.Common.Migrations
                         .IsUnique();
 
                     b.HasIndex("OrganizationId", "Name")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("volume_status <> 'deleted'");
 
                     b.HasIndex("OrganizationId", "ProviderAccountId");
 

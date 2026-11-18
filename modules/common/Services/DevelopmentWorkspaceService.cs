@@ -266,7 +266,8 @@ public sealed partial class DevelopmentWorkspaceService(
         await db.DevelopmentWorkspaceTaskLeases.AnyAsync(x => x.VmId == vm.Id && x.Generation == vm.Generation && x.Status == "active", ct);
 
     public async Task<IReadOnlyList<DevelopmentWorkspace>> ListAsync(string organizationId, CancellationToken ct) =>
-        await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases).Where(x => x.OrganizationId == organizationId).OrderBy(x => x.Name).ToListAsync(ct);
+        await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases)
+            .Where(x => x.OrganizationId == organizationId && x.VolumeStatus != "deleted").OrderBy(x => x.Name).ToListAsync(ct);
 
     public async Task<DevelopmentWorkspace?> GetAsync(string workspaceId, string organizationId, CancellationToken ct) =>
         await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(x => x.Id == workspaceId && x.OrganizationId == organizationId, ct);
@@ -416,7 +417,7 @@ public sealed partial class DevelopmentWorkspaceService(
         Touch(vm);
     }
 
-    private void AddOperation(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string kind,
+    private DevelopmentWorkspaceOperation AddOperation(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string kind,
         DevelopmentWorkspaceGitRecoverySource? gitRecovery = null)
     {
         var operation = new DevelopmentWorkspaceOperation
@@ -432,6 +433,7 @@ public sealed partial class DevelopmentWorkspaceService(
         };
         db.DevelopmentWorkspaceOperations.Add(operation); vm.OperationId = operation.Id;
         if (kind == "start") vm.AllocationOperationId = operation.Id;
+        return operation;
     }
 
     private async Task CheckAdmissionAsync(DevelopmentWorkspace workspace, decimal rate, CancellationToken ct)
@@ -517,9 +519,15 @@ public sealed partial class DevelopmentWorkspaceService(
             return workspace;
         }, ct);
 
-    private async Task<DevelopmentWorkspace> FindAsync(string id, string organizationId, CancellationToken ct) =>
-        await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(x => x.Id == id && x.OrganizationId == organizationId, ct)
-        ?? throw Invalid("workspace_not_found", "Workspace was not found.");
+    private async Task<DevelopmentWorkspace> FindAsync(string id, string organizationId, CancellationToken ct, bool allowDeletion = false)
+    {
+        var workspace = await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases)
+            .SingleOrDefaultAsync(x => x.Id == id && x.OrganizationId == organizationId, ct)
+            ?? throw Invalid("workspace_not_found", "Workspace was not found.");
+        if (!allowDeletion && workspace.VolumeStatus is "deleting" or "deleted")
+            throw Conflict("workspace_permanent_deletion", "This workspace cannot be changed after permanent deletion has been requested.");
+        return workspace;
+    }
 
     private static DevelopmentWorkspaceVm Vm(DevelopmentWorkspace workspace, string vmId, long? generation)
     {
