@@ -38,6 +38,7 @@ public interface IDevelopmentWorkspaceProvider
     Task<WorkspaceCloudAction> GetWorkspaceActionAsync(string resource, string id, CancellationToken ct);
     Task<IReadOnlyList<WorkspaceCloudVolume>> FindWorkspaceVolumesAsync(IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudVolume?> GetWorkspaceVolumeAsync(string id, CancellationToken ct);
+    Task DeleteWorkspaceVolumeAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudVolumeAllocation> CreateWorkspaceVolumeAsync(string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudAction?> AttachWorkspaceVolumeAsync(string id, string serverId, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudAction?> DetachWorkspaceVolumeAsync(string id, string serverId, IReadOnlyDictionary<string, string> labels, CancellationToken ct);

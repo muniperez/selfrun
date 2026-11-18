@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { PageScaffold } from "@/core/components/PageScaffold";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { createDevelopmentWorkspace, listDevelopmentWorkspaces } from "@/api/environmentsApi";
-import { getWorkspace, getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceOperation, workspaceTask } from "@/api/workspacesApi";
+import { deleteWorkspace, getWorkspace, getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceOperation, workspaceTask } from "@/api/workspacesApi";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 
 type Selection = { imageId: string; profile: string; planId: string };
@@ -76,6 +76,14 @@ function OrganizationWorkspaces({ organizationId, workspaceId }: { organizationI
     return () => { active.current = false; controller.abort(); ++revision.current; };
   }, [refresh]);
 
+  const applyDeletion = (updated: DevelopmentWorkspace) => {
+    if (!active.current) return;
+    // A read already in flight may still contain the pre-deletion workspace.
+    ++revision.current;
+    setItems(current => current.flatMap(item => item.id !== updated.id ? [item]
+      : updated.phase === "deleted" && !workspaceId ? [] : [updated]));
+  };
+
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
     if (creating) return;
@@ -103,14 +111,16 @@ function OrganizationWorkspaces({ organizationId, workspaceId }: { organizationI
     <Button variant="outline" onClick={() => void refresh()}>Refresh workspace status</Button>
     {loading ? <p role="status">Loading workspaces…</p> : items.length === 0 ? <p>No development workspaces.</p> : null}
     <section aria-label="Workspace list" className="space-y-4">
-      {items.map(item => <WorkspaceCard key={item.id} item={item} organizationId={organizationId} refresh={refresh} />)}
+      {items.map(item => <WorkspaceCard key={item.id} item={item} organizationId={organizationId} refresh={refresh} applyDeletion={applyDeletion} />)}
     </section>
   </>;
 }
 
 type Operation = (operation: () => Promise<unknown>) => Promise<void>;
 
-function WorkspaceCard({ item, organizationId, refresh }: { item: DevelopmentWorkspace; organizationId: string; refresh: () => Promise<void> }) {
+function WorkspaceCard({ item, organizationId, refresh, applyDeletion }: {
+  item: DevelopmentWorkspace; organizationId: string; refresh: () => Promise<void>; applyDeletion: (item: DevelopmentWorkspace) => void;
+}) {
   const [selection, setSelection] = useState(initialSelection);
   const [repository, setRepository] = useState("");
   const [baseRef, setBaseRef] = useState("");
@@ -121,6 +131,8 @@ function WorkspaceCard({ item, organizationId, refresh }: { item: DevelopmentWor
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmStopAll, setConfirmStopAll] = useState(false);
+  const [confirmDeletePhase, setConfirmDeletePhase] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const launchKey = useRequestKey();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -131,14 +143,42 @@ function WorkspaceCard({ item, organizationId, refresh }: { item: DevelopmentWor
     catch (reason) { if (mounted.current) setError(message(reason)); }
     finally { if (mounted.current) setBusy(false); }
   };
+  const deleting = item.phase === "deleting";
+  const deleteFailed = item.phase === "delete_failed";
+  const deleted = item.phase === "deleted";
+  const canDelete = !deleting && !deleted;
+  const confirmDelete = canDelete && confirmDeletePhase === item.phase;
+  const remove = async () => {
+    if (busy || deletePending || !confirmDelete) return;
+    setConfirmDeletePhase(null);
+    setConfirmStopAll(false);
+    setDeletePending(true);
+    setError(null);
+    try { applyDeletion(await deleteWorkspace(item.id, organizationId)); }
+    catch (reason) { if (mounted.current) setError(message(reason)); }
+    finally { if (mounted.current) setDeletePending(false); }
+  };
   return <article aria-label={`Workspace ${item.name}`} className="space-y-3 rounded border p-4">
     <h2>{item.name} <small>{item.id}</small></h2>
     <a href={`/workspaces/${encodeURIComponent(item.id)}`}>Workspace details: {item.name}</a>
+    {deleting && <p role="status">Permanent deletion is in progress. Refresh workspace status to check again.</p>}
+    {deleteFailed && <p>Permanent deletion failed. Resolve the reported error before retrying.</p>}
+    {deleted && <p role="status">Workspace permanently deleted.</p>}
+    {deletePending && <p role="status">Requesting permanent deletion…</p>}
+    {(item.errorCode || item.errorMessage) && <p role="alert">{[item.errorCode, item.errorMessage].filter(Boolean).join(": ")}</p>}
+    {error && <p role="alert">{error}</p>}
+    {canDelete && !confirmDelete && <Button variant="destructive" disabled={busy || deletePending}
+      onClick={() => setConfirmDeletePhase(item.phase)}>{deleteFailed ? "Retry permanent deletion…" : "Permanently delete workspace…"}</Button>}
+    {confirmDelete && <section aria-label={`Confirm permanent deletion of ${item.name}`}>
+      <p>Irreversible: permanently delete {item.name} ({item.id}). Its primary retained volume and any remaining local VM data will be permanently lost.</p>
+      {!deleteFailed && <p>Stop all VMs and wait for compute cleanup to finish before deleting.</p>}
+      <Button variant="destructive" disabled={busy || deletePending} onClick={() => void remove()}>Confirm permanent deletion</Button>
+      <Button variant="outline" onClick={() => setConfirmDeletePhase(null)}>Cancel deletion</Button>
+    </section>}
+    {!deleting && !deleteFailed && !deleted && !deletePending && <>
     <p>Primary retained volume: {item.volumeSizeGb} GB · {item.volumeStatus ?? "status unavailable"} · estimated storage {item.estimatedMonthlyStorage.toFixed(2)} {item.currency}/month.</p>
     <p>Operator rates: {item.pricingUpdatedAt ?? "timestamp unavailable"}. Compute estimates are per VM, not a billing guarantee.</p>
     <p>Hetzner compute billing ends on deletion, not power-off, and rounds up to whole hours. Retained storage, backups, IPs, traffic and the control plane may cost extra.</p>
-    {item.errorCode && <p role="alert">{item.errorCode}: {item.errorMessage}</p>}
-    {error && <p role="alert">{error}</p>}
     <Button variant="outline" disabled={busy || !item.vms?.length} onClick={() => setConfirmStopAll(true)}>Stop all VMs</Button>
     {confirmStopAll && <section aria-label="Confirm stop all">
       <p>Stop these VMs independently. Primary data is retained. Each ephemeral VM must pass its own Git-save guard; blocked VMs remain allocated and may incur costs.</p>
@@ -170,6 +210,7 @@ function WorkspaceCard({ item, organizationId, refresh }: { item: DevelopmentWor
       <p>{lossDisclosure} Launch does not itself push, force-push, create a PR or merge.</p>
       <Button disabled={busy || !pushAuthorized || !acknowledged}>Launch ephemeral VM</Button>
     </form>
+    </>}
   </article>;
 }
 

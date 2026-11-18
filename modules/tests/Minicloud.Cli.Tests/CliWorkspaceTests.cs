@@ -35,6 +35,47 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.All(_handler.Requests, request => Assert.Equal("/api/me", request.Path));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("--confirm-permanent-deletion=false")]
+    [InlineData("--confirm-permanent-deletion false")]
+    public async Task DeleteRequiresStandaloneConfirmation(string confirmation)
+    {
+        Assert.Equal(CliExitCodes.ValidationError, await Run(
+            ["delete", "workspace", "--organization", "org", .. confirmation.Split(' ', StringSplitOptions.RemoveEmptyEntries)]));
+        Assert.Empty(_handler.Requests);
+        Assert.Contains("--confirm-permanent-deletion", string.Join('\n', _console.Messages));
+    }
+
+    [Theory]
+    [InlineData("deleting", HttpStatusCode.Accepted, "Permanent deletion is in progress")]
+    [InlineData("deleted", HttpStatusCode.OK, "Workspace permanently deleted")]
+    public async Task DeleteSendsConfirmedDeleteAndShowsReturnedPhase(string phase, HttpStatusCode status, string message)
+    {
+        _handler.WorkspacePhase = phase;
+        _handler.DeleteStatus = status;
+        Assert.Equal(CliExitCodes.Success, await Run("delete", "work/space", "--confirm-permanent-deletion", "--organization", "org"));
+        var request = Assert.Single(_handler.Requests, x => x.Method == "DELETE");
+        Assert.Equal("/api/development-workspaces/work%2Fspace?organizationId=org&confirmPermanentDeletion=true", request.Path);
+        Assert.False(request.HasBody);
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("primary retained volume and any remaining local VM data will be permanently lost", output);
+        Assert.Contains($"Workspace phase: {phase}", output);
+        Assert.Contains(message, output);
+    }
+
+    [Fact]
+    public async Task StatusReportsTopLevelDeletionFailureAndHowToRetry()
+    {
+        _handler.WorkspacePhase = "delete_failed";
+        Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org"));
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("Workspace phase: delete_failed", output);
+        Assert.Contains("volume_delete_failed: Restore provider access", output);
+        Assert.Contains("retry workspaces delete with --confirm-permanent-deletion", output);
+        Assert.All(_handler.Requests, x => Assert.Equal("GET", x.Method));
+    }
+
     [Fact]
     public async Task CreateAndReadRemainExplicitAndNeverStartCompute()
     {
@@ -176,16 +217,18 @@ public sealed class CliWorkspaceTests : IDisposable
 
     public void Dispose() => _directory.Delete(true);
 
-    private sealed record Captured(string Method, string Path, JsonElement Body);
+    private sealed record Captured(string Method, string Path, JsonElement Body, bool HasBody);
     private sealed class Handler : HttpMessageHandler
     {
         public List<Captured> Requests = [];
         public string? RecoveryCommit { get; set; }
+        public string WorkspacePhase { get; set; } = "stopped";
+        public HttpStatusCode DeleteStatus { get; set; } = HttpStatusCode.Accepted;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.PathAndQuery;
             var json = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(ct);
-            Requests.Add(new(request.Method.Method, path, JsonDocument.Parse(json).RootElement.Clone()));
+            Requests.Add(new(request.Method.Method, path, JsonDocument.Parse(json).RootElement.Clone(), request.Content is not null));
             var vms = RecoveryCommit is not null && path.Contains("/vms/ephemeral/start?")
                 ? new object[] { new { id = "ephemeral", kind = "ephemeral", generation = 4,
                     phase = "provisioning", repository = "https://git.example/repo.git",
@@ -194,8 +237,11 @@ public sealed class CliWorkspaceTests : IDisposable
             object body = path == "/api/me" ? CliApiFixtures.Me("org", "other")
                 : path.Contains("/tasks/") ? new { vmId = "ephemeral", taskId = "build", generation = 3, status = "active", expiresAt = DateTimeOffset.UtcNow.AddMinutes(5) }
                 : path.EndsWith("/vms?organizationId=org") ? Vms
-                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms };
-            return new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
+                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
+                    phase = WorkspacePhase,
+                    errorCode = WorkspacePhase == "delete_failed" ? "volume_delete_failed" : null,
+                    errorMessage = WorkspacePhase == "delete_failed" ? "Restore provider access" : null };
+            return new(request.Method == HttpMethod.Delete ? DeleteStatus : HttpStatusCode.OK) { Content = JsonContent.Create(body) };
         }
         private static readonly object[] Vms = [
             new { id = "primary", kind = "primary", generation = 3, desiredState = "running", phase = "ready", profile = "Standard", sku = "sku", region = "region" },

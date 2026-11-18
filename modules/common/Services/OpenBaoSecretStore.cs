@@ -155,6 +155,9 @@ public sealed class OpenBaoSecretStore(HttpClient httpClient, IOptions<OpenBaoSe
     public static string IntegrationPathFor(string environment, string organizationId, string integrationId, string generation) =>
         string.Join('/', "env", Segment(environment), "orgs", Segment(organizationId), "integrations", Segment(integrationId), "credentials", Segment(generation));
 
+    public StoredSecretReference GetIntegrationReference(string organizationId, string integrationId, string generation) =>
+        new(ProviderName, IntegrationPathFor(_options.EnvironmentPrefix, organizationId, integrationId, generation), null);
+
     private static string EscapePath(string value) => string.Join('/', value.Split('/').Select(Segment));
 
     private sealed record OpenBaoWriteResponse(OpenBaoWriteData? Data);

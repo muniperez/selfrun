@@ -8,11 +8,11 @@ public sealed partial class CliApplication
     private async Task<int> RunWorkspacesAsync(string[] args, CancellationToken ct)
     {
         var action = args.FirstOrDefault();
-        if (action is not ("list" or "create" or "status" or "start" or "stop" or "cancel-idle-stop"
+        if (action is not ("list" or "create" or "status" or "delete" or "start" or "stop" or "cancel-idle-stop"
             or "resize-next-start" or "vms" or "launch" or "vm-status" or "vm-start" or "vm-stop"
             or "vm-cancel-idle-stop" or "vm-discard" or "vm-resize-next-start" or "stop-all"
             or "task-renew" or "task-complete"))
-            throw WorkspaceUsage("Expected list, create, status, start, stop, cancel-idle-stop, resize-next-start, vms, launch, vm-status, vm-start, vm-stop, vm-cancel-idle-stop, vm-discard, vm-resize-next-start, stop-all, task-renew or task-complete. See workspaces --help.");
+            throw WorkspaceUsage("Expected list, create, status, delete, start, stop, cancel-idle-stop, resize-next-start, vms, launch, vm-status, vm-start, vm-stop, vm-cancel-idle-stop, vm-discard, vm-resize-next-start, stop-all, task-renew or task-complete. See workspaces --help.");
 
         string Required(string option) => GetOption(args, option) is { Length: > 0 } value
             ? value : throw WorkspaceUsage($"Required: {option} <value>.");
@@ -23,6 +23,8 @@ public sealed partial class CliApplication
             if (!args.Contains(flag)) throw WorkspaceUsage($"Explicit {flag} is required.");
         }
         DevelopmentWorkspaceResizeRequest Resize() => new(Generation(), Required("--image"), Required("--profile"), Required("--plan"));
+
+        if (action == "delete") ValidateWorkspaceDeletion(args);
 
         var me = await _apiClient.GetMeAsync(ct);
         var organizationId = GetOption(args, "--organization");
@@ -52,6 +54,12 @@ public sealed partial class CliApplication
         var id = args.ElementAtOrDefault(1);
         if (string.IsNullOrWhiteSpace(id) || id.StartsWith("--", StringComparison.Ordinal))
             throw WorkspaceUsage($"Usage: minicloud workspaces {action} <workspace-id> [options]");
+        if (action == "delete")
+        {
+            _console.WriteLine($"IRREVERSIBLE deletion requested for workspace {id}. Its primary retained volume and any remaining local VM data will be permanently lost.");
+            WriteWorkspace(await _apiClient.DeleteDevelopmentWorkspaceAsync(id, organizationId, ct));
+            return CliExitCodes.Success;
+        }
         if (action == "vms" || action == "vm-status")
         {
             var vms = await _apiClient.GetWorkspaceVmsAsync(id, organizationId, ct);
@@ -126,13 +134,48 @@ public sealed partial class CliApplication
 
     private static CliCommandException WorkspaceUsage(string message) => new(CliExitCodes.ValidationError, message);
 
+    private static void ValidateWorkspaceDeletion(string[] args)
+    {
+        const string confirmation = "--confirm-permanent-deletion";
+        const string usage = "Usage: minicloud workspaces delete <workspace-id> --confirm-permanent-deletion [--organization <id>]";
+        if (args.ElementAtOrDefault(1) is not { Length: > 0 } id || string.IsNullOrWhiteSpace(id) || id.StartsWith('-'))
+            throw WorkspaceUsage(usage);
+
+        var confirmed = false;
+        for (var i = 2; i < args.Length; i++)
+        {
+            if (args[i] == confirmation && !confirmed)
+                confirmed = true;
+            else if (args[i] == "--organization" && i + 1 < args.Length && !args[i + 1].StartsWith('-'))
+                i++;
+            else if (!args[i].StartsWith("--organization=", StringComparison.Ordinal))
+                throw WorkspaceUsage(usage);
+        }
+
+        if (!confirmed) throw WorkspaceUsage(usage);
+    }
+
     private void WriteWorkspace(DevelopmentWorkspaceResponse workspace)
     {
         _console.WriteLine($"Workspace: {workspace.Name} ({workspace.Id})");
+        _console.WriteLine($"Workspace phase: {workspace.Phase}");
+        if (!string.IsNullOrWhiteSpace(workspace.ErrorCode) || !string.IsNullOrWhiteSpace(workspace.ErrorMessage))
+            _console.WriteLine($"Blocked: {string.Join(": ", new[] { workspace.ErrorCode, workspace.ErrorMessage }.Where(x => !string.IsNullOrWhiteSpace(x)))}");
+        switch (workspace.Phase)
+        {
+            case "deleting":
+                _console.WriteLine("Permanent deletion is in progress. Use workspaces status to check again.");
+                return;
+            case "delete_failed":
+                _console.WriteLine("Permanent deletion failed. Resolve the reported error, then retry workspaces delete with --confirm-permanent-deletion.");
+                return;
+            case "deleted":
+                _console.WriteLine("Workspace permanently deleted.");
+                return;
+        }
         _console.WriteLine($"Primary retained storage: {workspace.VolumeSizeGb} GB; {workspace.VolumeStatus ?? "status unavailable"}; storage charges continue while stopped.");
         _console.WriteLine($"Estimated storage: {workspace.EstimatedMonthlyStorage:F2} {workspace.Currency}/month; rates {(workspace.PricingUpdatedAt?.ToString("O") ?? "timestamp unavailable")}");
         foreach (var vm in workspace.Vms ?? []) WriteWorkspaceVm(vm);
-        if (workspace.ErrorCode is not null) _console.WriteLine($"Blocked: {workspace.ErrorCode}: {workspace.ErrorMessage}");
     }
 
     private void WriteWorkspaceVm(DevelopmentWorkspaceVmResponse vm)

@@ -4,13 +4,13 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspacesModule } from "./WorkspacesModule";
 import { createDevelopmentWorkspace, listDevelopmentWorkspaces } from "@/api/environmentsApi";
-import { getWorkspace, getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceOperation, workspaceTask } from "@/api/workspacesApi";
+import { deleteWorkspace, getWorkspace, getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceOperation, workspaceTask } from "@/api/workspacesApi";
 
 const auth = vi.hoisted(() => ({ selectedOrganization: { id: "org-a" } as { id: string } | null }));
 vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
 vi.mock("@/api/environmentsApi", () => ({ createDevelopmentWorkspace: vi.fn(), listDevelopmentWorkspaces: vi.fn() }));
 vi.mock("@/api/workspacesApi", () => ({
-  getWorkspace: vi.fn(), getWorkspaceLaunchUrl: vi.fn(), launchEphemeralVm: vi.fn(), mutateWorkspaceVm: vi.fn(), workspaceOperation: vi.fn(), workspaceTask: vi.fn(),
+  deleteWorkspace: vi.fn(), getWorkspace: vi.fn(), getWorkspaceLaunchUrl: vi.fn(), launchEphemeralVm: vi.fn(), mutateWorkspaceVm: vi.fn(), workspaceOperation: vi.fn(), workspaceTask: vi.fn(),
 }));
 
 function vm(id = "primary", overrides: Partial<DevelopmentWorkspaceVm> = {}): DevelopmentWorkspaceVm {
@@ -48,6 +48,56 @@ beforeEach(() => {
   vi.mocked(workspaceOperation).mockResolvedValue(workspace());
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+
+it("requires explicit confirmation and removes a deleted workspace from the list", async () => {
+  await load();
+  const open = () => fireEvent.click(screen.getByRole("button", { name: "Permanently delete workspace…" }));
+  open();
+  const confirmation = screen.getByRole("region", { name: "Confirm permanent deletion of Coding" });
+  expect(confirmation).toHaveTextContent(/primary retained volume and any remaining local VM data will be permanently lost/);
+  expect(deleteWorkspace).not.toHaveBeenCalled();
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel deletion" }));
+  expect(deleteWorkspace).not.toHaveBeenCalled();
+  open();
+  vi.mocked(deleteWorkspace).mockResolvedValueOnce(workspace({ phase: "deleted" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm permanent deletion" }));
+  expect(await screen.findByText("No development workspaces.")).toBeInTheDocument();
+  expect(deleteWorkspace).toHaveBeenCalledExactlyOnceWith("workspace", "org-a");
+});
+
+it("shows deletion progress, top-level failure and explicit retry, then retains the detail tombstone", async () => {
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace());
+  render(<MemoryRouter initialEntries={["/workspaces/workspace"]}><Routes>
+    <Route path="/workspaces/:workspaceId" element={<WorkspacesModule />} />
+  </Routes></MemoryRouter>);
+  vi.mocked(deleteWorkspace).mockResolvedValueOnce(workspace({ phase: "deleting" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Permanently delete workspace…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm permanent deletion" }));
+  expect(await screen.findByText(/Permanent deletion is in progress/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry permanent deletion…" })).not.toBeInTheDocument();
+
+  const failed = workspace({ phase: "delete_failed", errorCode: "volume_delete_failed", errorMessage: "Restore provider access" });
+  vi.mocked(getWorkspace).mockResolvedValueOnce(failed);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh workspace status" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("volume_delete_failed: Restore provider access");
+  fireEvent.click(screen.getByRole("button", { name: "Retry permanent deletion…" }));
+  expect(deleteWorkspace).toHaveBeenCalledTimes(1);
+  vi.mocked(deleteWorkspace).mockRejectedValueOnce(new Error("Connection interrupted"));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm permanent deletion" }));
+  expect(await screen.findByText("Connection interrupted")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Retry permanent deletion…" }));
+  vi.mocked(deleteWorkspace).mockResolvedValueOnce(workspace({ phase: "deleting" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm permanent deletion" }));
+  expect(await screen.findByText(/Permanent deletion is in progress/)).toBeInTheDocument();
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ phase: "deleted" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh workspace status" }));
+  expect(await screen.findByText("Workspace permanently deleted.")).toHaveAttribute("role", "status");
+  expect(screen.queryByRole("button", { name: /permanently delete|retry permanent deletion/i })).not.toBeInTheDocument();
+  expect(screen.getByRole("article", { name: "Workspace Coding" })).toBeInTheDocument();
+  expect(deleteWorkspace).toHaveBeenCalledTimes(3);
+});
 
 it("loads without starting paid compute; creates stopped workspace and launches only after explicit data/push acknowledgement", async () => {
   await load();

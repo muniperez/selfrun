@@ -27,12 +27,12 @@ public sealed class DevelopmentWorkspaceProviderTests
             labels = new Dictionary<string, string>(Labels(kind)) { ["workspace"] = workspace }
         });
 
-    private static string Volume(string? server = null) =>
+    private static string Volume(string? server = null, IReadOnlyDictionary<string, string>? labels = null) =>
         JsonSerializer.Serialize(new
         {
             id = 201, name = "mc-workspace-test", size = 20, format = "ext4",
             location = new { name = "ash" }, server = server is null ? (long?)null : long.Parse(server),
-            linux_device = "/dev/disk/by-id/scsi-0HC_Volume_201", labels = Labels()
+            linux_device = "/dev/disk/by-id/scsi-0HC_Volume_201", labels = labels ?? Labels()
         });
 
     [Fact]
@@ -136,6 +136,46 @@ public sealed class DevelopmentWorkspaceProviderTests
         handler.QueueJsonResponse("{\"volume\":" + Volume("999") + "}");
         await Assert.ThrowsAsync<InvalidOperationException>(() => Client(handler).DetachWorkspaceVolumeAsync("201", "301", Labels(), default));
         Assert.Single(handler.RecordedRequests);
+    }
+
+    [Theory]
+    [InlineData("managed-by", "ordinary-app")]
+    [InlineData("organization", "org_other")]
+    [InlineData("workspace", "workspace_other")]
+    [InlineData("kind", "ephemeral")]
+    [InlineData(null, null)]
+    public async Task PermanentVolumeDeletionRefusesMismatchedOwnershipOrAnAttachedWriter(string? key, string? value)
+    {
+        var handler = new TestHttpMessageHandler();
+        var labels = Labels();
+        if (key is not null) labels[key] = value!;
+        handler.QueueJsonResponse("{\"volume\":" + Volume(server: key is null ? "301" : null, labels: labels) + "}");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Client(handler).DeleteWorkspaceVolumeAsync("201", Labels(), default));
+
+        var request = Assert.Single(handler.RecordedRequests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/v1/volumes/201", new Uri(request.Uri).AbsolutePath);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NoContent)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task PermanentVolumeDeletionAcceptsSuccessOrDisappearanceAfterTheOwnershipRead(HttpStatusCode status)
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse("{\"volume\":" + Volume() + "}");
+        handler.QueueResponse(new HttpResponseMessage(status));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        var client = Client(handler);
+
+        await client.DeleteWorkspaceVolumeAsync("201", Labels(), default);
+        await client.DeleteWorkspaceVolumeAsync("201", Labels(), default);
+
+        Assert.Equal(new[] { HttpMethod.Get, HttpMethod.Delete, HttpMethod.Get },
+            handler.RecordedRequests.Select(x => x.Method));
+        Assert.All(handler.RecordedRequests, request => Assert.Equal("/v1/volumes/201", new Uri(request.Uri).AbsolutePath));
     }
 
     [Fact]

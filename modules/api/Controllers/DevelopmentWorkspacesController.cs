@@ -53,6 +53,20 @@ public sealed class DevelopmentWorkspacesController(
     public Task<IResult> Start(string id, [FromQuery] string organizationId, CancellationToken ct) =>
         MutateAsync(organizationId, () => workspaces.StartAsync(id, organizationId, ct), ct);
 
+    [HttpDelete("{id}")]
+    public async Task<IResult> Delete(string id, [FromQuery] string organizationId,
+        [FromQuery] bool confirmPermanentDeletion, CancellationToken ct)
+    {
+        if (!await CanAsync(organizationId, OrganizationAction.WriteApps, ct)) return EndpointResults.Forbidden();
+        try
+        {
+            var response = workspaces.ToResponse(await workspaces.DeleteAsync(id, organizationId, confirmPermanentDeletion, ActorId(), ct));
+            return response.Phase == "deleted" ? Results.Ok(response)
+                : Results.Accepted($"/api/development-workspaces/{Uri.EscapeDataString(id)}?organizationId={Uri.EscapeDataString(organizationId)}", response);
+        }
+        catch (DevelopmentWorkspaceException error) { return Error(error); }
+    }
+
     [HttpPost("{id}/stop")]
     public Task<IResult> Stop(string id, [FromQuery] string organizationId, CancellationToken ct) =>
         MutateAsync(organizationId, () => workspaces.StopAsync(id, organizationId, ct), ct);

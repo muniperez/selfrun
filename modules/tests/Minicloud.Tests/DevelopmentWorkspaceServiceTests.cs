@@ -100,6 +100,33 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConcurrentStartAndPermanentDeleteCannotBothAcquireTheWorkspace()
+    {
+        var workspace = await Workspace();
+        await using var first = Context(); await using var second = Context();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<string> RunAsync(Func<Task<DevelopmentWorkspace>> request)
+        {
+            await gate.Task;
+            try { return Primary(await request()).Phase; }
+            catch (DevelopmentWorkspaceException error) { return error.Code; }
+        }
+
+        var start = RunAsync(() => Service(first).StartAsync(workspace.Id, "org", default));
+        var delete = RunAsync(() => Service(second).DeleteAsync(workspace.Id, "org", true, "actor", default));
+        gate.SetResult();
+        var results = await Task.WhenAll(start, delete);
+        var op = Assert.Single(await db.DevelopmentWorkspaceOperations.AsNoTracking().ToListAsync());
+        if (op.Kind == "start")
+            Assert.Equal(new[] { "provisioning", "workspace_delete_requires_stop" }, results);
+        else
+        {
+            Assert.Equal("delete-workspace", op.Kind);
+            Assert.Equal(new[] { "workspace_permanent_deletion", "deleting" }, results);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentLaunchesCannotExceedCapAndStoppingStillReservesSpend()
     {
         var workspace = await Workspace();
