@@ -55,7 +55,9 @@ The response body is the normal workspace representation. `202 Accepted` means
 deletion is in progress or a retry has been queued; `200 OK` means the workspace
 is deleted, including on repeated requests for an already-deleted workspace.
 Read the top-level `phase` (`deleting`, `delete_failed`, or `deleted`) and
-top-level `errorCode` and `errorMessage` for failure details.
+top-level `errorCode` and `errorMessage` for failure details. A `deleting`
+phase indicates permanent deletion only when `volumeStatus` is also `deleting`;
+ordinary compute cleanup can report the same phase while retaining the volume.
 
 Check progress with `GET /api/development-workspaces/{id}?organizationId={organizationId}`.
 If the phase is `delete_failed`, address the reported error and repeat the

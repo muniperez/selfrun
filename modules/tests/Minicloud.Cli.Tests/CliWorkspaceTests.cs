@@ -53,6 +53,7 @@ public sealed class CliWorkspaceTests : IDisposable
     public async Task DeleteSendsConfirmedDeleteAndShowsReturnedPhase(string phase, HttpStatusCode status, string message)
     {
         _handler.WorkspacePhase = phase;
+        _handler.VolumeStatus = phase;
         _handler.DeleteStatus = status;
         Assert.Equal(CliExitCodes.Success, await Run("delete", "work/space", "--confirm-permanent-deletion", "--organization", "org"));
         var request = Assert.Single(_handler.Requests, x => x.Method == "DELETE");
@@ -74,6 +75,19 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Contains("volume_delete_failed: Restore provider access", output);
         Assert.Contains("retry workspaces delete with --confirm-permanent-deletion", output);
         Assert.All(_handler.Requests, x => Assert.Equal("GET", x.Method));
+    }
+
+    [Fact]
+    public async Task StatusDoesNotMistakeComputeDeletionForPermanentWorkspaceDeletion()
+    {
+        _handler.WorkspacePhase = "deleting";
+        _handler.VolumeStatus = "retained";
+        Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org"));
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("Workspace phase: deleting", output);
+        Assert.Contains("Primary retained storage: 20 GB; retained", output);
+        Assert.DoesNotContain("Permanent deletion", output);
+        Assert.DoesNotContain("permanently deleted", output);
     }
 
     [Fact]
@@ -223,6 +237,7 @@ public sealed class CliWorkspaceTests : IDisposable
         public List<Captured> Requests = [];
         public string? RecoveryCommit { get; set; }
         public string WorkspacePhase { get; set; } = "stopped";
+        public string VolumeStatus { get; set; } = "retained";
         public HttpStatusCode DeleteStatus { get; set; } = HttpStatusCode.Accepted;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -239,6 +254,7 @@ public sealed class CliWorkspaceTests : IDisposable
                 : path.EndsWith("/vms?organizationId=org") ? Vms
                 : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
                     phase = WorkspacePhase,
+                    volumeStatus = VolumeStatus,
                     errorCode = WorkspacePhase == "delete_failed" ? "volume_delete_failed" : null,
                     errorMessage = WorkspacePhase == "delete_failed" ? "Restore provider access" : null };
             return new(request.Method == HttpMethod.Delete ? DeleteStatus : HttpStatusCode.OK) { Content = JsonContent.Create(body) };

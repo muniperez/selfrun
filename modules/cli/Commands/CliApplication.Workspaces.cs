@@ -163,7 +163,7 @@ public sealed partial class CliApplication
             _console.WriteLine($"Blocked: {string.Join(": ", new[] { workspace.ErrorCode, workspace.ErrorMessage }.Where(x => !string.IsNullOrWhiteSpace(x)))}");
         switch (workspace.Phase)
         {
-            case "deleting":
+            case "deleting" when workspace.VolumeStatus == "deleting":
                 _console.WriteLine("Permanent deletion is in progress. Use workspaces status to check again.");
                 return;
             case "delete_failed":

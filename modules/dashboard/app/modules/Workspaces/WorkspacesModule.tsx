@@ -143,7 +143,7 @@ function WorkspaceCard({ item, organizationId, refresh, applyDeletion }: {
     catch (reason) { if (mounted.current) setError(message(reason)); }
     finally { if (mounted.current) setBusy(false); }
   };
-  const deleting = item.phase === "deleting";
+  const deleting = item.phase === "deleting" && item.volumeStatus === "deleting";
   const deleteFailed = item.phase === "delete_failed";
   const deleted = item.phase === "deleted";
   const canDelete = !deleting && !deleted;
