@@ -69,11 +69,12 @@ public sealed class ProviderLegacyImportService(
                 foreach (var binding in request.AppBindings)
                 {
                     var app = importApps[binding.AppId];
-                    if (app.DeletionStatus is not null || await db.Deployments.AnyAsync(x => x.AppId == app.Id &&
+                    if ((app.DeletionStatus is not null && !(binding.AllowFailedDeletion && app.DeletionStatus == "failed")) ||
+                        await db.Deployments.AnyAsync(x => x.AppId == app.Id &&
                         (x.OwnershipToken != null || x.Status == DeploymentStatus.WaitingForBuild || x.Status == DeploymentStatus.Queued ||
                          x.Status == DeploymentStatus.Dispatching || x.Status == DeploymentStatus.Provisioning ||
                          x.Status == DeploymentStatus.Deploying || x.Status == DeploymentStatus.Verifying), ct))
-                        throw Error("legacy_import_active_work", "Pause admissions and finish active deployment/deletion work before import.");
+                        throw Error("legacy_import_active_work", "Pause admissions and finish active deployment/deletion work before import. For a terminal failed deletion, explicitly set allowFailedDeletion on its app binding.");
 
                     var servers = await db.ServerInstances.Where(x => x.AppId == app.Id).ToListAsync(ct);
                     var runtimes = await db.RuntimeServers.Where(x => x.AppId == app.Id).ToListAsync(ct);
@@ -101,9 +102,14 @@ public sealed class ProviderLegacyImportService(
                             (account.ProviderType == CloudProvider.Hetzner && !HasLabels(found.Labels,
                                 ("managed-by", "minicloud"), ("customer", app.Organization.Slug), ("app", app.Slug), ("env", "production"))))
                             throw Error("legacy_import_resource_unverified", "The original server could not be verified in the selected account. No ownership was changed.");
-                        if (await db.ServerInstances.AnyAsync(x => x.AppId != app.Id && x.ProviderAccountId == account.Id && x.ProviderServerId == resourceId, ct) ||
-                            await db.RuntimeServers.AnyAsync(x => x.AppId != app.Id && x.ProviderAccountId == account.Id && x.ProviderServerId == resourceId, ct))
-                            throw Error("legacy_import_ownership_conflict", "This resource is already assigned to another app in the selected account.");
+                        var providerName = account.ProviderType.ToString().ToLowerInvariant();
+                        if (await db.ServerInstances.AnyAsync(x => x.AppId != app.Id &&
+                                (x.ProviderAccountId == account.Id || (x.ProviderAccountId == null && x.Provider.ToLower() == providerName)) &&
+                                x.ProviderServerId == resourceId, ct) ||
+                            await db.RuntimeServers.AnyAsync(x => x.AppId != app.Id &&
+                                (x.ProviderAccountId == account.Id || (x.ProviderAccountId == null && x.Provider.ToLower() == providerName)) &&
+                                x.ProviderServerId == resourceId, ct))
+                            throw Error("legacy_import_ownership_conflict", "This resource has a conflicting or unbound registration for another app.");
                     }
                     else if (await db.Deployments.AnyAsync(x => x.AppId == app.Id && x.Status != DeploymentStatus.Canceled, ct))
                         throw Error("legacy_import_resource_unverified", "Deployment history without a registered server requires resource reconciliation before import.");
