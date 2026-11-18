@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Minicloud.RuntimeAgent;
 
@@ -130,6 +131,39 @@ public sealed class RuntimeAgentTests
             Assert.Contains(point.Operation, new[] { "heartbeat", "status", "routing", "logs", "docker.inspect", "docker.logs", "routing.apply", "journal.logs", "systemctl.status" }));
     }
 
+    [Fact]
+    public async Task DiagnosticsClassifyReturnedRoutingFailuresAndEmitActivities()
+    {
+        var points = new ConcurrentBag<MetricPoint>();
+        var activities = new ConcurrentBag<Activity>();
+        using var listener = CreateListener(points, RuntimeAgentDiagnostics.MeterName);
+        using var activityListener = CreateActivityListener(activities, RuntimeAgentDiagnostics.ActivitySourceName);
+        var root = Path.Combine(Path.GetTempPath(), $"routing-metrics-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var config = new AgentConfig("srv", "org", "app_1", "https://api.example", "minicloud-demo", "/missing", "/tmp/token", Path.Combine(root, "state.json"));
+            var runner = new FakeProcessRunner(new Dictionary<string, ProcessResult>
+            {
+                ["sudo -n /opt/minicloud/agent/apply-minicloud-routing"] = new(1, "", "")
+            });
+            var desired = new RuntimeDesiredRoutingResponse("v1", "app_1", "minicloud-demo", [new("dom", "demo.app.muni.dev", "/", "api", 8080)]);
+            var routing = new RoutingApplier(config, runner, new FakeProbe(false));
+
+            await AgentOperations.TryAsync("routing", () => routing.ApplyAsync(desired, CancellationToken.None),
+                results => results.Any(result => result.ApplyStatus == "failed"));
+
+            Assert.Contains(points, point => point.Name == "minicloud.runtime.agent.operation.calls" && point.Operation == "routing" && point.Outcome == "failure");
+            Assert.Contains(points, point => point.Name == "minicloud.runtime.agent.operation.calls" && point.Operation == "routing.apply" && point.Outcome == "failure");
+            Assert.Contains(activities, activity => activity.OperationName == "routing" && activity.GetTagItem("outcome")?.ToString() == "failure");
+            Assert.Contains(activities, activity => activity.OperationName == "routing.apply" && activity.GetTagItem("outcome")?.ToString() == "failure");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
     [Theory]
     [InlineData(0, true, "applied", "ready", "demo.app.muni.dev")]
     [InlineData(0, true, "applied", "ready", "example.com")]
@@ -213,6 +247,18 @@ public sealed class RuntimeAgentTests
         }
 
         return null;
+    }
+
+    private static ActivityListener CreateActivityListener(ConcurrentBag<Activity> activities, string sourceName)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Add
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     private sealed record MetricPoint(string Name, object Value, string? Operation, string? Outcome);
