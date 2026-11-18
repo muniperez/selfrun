@@ -93,7 +93,7 @@ public sealed partial class MinicloudDbContext
             foreach (var deployment in pending)
             {
                 using var command = CreateAllocationCommand(deployment, out var utcDate);
-                deployment.Number = FormatAllocated(command.ExecuteScalar(), deployment.OrganizationId, utcDate);
+                deployment.Number = FormatAllocated(Diagnostics.OperatorDiagnostics.ExecuteCommand("deployment.number.allocate", command.ExecuteScalar), deployment.OrganizationId, utcDate);
             }
 
             return save();
@@ -112,7 +112,7 @@ public sealed partial class MinicloudDbContext
             foreach (var deployment in pending)
             {
                 await using var command = CreateAllocationCommand(deployment, out var utcDate);
-                deployment.Number = FormatAllocated(await command.ExecuteScalarAsync(cancellationToken), deployment.OrganizationId, utcDate);
+                deployment.Number = FormatAllocated(await Diagnostics.OperatorDiagnostics.ExecuteCommandAsync("deployment.number.allocate", () => command.ExecuteScalarAsync(cancellationToken)), deployment.OrganizationId, utcDate);
             }
 
             return await save();

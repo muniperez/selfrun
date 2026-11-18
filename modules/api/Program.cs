@@ -2,6 +2,7 @@ using Minicloud.Api.Extensions;
 using Minicloud.Api.Services;
 using Minicloud.Common.Services;
 using Minicloud.Common.Extensions;
+using Minicloud.Common.Diagnostics;
 
 if (args.Length > 0 && args[0] == "bootstrap")
 {
@@ -16,6 +17,7 @@ if (args.Length > 0 && args[0] == "maintenance")
 }
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-api", webHost: true);
 builder.Configuration.AddDevelopmentWorkspaceConfiguration();
 if (args.Length > 0 && args[0] == "migrate")
 {

@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Minicloud.Telemetry.Controllers;
 using Minicloud.Telemetry.Data;
 using Minicloud.Telemetry.Services;
+using Minicloud.Common.Diagnostics;
 
 namespace Minicloud.Telemetry;
 
@@ -13,6 +14,7 @@ public class Program
     public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-telemetry", webHost: true);
 
         // Options
         builder.Services.Configure<TelemetryOptions>(
@@ -25,8 +27,10 @@ public class Program
         var connectionString = builder.Configuration.GetConnectionString("Telemetry")
             ?? builder.Configuration.GetConnectionString("DefaultConnection");
 
-        builder.Services.AddDbContext<TelemetryDbContext>(options =>
+        builder.Services.AddDbContext<TelemetryDbContext>((provider, options) =>
         {
+            if (provider.GetService<DbCommandDiagnosticsInterceptor>() is { } interceptor)
+                options.AddInterceptors(interceptor);
             if (!string.IsNullOrWhiteSpace(connectionString) &&
                 (connectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase) ||
                  connectionString.StartsWith("Server=", StringComparison.OrdinalIgnoreCase) ||

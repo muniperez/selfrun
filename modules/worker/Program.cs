@@ -20,8 +20,10 @@ using Minicloud.Worker.Queue;
 using Minicloud.Worker.Ssh;
 using Minicloud.Worker.Storage;
 using Minicloud.Common.Registry;
+using Minicloud.Common.Diagnostics;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-worker", webHost: false);
 builder.Configuration.AddDevelopmentWorkspaceConfiguration();
 builder.Services.Configure<DevelopmentWorkspaceOptions>(
     builder.Configuration.GetSection(DevelopmentWorkspaceOptions.SectionName));

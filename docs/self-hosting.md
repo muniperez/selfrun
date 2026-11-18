@@ -180,6 +180,52 @@ Host handling, SMTP recovery and browser/Grafana recovery revocation remain
 deferred in [#44](https://github.com/muniventures/minicloud/issues/44).
 The prior disposable Kratos v1.3.1 checks are not a live Google qualification.
 
+### Optional operator diagnostics
+
+The API, worker, telemetry service and workspace gateway default to
+`OperatorDiagnostics__Enabled=false`. To opt in on each process, set it to
+`true` and configure a private OTLP collector with the standard
+`OTEL_EXPORTER_OTLP_ENDPOINT` and, if needed, `OTEL_EXPORTER_OTLP_PROTOCOL`.
+Use an authenticated, encrypted private collector; these are operator-only
+signals, not the application-log ingestion endpoint. An unavailable collector
+does not block startup or requests. The trace sampler respects an incoming
+sampled parent and otherwise samples 10% of new traces. `/health`, OTLP
+ingestion paths and exporter requests are excluded from application traces.
+Metrics still include health requests. A bounded, source-generated summary
+logs working-set bytes and thread-pool queue length once per minute.
+
+The exported metric contract is:
+
+| Instrument | Unit | Allowed attributes |
+| --- | --- | --- |
+| `http.server.request.duration` | `s` | `http.request.method`, `http.response.status_code`, `http.route`, `network.protocol.version` |
+| `http.client.request.duration` | `s` | `http.request.method`, `http.response.status_code`, `network.protocol.version` |
+| `dotnet.process.cpu.time` | `s` | `cpu.mode` |
+| `dotnet.process.memory.working_set` | `By` | none |
+| `dotnet.gc.heap.total_allocated` | `By` | none |
+| `dotnet.gc.pause.time` | `s` | none |
+| `dotnet.thread_pool.queue.length` | `{work_item}` | none |
+| `minicloud.db.commands` | `{command}` | `operation`, `outcome` |
+| `minicloud.db.command.duration` | `s` | `operation`, `outcome` |
+
+CPU, allocation and pause counters are cumulative; derive rates from their
+changes over time. HTTP metrics are the built-in .NET instruments, collected
+once. Database operations are fixed names (`ef.command`,
+`deployment.number.allocate`, `worker.lease.acquire`, and
+`worker.lease.heartbeat`); outcomes are `success`, `error` or `cancelled`.
+The shared `Minicloud.Operator` meter and activity source are reserved for
+bounded operator signals. New operations must use fixed names, never user data.
+Worker pipeline-step spans are separate work.
+
+Exported spans allow only `http.request.method`, `http.response.status_code`,
+`http.route`, `network.protocol.version`, `operation` and `outcome`. SQL,
+parameters, URLs, query strings, headers and exception details are not exported.
+HTTP span names are normalized to `HTTP`; route templates remain available as
+an attribute. Configure resource attributes and collector-side processing
+without secrets or tenant identifiers. Existing application and proxy logging
+policies still apply; in particular, gateway query/body logging must remain
+disabled as described in the gateway README.
+
 ### Startup order
 
 1. `database-initialize` creates or verifies the `minicloud` and `kratos` roles
