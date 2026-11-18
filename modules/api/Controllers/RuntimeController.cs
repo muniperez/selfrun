@@ -11,6 +11,7 @@ using Minicloud.Api.Services;
 using Minicloud.Common.Services;
 using Minicloud.Common.Validation;
 using Minicloud.Common.Redaction;
+using Minicloud.Api;
 using static Minicloud.Api.Controllers.EndpointResults;
 
 namespace Minicloud.Api.Controllers;
@@ -42,6 +43,9 @@ public sealed class RuntimeController : ControllerBase
     [AllowAnonymous]
     public async Task<IResult> IngestLogs([FromBody] RuntimeLogIngestRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
+        using var measurement = RuntimeIngestionDiagnostics.Start("ingest.logs", Request.ContentLength ?? -1, request.Records.Count, cancellationToken);
+        try
+        {
         var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
         if (auth is null)
         {
@@ -100,13 +104,28 @@ public sealed class RuntimeController : ControllerBase
 
         await PruneRuntimeLogsAsync(db, auth.Server.AppId, now, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+        measurement.Complete("success");
         return Results.Ok(new RuntimeLogIngestResponse(accepted, rejected, cursors));
+        }
+        catch (OperationCanceledException)
+        {
+            measurement.Complete("cancelled");
+            throw;
+        }
+        catch
+        {
+            measurement.Complete("failure");
+            throw;
+        }
     }
 
     [HttpPost("ingest/status")]
     [AllowAnonymous]
     public async Task<IResult> IngestStatus([FromBody] RuntimeStatusIngestRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
+        using var measurement = RuntimeIngestionDiagnostics.Start("ingest.status", Request.ContentLength ?? -1, request.Services.Count, cancellationToken);
+        try
+        {
         var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
         if (auth is null)
         {
@@ -135,7 +154,19 @@ public sealed class RuntimeController : ControllerBase
             ReceivedAt = now
         });
         await db.SaveChangesAsync(cancellationToken);
+        measurement.Complete("success");
         return Results.Ok(new { accepted = true, serverId = auth.Server.Id });
+        }
+        catch (OperationCanceledException)
+        {
+            measurement.Complete("cancelled");
+            throw;
+        }
+        catch
+        {
+            measurement.Complete("failure");
+            throw;
+        }
     }
 
     [HttpGet("routing")]
@@ -188,6 +219,9 @@ public sealed class RuntimeController : ControllerBase
     [AllowAnonymous]
     public async Task<IResult> IngestRoutingApplyResults([FromBody] RuntimeRoutingApplyResultsRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
+        using var measurement = RuntimeIngestionDiagnostics.Start("routing.results", Request.ContentLength ?? -1, request.Results.Count, cancellationToken);
+        try
+        {
         var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
         if (auth is null)
         {
@@ -226,7 +260,19 @@ public sealed class RuntimeController : ControllerBase
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        measurement.Complete("success");
         return Results.Ok(new { accepted });
+        }
+        catch (OperationCanceledException)
+        {
+            measurement.Complete("cancelled");
+            throw;
+        }
+        catch
+        {
+            measurement.Complete("failure");
+            throw;
+        }
     }
 
     [HttpPost("servers")]
