@@ -1,4 +1,7 @@
+extern alias WorkerAssembly;
+
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -6,6 +9,8 @@ using Minicloud.Api.Auth;
 using Minicloud.Common.Models;
 using Minicloud.Api.Services;
 using Minicloud.Common.Services;
+using Minicloud.Common.Providers.Dns;
+using AppDeletionProcessor = WorkerAssembly::Minicloud.Worker.Deletion.AppDeletionProcessor;
 
 namespace Minicloud.Tests;
 
@@ -81,6 +86,14 @@ public sealed class AppDeletionServiceTests
                 Assert.Equal(0, store.Deletes);
                 Assert.Empty(await db.AuditEvents.ToListAsync());
                 Assert.Empty(await db.TelemetryCleanupJobs.ToListAsync());
+                var providerCalls = 0;
+                var worker = new AppDeletionProcessor(db, _ =>
+                {
+                    providerCalls++;
+                    throw new InvalidOperationException("Blocked deletion must not call a provider.");
+                }, new Dns(), NullLogger<AppDeletionProcessor>.Instance);
+                Assert.False(await worker.ProcessNextAsync(default));
+                Assert.Equal(0, providerCalls);
             }
             else
             {
@@ -160,6 +173,12 @@ public sealed class AppDeletionServiceTests
         public Task<StoredSecretReference> PutAsync(SecretStoreWriteRequest request, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> GetAsync(StoredSecretReference reference, CancellationToken ct) => throw new NotImplementedException();
         public Task DeleteAsync(StoredSecretReference reference, CancellationToken ct) { Deletes++; return Task.CompletedTask; }
+    }
+    private sealed class Dns : ICloudflareDnsClient
+    {
+        public Task DeleteDnsRecordsAsync(string hostname, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+        public Task UpsertDnsRecordAsync(string hostname, string ipAddress, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+        public Task WaitForPropagationAsync(string hostname, string expectedIp, TimeSpan timeout, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     }
     private sealed class Hosting : IHostEnvironment
     {
