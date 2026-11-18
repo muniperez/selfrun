@@ -1,0 +1,42 @@
+{
+    # Proxy errors otherwise include request URIs containing bearer capabilities.
+    log {
+        exclude http.log.error
+    }
+    on_demand_tls {
+        ask http://{$MINICLOUD_WORKSPACE_GATEWAY_ADDRESS}:8080/internal/certificate
+    }
+}
+
+{$API_HOSTNAME} {
+    encode zstd gzip
+    @internal path /internal/workspace-gateway /internal/workspace-gateway/*
+    respond @internal 404
+    reverse_proxy api:8080
+}
+
+{$CONSOLE_HOSTNAME} {
+    header /settings/github/* {
+        Referrer-Policy no-referrer
+        Cache-Control no-store
+    }
+    encode zstd gzip
+    reverse_proxy dashboard:8080
+}
+
+# Catch-all issuance is authorized per leaf by the private ask endpoint.
+# Do not use a wildcard TLS site label (that would require DNS-01).
+https:// {
+    tls {
+        on_demand
+    }
+    @workspace host *.{$MINICLOUD_WORKSPACE_GATEWAY_DOMAIN}
+    handle @workspace {
+        reverse_proxy {$MINICLOUD_WORKSPACE_GATEWAY_ADDRESS}:8080 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        respond 404
+    }
+}

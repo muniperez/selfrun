@@ -88,6 +88,32 @@ public sealed class MinicloudApiClient
     public Task<IReadOnlyList<ProviderPlanResponse>> GetPlansAsync(string organizationId, CancellationToken cancellationToken) =>
         SendAsync<IReadOnlyList<ProviderPlanResponse>>(HttpMethod.Get, $"/api/plans?organizationId={Uri.EscapeDataString(organizationId)}", null, cancellationToken);
 
+    public Task<IReadOnlyList<DevelopmentWorkspaceResponse>> GetDevelopmentWorkspacesAsync(string organizationId, CancellationToken ct) =>
+        SendAsync<IReadOnlyList<DevelopmentWorkspaceResponse>>(HttpMethod.Get, $"/api/development-workspaces?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);
+
+    public Task<DevelopmentWorkspaceResponse> GetDevelopmentWorkspaceAsync(string id, string organizationId, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Get, $"/api/development-workspaces/{Uri.EscapeDataString(id)}?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);
+
+    public Task<DevelopmentWorkspaceResponse> CreateDevelopmentWorkspaceAsync(CreateDevelopmentWorkspaceRequest request, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post, "/api/development-workspaces", request, ct);
+
+    public Task<DevelopmentWorkspaceResponse> MutateDevelopmentWorkspaceAsync(string id, string organizationId, string action, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}/{Uri.EscapeDataString(action)}?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);
+
+    public Task<DevelopmentWorkspaceResponse> WorkspaceOperationAsync(string id, string organizationId, string path, object? body, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}/{path}?organizationId={Uri.EscapeDataString(organizationId)}", body, ct);
+
+    public Task<IReadOnlyList<DevelopmentWorkspaceVmResponse>> GetWorkspaceVmsAsync(string id, string organizationId, CancellationToken ct) =>
+        SendAsync<IReadOnlyList<DevelopmentWorkspaceVmResponse>>(HttpMethod.Get,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}/vms?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);
+
+    public Task<DevelopmentWorkspaceTaskLeaseResponse> WorkspaceTaskAsync(string id, string vmId, string organizationId,
+        string taskId, bool complete, object body, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceTaskLeaseResponse>(complete ? HttpMethod.Post : HttpMethod.Put,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}/vms/{Uri.EscapeDataString(vmId)}/tasks/{Uri.EscapeDataString(taskId)}/{(complete ? "complete" : "lease")}?organizationId={Uri.EscapeDataString(organizationId)}", body, ct);
+
     public Task<ProviderAccountResponse> CreateProviderAsync(CreateProviderRequest request, CancellationToken ct) =>
         SendAsync<ProviderAccountResponse>(HttpMethod.Post, "/api/providers", request, ct);
 

@@ -1,0 +1,23 @@
+[Unit]
+Description=Minicloud generation-fenced local workspace supervisor
+After=local-fs.target
+Requires=minicloudwork.slice
+ConditionPathExists=/etc/minicloud-workspace/runtime.json
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -B /opt/minicloud-workspace/runtime.py serve
+User=root
+UMask=0077
+RuntimeDirectory=minicloud-workspace
+RuntimeDirectoryMode=0700
+StateDirectory=minicloud-workspace
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+StandardOutput=null
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

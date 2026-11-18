@@ -21,9 +21,13 @@
   <Folder Name="/modules/worker/">
     <Project Path="modules/worker/Minicloud.Worker.csproj" />
   </Folder>
+  <Folder Name="/modules/workspace-gateway/">
+    <Project Path="modules/workspace-gateway/Minicloud.WorkspaceGateway.csproj" />
+  </Folder>
   <Folder Name="/modules/tests/">
     <Project Path="modules/tests/Minicloud.Cli.Tests/Minicloud.Cli.Tests.csproj" />
     <Project Path="modules/tests/Minicloud.Tests/Minicloud.Tests.csproj" />
     <Project Path="modules/tests/Minicloud.Worker.Tests/Minicloud.Worker.Tests.csproj" />
+    <Project Path="modules/tests/Minicloud.WorkspaceGateway.Tests/Minicloud.WorkspaceGateway.Tests.csproj" />
   </Folder>
 </Solution>

@@ -394,3 +394,54 @@ export type CustomDomainRegistrationResponse = {
 };
 
 export type AppStorageVolume = { name: string; provider: string; providerVolumeId: string | null; region: string; sizeGb: number; uid: number; gid: number; status: "registered" | "creation_unresolved" | "pending" };
+
+export type DevelopmentWorkspace = {
+  id: string;
+  organizationId: string;
+  name: string;
+  imageId: string;
+  profile: string;
+  planId: string;
+  providerAccountId: string;
+  region: string;
+  sku: string;
+  volumeSizeGb: number;
+  desiredState: "running" | "stopped";
+  phase: string;
+  generation: number;
+  providerServerId?: string | null;
+  providerVolumeId?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  lastActivityAt?: string | null;
+  shutdownDeadline?: string | null;
+  lastReadyAt?: string | null;
+  estimatedMonthlyCompute: number;
+  estimatedMonthlyStorage: number;
+  currency: string;
+  pricingUpdatedAt?: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  primaryVmId?: string | null;
+  volumeStatus?: string | null;
+  vms: DevelopmentWorkspaceVm[];
+};
+
+export type DevelopmentWorkspaceTaskLease = {
+  vmId: string; taskId: string; generation: number; status: string; expiresAt: string;
+};
+
+export type DevelopmentWorkspaceVm = {
+  id: string; kind: "primary" | "ephemeral"; generation: number; desiredState: string; phase: string;
+  imageId: string; profile: string; planId: string; providerAccountId: string; region: string; sku: string;
+  providerServerId?: string | null; errorCode?: string | null; errorMessage?: string | null;
+  lastActivityAt?: string | null; shutdownDeadline?: string | null; lastReadyAt?: string | null;
+  repository?: string | null; baseRef?: string | null; baseCommit?: string | null; workBranch?: string | null;
+  pushAuthorized: boolean; ignoredDataAcknowledged: boolean; gitStatus: string;
+  finalHead?: string | null; verifiedRemoteRef?: string | null; verifiedRemoteCommit?: string | null;
+  nextImageId?: string | null; nextProfile?: string | null; nextPlanId?: string | null;
+  computeHourlyRate: number; estimatedMonthlyCompute: number; computeReserved: boolean; revision: number;
+  taskLeases?: DevelopmentWorkspaceTaskLease[];
+  startAfterStop?: boolean;
+};

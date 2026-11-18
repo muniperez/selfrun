@@ -1,0 +1,29 @@
+[Unit]
+Description=Pinned loopback-only T3; no invented drain API
+After=minicloud-workspace.service
+Requires=minicloud-workspace.service
+ConditionPathIsDirectory=/workspace/t3
+
+[Service]
+User=coding
+Group=coding
+Slice=minicloudwork.slice
+WorkingDirectory=/workspace
+Environment=HOME=/workspace/home
+Environment=CODEX_HOME=/workspace/home/.codex
+ExecStart=/usr/local/bin/t3 serve --host 127.0.0.1 --port 3773 --base-dir /workspace/t3 --no-browser
+Restart=no
+SuccessExitStatus=130
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/workspace
+PrivateTmp=yes
+KillMode=process
+TimeoutStopSec=30
+SendSIGKILL=no
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

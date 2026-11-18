@@ -21,6 +21,7 @@ import { GitHubCallbackModule, GitHubSettingsModule } from "./modules/Settings/G
 import { CliLoginModule } from "./modules/CliLogin/CliLoginModule";
 import { SetupModule } from "./modules/Setup/SetupModule";
 import { ProviderPlanGuide } from "./modules/Setup/ProviderPlanGuide";
+import { WorkspacesModule } from "./modules/Workspaces/WorkspacesModule";
 
 import { ProviderAccountsModule, ProvidersModule } from "./modules/Providers/ProvidersModule";
 
@@ -46,6 +47,8 @@ export const routes: RouteObject[] = [
       { path: "/apps", element: <AppsModule /> },
       { path: "/apps/new", element: <CreateAppModule /> },
       { path: "/databases", element: <DatabasesModule /> },
+      { path: "/workspaces", element: <WorkspacesModule /> },
+      { path: "/workspaces/:workspaceId", element: <WorkspacesModule /> },
       { path: "/databases/:databaseId", element: <DatabaseDetailModule /> },
       { path: "/plans", element: <ProvidersModule /> },
       { path: "/plans/accounts", element: <ProviderAccountsModule /> },
