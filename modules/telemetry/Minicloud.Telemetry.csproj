@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\redaction\Minicloud.Redaction.csproj" />
     <ProjectReference Include="..\common\Minicloud.Common.csproj" />
   </ItemGroup>
 

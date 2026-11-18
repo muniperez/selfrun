@@ -1,8 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS runtime-agent
 WORKDIR /src
 ARG MINICLOUD_AGENT_RID=linux-x64
-COPY modules/contracts modules/contracts
-COPY modules/common modules/common
+COPY modules/redaction modules/redaction
 COPY modules/runtime-agent modules/runtime-agent
 RUN case "$MINICLOUD_AGENT_RID" in \
       linux-x64) other_rid=linux-arm64 ;; \
@@ -15,6 +14,7 @@ RUN case "$MINICLOUD_AGENT_RID" in \
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY ["modules/contracts/Minicloud.Contracts.csproj", "modules/contracts/"]
+COPY ["modules/redaction/Minicloud.Redaction.csproj", "modules/redaction/"]
 COPY ["modules/common/Minicloud.Common.csproj", "modules/common/"]
 COPY ["modules/worker/Minicloud.Worker.csproj", "modules/worker/"]
 RUN dotnet restore "modules/worker/Minicloud.Worker.csproj"
