@@ -755,10 +755,13 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         var siblingVolume = cloud.Volume! with { Id = "volume-sibling", Labels = VolumeLabels(sibling) };
         sibling.ProviderVolumeId = siblingVolume.Id;
         sibling.VolumeStatus = "retained";
+        sibling.LastBackupAt = clock.GetUtcNow();
+        sibling.BackupStatus = "completed";
         await db.SaveChangesAsync();
         cloud.SiblingVolumes.Add(siblingVolume.Id, siblingVolume);
         var siblingServer = cloud.Server(VolumeLabels(sibling)) with { Id = "server-sibling" };
         cloud.Servers.Add(siblingServer.Id, siblingServer);
+        var imageId = sibling.Vms.Single().ProviderImage;
         cloud.LoseDeleteVolumeResponse = true;
 
         await lifecycle.DeleteAsync(workspace.Id, "org", true, "actor", default);
@@ -784,11 +787,29 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Single(cloud.DeletedVolumes);
         Assert.Equal(siblingVolume, Assert.Single(cloud.SiblingVolumes).Value);
         Assert.Equal(siblingServer, Assert.Single(cloud.Servers).Value);
-        Assert.Equal(siblingVolume.Id, (await CurrentWorkspace(sibling.Id)).ProviderVolumeId);
+        var survivingWorkspace = await CurrentWorkspace(sibling.Id);
+        Assert.Equal(siblingVolume.Id, survivingWorkspace.ProviderVolumeId);
+        Assert.Equal(sibling.LastBackupAt, survivingWorkspace.LastBackupAt);
+        Assert.Equal(sibling.BackupStatus, survivingWorkspace.BackupStatus);
+        Assert.Equal("available", (await cloud.GetWorkspaceImageAsync(imageId, default))?.Status);
         Assert.Empty(cloud.DetachedVolumes);
         Assert.Empty(cloud.DeletedServers);
         Assert.Empty(cloud.DeletedIps);
         Assert.Empty(cloud.DeletedFirewalls);
+    }
+
+    [Fact]
+    public async Task PermanentDeleteOfNeverStartedWorkspaceDoesNotSendProviderDelete()
+    {
+        var workspace = await lifecycle.CreateAsync(
+            new("org", "Never started", "image", "standard", "plan", 20, "never-started"), "actor", default);
+        await lifecycle.DeleteAsync(workspace.Id, "org", true, "actor", default);
+
+        await Hop();
+
+        Assert.Equal("deleted", (await CurrentVm(workspace.PrimaryVmId)).Phase);
+        Assert.Equal(0m, (await CurrentWorkspace(workspace.Id)).StorageMonthlyRate);
+        Assert.Empty(cloud.DeletedVolumes);
     }
 
     private async Task<DevelopmentWorkspace> SeedRetainedVolume()

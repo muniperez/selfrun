@@ -6,7 +6,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 it.each([[202, "deleting"], [200, "deleted"]])("parses HTTP %s permanent deletion response (%s)", async (status, phase) => {
   setCsrfToken("synthetic-csrf");
-  const body = { id: "work/space", phase };
+  const body = { id: "work/space", phase, volumeStatus: phase };
   const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
   vi.stubGlobal("fetch", fetcher);
 

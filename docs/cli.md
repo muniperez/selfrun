@@ -869,8 +869,8 @@ untracked files. Use `workspaces stop` or `workspaces stop-all` instead if you
 want to stop compute and retain the primary volume. You can omit
 `--organization` if you have access to only one organization.
 
-A successful delete request may report `deleting`; it does not mean cleanup
-has finished. Check `status` until it reports `deleted`. If it reports
+A successful delete request may report permanent deletion in progress; it
+does not mean cleanup has finished. Check `status` until it reports `deleted`. If it reports
 `delete_failed`, address the reported error and repeat the same delete command
 with explicit confirmation. `workspaces list` omits deleted workspaces, but
 `workspaces status` still shows the deletion record by ID.
