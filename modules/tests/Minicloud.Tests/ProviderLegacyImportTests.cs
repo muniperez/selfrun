@@ -123,7 +123,7 @@ public sealed class ProviderLegacyImportTests : IAsyncLifetime
         Assert.False(await auth.CanAccessAppAsync(principal.ToActorIdentity(), app.Id, OrganizationAction.CreateDeployments, default));
         var deletion = new AppDeletionService(_db, auth, new AppServiceSecretService(_db, new Store(), ids, TimeProvider.System),
             new TelemetryService(_db, ids, TimeProvider.System, new TelemetryTokenService(), new DeploymentServiceSetService(), auth, audit, new Hosting()),
-            audit, new DeploymentArtifactStorageService(Options.Create(new DeploymentArtifactStorageOptions()), TimeProvider.System));
+            audit, new DeploymentArtifactStorageService(Options.Create(new DeploymentArtifactStorageOptions()), TimeProvider.System), Options.Create(new ProviderCatalogOptions()));
         Assert.Null(await deletion.RequestApplicationDeletionAsync(principal, application.Id, "recovery", default));
         Assert.Equal("queued", (await _db.Apps.SingleAsync()).DeletionStatus);
         Assert.True(await processor.ProcessNextAsync(default));
