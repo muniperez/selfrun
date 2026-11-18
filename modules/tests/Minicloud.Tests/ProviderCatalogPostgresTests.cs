@@ -19,6 +19,78 @@ namespace Minicloud.Tests;
 public sealed class ProviderCatalogPostgresTests
 {
     [Fact]
+    public async Task FailedDeletionImportSerializesWithRetryAndRechecksLockedState()
+    {
+        var container = "mc-import-race-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await Docker("run", "--rm", "-d", "--name", container, "-e", "POSTGRES_PASSWORD=" + container,
+                "-p", "127.0.0.1::5432", "postgres:16-alpine");
+            var port = (await Docker("port", container, "5432/tcp")).Trim().Split(':')[^1];
+            var options = new DbContextOptionsBuilder<MinicloudDbContext>()
+                .UseNpgsql(new Npgsql.NpgsqlConnectionStringBuilder
+                {
+                    Host = "127.0.0.1", Port = int.Parse(port), Database = "postgres",
+                    Username = "postgres", Password = container
+                }.ConnectionString).Options;
+            for (var attempt = 0; attempt < 60; attempt++)
+            {
+                await using var probe = new MinicloudDbContext(options);
+                if (await probe.Database.CanConnectAsync()) break;
+                await Task.Delay(250);
+            }
+            await using (var setup = new MinicloudDbContext(options))
+            {
+                await setup.Database.MigrateAsync();
+                setup.Organizations.Add(new Organization { Id = "org", Name = "Org", Slug = "org" });
+                setup.ProviderAccounts.Add(Account("account"));
+                setup.Apps.Add(new MinicloudApp { Id = "legacy", OrganizationId = "org", Name = "Legacy", Slug = "legacy",
+                    Plan = AppPlan.P0H0, DeletionStatus = "failed", DeletionError = "original" });
+                await setup.SaveChangesAsync();
+            }
+
+            var factory = new PausedImportFactory();
+            var request = new ProviderLegacyImportRequest("org", "account",
+                [new("legacy", BuildPlatform: "linux/amd64", AllowFailedDeletion: true)], []);
+            await using var importing = new MinicloudDbContext(options);
+            var import = new ProviderLegacyImportService(importing, Catalog(importing), factory,
+                Options.Create(new ProviderPlanOptions()), TimeProvider.System).ImportAsync(request, default);
+            await factory.Locked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            await using var retrying = new MinicloudDbContext(options);
+            await using var retryTransaction = await retrying.Database.BeginTransactionAsync();
+            var retryLock = retrying.Apps.FromSqlRaw("SELECT * FROM apps WHERE id = 'legacy' FOR UPDATE").SingleAsync();
+            await Task.Delay(200);
+            Assert.False(retryLock.IsCompleted, "Deletion retry must wait for verified import to commit.");
+            factory.Release.SetResult();
+            Assert.Equal(1, (await import.WaitAsync(TimeSpan.FromSeconds(10))).BoundApps);
+            var app = await retryLock.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("failed", app.DeletionStatus);
+            Assert.Equal("original", app.DeletionError);
+            Assert.NotNull(app.PlanId);
+
+            // A second import reads the old failed state before retry commits.
+            // It must reload under the lock and reject the newly queued deletion.
+            await using var stale = new MinicloudDbContext(options);
+            Assert.Equal("failed", (await stale.Apps.SingleAsync()).DeletionStatus);
+            var competingImport = new ProviderLegacyImportService(stale, Catalog(stale),
+                new PausedImportFactory(released: true), Options.Create(new ProviderPlanOptions()), TimeProvider.System)
+                .ImportAsync(request, default);
+            await Task.Delay(200);
+            Assert.False(competingImport.IsCompleted, "Import must wait for deletion retry's app lock.");
+            app.DeletionStatus = "queued";
+            await retrying.SaveChangesAsync();
+            await retryTransaction.CommitAsync();
+            var error = await Assert.ThrowsAsync<ProviderCatalogException>(() => competingImport.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("legacy_import_active_work", error.Code);
+            await using var verify = new MinicloudDbContext(options);
+            Assert.Equal("queued", (await verify.Apps.SingleAsync()).DeletionStatus);
+            Assert.Single(await verify.ProviderPlans.ToListAsync());
+        }
+        finally { await Docker("rm", "-f", container); }
+    }
+
+    [Fact]
     public async Task MigrationPreservesLegacyRowsAndReservationsSerializeWithMappingEdits()
     {
         var container = "mc-providers-" + Guid.NewGuid().ToString("N");
@@ -155,6 +227,17 @@ public sealed class ProviderCatalogPostgresTests
     }
 
     private static ProviderCatalogService Catalog(MinicloudDbContext db) => new(db, new IdGenerator(), TimeProvider.System);
+    private sealed class PausedImportFactory(bool released = false) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)
+    {
+        public TaskCompletionSource Locked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async Task<IVpsProviderClient> CreateAsync(string organizationId, string providerAccountId, CancellationToken ct, bool allowDisabled = true)
+        {
+            Locked.TrySetResult();
+            if (!released) await Release.Task.WaitAsync(ct);
+            return new EmptyClient();
+        }
+    }
     private static ProviderAccountService Accounts(MinicloudDbContext db, TestSecrets secrets) => new(db, secrets,
         new EmptyFactory(db, secrets), new IdGenerator(), TimeProvider.System,
         Options.Create(new OpenBaoSecretStoreOptions { EnvironmentPrefix = "postgres-tests" }));
