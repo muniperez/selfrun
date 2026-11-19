@@ -5,27 +5,41 @@ using System.Text.Json;
 
 namespace Minicloud.RuntimeAgent;
 
-public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processRunner)
+// One instance per agent cycle. Only successful discovery is shared.
+public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processRunner) : IDisposable
 {
+    private JsonDocument? _containers;
+
     private async Task<JsonDocument> InspectAsync(CancellationToken cancellationToken)
     {
+        if (_containers is not null)
+        {
+            return _containers;
+        }
+
         var list = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", ["ps", "-aq", "--filter", $"label=com.docker.compose.project={config.ComposeProject}"], cancellationToken);
         RequireSuccess(list, "container discovery");
         var ids = Lines(list.Stdout).ToArray();
         if (ids.Length == 0)
         {
-            return JsonDocument.Parse("[]");
+            return _containers = JsonDocument.Parse("[]");
         }
         var inspect = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", new[] { "inspect" }.Concat(ids).ToArray(), cancellationToken);
         RequireSuccess(inspect, "container inspection");
-        return JsonDocument.Parse(inspect.Stdout);
+        var containers = JsonDocument.Parse(inspect.Stdout);
+        if (containers.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            containers.Dispose();
+            throw new InvalidOperationException("Docker inspection did not return a container array.");
+        }
+        return _containers = containers;
     }
 
     public async Task<IReadOnlyList<AgentLogRecord>> CollectLogsAsync(CancellationToken cancellationToken)
     {
         var records = new List<AgentLogRecord>();
         var now = DateTimeOffset.UtcNow;
-        using var containers = await InspectAsync(cancellationToken);
+        var containers = await InspectAsync(cancellationToken);
         foreach (var container in containers.RootElement.EnumerateArray())
         {
             var service = ServiceName(container);
@@ -57,7 +71,7 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
 
     public async Task<RuntimeStatusIngestRequest> CollectStatusAsync(string agentVersion, CancellationToken cancellationToken)
     {
-        using var containers = await InspectAsync(cancellationToken);
+        var containers = await InspectAsync(cancellationToken);
         var statuses = containers.RootElement.EnumerateArray().Select(container =>
         {
             var state = container.GetProperty("State");
@@ -70,6 +84,8 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
         return new RuntimeStatusIngestRequest(agentVersion, DateTimeOffset.UtcNow, config.ComposeProject, statuses,
             new RuntimeCaddyStatusDto(caddy.ExitCode == 0 && caddy.Stdout.Trim() == "active"));
     }
+
+    public void Dispose() => _containers?.Dispose();
 
     private static string ServiceName(JsonElement container) => container.GetProperty("Config").GetProperty("Labels").GetProperty("com.docker.compose.service").GetString()!;
     private static void RequireSuccess(ProcessResult result, string operation)
