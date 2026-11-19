@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Minicloud.Common.Extensions;
+using Minicloud.Common.Services;
 
 namespace Minicloud.Tests;
 
@@ -24,7 +25,7 @@ public sealed class DevelopmentWorkspaceConfigurationTests
     }
 
     [Fact]
-    public void Explicit_file_is_loaded_and_environment_still_wins()
+    public void Explicit_file_is_loaded_legacy_workspace_counts_are_ignored_and_environment_still_wins()
     {
         var root = FindRepositoryRoot();
         var directory = Path.Combine(root, ".local", "artifacts", "issue110", "packaging",
@@ -32,7 +33,8 @@ public sealed class DevelopmentWorkspaceConfigurationTests
         Directory.CreateDirectory(directory);
         var file = Path.Combine(directory, "workspace.json");
         File.WriteAllText(file, """
-            {"DevelopmentWorkspaces":{"Enabled":true,"MaxActiveVms":2}}
+            {"DevelopmentWorkspaces":{"Enabled":true,"MaxActiveVms":2,
+              "MaxActiveWorkspaces":"obsolete","MaxWorkspacesPerOrganization":"obsolete"}}
             """);
         var priorLimit = Environment.GetEnvironmentVariable("DevelopmentWorkspaces__MaxActiveVms");
         try
@@ -42,8 +44,11 @@ public sealed class DevelopmentWorkspaceConfigurationTests
             {
                 var configuration = new ConfigurationManager();
                 configuration.AddDevelopmentWorkspaceConfiguration();
-                Assert.Equal("True", configuration["DevelopmentWorkspaces:Enabled"]);
-                Assert.Equal("1", configuration["DevelopmentWorkspaces:MaxActiveVms"]);
+                var options = configuration.GetRequiredSection(DevelopmentWorkspaceOptions.SectionName)
+                    .Get<DevelopmentWorkspaceOptions>();
+                Assert.NotNull(options);
+                Assert.True(options.Enabled);
+                Assert.Equal(1, options.MaxActiveVms);
             });
         }
         finally

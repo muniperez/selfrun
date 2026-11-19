@@ -106,12 +106,13 @@ allocation or mutation.
   remain failures, not configuration states.
 
 Discovery is advisory, not a capacity, spend or credential-availability guarantee.
-Writes revalidate current selection and placement policy; creation checks current
-workspace count and retained-storage spend, while starting/launching compute
-checks current VM admission and compute-plus-storage spend. Resize records a
-next-start selection without reserving compute; start revalidates it again.
-Existing idempotency, generation and repository-approval requirements are
-unchanged.
+Writes revalidate current selection and placement policy. Creation leaves the
+workspace stopped and checks retained-storage spend. Starting or launching
+compute checks VM concurrency and compute-plus-storage spend; provider quotas
+still apply. Neither operation limits the number of workspace records or the
+number of distinct active workspaces. Resize records a next-start selection
+without reserving compute; start revalidates it again. Existing idempotency,
+generation and repository-approval requirements are unchanged.
 
 ## Browser accounts
 

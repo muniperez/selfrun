@@ -41,8 +41,6 @@ public sealed partial class DevelopmentWorkspaceService(
             }
             if (!await db.Organizations.AnyAsync(x => x.Id == request.OrganizationId, ct))
                 throw Invalid("workspace_organization_invalid", "Organization was not found.");
-            if (await db.DevelopmentWorkspaces.CountAsync(x => x.OrganizationId == request.OrganizationId, ct) >= Policy.MaxWorkspacesPerOrganization)
-                throw Conflict("workspace_admission_limit", "Organization workspace limit reached.");
             var selection = await SelectAsync(request.OrganizationId, request.ImageId, request.Profile, request.PlanId, ct);
             var workspace = new DevelopmentWorkspace
             {
@@ -397,12 +395,12 @@ public sealed partial class DevelopmentWorkspaceService(
     {
         var reserved = await db.DevelopmentWorkspaceVms.Where(x => x.ComputeReserved)
             .Select(x => new { x.OrganizationId, x.WorkspaceId }).ToListAsync(ct);
-        if (reserved.Count >= Policy.MaxActiveVms
-            || (!reserved.Any(x => x.WorkspaceId == workspace.Id)
-                && reserved.Select(x => x.WorkspaceId).Distinct().Count() >= Policy.MaxActiveWorkspaces)
-            || reserved.Count(x => x.OrganizationId == workspace.OrganizationId) >= Policy.MaxVmsPerOrganization
-            || reserved.Count(x => x.WorkspaceId == workspace.Id) >= Policy.MaxVmsPerWorkspace)
-            throw Conflict("workspace_admission_limit", "Configured VM concurrency limit reached.");
+        if (reserved.Count >= Policy.MaxActiveVms)
+            throw Conflict("workspace_admission_limit", "Global VM concurrency limit reached.");
+        if (reserved.Count(x => x.OrganizationId == workspace.OrganizationId) >= Policy.MaxVmsPerOrganization)
+            throw Conflict("workspace_admission_limit", "Organization VM concurrency limit reached.");
+        if (reserved.Count(x => x.WorkspaceId == workspace.Id) >= Policy.MaxVmsPerWorkspace)
+            throw Conflict("workspace_admission_limit", "Per-workspace VM concurrency limit reached.");
         await CheckSpendAsync(workspace.OrganizationId, rate * 720m, ct);
     }
 
@@ -513,7 +511,7 @@ public sealed partial class DevelopmentWorkspaceService(
     private void EnsureEnabled()
     {
         if (!Policy.Enabled) throw Conflict("workspaces_disabled", "Development workspaces are disabled by the operator.");
-        if (Policy.MaxActiveWorkspaces < 1 || Policy.MaxActiveVms < 1 || Policy.MaxWorkspacesPerOrganization < 1 || Policy.MaxVmsPerWorkspace < 1
+        if (Policy.MaxActiveVms < 1 || Policy.MaxVmsPerWorkspace < 1
             || Policy.MaxVmsPerOrganization < 1 || Policy.MaxEstimatedMonthlySpend <= 0
             || Policy.MaxEstimatedMonthlySpendPerOrganization <= 0 || Policy.VolumeMonthlyRatePerGb <= 0
             || Policy.MaxPricingAgeDays < 1 || Policy.PricingUpdatedAt is null || Policy.PricingUpdatedAt > Now
