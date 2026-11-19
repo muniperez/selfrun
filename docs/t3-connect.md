@@ -5,6 +5,16 @@ not another VM type or an always-on compute plan. Viewing status, signing in on
 another device and opening a link never start compute. Ordinary **Open T3**
 continues to use only terminal/orchestration read and operate permissions.
 
+On the workspace detail page, primary and ephemeral VMs show the startup
+stages reported by the control plane. The dashboard checks status automatically
+for a limited time and keeps the last reported status and costs visible if a
+check fails. **Refresh workspace status** checks again without starting compute.
+
+After you request an **Open T3** or **Open preview** link, its countdown shows
+how long you have to open that single-use link, not how long the session lasts.
+If it expires, select **Request new link**. The dashboard does not request or
+open a replacement automatically.
+
 ## Link, check and unlink
 
 1. As the workspace creator or an organization Owner, open a **ready primary**
@@ -19,28 +29,28 @@ continues to use only terminal/orchestration read and operate permissions.
    responses instead of opening a stale account-management page. The API and
    gateway independently enforce ownership; hiding the control is not authorization.
 2. Read the independent-access disclosure and choose **Link my T3 account**.
-   The private page shows T3's device-approval URL and code. Open it on your own
-   device, verify the code matches and approve with your own T3 account. Do not
-   share, log, screenshot or paste approval material into a T3 terminal.
+   The private page shows T3's device-approval link and code. Open it on your own
+   device, verify the code matches and approve with your own T3 account. The page
+   checks approval automatically and offers a new request if the code expires.
+   Do not share, log, screenshot or paste approval material into a T3 terminal.
 3. After approval, save work and finish agent turns, then explicitly choose
-   **Activate link**. Confirm interruption of T3 turns and terminals. This
+   **Activate and restart T3**. Confirm interruption of T3 turns and terminals. This
    restarts **only `minicloud-t3.service`**, on the same VM and the same
    `/workspace/t3` data directory. It does not install T3's background service,
    replace the VM, reinstall T3, or erase projects, threads or provider logins.
-4. Refresh after restart. `linked: true` means registration exists;
-   `reachable: true` additionally means the running tunnel answered T3's check.
-   Registration alone is not evidence that another device can connect. The page
-   identifies the VM, generation and upstream environment ID.
+4. The page checks again during the restart and shows **Ready to connect** only
+   when the running tunnel answers T3's reachability check. Otherwise a confirmed
+   registration is shown as **Linked but not reachable**.
 5. On another supported T3 client (for example `app.t3.codes`), sign in to that
    same T3 account, select the environment and open an **existing** project and
    thread. Resume it using the provider already configured on the VM. No other
    VM should appear in Minicloud's provider inventory because of linking.
-6. **Unlink and sign out T3 Connect** cancels a pending flow, disables the local
-   link/tunnel, clears the T3 CLI account sign-in, and attempts relay-side machine
-   removal. It does **not** sign out Codex or another coding provider. If
-   `remoteRemovalConfirmed` is false, remove the stale machine from your T3 account;
-   a local sign-out is not proof of remote deletion. Use this account-side
-   removal if the VM is offline or was lost.
+6. Under **Manage connection**, **Unlink T3 Connect** disables the local link,
+   clears the T3 CLI account sign-in and attempts relay-side machine removal.
+   **Cancel approval** uses the same operation during a pending approval. This
+   does **not** sign out Codex or another coding provider. If remote removal is
+   not confirmed, remove the stale machine from your T3 account. Use this
+   account-side removal if the VM is offline or was lost.
 
 Approval codes and raw CLI output exist only in the management process's memory
 and no-store HTTP responses. The service disables access/error journaling and

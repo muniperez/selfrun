@@ -17,7 +17,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     private readonly TestClock clock = new();
     private readonly DevelopmentWorkspaceOptions policy = new()
     {
-        Enabled = true, MaxActiveWorkspaces = 3, MaxActiveVms = 5, MaxWorkspacesPerOrganization = 5,
+        Enabled = true, MaxActiveVms = 5,
         MaxVmsPerWorkspace = 3, MaxVmsPerOrganization = 4,
         MaxEstimatedMonthlySpend = 10000, MaxEstimatedMonthlySpendPerOrganization = 5000,
         VolumeMonthlyRatePerGb = .1m, PricingUpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
@@ -226,6 +226,49 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreatesStoppedWorkspacesBeyondPreviousCountCapUntilStorageSpendLimit()
+    {
+        policy.MaxEstimatedMonthlySpend = 12;
+        var service = Service();
+        for (var i = 1; i <= 6; i++)
+        {
+            var workspace = await service.CreateAsync(Create($"Workspace {i}", $"create-{i}"), "actor", default);
+            Assert.Equal("stopped", Primary(workspace).Phase);
+            Assert.False(Primary(workspace).ComputeReserved);
+            Assert.Null(workspace.ProviderVolumeId);
+        }
+
+        await AssertCode("workspace_spend_limit",
+            () => service.CreateAsync(Create("Workspace 7", "create-7"), "actor", default));
+        Assert.Equal(6, await db.DevelopmentWorkspaces.CountAsync());
+        Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(true, "Global VM concurrency limit reached.")]
+    [InlineData(false, "Organization VM concurrency limit reached.")]
+    public async Task StartsComputeInMoreThanThreeWorkspacesUntilVmConcurrencyLimit(bool globalLimit, string message)
+    {
+        policy.MaxActiveVms = globalLimit ? 4 : 5;
+        policy.MaxVmsPerOrganization = globalLimit ? 5 : 4;
+        var service = Service();
+        for (var i = 1; i <= 4; i++)
+        {
+            var workspace = await service.CreateAsync(Create($"Workspace {i}", $"create-{i}"), "actor", default);
+            var started = await service.StartAsync(workspace.Id, "org", default);
+            Assert.Equal("provisioning", Primary(started).Phase);
+            Assert.True(Primary(started).ComputeReserved);
+        }
+
+        var extra = await service.CreateAsync(Create("Workspace 5", "create-5"), "actor", default);
+        var error = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => service.StartAsync(extra.Id, "org", default));
+        Assert.Equal("workspace_admission_limit", error.Code);
+        Assert.Equal(message, error.Message);
+        Assert.Equal(4, await db.DevelopmentWorkspaceVms.CountAsync(x => x.ComputeReserved));
+        Assert.Equal(4, await db.DevelopmentWorkspaceOperations.CountAsync());
+    }
+
+    [Fact]
     public async Task ConcurrentDuplicateStartReservesExactlyOneGenerationAndOperation()
     {
         var workspace = await Workspace();
@@ -253,7 +296,9 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         var current = (await Service().GetAsync(workspace.Id, "org", default))!;
         var ephemeral = current.Vms.Single(x => x.Kind == "ephemeral");
         await Service().StopVmAsync(workspace.Id, "org", ephemeral.Id, 1, default);
-        await AssertCode("workspace_admission_limit", () => Service().StartAsync(workspace.Id, "org", default));
+        var error = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => Service().StartAsync(workspace.Id, "org", default));
+        Assert.Equal("workspace_admission_limit", error.Code);
+        Assert.Equal("Per-workspace VM concurrency limit reached.", error.Message);
         Assert.Single(await db.DevelopmentWorkspaceVms.Where(x => x.ComputeReserved).ToListAsync());
     }
 

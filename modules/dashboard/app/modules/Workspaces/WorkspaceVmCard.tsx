@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Clock3, Terminal } from "lucide-react";
 import { getWorkspaceLaunchUrl, mutateWorkspaceVm, workspaceTask } from "@/api/workspacesApi";
 import { Badge } from "@/components/ui/badge";
@@ -6,16 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import type { DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import { WorkspaceLaunchLink } from "./WorkspaceLaunchLink";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceT3Connect } from "./WorkspaceT3Connect";
+import { vmStartup, WorkspaceVmStartup } from "./WorkspaceVmStartup";
 
 type Props = {
   workspaceId: string;
   organizationId: string;
   vm: DevelopmentWorkspaceVm;
   currency: string;
-  refresh: () => Promise<void>;
+  refresh: (observation?: DevelopmentWorkspace) => Promise<void>;
   canManage: boolean;
   canManageConnect?: boolean;
   variant?: "primary" | "embedded";
@@ -24,6 +26,10 @@ type Props = {
 
 const lossDisclosure = "Independent Git-only root disk; no access to the primary retained volume. Ignored, untracked and unpushed local data can be permanently lost. There is no filesystem backup.";
 const message = (reason: unknown) => reason instanceof Error ? reason.message : "Workspace operation failed. Refresh status and try again.";
+const startingLabel = "Starting VM…";
+type Launch = { context: string; service: string } & (
+  { state: "active"; url: string; deadline: number } | { state: "expired" }
+);
 
 export function WorkspaceVmCard(props: Props) {
   return <VmGenerationCard key={`${props.organizationId}:${props.workspaceId}:${props.vm.id}:${props.vm.generation}`} {...props} />;
@@ -41,14 +47,14 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
   const [previewSlug, setPreviewSlug] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [service, setService] = useState("t3");
-  const [launch, setLaunch] = useState<{ url: string; expiresAt: string; context: string; service: string } | null>(null);
+  const [launch, setLaunch] = useState<Launch | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [discardText, setDiscardText] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const mounted = useRef(true);
   const inFlight = useRef(false);
   const request = useRef(0);
-  const ready = vm.phase === "ready" && vm.desiredState === "running" && !vm.errorCode;
+  const { ready, starting, failed } = vmStartup(vm);
   const context = JSON.stringify([vm.revision, vm.generation, ready, canManage, service, previewSlug]);
   const currentContext = useRef(context);
   currentContext.current = context;
@@ -60,6 +66,12 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
   const stopping = ["draining", "deleting", "awaiting_git_save"].includes(vm.phase);
   const confirmText = `discard ${vm.id} ${vm.generation}`;
   const embedded = variant === "embedded";
+  const startingRequest = pending === startingLabel;
+  const visibleLaunch = canManage && launch?.context === context ? launch : null;
+  const expireLaunch = useCallback(() => {
+    setLaunch(current => current?.state === "active" && current === launch
+      ? { context: current.context, service: current.service, state: "expired" } : current);
+  }, [launch]);
 
   useEffect(() => {
     mounted.current = true;
@@ -69,25 +81,20 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
     setSelection({ imageId: vm.nextImageId ?? vm.imageId, profile: vm.nextProfile ?? vm.profile, planId: vm.nextPlanId ?? vm.planId });
   }, [vm.nextImageId, vm.nextProfile, vm.nextPlanId, vm.imageId, vm.profile, vm.planId]);
   useEffect(() => {
-    if (!launch) return;
-    const timer = window.setTimeout(() => setLaunch(null), Math.min(Math.max(0, Date.parse(launch.expiresAt) - Date.now()), 2_147_483_647));
-    return () => window.clearTimeout(timer);
-  }, [launch]);
-  useEffect(() => {
-    if (!canManage) { setDiscardOpen(false); setDiscardText(""); setAcknowledged(false); setLaunch(null); }
+    if (!canManage) { ++request.current; setDiscardOpen(false); setDiscardText(""); setAcknowledged(false); setLaunch(null); }
   }, [canManage]);
   useEffect(() => {
     setLaunch(previous => previous?.context === context ? previous : null);
   }, [context]);
 
-  const run = async (label: string, operation: () => Promise<unknown>, refreshAfter = true) => {
+  const run = async (label: string, operation: () => Promise<DevelopmentWorkspace | void>, refreshAfter = true) => {
     if (inFlight.current || !permission.current) return;
     inFlight.current = true;
     setPending(label); setError(null);
     if (refreshAfter) { ++request.current; setLaunch(null); }
     try {
-      await operation();
-      if (mounted.current && refreshAfter) await refresh();
+      const observation = await operation();
+      if (mounted.current && refreshAfter) await refresh(observation || undefined);
     } catch (reason) {
       if (mounted.current) setError(message(reason));
     } finally {
@@ -112,21 +119,29 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
     currentContext.current = expectedContext;
     const sequence = ++request.current;
     void run("Authorizing gateway access…", async () => {
+      const current = () => mounted.current && sequence === request.current && currentContext.current === expectedContext && permission.current;
+      const report = (error: string) => {
+        if (current()) setError(`${error} Compute was not started. Check gateway configuration, VM readiness and the registered preview slug, then retry or contact your operator.`);
+      };
+      let result: Awaited<ReturnType<typeof getWorkspaceLaunchUrl>>;
       try {
-        const result = await getWorkspaceLaunchUrl(workspaceId, vm.id, organizationId, vm.generation, target);
-        let url: URL;
-        try { url = new URL(result.url); }
-        catch { throw new Error("Gateway returned an invalid launch URL. Request a new session or contact your operator."); }
-        if (url.protocol !== "https:" || !url.hostname || url.username || url.password)
-          throw new Error("Gateway returned an unsafe launch URL; an HTTPS URL without embedded credentials is required.");
-        if (!Number.isFinite(Date.parse(result.expiresAt)) || Date.parse(result.expiresAt) <= Date.now())
-          throw new Error("Gateway authorization has expired or has an invalid expiry. Request a new session.");
-        if (mounted.current && sequence === request.current && currentContext.current === expectedContext && permission.current)
-          setLaunch({ ...result, context: expectedContext, service: target });
-      } catch (reason) {
-        if (mounted.current && sequence === request.current && currentContext.current === expectedContext)
-          setError(`${message(reason)} Compute was not started. Check gateway configuration, VM readiness and the registered preview slug, then retry or contact your operator.`);
+        result = await getWorkspaceLaunchUrl(workspaceId, vm.id, organizationId, vm.generation, target);
+      } catch {
+        report("Could not authorize a secure launch link.");
+        return;
       }
+      if (!current()) return;
+      let url: URL;
+      try { url = new URL(result?.url); }
+      catch { report("Gateway returned an invalid launch URL."); return; }
+      if (url.protocol !== "https:" || !url.hostname || url.username || url.password) {
+        report("Gateway returned an unsafe launch URL.");
+        return;
+      }
+      const deadline = Date.parse(result.expiresAt);
+      if (!Number.isFinite(deadline)) { report("Gateway returned an invalid expiry."); return; }
+      const scope = { context: expectedContext, service: target };
+      setLaunch(deadline > Date.now() ? { ...scope, state: "active", url: url.href, deadline } : { ...scope, state: "expired" });
     }, false);
   };
   const closeDiscard = (open: boolean) => {
@@ -134,7 +149,7 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
   };
 
   const startControl = vm.desiredState === "stopped" && <Button disabled={blocked || Boolean(vm.startAfterStop)}
-    onClick={() => void action("start", stopping ? "Queueing start…" : "Starting compute…")}>{stopping ? "Queue start after stop" : "Start compute"}</Button>;
+    onClick={() => void action("start", stopping ? "Queueing start…" : startingLabel)}>{stopping ? "Queue start after stop" : "Start compute"}</Button>;
   const stopControl = (vm.desiredState !== "stopped" || awaitingGit || vm.startAfterStop) && <Button variant="outline" disabled={blocked}
     onClick={() => void action("stop", awaitingGit ? "Retrying stop…" : "Stopping compute…")}>{awaitingGit ? "Retry stop" : "Stop compute"}</Button>;
   const discardControl = vm.kind === "ephemeral" && <Button variant="ghost" className="text-destructive hover:text-destructive" disabled={blocked || vm.phase === "stopped"}
@@ -151,7 +166,8 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
         </div>
       </div>
       <Badge variant="secondary" className={`shrink-0 ${awaitingGit ? "border-warning/25 bg-warning-surface text-warning" : ""}`}>
-        {awaitingGit ? "Git save blocked" : vm.phase === "ready" ? "Ready" : vm.phase === "stopped" ? "Stopped" : vm.phase.replaceAll("_", " ")}
+        {startingRequest || starting ? "Starting" : failed ? "Startup failed" : awaitingGit ? "Git save blocked" : ready ? "Ready"
+          : vm.phase === "ready" ? "Not ready" : vm.phase === "stopped" ? "Stopped" : vm.phase.replaceAll("_", " ")}
       </Badge>
     </CardHeader>}
     {!embedded && <dl className="grid gap-4 px-5 pb-4 text-sm sm:grid-cols-3">
@@ -171,29 +187,33 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
         </div>
       </div>
     </section>}
+    <WorkspaceVmStartup vm={vm} pending={startingRequest} />
     {vm.startAfterStop && <p role="status" className="px-5 py-2 text-sm">Authorized start queued after this generation safely stops. Stop compute cancels the queued start.</p>}
-    {pending && <p role="status" className="px-5 py-2 text-sm">{pending}</p>}
+    {pending && !startingRequest && <p role="status" className="px-5 py-2 text-sm">{pending}</p>}
     {!canManage && <p className="px-5 py-2 text-xs text-muted-foreground">Read-only access. A workspace manager is required for compute changes and session authorization.</p>}
     {vm.errorCode && !awaitingGit && <p role="alert" className="break-words px-5 py-2 text-sm text-destructive">{vm.errorCode}: {vm.errorMessage ?? "No additional details reported."}</p>}
     {error && <p role="alert" className="break-words px-5 py-2 text-sm text-destructive">{error}</p>}
     {(!awaitingGit || !embedded) && <div className={`flex flex-wrap items-center justify-between gap-3 px-5 py-3 ${embedded ? "" : "border-t bg-muted/20"}`}>
       {ready ? <section aria-label={`Connections for VM ${vm.id}`} className="flex flex-wrap items-center gap-2">
         <Button disabled={blocked} onClick={() => authorize("t3")}>Connect to T3</Button>
-        <Button variant="outline" disabled={blocked} aria-expanded={previewOpen} onClick={() => setPreviewOpen(previous => !previous)}>Open preview</Button>
+        <Button variant="outline" disabled={blocked} aria-expanded={previewOpen} onClick={() => {
+          ++request.current; setLaunch(null); setPreviewOpen(previous => !previous);
+        }}>Open preview</Button>
       </section> : !stopping ? startControl : <span className="text-xs text-muted-foreground">Generation {vm.generation} · {vm.phase.replaceAll("_", " ")}</span>}
-      <p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="size-3.5" aria-hidden="true" />Last activity: {vm.lastActivityAt ?? "unavailable"}</p>
+      <p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="size-3.5" aria-hidden="true" />
+        {vm.lastActivityAt ? `Last activity: ${vm.lastActivityAt}` : "Waiting for first activity"}</p>
     </div>}
     {ready && previewOpen && <form aria-label={`Open preview for VM ${vm.id}`} className="flex flex-wrap items-end gap-2 border-t px-5 py-3" onSubmit={event => { event.preventDefault(); authorize(previewSlug.trim()); }}>
       <label className="min-w-0 space-y-1 text-sm">Registered preview slug<Input className="w-full sm:w-48" value={previewSlug} disabled={blocked} placeholder="my-preview" required onChange={event => { ++request.current; setLaunch(null); setPreviewSlug(event.target.value); }} /></label>
       <Button variant="outline" disabled={blocked || !previewSlug.trim()}>Authorize preview</Button>
     </form>}
-    {canManage && launch && launch.context === context && Date.parse(launch.expiresAt) > Date.now() && <p className="break-words px-5 py-2 text-sm">
-      <a className="text-primary underline underline-offset-4" href={launch.url} target="_blank" rel="noopener noreferrer" onClick={event => {
-        if (Date.parse(launch.expiresAt) <= Date.now()) { event.preventDefault(); setLaunch(null); setError("Gateway authorization has expired. Request a new session."); }
-      }}>Open authorized {launch.service === "t3" ? "T3 session" : `${launch.service} preview`} on VM {vm.id} generation {vm.generation}</a>
-      <span className="ml-2 text-muted-foreground">Expires {launch.expiresAt}</span>
-    </p>}
-    {vm.kind === "primary" && canManage && canManageConnect && <div className="border-t px-5 py-4">
+    {visibleLaunch?.state === "active" && <WorkspaceLaunchLink url={visibleLaunch.url} deadline={visibleLaunch.deadline}
+      label={visibleLaunch.service === "t3" ? "Open T3" : "Open preview"} onExpire={expireLaunch} />}
+    <div className={visibleLaunch?.state === "expired" ? "flex flex-wrap items-center gap-2 px-5 py-2 text-sm" : undefined}>
+      <p role="status">{visibleLaunch?.state === "expired" ? "Link expired" : ""}</p>
+      {visibleLaunch?.state === "expired" && <Button variant="outline" disabled={blocked} onClick={() => authorize(visibleLaunch.service)}>Request new link</Button>}
+    </div>
+    {vm.kind === "primary" && canManage && canManageConnect && !starting && !startingRequest && !failed && <div className="border-t px-5 py-4">
       <WorkspaceT3Connect workspaceId={workspaceId} vmId={vm.id} organizationId={organizationId}
         generation={vm.generation} revision={vm.revision} ready={ready && !busy} />
     </div>}
@@ -212,8 +232,8 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
           <div><dt>Placement</dt><dd>{vm.profile} · {vm.sku} · {vm.region} · provider account {vm.providerAccountId}</dd></div>
           <div><dt>Compute estimates</dt><dd>{vm.computeHourlyRate.toFixed(4)} {currency}/hour · {vm.estimatedMonthlyCompute.toFixed(2)} {currency}/month</dd></div>
           <div><dt>Reservation</dt><dd>{vm.computeReserved ? "Reserved — charges may continue until deletion is confirmed." : "No compute reservation reported; this is not confirmation of provider deletion or a final bill."}</dd></div>
-          <div><dt>Activity</dt><dd>Last activity: {vm.lastActivityAt ?? "unavailable"} · Idle stop deadline: {vm.shutdownDeadline ?? "none reported"}</dd></div>
-          <div><dt>Image / plan / server</dt><dd>{vm.imageId} · {vm.planId} · {vm.providerServerId ?? "none reported"} · Last ready: {vm.lastReadyAt ?? "unavailable"}</dd></div>
+          <div><dt>Activity</dt><dd>{vm.lastActivityAt ? `Last activity: ${vm.lastActivityAt}` : "Waiting for first activity"} · Idle stop deadline: {vm.shutdownDeadline ?? "none reported"}</dd></div>
+          <div><dt>Image / plan / server</dt><dd>{vm.imageId} · {vm.planId} · {vm.providerServerId ?? "none reported"}{vm.lastReadyAt && ` · Last ready: ${vm.lastReadyAt}`}</dd></div>
           {retainedStorage && <div><dt>Retained volume status</dt><dd>{retainedStorage.status ?? "status unavailable"}</dd></div>}
         </dl>
         <div className="space-y-2 break-words text-xs text-muted-foreground">

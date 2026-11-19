@@ -5,6 +5,7 @@ namespace Minicloud.RuntimeAgent;
 public sealed class CursorStore(string path)
 {
     private readonly Dictionary<string, string> _cursors = new(StringComparer.Ordinal);
+    private bool _dirty;
 
     public IReadOnlyDictionary<string, string> Cursors => _cursors;
 
@@ -22,13 +23,23 @@ public sealed class CursorStore(string path)
         {
             _cursors[pair.Key] = pair.Value;
         }
+        _dirty = false;
     }
 
     public async Task SaveAsync(IReadOnlyDictionary<string, string> acceptedCursors, CancellationToken cancellationToken)
     {
         foreach (var pair in acceptedCursors)
         {
-            _cursors[pair.Key] = pair.Value;
+            if (!_cursors.TryGetValue(pair.Key, out var saved) || saved != pair.Value)
+            {
+                _cursors[pair.Key] = pair.Value;
+                _dirty = true;
+            }
+        }
+
+        if (!_dirty)
+        {
+            return;
         }
 
         var directory = Path.GetDirectoryName(path);
@@ -44,6 +55,7 @@ public sealed class CursorStore(string path)
         }
 
         File.Move(tempPath, path, overwrite: true);
+        _dirty = false;
     }
 }
 

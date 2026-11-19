@@ -1,9 +1,7 @@
 {
   "DevelopmentWorkspaces": {
     "Enabled": false,
-    "MaxActiveWorkspaces": 3,
     "MaxActiveVms": 9,
-    "MaxWorkspacesPerOrganization": 2,
     "MaxVmsPerWorkspace": 3,
     "MaxVmsPerOrganization": 3,
     "MaxEstimatedMonthlySpend": 0,

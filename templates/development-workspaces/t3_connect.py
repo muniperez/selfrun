@@ -221,31 +221,34 @@ class Enrollment:
     def collect(self, process):
         url = None
         size = 0
+        result = "approval_failed"
+        timed_out = False
         try:
             while line := process.stdout.readline(4097):
                 size += len(line)
                 require(size <= 32768 and len(line) <= 4096, "Unexpected CLI output")
                 text = line.decode("utf-8", errors="replace").strip()
+                if text.endswith("Timed out waiting for T3 Connect authorization."):
+                    timed_out = True
                 if re.fullmatch(r"https://[a-zA-Z0-9.-]+/[^\s<>\"']*", text):
                     url = text
                 match = re.fullmatch(r"Code: ([A-Za-z0-9-]{4,32})", text)
                 if match and url:
                     with self.lock:
-                        if self.process is process:
+                        if self.process is process and self.result == "awaiting_approval":
                             self.prompt = dict(url=url, code=match[1])
-            exit_code = process.wait()
-            with self.lock:
-                if self.process is process:
-                    self.result = "approval_saved_activate_required" if exit_code == 0 else "approval_failed"
+            if process.wait() == 0:
+                result = "approval_saved_activate_required"
+            elif timed_out:
+                result = "approval_expired"
         except Exception:
             self.terminate(process)
-            with self.lock:
-                if self.process is process:
-                    self.result = "approval_failed"
         finally:
             process.stdout.close()
             with self.lock:
                 if self.process is process:
+                    if self.result == "awaiting_approval":
+                        self.result = result
                     self.process, self.prompt = None, None
                     self.clear_pending()
 
@@ -310,6 +313,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.reply(200, (Path(__file__).parent / "t3-connect.html").read_bytes(), "text/html; charset=utf-8")
             elif self.path == "/connect.js":
                 self.reply(200, (Path(__file__).parent / "t3-connect.js").read_bytes(), "text/javascript; charset=utf-8")
+            elif self.path == "/connect.css":
+                self.reply(200, (Path(__file__).parent / "t3-connect.css").read_bytes(), "text/css; charset=utf-8")
             elif self.path == "/status":
                 if self.authorized():
                     self.reply(200, self.server.enrollment.status())

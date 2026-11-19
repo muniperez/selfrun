@@ -86,6 +86,40 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DetailReportsAllowlistedStartupStageOfCurrentOperationEvenWhenBlocked()
+    {
+        using var owner = Client(token);
+        var workspace = await Create(owner);
+        var detail = $"{Root}/{workspace.Id}?organizationId=org";
+        Assert.Null(Assert.Single((await owner.GetFromJsonAsync<DevelopmentWorkspaceResponse>(detail))!.Vms!).StartupStage);
+        using var started = await owner.PostAsync($"{Root}/{workspace.Id}/start?organizationId=org", null);
+        Assert.True(started.IsSuccessStatusCode, await started.Content.ReadAsStringAsync());
+        var pending = Assert.Single((await owner.GetFromJsonAsync<DevelopmentWorkspaceResponse>(detail))!.Vms!);
+        Assert.Equal("preparing_vm", pending.StartupStage);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var operation = await db.DevelopmentWorkspaceOperations.SingleAsync();
+        var machine = await db.DevelopmentWorkspaceVms.SingleAsync();
+        operation.Step = "session";
+        operation.ProviderEvidenceJson = """{"private":"synthetic-private-evidence"}""";
+        machine.Phase = "blocked";
+        machine.ErrorCode = "workspace_reconciliation_required";
+        await db.SaveChangesAsync();
+
+        var raw = await owner.GetStringAsync(detail);
+        Assert.DoesNotContain("synthetic-private-evidence", raw);
+        Assert.DoesNotContain(operation.Id, raw);
+        var blocked = Assert.Single((await owner.GetFromJsonAsync<DevelopmentWorkspaceResponse>(detail))!.Vms!);
+        Assert.Equal("blocked", blocked.Phase);
+        Assert.Equal("checking_readiness", blocked.StartupStage);
+
+        machine.Generation++;
+        await db.SaveChangesAsync();
+        Assert.Null(Assert.Single((await owner.GetFromJsonAsync<DevelopmentWorkspaceResponse>(detail))!.Vms!).StartupStage);
+    }
+
+    [Fact]
     public async Task DiscoveryNeedsOnlyReadPermissionAndReturnsPublicMetadataWithoutAllocating()
     {
         string readToken, noReadToken;

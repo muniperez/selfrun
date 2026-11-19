@@ -162,7 +162,7 @@ def install(source_revision, builder):
     runtime = Path("/opt/minicloud-workspace")
     runtime.mkdir(exist_ok=True)
     for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py",
-                 "t3_connect.py", "t3-connect.html", "t3-connect.js", "copilot_provider.py"):
+                 "t3_connect.py", "t3-connect.html", "t3-connect.js", "t3-connect.css", "copilot_provider.py"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
     install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))

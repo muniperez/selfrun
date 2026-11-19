@@ -39,7 +39,7 @@ public sealed class DevelopmentWorkspacesController(
         if (!await CanAsync(organizationId, OrganizationAction.ReadApps, ct)) return EndpointResults.Forbidden();
         var workspace = await workspaces.GetAsync(id, organizationId, ct);
         return workspace is null ? EndpointResults.NotFound("workspace_not_found", "Workspace was not found.")
-            : Results.Ok(workspaces.ToResponse(workspace));
+            : Results.Ok(await workspaces.ToDetailResponseAsync(workspace, ct));
     }
 
     [HttpGet("{id}/vms")]
