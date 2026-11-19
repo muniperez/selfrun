@@ -5,6 +5,7 @@ using Minicloud.Api.Auth;
 using Minicloud.Common.Auth;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
+using Minicloud.Common.Contracts;
 using Minicloud.Common.Services;
 
 namespace Minicloud.Api.Services;

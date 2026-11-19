@@ -9,6 +9,7 @@ using Minicloud.Api.Controllers;
 using Minicloud.Api.Services;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
+using Minicloud.Common.Contracts;
 using Minicloud.Common.Services;
 
 namespace Minicloud.WorkspaceGateway.Tests;

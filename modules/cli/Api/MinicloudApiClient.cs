@@ -94,6 +94,16 @@ public sealed class MinicloudApiClient
     public Task<DevelopmentWorkspaceResponse> GetDevelopmentWorkspaceAsync(string id, string organizationId, CancellationToken ct) =>
         SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Get, $"/api/development-workspaces/{Uri.EscapeDataString(id)}?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);
 
+    public Task<WorkspaceSelections> GetDevelopmentWorkspaceSelectionsAsync(string organizationId, string? workspaceId, CancellationToken ct) =>
+        SendAsync<WorkspaceSelections>(HttpMethod.Get, $"/api/development-workspaces/selections?organizationId={Uri.EscapeDataString(organizationId)}"
+            + (workspaceId is null ? "" : $"&workspaceId={Uri.EscapeDataString(workspaceId)}"), null, ct);
+
+    public Task<DevelopmentWorkspaceGatewayLaunchResponse> LaunchDevelopmentWorkspaceGatewayAsync(
+        string id, string vmId, string organizationId, long generation, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceGatewayLaunchResponse>(HttpMethod.Post,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}/vms/{Uri.EscapeDataString(vmId)}/launch?organizationId={Uri.EscapeDataString(organizationId)}",
+            new DevelopmentWorkspaceGatewayLaunchRequest(generation), ct);
+
     public Task<DevelopmentWorkspaceResponse> CreateDevelopmentWorkspaceAsync(CreateDevelopmentWorkspaceRequest request, CancellationToken ct) =>
         SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post, "/api/development-workspaces", request, ct);
 

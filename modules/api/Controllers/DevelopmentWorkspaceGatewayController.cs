@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Minicloud.Api.Services;
+using Minicloud.Common.Contracts;
 using Minicloud.Common.Services;
 
 namespace Minicloud.Api.Controllers;

@@ -1,4 +1,8 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Minicloud.Cli.Api;
 using Minicloud.Common.Contracts;
 
 namespace Minicloud.Cli.Commands;
@@ -8,11 +12,11 @@ public sealed partial class CliApplication
     private async Task<int> RunWorkspacesAsync(string[] args, CancellationToken ct)
     {
         var action = args.FirstOrDefault();
-        if (action is not ("list" or "create" or "status" or "start" or "stop" or "cancel-idle-stop"
+        if (action is not ("list" or "selections" or "create" or "open" or "status" or "start" or "stop" or "cancel-idle-stop"
             or "resize-next-start" or "vms" or "launch" or "vm-status" or "vm-start" or "vm-stop"
             or "vm-cancel-idle-stop" or "vm-discard" or "vm-resize-next-start" or "stop-all"
             or "task-renew" or "task-complete"))
-            throw WorkspaceUsage("Expected list, create, status, start, stop, cancel-idle-stop, resize-next-start, vms, launch, vm-status, vm-start, vm-stop, vm-cancel-idle-stop, vm-discard, vm-resize-next-start, stop-all, task-renew or task-complete. See workspaces --help.");
+            throw WorkspaceUsage("Expected list, selections, create, open, status, start, stop, cancel-idle-stop, resize-next-start, vms, launch, vm-status, vm-start, vm-stop, vm-cancel-idle-stop, vm-discard, vm-resize-next-start, stop-all, task-renew or task-complete. See workspaces --help.");
 
         string Required(string option) => GetOption(args, option) is { Length: > 0 } value
             ? value : throw WorkspaceUsage($"Required: {option} <value>.");
@@ -21,6 +25,18 @@ public sealed partial class CliApplication
         void Acknowledge(string flag)
         {
             if (!args.Contains(flag)) throw WorkspaceUsage($"Explicit {flag} is required.");
+        }
+        var json = args.Contains("--json", StringComparer.Ordinal);
+        // Keep stdout machine-readable with --json; advisories still reach the terminal on stderr.
+        void Note(string message)
+        {
+            if (json) _console.WriteError(message); else _console.WriteLine(message);
+        }
+        int Output<T>(T value, Action<T> human)
+        {
+            if (json) _console.WriteLine(JsonSerializer.Serialize(value, WorkspaceJson));
+            else human(value);
+            return CliExitCodes.Success;
         }
         DevelopmentWorkspaceResizeRequest Resize() => new(Generation(), Required("--image"), Required("--profile"), Required("--plan"));
 
@@ -33,19 +49,41 @@ public sealed partial class CliApplication
         if (action == "list")
         {
             var items = await _apiClient.GetDevelopmentWorkspacesAsync(organizationId, ct);
-            foreach (var item in items) WriteWorkspace(item);
-            if (items.Count == 0) _console.WriteLine("No development workspaces.");
-            return CliExitCodes.Success;
+            return Output(items, list =>
+            {
+                foreach (var item in list) WriteWorkspace(item);
+                if (list.Count == 0) _console.WriteLine("No development workspaces.");
+            });
+        }
+        if (action == "selections")
+        {
+            var selections = await _apiClient.GetDevelopmentWorkspaceSelectionsAsync(organizationId, GetOption(args, "--workspace"), ct);
+            return Output(selections, WriteWorkspaceSelections);
         }
         if (action == "create")
         {
             if (!int.TryParse(Required("--volume-gb"), NumberStyles.None, CultureInfo.InvariantCulture, out var size) || size is < 10 or > 10000)
                 throw WorkspaceUsage("--volume-gb must be between 10 and 10000.");
-            var key = GetOption(args, "--idempotency-key") ?? Guid.NewGuid().ToString("N");
-            _console.WriteLine($"Create idempotency key: {key}. Reuse this key when retrying the same request.");
-            WriteWorkspace(await _apiClient.CreateDevelopmentWorkspaceAsync(new CreateDevelopmentWorkspaceRequest(
-                organizationId, Required("--name"), Required("--image"), Required("--profile"), Required("--plan"), size, key), ct));
-            _console.WriteLine("Workspace created stopped; start is explicit.");
+            var name = Required("--name").Trim();
+            var explicitKey = GetOption(args, "--idempotency-key");
+            var key = explicitKey ?? DefaultWorkspaceCreateKey(organizationId, name);
+            Note(explicitKey is null
+                ? $"Create idempotency key: {key} (derived from organization and name). Re-running the same create resumes this workspace."
+                : $"Create idempotency key: {key}. Reuse this key when retrying the same request.");
+            DevelopmentWorkspaceResponse created;
+            try
+            {
+                created = await _apiClient.CreateDevelopmentWorkspaceAsync(new CreateDevelopmentWorkspaceRequest(
+                    organizationId, name, Required("--image"), Required("--profile"), Required("--plan"), size, key), ct);
+            }
+            catch (ApiException error) when (error.Code == "workspace_idempotency_conflict")
+            {
+                throw WorkspaceUsage(explicitKey is null
+                    ? $"Workspace '{name}' already exists with a different image, profile, plan or volume size. Inspect it with 'minicloud workspaces list', change it with resize-next-start, or choose another --name."
+                    : "This --idempotency-key was already used with a different request. Repeat the original options or use a new key.");
+            }
+            Output(created, WriteWorkspace);
+            Note("Workspace created stopped; start is explicit.");
             return CliExitCodes.Success;
         }
 
@@ -57,7 +95,39 @@ public sealed partial class CliApplication
             var vms = await _apiClient.GetWorkspaceVmsAsync(id, organizationId, ct);
             if (action == "vm-status") vms = vms.Where(x => x.Id == Required("--vm")).ToArray();
             if (vms.Count == 0 && action == "vm-status") throw WorkspaceUsage("VM not found in selected workspace.");
-            foreach (var vm in vms) WriteWorkspaceVm(vm);
+            return Output(vms, list => { foreach (var vm in list) WriteWorkspaceVm(vm); });
+        }
+        if (action == "open")
+        {
+            var current = await _apiClient.GetDevelopmentWorkspaceAsync(id, organizationId, ct);
+            var vmId = GetOption(args, "--vm");
+            var vm = (current.Vms ?? []).FirstOrDefault(x => vmId is null ? x.Kind == "primary" : x.Id == vmId)
+                ?? throw WorkspaceUsage(vmId is null ? "Workspace has no primary VM." : "VM not found in selected workspace.");
+            if (vm.Phase != "ready" || vm.DesiredState != "running" || vm.ErrorCode is not null)
+                throw WorkspaceUsage($"VM {vm.Id} is {vm.DesiredState}/{vm.Phase}{(vm.ErrorCode is null ? "" : $" ({vm.ErrorCode})")}; open requires a ready running VM. "
+                    + (vm.Kind == "primary" ? $"Start it with 'minicloud workspaces start {id}'" : $"Start it with 'minicloud workspaces vm-start {id} --vm {vm.Id} --generation {vm.Generation}'")
+                    + " and check 'minicloud workspaces status'. Open never starts compute.");
+            DevelopmentWorkspaceGatewayLaunchResponse launch;
+            try
+            {
+                launch = await _apiClient.LaunchDevelopmentWorkspaceGatewayAsync(id, vm.Id, organizationId, vm.Generation, ct);
+            }
+            catch (ApiException error) when (error.StatusCode is 409 or 503)
+            {
+                throw WorkspaceUsage(error.StatusCode == 503
+                    ? "The workspace gateway is not configured on this Minicloud server. Ask your operator to enable it."
+                    : $"VM {vm.Id} generation {vm.Generation} is not ready for T3 access or you lack write access. Refresh with 'minicloud workspaces status {id}' and retry.");
+            }
+            if (!Uri.TryCreate(launch.Url, UriKind.Absolute, out var url) || url.Scheme != Uri.UriSchemeHttps || url.UserInfo.Length != 0)
+                throw new CliCommandException(CliExitCodes.NetworkOrApiUnavailable, "The server returned an unsafe launch URL; an HTTPS URL without embedded credentials is required.");
+            Output(launch, value =>
+            {
+                _console.WriteLine($"T3 on VM {vm.Id} generation {vm.Generation} ({vm.Kind}). Single-use link, expires {value.ExpiresAt:O}:");
+                _console.WriteLine(value.Url);
+            });
+            if (!args.Contains("--no-browser", StringComparer.Ordinal) && !TryOpenBrowser(launch.Url))
+                Note("Could not open a browser; open the link above before it expires.");
+            Note("Do not share this link. Run open again for a new session after it expires.");
             return CliExitCodes.Success;
         }
         if (action.StartsWith("task-", StringComparison.Ordinal))
@@ -70,8 +140,8 @@ public sealed partial class CliApplication
                 ? new CompleteDevelopmentWorkspaceTaskRequest(generation, args.Contains("--cancelled"))
                 : new DevelopmentWorkspaceGenerationRequest(generation);
             var lease = await _apiClient.WorkspaceTaskAsync(id, vm, organizationId, task, complete, body, ct);
-            _console.WriteLine($"Task {lease.TaskId}: {lease.Status}; VM {lease.VmId}, generation {lease.Generation}; lease expires {lease.ExpiresAt:O}");
-            return CliExitCodes.Success;
+            return Output(lease, value => _console.WriteLine(
+                $"Task {value.TaskId}: {value.Status}; VM {value.VmId}, generation {value.Generation}; lease expires {value.ExpiresAt:O}"));
         }
         if (action == "launch")
         {
@@ -81,9 +151,9 @@ public sealed partial class CliApplication
                 Required("--image"), Required("--profile"), Required("--plan"), Required("--repository"),
                 Required("--base-ref"), Required("--base-commit"), true, true,
                 GetOption(args, "--idempotency-key") ?? Guid.NewGuid().ToString("N"), GetOption(args, "--repository-credential-ref"));
-            _console.WriteLine($"Launch idempotency key: {request.IdempotencyKey}. Reuse this key when retrying the same request.");
-            WriteWorkspace(await _apiClient.WorkspaceOperationAsync(id, organizationId, "vms/ephemeral", request, ct));
-            _console.WriteLine($"Launch idempotency key: {request.IdempotencyKey}. Git-only root: ignored/untracked data is not retained. Launch does not push, open a PR, or merge.");
+            Note($"Launch idempotency key: {request.IdempotencyKey}. Reuse this key when retrying the same request.");
+            Output(await _apiClient.WorkspaceOperationAsync(id, organizationId, "vms/ephemeral", request, ct), WriteWorkspace);
+            Note($"Launch idempotency key: {request.IdempotencyKey}. Git-only root: ignored/untracked data is not retained. Launch does not push, open a PR, or merge.");
             return CliExitCodes.Success;
         }
         if (action.StartsWith("vm-", StringComparison.Ordinal))
@@ -94,7 +164,7 @@ public sealed partial class CliApplication
             {
                 if (args.Any(x => x is "--base-commit" or "--base-ref" or "--repository"))
                     throw WorkspaceUsage("vm-start uses the recorded verified saved Git source; repository/base overrides are not supported.");
-                _console.WriteLine("Stopped Git-only VMs recover their verified saved remote HEAD, not the original base. No commit or push is performed.");
+                Note("Stopped Git-only VMs recover their verified saved remote HEAD, not the original base. No commit or push is performed.");
             }
             object body;
             if (operation == "discard")
@@ -102,29 +172,44 @@ public sealed partial class CliApplication
                 Acknowledge("--discard-local-data");
                 Acknowledge("--acknowledge-ignored-data-loss");
                 body = new DevelopmentWorkspaceDiscardRequest(Generation(), true, true);
-                _console.WriteLine($"IRREVERSIBLE discard requested for VM {vm}, generation {Generation()}. Local ignored/untracked/unpushed data will be lost.");
+                Note($"IRREVERSIBLE discard requested for VM {vm}, generation {Generation()}. Local ignored/untracked/unpushed data will be lost.");
             }
             else body = operation == "resize-next-start" ? Resize() : new DevelopmentWorkspaceGenerationRequest(Generation());
-            WriteWorkspace(await _apiClient.WorkspaceOperationAsync(id, organizationId,
-                $"vms/{Uri.EscapeDataString(vm)}/{(operation == "resize-next-start" ? "resize" : operation)}", body, ct));
-            return CliExitCodes.Success;
+            return Output(await _apiClient.WorkspaceOperationAsync(id, organizationId,
+                $"vms/{Uri.EscapeDataString(vm)}/{(operation == "resize-next-start" ? "resize" : operation)}", body, ct), WriteWorkspace);
         }
         if (action == "stop-all")
         {
             var current = await _apiClient.GetDevelopmentWorkspaceAsync(id, organizationId, ct);
-            _console.WriteLine("Stopping the following VMs; Git-save guards apply independently and may block deletion:");
-            foreach (var vm in current.Vms ?? []) WriteWorkspaceVm(vm);
+            Note("Stopping the following VMs; Git-save guards apply independently and may block deletion:");
+            if (!json) foreach (var vm in current.Vms ?? []) WriteWorkspaceVm(vm);
         }
         var workspace = action == "status"
             ? await _apiClient.GetDevelopmentWorkspaceAsync(id, organizationId, ct)
             : action == "resize-next-start"
                 ? await _apiClient.WorkspaceOperationAsync(id, organizationId, "resize", Resize(), ct)
                 : await _apiClient.MutateDevelopmentWorkspaceAsync(id, organizationId, action, ct);
-        WriteWorkspace(workspace);
-        return CliExitCodes.Success;
+        return Output(workspace, WriteWorkspace);
     }
 
+    private static readonly JsonSerializerOptions WorkspaceJson = new(JsonSerializerDefaults.Web);
+
     private static CliCommandException WorkspaceUsage(string message) => new(CliExitCodes.ValidationError, message);
+
+    internal static string DefaultWorkspaceCreateKey(string organizationId, string name) =>
+        "cli-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{organizationId}\n{name}"))).ToLowerInvariant()[..40];
+
+    private void WriteWorkspaceSelections(WorkspaceSelections selections)
+    {
+        if (!selections.Available)
+        {
+            _console.WriteLine($"Workspace creation is unavailable: {selections.UnavailableReason ?? "no eligible image, profile and plan."}");
+            return;
+        }
+        foreach (var option in selections.Options)
+            _console.WriteLine($"--image {option.ImageId} --profile {option.Profile} --plan {option.PlanId}  # {option.ImageName}; {option.PlanName} on {option.ProviderAccountName} {option.Region}/{option.Sku}");
+        if (selections.Options.Count == 0) _console.WriteLine("No eligible image, profile and plan combinations.");
+    }
 
     private void WriteWorkspace(DevelopmentWorkspaceResponse workspace)
     {

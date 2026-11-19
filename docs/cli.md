@@ -633,6 +633,41 @@ minicloud domains delete --app <app> --hostname <host>
 `domains list` includes each hostname's service, status, runtime apply state,
 TLS state, last applied timestamp, and last updated timestamp.
 
+## Coding Workspaces
+
+Operator-enabled development workspaces run T3 Code on a private VM with a
+retained primary volume. The CLI uses the same workspace API, worker and gateway
+as the dashboard.
+
+```bash
+minicloud workspaces selections [--organization <id>]
+minicloud workspaces create --name coding --image <image> --profile Standard --plan <plan> --volume-gb 20
+minicloud workspaces start <workspace-id>
+minicloud workspaces status <workspace-id>
+minicloud workspaces open <workspace-id> [--vm <vm-id>] [--no-browser]
+minicloud workspaces stop <workspace-id>
+```
+
+- `selections` lists the eligible `--image`, `--profile` and `--plan`
+  combinations for `create`.
+- `create` records a stopped workspace. Without `--idempotency-key`, the key is
+  derived from the organization and name. Repeating the same create returns the
+  existing workspace. Different options fail with an actionable conflict.
+- `start` provisions or resumes the primary VM. The worker records provider
+  identity before readiness and reconciles retries. Use `status` to follow its
+  readiness stage and any blocking error.
+- `open` mints a short-lived, single-use T3 gateway link for a ready running VM,
+  primary by default, and opens it in your browser. It never starts compute.
+  Use `--no-browser` on terminal-only clients. Run it again after the link
+  expires. Do not share the link.
+- Sign in to coding providers inside T3. Repository access uses the organization's
+  [GitHub App](github-app.md). For optional T3 account linking, see
+  [T3 Connect](t3-connect.md).
+- Add `--json` to print the API response on stdout; advisories go to stderr.
+
+Run `minicloud workspaces --help` for ephemeral Git-only VMs, resizing, task
+leases and explicit discard.
+
 ## Version And Help
 
 Check the installed CLI version:

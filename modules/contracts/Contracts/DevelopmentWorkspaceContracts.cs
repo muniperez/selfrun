@@ -75,3 +75,6 @@ public sealed record DevelopmentWorkspaceVmResponse(
 
 public sealed record DevelopmentWorkspaceTaskLeaseResponse(
     string VmId, string TaskId, long Generation, string Status, DateTimeOffset ExpiresAt);
+
+public sealed record DevelopmentWorkspaceGatewayLaunchRequest(long Generation, string Service = "t3");
+public sealed record DevelopmentWorkspaceGatewayLaunchResponse(string Url, DateTimeOffset ExpiresAt);
