@@ -191,6 +191,7 @@ class ConnectTests(unittest.TestCase):
         process = Mock(stdout=Output())
         process.wait.return_value = 0
         manager.process = process
+        manager.result = "awaiting_approval"
         worker = threading.Thread(target=manager.collect, args=(process,))
         worker.start()
         for _ in range(100):
@@ -208,6 +209,51 @@ class ConnectTests(unittest.TestCase):
         self.assertIsNone(manager.prompt)
         self.assertIsNone(manager.process)
         self.assertEqual(manager.result, "approval_saved_activate_required")
+
+    def test_expiry_clears_approval_and_survives_cli_cleanup(self):
+        manager = connect.Enrollment(self.config, self.root)
+        marker = self.root / "connect-operation.json"
+        marker.touch()
+        process = Mock(stdout=io.BytesIO(b"https://example.invalid/activate\nCode: TEST-CODE\n"))
+        process.wait.return_value = -15
+        manager.process = process
+        manager.result = "awaiting_approval"
+        manager.prompt = dict(code="OLD-CODE", url="https://example.invalid/activate")
+        with patch.object(manager, "terminate"):
+            manager.expire(process)
+        self.assertIsNone(manager.prompt)
+        manager.collect(process)
+        self.assertIsNone(manager.prompt)
+        self.assertIsNone(manager.process)
+        self.assertEqual(manager.result, "approval_expired")
+        self.assertFalse(marker.exists())
+
+    def test_upstream_approval_timeout_is_reported_as_expired(self):
+        manager = connect.Enrollment(self.config, self.root)
+        process = Mock(stdout=io.BytesIO(
+            b"CloudCliAuthorizationTimeoutError: Timed out waiting for T3 Connect authorization.\n"))
+        process.wait.return_value = 1
+        manager.process = process
+        manager.result = "awaiting_approval"
+        manager.collect(process)
+        self.assertEqual(manager.result, "approval_expired")
+        self.assertIsNone(manager.prompt)
+
+    def test_page_stylesheet_is_served_under_the_existing_csp(self):
+        handler = object.__new__(connect.Handler)
+        handler.path = "/connect.css"
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = io.BytesIO()
+        handler.do_GET()
+        handler.send_response.assert_called_once_with(200)
+        handler.send_header.assert_any_call("Content-Type", "text/css; charset=utf-8")
+        handler.send_header.assert_any_call("Cache-Control", "no-store")
+        handler.send_header.assert_any_call("Content-Security-Policy",
+                                           "default-src 'self'; script-src 'self'; style-src 'self'; "
+                                           "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        self.assertEqual(handler.wfile.getvalue(), (HERE / "t3-connect.css").read_bytes())
 
     def test_routine_t3_token_and_missing_management_credential_are_rejected(self):
         handler = object.__new__(connect.Handler)
