@@ -670,9 +670,7 @@ public sealed class RuntimeApiIntegrationTests : IAsyncLifetime
             {
                 services.RemoveAll<ICustomDomainDnsResolver>();
                 services.AddSingleton<ICustomDomainDnsResolver>(Dns);
-                services.RemoveAll<DbContextOptions<MinicloudDbContext>>();
-                services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
-                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection));
+                services.UseSharedSqliteConnection(connection);
             });
         }
     }

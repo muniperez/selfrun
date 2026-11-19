@@ -491,9 +491,7 @@ public sealed class MaintenanceAuthorityTests : IAsyncLifetime
             }));
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<DbContextOptions<MinicloudDbContext>>();
-                services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
-                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection));
+                services.UseSharedSqliteConnection(connection);
             });
         }
     }
