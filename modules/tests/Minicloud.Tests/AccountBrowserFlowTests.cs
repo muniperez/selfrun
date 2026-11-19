@@ -564,9 +564,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             }));
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<DbContextOptions<MinicloudDbContext>>();
-                services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
-                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection));
+                services.UseSharedSqliteConnection(connection);
                 services.RemoveAll<IKratosSessionValidator>();
                 services.AddSingleton<IKratosSessionValidator>(new SessionValidator());
                 services.AddHttpClient<KratosBrowserFlowClient>().ConfigurePrimaryHttpMessageHandler(() => Upstream);
