@@ -50,15 +50,61 @@ describe("account browser forms", () => {
     expect(document.body.textContent).not.toContain("synthetic-password");
   });
 
-  it("requires an explicit restart after an expired form", async () => {
+  it("requests a fresh sign-in form when the initial flow has expired", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ error: { code: "auth_flow_expired", message: "Expired" } }, 410))
+      .mockResolvedValueOnce(jsonResponse({ flow: browserFlow(), session: null }));
+    vi.stubGlobal("fetch", fetcher);
+    mount("login", false, false, "/cli/login?session=request-1");
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][0]).toContain("/browser?returnTo=%2Fcli%2Flogin%3Fsession%3Drequest-1");
+    expect(screen.queryByRole("button", { name: "Restart form" })).not.toBeInTheDocument();
+  });
+
+  it.each(["on the page", "on submission"])("refreshes a flow expired %s without replaying the password", async expiry => {
+    const initialFlow = browserFlow();
+    if (expiry === "on the page") initialFlow.expiresAt = "2000-01-01T00:00:00Z";
+    const freshFlow = browserFlow();
+    freshFlow.id = "22222222-3333-4444-8555-666666666666";
+    freshFlow.ui.action = `/api/account/flows/login?flow=${freshFlow.id}`;
+    freshFlow.ui.nodes[0].value = "refreshed-csrf";
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ flow: initialFlow, session: null }));
+    if (expiry === "on submission") {
+      fetcher.mockResolvedValueOnce(jsonResponse({ error: { code: "auth_flow_expired", message: "Expired" } }, 410));
+    }
+    fetcher.mockResolvedValueOnce(jsonResponse({ flow: freshFlow, session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }));
+    vi.stubGlobal("fetch", fetcher);
+    const auth = mount();
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "operator@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "original-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+      expect(screen.getByLabelText("Password")).toHaveValue("");
+    });
+    expect(fetcher.mock.calls.filter(call => call[1].method === "POST")).toHaveLength(expiry === "on submission" ? 1 : 0);
+    expect(auth.refreshSession).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "operator@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "new-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
+    const [url, request] = fetcher.mock.calls.at(-1)!;
+    expect(url).toContain(`flow=${freshFlow.id}`);
+    expect(JSON.parse(request.body)).toMatchObject({ csrf_token: "refreshed-csrf", password: "new-password" });
+  });
+
+  it("offers a manual retry if fetching a fresh sign-in form fails", async () => {
+    const expired = () => jsonResponse({ error: { code: "auth_flow_expired", message: "Expired" } }, 410);
+    const fetcher = vi.fn().mockResolvedValueOnce(expired()).mockResolvedValueOnce(expired())
       .mockResolvedValueOnce(jsonResponse({ flow: browserFlow(), session: null }));
     vi.stubGlobal("fetch", fetcher);
     mount();
     expect(await screen.findByRole("alert")).toHaveTextContent("Restart");
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByText("Restart form"));
-    expect(await screen.findByLabelText("Password")).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Restart form" }));
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
   });
 
   it("does not render signup, Google or recovery unless explicitly enabled", async () => {

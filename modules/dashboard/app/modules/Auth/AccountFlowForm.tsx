@@ -32,6 +32,10 @@ function supportedNode(node: FlowNode) {
     ["csrf_token", "identifier", "password", "method", "email", "code", "traits.email", "traits.name", "traits.name.first", "traits.name.last"].includes(node.name);
 }
 
+function expiredLoginFlow(kind: FlowKind, error: unknown) {
+  return kind === "login" && error instanceof ApiError && error.code === "auth_flow_expired";
+}
+
 export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
   kind: FlowKind;
   returnTo?: string;
@@ -57,7 +61,13 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     setRestartRequired(false);
     if (!enabled) return;
     setBusy(true);
-    (flowId && revision === 0 ? getAccountFlow(kind, flowId) : startAccountFlow(kind, returnTo)).then(result => {
+    const request = flowId && revision === 0 ? getAccountFlow(kind, flowId) : startAccountFlow(kind, returnTo);
+    request.catch(loadError => {
+      if (current === generation.current && revision === 0 && expiredLoginFlow(kind, loadError)) {
+        return startAccountFlow(kind, returnTo);
+      }
+      throw loadError;
+    }).then(result => {
       if (current === generation.current) setFlow(result.flow);
     }).catch(loadError => {
       if (current === generation.current) {
@@ -68,11 +78,24 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     return () => { ++generation.current; };
   }, [enabled, kind, returnTo, revision, flowId]);
 
+  function handleExpiredFlow() {
+    if (kind === "login") {
+      restartFlow();
+    } else {
+      setError("This form expired. Restart to try again.");
+      setRestartRequired(true);
+    }
+  }
+
+  function restartFlow() {
+    setBusy(true);
+    setRevision(value => value + 1);
+  }
+
   async function continueWithGoogle() {
     if (!flow || busy || restartRequired) return;
     if (Date.parse(flow.expiresAt) <= Date.now()) {
-      setError("This form expired. Restart to try again.");
-      setRestartRequired(true);
+      handleExpiredFlow();
       return;
     }
     const current = generation.current;
@@ -83,6 +106,10 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
       if (current === generation.current) browserNavigation.assign(destination);
     } catch (providerError) {
       if (current !== generation.current) return;
+      if (expiredLoginFlow(kind, providerError)) {
+        restartFlow();
+        return;
+      }
       setError(accountErrorMessage(providerError));
       setRestartRequired(true);
       setBusy(false);
@@ -93,8 +120,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     event.preventDefault();
     if (!flow || busy || restartRequired) return;
     if (Date.parse(flow.expiresAt) <= Date.now()) {
-      setError("This form expired. Restart to try again.");
-      setRestartRequired(true);
+      handleExpiredFlow();
       return;
     }
     const current = generation.current;
@@ -108,6 +134,11 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     if (submitter instanceof HTMLButtonElement && submitter.name) fields[submitter.name] = submitter.value;
     setBusy(true);
     setError(null);
+    let refreshing = false;
+    function refreshExpiredLogin() {
+      refreshing = true;
+      restartFlow();
+    }
     try {
       const result = await submitAccountFlow(flow, fields);
       if (current !== generation.current) return;
@@ -120,22 +151,29 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     } catch (submitError) {
       if (current !== generation.current) return;
       form.reset();
-      setError(accountErrorMessage(submitError));
-      if (submitError instanceof ApiError && submitError.code === "auth_flow_invalid") {
+      if (expiredLoginFlow(kind, submitError)) {
+        refreshExpiredLogin();
+      } else if (submitError instanceof ApiError && submitError.code === "auth_flow_invalid") {
+        setError(accountErrorMessage(submitError));
         try {
           const result = await getAccountFlow(kind, flow.id);
           if (current === generation.current) setFlow(result.flow);
         } catch (readError) {
           if (current === generation.current) {
-            setError(accountErrorMessage(readError));
-            setRestartRequired(true);
+            if (expiredLoginFlow(kind, readError)) {
+              refreshExpiredLogin();
+            } else {
+              setError(accountErrorMessage(readError));
+              setRestartRequired(true);
+            }
           }
         }
       } else {
+        setError(accountErrorMessage(submitError));
         setRestartRequired(true);
       }
     } finally {
-      if (current === generation.current) setBusy(false);
+      if (current === generation.current && !refreshing) setBusy(false);
     }
   }
 
@@ -187,7 +225,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
             {kind === "settings" ? "Link Google account" : "Continue with Google"}
           </Button>
         ) : null}
-        {enabled ? <Button variant="outline" disabled={busy} onClick={() => setRevision(value => value + 1)}>Restart form</Button> : null}
+        {enabled && (kind !== "login" || restartRequired) ? <Button variant="outline" disabled={busy} onClick={restartFlow}>Restart form</Button> : null}
         {kind === "login" && capabilities?.emailRecovery ? <Link className="block underline" to="/recovery" state={{ from: returnTo }}>Forgot password?</Link> : null}
         {kind === "recovery" ? <Link className="block underline" to="/sign-in" state={{ from: returnTo }}>Return to sign in</Link> : null}
       </CardContent>
