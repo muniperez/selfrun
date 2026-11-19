@@ -60,6 +60,11 @@ public sealed class DevelopmentWorkspaceVm
     public bool ComputeReserved { get; set; }
     public bool StartAfterStop { get; set; }
     public DateTimeOffset? StartRequestedAt { get; set; }
+    // Latest runtime resource sample only (no history); telemetry never changes Revision on its own.
+    public string? ResourceSampleJson { get; set; }
+    public long? ResourceSampleGeneration { get; set; }
+    public DateTimeOffset? ResourceSampleReceivedAt { get; set; }
+    public string? RuntimeCapabilities { get; set; }
     public string? NextImageId { get; set; }
     public string? NextProfile { get; set; }
     public string? NextPlanId { get; set; }
@@ -163,4 +168,38 @@ public sealed class DevelopmentWorkspaceTaskLease
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public static class DevelopmentWorkspaceFilesystemJobKinds
+{
+    public const string DiskUsage = "disk_usage";
+    public const string DirectoryDeletion = "directory_deletion";
+}
+
+public sealed class DevelopmentWorkspaceFilesystemJob
+{
+    public string Id { get; set; } = default!;
+    public string OrganizationId { get; set; } = default!;
+    public string WorkspaceId { get; set; } = default!;
+    public string VmId { get; set; } = default!;
+    public long Generation { get; set; }
+    public string Kind { get; init; } = default!;
+    public string State { get; set; } = "queued";
+    public string PathJson { get; set; } = "[]";
+    public long? TargetDevice { get; set; }
+    public long? TargetInode { get; set; }
+    public string? SourceJobId { get; set; }
+    public string IdempotencyKey { get; set; } = default!;
+    public string RequestDigest { get; set; } = default!;
+    public string ActorId { get; set; } = default!;
+    public bool CancelRequested { get; set; }
+    public string? ResultJson { get; set; }
+    public string? ErrorCode { get; set; }
+    public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public long Revision { get; set; } = 1;
 }

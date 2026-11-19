@@ -1,3 +1,5 @@
+import type { DevelopmentWorkspaceVmResources } from "@/api/workspaceFilesystemApi";
+
 export type StorageMount = { sizeGb: number; mountPath: string; uid: number; gid: number };
 
 export type OrganizationSummary = {
@@ -446,4 +448,5 @@ export type DevelopmentWorkspaceVm = {
   taskLeases?: DevelopmentWorkspaceTaskLease[];
   startAfterStop?: boolean;
   startupStage?: string | null;
+  resources?: DevelopmentWorkspaceVmResources | null;
 };

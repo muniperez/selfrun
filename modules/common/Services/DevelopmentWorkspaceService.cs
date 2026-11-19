@@ -319,7 +319,8 @@ public sealed partial class DevelopmentWorkspaceService(
             vm.VerifiedRemoteCommit, vm.NextImageId, vm.NextProfile, vm.NextPlanId, vm.ComputeHourlyRate,
             vm.ComputeReserved ? vm.ComputeHourlyRate * 720m : 0, vm.ComputeReserved, vm.Revision,
             vm.TaskLeases.Where(x => x.Generation == vm.Generation).Select(x =>
-                new DevelopmentWorkspaceTaskLeaseResponse(x.VmId, x.TaskId, x.Generation, x.Status, x.ExpiresAt)).ToArray(), vm.StartAfterStop);
+                new DevelopmentWorkspaceTaskLeaseResponse(x.VmId, x.TaskId, x.Generation, x.Status, x.ExpiresAt)).ToArray(), vm.StartAfterStop,
+            Resources: Resources(vm));
 
     private async Task StartCoreAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, CancellationToken ct)
     {

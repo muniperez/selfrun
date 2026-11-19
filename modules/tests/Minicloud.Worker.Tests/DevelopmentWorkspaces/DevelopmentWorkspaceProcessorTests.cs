@@ -934,6 +934,186 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         return (workspace, vm, operation);
     }
 
+    [Fact]
+    public async Task HeartbeatStoresOnlyValidatedResourceSamplesForTheCurrentGeneration()
+    {
+        var (_, vm, _) = await Seed("session");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        await db.SaveChangesAsync();
+        runtime.Capabilities = ["resources-v1", "disk-usage-v1", "directory-delete-v1", "unknown-capability"];
+        runtime.Resources = ResourceSample(vm.Id, 1, utilization: 12.5);
+
+        Assert.True(await Processor().ProcessNextAsync(default));
+
+        var stored = await CurrentVm(vm.Id);
+        Assert.Equal("directory-delete-v1,disk-usage-v1,resources-v1", stored.RuntimeCapabilities);
+        var resources = lifecycle.ToVmResponse(stored).Resources!;
+        Assert.Equal("current", resources.State);
+        Assert.Equal(12.5, resources.Cpu!.UtilizationPercent);
+        Assert.Equal(["/", "/workspace"], resources.Filesystems.Single().Paths);
+        Assert.True(resources.DiskUsageSupported && resources.DirectoryDeletionSupported);
+
+        var status = JsonSerializer.SerializeToElement(new { resources = ResourceSample("vm_other", 1, utilization: 12.5) }, Json);
+        Assert.Null(DevelopmentWorkspaceService.NormalizeResourceSample(status, vm.Id, 1, clock.GetUtcNow()));
+        status = JsonSerializer.SerializeToElement(new { resources = ResourceSample(vm.Id, 1, utilization: 140) }, Json);
+        Assert.Null(DevelopmentWorkspaceService.NormalizeResourceSample(status, vm.Id, 1, clock.GetUtcNow()));
+
+        clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.Equal("stale", lifecycle.ToVmResponse(await CurrentVm(vm.Id)).Resources!.State);
+    }
+
+    [Fact]
+    public async Task OldImagesReportResourcesAsUnsupportedAndRejectFolderJobs()
+    {
+        var (workspace, vm) = await SeedFilesystemReady(capabilities: "");
+        Assert.Equal("unsupported", lifecycle.ToVmResponse(await CurrentVm(vm.Id)).Resources!.State);
+        var error = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDiskUsageScanAsync(
+            workspace.Id, "org", vm.Id, new(1, "scan-key-0001"), "actor", default));
+        Assert.Equal("workspace_disk_usage_unsupported", error.Code);
+    }
+
+    [Fact]
+    public async Task ConfirmedFolderDeletionUsesMeasuredIdentityAndNeverRelaunchesAfterALostReply()
+    {
+        var (workspace, vm) = await SeedFilesystemReady();
+        var root = await lifecycle.StartDiskUsageScanAsync(workspace.Id, "org", vm.Id, new(1, "scan-key-0001"), "actor", default);
+        Assert.Equal(root.Id, (await lifecycle.StartDiskUsageScanAsync(workspace.Id, "org", vm.Id, new(1, "scan-key-0001"), "actor", default)).Id);
+        await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDiskUsageScanAsync(
+            workspace.Id, "org", vm.Id, new(1, "scan-key-0002"), "actor", default));
+        runtime.FilesystemResult = ScanResult([], 11, 22, ("repos", 900L, true, false), ("lost+found", 0L, false, false));
+        await Processor().FilesystemNextAsync(default);
+        var start = runtime.FilesystemRequests.Single();
+        Assert.Equal("scan", start.GetProperty("mode").GetString());
+        Assert.Equal(JsonValueKind.Null, start.GetProperty("expect").ValueKind);
+        var scanned = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, root.Id, default));
+        Assert.Equal("succeeded", scanned.State);
+        Assert.Null(scanned.DiskUsage!.Entries.Single(x => x.Name == "lost+found").TargetToken);
+        var repos = scanned.DiskUsage.Entries.Single(x => x.Name == "repos");
+        Assert.Equal("/workspace/repos", repos.Path);
+        Assert.False(repos.CanDelete);
+        Assert.Equal("protected_path", repos.ProtectedReason);
+        await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDirectoryDeletionAsync(workspace.Id, "org", vm.Id,
+            new(1, repos.TargetToken!, "/workspace/repos", true, "delete-key-01"), "actor", default));
+
+        runtime.FilesystemResult = null;
+        var nested = await lifecycle.StartDiskUsageScanAsync(workspace.Id, "org", vm.Id, new(1, "scan-key-0003", repos.TargetToken), "actor", default);
+        await Processor().FilesystemNextAsync(default);
+        Assert.Equal(33, runtime.FilesystemRequests[^1].GetProperty("expect").GetProperty("ino").GetInt64());
+        runtime.FilesystemResult = ScanResult(["repos"], 11, 33, ("project", 700L, true, true));
+        await Processor().FilesystemNextAsync(default);
+        Assert.Equal("fs-job-status", runtime.Actions[^1]);
+        var project = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, nested.Id, default))
+            .DiskUsage!.Entries.Single();
+        Assert.True(project.CanDelete);
+
+        foreach (var (confirmation, acknowledged, code) in new[]
+                 {
+                     ("/workspace/repos/Project", true, "workspace_deletion_confirmation_mismatch"),
+                     ("/workspace/repos/project", false, "workspace_deletion_not_acknowledged")
+                 })
+        {
+            var refused = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDirectoryDeletionAsync(
+                workspace.Id, "org", vm.Id, new(1, project.TargetToken!, confirmation, acknowledged, "delete-key-" + code.Length), "actor", default));
+            Assert.Equal(code, refused.Code);
+        }
+        var forged = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDirectoryDeletionAsync(workspace.Id, "org",
+            vm.Id, new(1, nested.Id + ".forged", "/workspace/repos/project", true, "delete-key-02"), "actor", default));
+        Assert.Equal("workspace_folder_selection_expired", forged.Code);
+
+        var deletion = await lifecycle.StartDirectoryDeletionAsync(workspace.Id, "org", vm.Id,
+            new(1, project.TargetToken!, "/workspace/repos/project", true, "delete-key-03"), "actor", default);
+        Assert.Equal(deletion.Id, (await lifecycle.StartDirectoryDeletionAsync(workspace.Id, "org", vm.Id,
+            new(1, project.TargetToken!, "/workspace/repos/project", true, "delete-key-03"), "actor", default)).Id);
+        runtime.FilesystemResult = null;
+        runtime.FailFilesystemStart = true;
+        await Processor().FilesystemNextAsync(default);
+        runtime.FailFilesystemStart = false;
+        runtime.FilesystemResult = new
+        {
+            schemaVersion = 1, mode = "delete", policyVersion = 1, path = new[] { "repos", "project" }, outcome = "succeeded",
+            removedEntries = 12, removedBytes = 700, limitReached = (string?)null, errors = new { }
+        };
+        await Processor().FilesystemNextAsync(default);
+
+        var deleteRequest = runtime.FilesystemRequests[^2];
+        Assert.Equal("delete", deleteRequest.GetProperty("mode").GetString());
+        Assert.Equal(["repos", "project"], deleteRequest.GetProperty("path").EnumerateArray().Select(x => x.GetString()));
+        Assert.Equal(44, deleteRequest.GetProperty("expect").GetProperty("ino").GetInt64());
+        Assert.Equal(1, runtime.FilesystemRequests.Count(x => x.GetProperty("jobId").GetString() == deletion.Id
+            && x.TryGetProperty("mode", out _)));
+        var done = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, deletion.Id, default));
+        Assert.Equal("succeeded", done.State);
+        Assert.Equal(700, done.Deletion!.RemovedBytes);
+        var invalidated = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDiskUsageScanAsync(
+            workspace.Id, "org", vm.Id, new(1, "scan-key-0005", project.TargetToken), "actor", default));
+        Assert.Equal("workspace_folder_selection_expired", invalidated.Code);
+        var audit = await db.AuditEvents.AsNoTracking().Where(x => x.Action.StartsWith("development_workspace.folder_deletion"))
+            .Select(x => x.Action).ToListAsync();
+        Assert.Equal(["development_workspace.folder_deletion_completed", "development_workspace.folder_deletion_requested"], audit.Order());
+
+        clock.Advance(TimeSpan.FromMinutes(6));
+        var expired = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => lifecycle.StartDiskUsageScanAsync(
+            workspace.Id, "org", vm.Id, new(1, "scan-key-0004", repos.TargetToken), "actor", default));
+        Assert.Equal("workspace_folder_selection_expired", expired.Code);
+        clock.Advance(TimeSpan.FromDays(1));
+        await Processor().FilesystemNextAsync(default);
+        Assert.Equal([deletion.Id], await db.DevelopmentWorkspaceFilesystemJobs.AsNoTracking().Select(x => x.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task StoppingTheDevEnvironmentEndsRunningFolderJobsWithoutGuessingDeletionOutcomes()
+    {
+        var (workspace, vm) = await SeedFilesystemReady();
+        var scan = await lifecycle.StartDiskUsageScanAsync(workspace.Id, "org", vm.Id, new(1, "scan-key-0001"), "actor", default);
+        await Processor().FilesystemNextAsync(default);
+        var cancelled = await lifecycle.CancelFilesystemJobAsync(workspace.Id, "org", vm.Id, scan.Id, default);
+        Assert.True(cancelled.CancelRequested);
+        await Processor().FilesystemNextAsync(default);
+        Assert.Equal("fs-job-cancel", runtime.Actions[^1]);
+
+        var stored = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
+        stored.Phase = "draining"; stored.DesiredState = "stopped";
+        await db.SaveChangesAsync();
+        await Processor().FilesystemNextAsync(default);
+        var job = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, scan.Id, default));
+        Assert.Equal("failed", job.State);
+        Assert.Equal("dev_environment_stopped", job.ErrorCode);
+    }
+
+    private async Task<(DevelopmentWorkspace Workspace, DevelopmentWorkspaceVm Vm)> SeedFilesystemReady(
+        string capabilities = "directory-delete-v1,disk-usage-v1,resources-v1")
+    {
+        var (workspace, vm, start) = await Seed("ready");
+        vm.Phase = "ready"; vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10"; vm.GatewayReady = true;
+        start.Status = "completed";
+        vm.RuntimeCapabilities = capabilities; vm.ResourceSampleGeneration = 1; vm.ResourceSampleReceivedAt = clock.GetUtcNow();
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        return (workspace, vm);
+    }
+
+    private object ResourceSample(string vmId, long generation, double utilization) => new
+    {
+        schemaVersion = 1, vmId, generation, observedAt = clock.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0,
+        cpu = new { logicalCount = 4, utilizationPercent = utilization, windowSeconds = 30.0 },
+        memory = new { totalBytes = 8L << 30, availableBytes = 6L << 30 },
+        filesystems = new[] { new { paths = new[] { "/", "/workspace" }, totalBytes = 40L << 30, freeBytes = 30L << 30,
+            availableBytes = 28L << 30, inodesTotal = 1000L, inodesAvailable = 900L, nestedMountsExcluded = 0 } },
+        unavailable = new { }
+    };
+
+    private static object ScanResult(string[] path, long dev, long ino, params (string Name, long Bytes, bool Selectable, bool Deletable)[] entries) => new
+    {
+        schemaVersion = 1, mode = "scan", policyVersion = 1, path, target = new { dev, ino, uid = 2000 }, complete = true,
+        limitReached = (string?)null, totalBytes = entries.Sum(x => x.Bytes), filesHereBytes = 0, omittedEntries = 0, omittedBytes = 0,
+        scannedEntries = entries.Length, hardLinksApproximate = false, errors = new { }, elapsedSeconds = 0.1,
+        entries = entries.Select(x => new
+        {
+            name = x.Name, bytes = x.Bytes, state = "complete", errors = Array.Empty<string>(), selectable = x.Selectable,
+            deletable = x.Deletable, uid = 2000, dev, ino = ino + 11
+        }).ToArray()
+    };
+
     private async Task<(DevelopmentWorkspace Workspace, DevelopmentWorkspaceVm Vm, DevelopmentWorkspaceOperation Operation)> SeedStop(string step, bool ephemeral = false)
     {
         var (workspace, vm, start) = await Seed("ready", ephemeral);
@@ -1030,6 +1210,11 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public Dictionary<string, JsonElement> Rejections { get; } = [];
         public Action<string>? BeforeAction { get; set; }
         public List<string> Actions { get; } = [];
+        public object? Resources { get; set; }
+        public string[]? Capabilities { get; set; }
+        public List<JsonElement> FilesystemRequests { get; } = [];
+        public object? FilesystemResult { get; set; }
+        public bool FailFilesystemStart { get; set; }
         public Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct)
         {
             Actions.Add(action);
@@ -1047,7 +1232,16 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
                     ["tasks"] = TaskRunning ? new Dictionary<string, object> { ["runtime-task"] = new { state = "Running" } } : new()
                 };
                 if (Inventory is not null) result["workInventory"] = new { state = Inventory };
+                if (Resources is not null) result["resources"] = Resources;
+                if (Capabilities is not null) result["capabilities"] = Capabilities;
                 return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, result }, Json));
+            }
+            if (action.StartsWith("fs-job-", StringComparison.Ordinal))
+            {
+                FilesystemRequests.Add(JsonSerializer.SerializeToElement(arguments, Json));
+                if (action == "fs-job-start" && FailFilesystemStart) throw new IOException("Synthetic lost reply.");
+                object job = FilesystemResult is null ? new { state = "running" } : new { state = "completed", result = FilesystemResult };
+                return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, result = job }, Json));
             }
             if (action == "git-check" && !GitClean)
                 return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = false, state = "AwaitingGitSave" }, Json));

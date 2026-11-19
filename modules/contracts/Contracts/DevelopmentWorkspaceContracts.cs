@@ -71,7 +71,8 @@ public sealed record DevelopmentWorkspaceVmResponse(
     decimal ComputeHourlyRate, decimal EstimatedMonthlyCompute, bool ComputeReserved, long Revision,
     IReadOnlyList<DevelopmentWorkspaceTaskLeaseResponse>? TaskLeases = null,
     bool StartAfterStop = false,
-    string? StartupStage = null);
+    string? StartupStage = null,
+    DevelopmentWorkspaceVmResources? Resources = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseResponse(
     string VmId, string TaskId, long Generation, string Status, DateTimeOffset ExpiresAt);

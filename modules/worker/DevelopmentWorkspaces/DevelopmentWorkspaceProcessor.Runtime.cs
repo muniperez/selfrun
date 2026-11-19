@@ -77,6 +77,10 @@ public sealed partial class DevelopmentWorkspaceProcessor
             throw new InvalidOperationException("Runtime route publication lost its generation authority.");
         fresh.RuntimeCredentialRef = credentialRef; fresh.RuntimeTokenExpiresAt = expires;
         fresh.LastHeartbeatAt = Now; fresh.Revision++; fresh.UpdatedAt = Now;
+        // Best-effort telemetry: an old image or an invalid sample only clears the metrics.
+        fresh.RuntimeCapabilities = DevelopmentWorkspaceService.NormalizeCapabilities(status);
+        fresh.ResourceSampleJson = DevelopmentWorkspaceService.NormalizeResourceSample(status, fresh.Id, fresh.Generation, Now);
+        fresh.ResourceSampleGeneration = fresh.Generation; fresh.ResourceSampleReceivedAt = Now;
         if (fresh.Kind == "primary" && status.TryGetProperty("backup", out var backup))
         {
             var owner = await db.DevelopmentWorkspaces.SingleAsync(x => x.Id == fresh.WorkspaceId, ct);

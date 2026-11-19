@@ -130,6 +130,38 @@ public sealed class DevelopmentWorkspacesController(
         [FromBody] CompleteDevelopmentWorkspaceTaskRequest request, CancellationToken ct) =>
         TaskMutationAsync(organizationId, () => workspaces.CompleteTaskAsync(id, organizationId, vmId, request.Generation, taskId, request.Cancelled, ct), ct);
 
+    // Folder sizes and deletion expose and change dev environment contents, so every call requires write access.
+    [HttpPost("{id}/vms/{vmId}/disk-usage/scans")]
+    public Task<IResult> StartDiskUsageScan(string id, string vmId, [FromQuery] string organizationId,
+        [FromBody] DevelopmentWorkspaceDiskUsageScanRequest request, CancellationToken ct) =>
+        FilesystemJobAsync(organizationId, () => workspaces.StartDiskUsageScanAsync(id, organizationId, vmId, request, ActorId(), ct),
+            StatusCodes.Status202Accepted, ct);
+
+    [HttpPost("{id}/vms/{vmId}/directory-deletions")]
+    public Task<IResult> StartDirectoryDeletion(string id, string vmId, [FromQuery] string organizationId,
+        [FromBody] DevelopmentWorkspaceDirectoryDeletionRequest request, CancellationToken ct) =>
+        FilesystemJobAsync(organizationId, () => workspaces.StartDirectoryDeletionAsync(id, organizationId, vmId, request, ActorId(), ct),
+            StatusCodes.Status202Accepted, ct);
+
+    [HttpGet("{id}/vms/{vmId}/filesystem-jobs/{jobId}")]
+    public Task<IResult> GetFilesystemJob(string id, string vmId, string jobId, [FromQuery] string organizationId, CancellationToken ct) =>
+        FilesystemJobAsync(organizationId, () => workspaces.GetFilesystemJobAsync(id, organizationId, vmId, jobId, ct),
+            StatusCodes.Status200OK, ct);
+
+    [HttpPost("{id}/vms/{vmId}/filesystem-jobs/{jobId}/cancel")]
+    public Task<IResult> CancelFilesystemJob(string id, string vmId, string jobId, [FromQuery] string organizationId, CancellationToken ct) =>
+        FilesystemJobAsync(organizationId, () => workspaces.CancelFilesystemJobAsync(id, organizationId, vmId, jobId, ct),
+            StatusCodes.Status200OK, ct);
+
+    private async Task<IResult> FilesystemJobAsync(string organizationId, Func<Task<DevelopmentWorkspaceFilesystemJob>> action,
+        int status, CancellationToken ct)
+    {
+        if (!await CanAsync(organizationId, OrganizationAction.WriteApps, ct)) return EndpointResults.Forbidden();
+        Response.Headers.CacheControl = "no-store";
+        try { return Results.Json(workspaces.ToFilesystemJobResponse(await action()), statusCode: status); }
+        catch (DevelopmentWorkspaceException error) { return Error(error); }
+    }
+
     private async Task<IResult> MutateAsync(string organizationId, Func<Task<DevelopmentWorkspace>> mutate, CancellationToken ct)
     {
         if (!await CanAsync(organizationId, OrganizationAction.WriteApps, ct)) return EndpointResults.Forbidden();
