@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +11,6 @@ using Minicloud.Api.Providers;
 using Minicloud.Api.Services;
 using Minicloud.Common.Services;
 using Minicloud.Common.Validation;
-using Minicloud.Common.Redaction;
 using static Minicloud.Api.Controllers.EndpointResults;
 
 namespace Minicloud.Api.Controllers;
@@ -59,9 +59,9 @@ public sealed class RuntimeController : ControllerBase
 
             var deployedServices = await LatestDeploymentServicesAsync(db, auth.Server.AppId, cancellationToken);
             var now = timeProvider.GetUtcNow();
-            var accepted = 0;
             var rejected = 0;
             var cursors = new Dictionary<string, string>(StringComparer.Ordinal);
+            var eligible = new List<RuntimeLogIngestRecord>(request.Records.Count);
 
             foreach (var record in request.Records)
             {
@@ -71,38 +71,22 @@ public sealed class RuntimeController : ControllerBase
                     continue;
                 }
 
-                var exists = await db.RuntimeLogRecords.AnyAsync(x =>
-                    x.RuntimeServerId == auth.Server.Id &&
-                    x.Source == record.Source &&
-                    x.Cursor == record.Cursor &&
-                    x.ObservedAt == record.ObservedAt,
-                    cancellationToken);
-                if (exists)
-                {
-                    cursors[record.Source] = record.Cursor;
-                    continue;
-                }
-
-                db.RuntimeLogRecords.Add(new RuntimeLogRecord
-                {
-                    Id = ids.NewId("rtlog"),
-                    OrganizationId = auth.Server.OrganizationId,
-                    AppId = auth.Server.AppId,
-                    RuntimeServerId = auth.Server.Id,
-                    Source = record.Source,
-                    Service = record.Service,
-                    Stream = NormalizeStream(record.Stream),
-                    Cursor = record.Cursor,
-                    Content = LogRedactor.Redact(record.Message),
-                    ObservedAt = record.ObservedAt,
-                    ReceivedAt = now
-                });
-                accepted++;
+                eligible.Add(record);
                 cursors[record.Source] = record.Cursor;
             }
 
-            await PruneRuntimeLogsAsync(db, auth.Server.AppId, now, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
+            // Check for replays before pruning so a replay cannot resurrect a row pruned by this batch.
+            var pending = await RuntimeLogBatch.FindNewAsync(db, auth.Server.Id, eligible, cancellationToken);
+            var pruneStartedAt = Stopwatch.GetTimestamp();
+            try
+            {
+                await PruneRuntimeLogsAsync(db, auth.Server.AppId, now, cancellationToken);
+            }
+            finally
+            {
+                RuntimeIngestionDiagnostics.RecordLogPrune(pruneStartedAt);
+            }
+            var accepted = await RuntimeLogBatch.SaveAsync(db, auth.Server, eligible, pending, ids, now, cancellationToken);
             measurement.Complete("success");
             return Results.Ok(new RuntimeLogIngestResponse(accepted, rejected, cursors));
         }
@@ -629,9 +613,6 @@ public sealed class RuntimeController : ControllerBase
         var serviceName = service ?? source["service:".Length..];
         return deployedServices.Contains(serviceName);
     }
-
-    static string NormalizeStream(string stream) =>
-        string.Equals(stream, "stderr", StringComparison.OrdinalIgnoreCase) ? "stderr" : "stdout";
 
     static string NormalizeApplyStatus(string status) =>
         string.Equals(status, DomainBindingService.ApplyFailed, StringComparison.OrdinalIgnoreCase)

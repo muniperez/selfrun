@@ -13,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers.Dns;
@@ -21,6 +22,7 @@ using Minicloud.Common.Services;
 
 namespace Minicloud.Tests;
 
+[Collection("Runtime ingestion diagnostics")]
 public sealed class RuntimeApiIntegrationTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
@@ -84,6 +86,41 @@ public sealed class RuntimeApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RuntimeLogIngestion_DeduplicatesWithoutChangingPruneOrder()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var seed = await SeedAsync("org_runtime_replay", "app_runtime_replay", now);
+        using var client = _factory!.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", seed.RuntimeToken);
+        var expired = new RuntimeLogIngestRecord("caddy", null, "stdout", now.AddDays(-3), "old", "expired");
+        var fresh = expired with { ObservedAt = now, Cursor = "new", Message = "first", Stream = "STDERR" };
+        var later = fresh with { ObservedAt = now.AddTicks(1), Message = "distinct timestamp" };
+
+        var first = await Ingest(expired, fresh, later, fresh with { Message = "duplicate" });
+        Assert.Equal(3, first.Accepted);
+        Assert.Equal(0, first.Rejected);
+        Assert.Equal("new", first.LastAcceptedCursorBySource["caddy"]);
+        var retry = await Ingest(later, fresh, expired);
+        Assert.Equal(0, retry.Accepted);
+        Assert.Equal("old", retry.LastAcceptedCursorBySource["caddy"]);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var logs = await db.RuntimeLogRecords.AsNoTracking().ToListAsync();
+        Assert.Equal(2, logs.Count);
+        Assert.All(logs, log => Assert.Equal("stderr", log.Stream));
+        Assert.Contains(logs, log => log.Content == fresh.Message);
+        Assert.Contains(logs, log => log.Content == later.Message);
+
+        async Task<RuntimeLogIngestResponse> Ingest(params RuntimeLogIngestRecord[] records)
+        {
+            using var response = await client.PostAsJsonAsync("/api/runtime/ingest/logs", new RuntimeLogIngestRequest(records));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return (await response.Content.ReadFromJsonAsync<RuntimeLogIngestResponse>())!;
+        }
+    }
+
+    [Fact]
     public async Task RuntimeLogIngestion_RecordsOneBoundedMeasurementPerBatch()
     {
         var now = new DateTimeOffset(2026, 5, 4, 10, 0, 0, TimeSpan.Zero);
@@ -121,6 +158,7 @@ public sealed class RuntimeApiIntegrationTests : IAsyncLifetime
         Assert.Contains(calls, point => point.Outcome == "success");
         Assert.Contains(calls, point => point.Outcome == "failure");
         Assert.Equal(2, points.Count(point => point.Name == "minicloud.runtime.ingestion.duration" && point.Operation == "ingest.logs"));
+        Assert.Single(points, point => point.Name == "minicloud.runtime.ingestion.logs.prune.duration");
         Assert.Equal(2, points.Count(point => point.Name == "minicloud.runtime.ingestion.bytes" && point.Operation == "ingest.logs"));
         Assert.Contains(points, point => point.Name == "minicloud.runtime.ingestion.bytes" && point.Operation == "ingest.logs" && (long)point.Value > 0);
         Assert.Equal(2, points.Count(point => point.Name == "minicloud.runtime.ingestion.records" && point.Operation == "ingest.logs"));

@@ -12,9 +12,13 @@ internal static class RuntimeIngestionDiagnostics
     private static readonly Histogram<double> Duration = Meter.CreateHistogram<double>("minicloud.runtime.ingestion.duration", "s");
     private static readonly Counter<long> Bytes = Meter.CreateCounter<long>("minicloud.runtime.ingestion.bytes", "By");
     private static readonly Counter<long> Records = Meter.CreateCounter<long>("minicloud.runtime.ingestion.records", "{record}");
+    private static readonly Histogram<double> LogPruneDuration = Meter.CreateHistogram<double>("minicloud.runtime.ingestion.logs.prune.duration", "s");
 
     public static Measurement Start(string operation, long bytes, long records, CancellationToken cancellationToken) =>
         new(operation, bytes, records, cancellationToken, Stopwatch.GetTimestamp(), ActivitySource.StartActivity(operation, ActivityKind.Server));
+
+    public static void RecordLogPrune(long startedAt) =>
+        LogPruneDuration.Record(Stopwatch.GetElapsedTime(startedAt).TotalSeconds);
 
     internal sealed class Measurement(
         string operation,

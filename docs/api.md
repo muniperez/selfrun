@@ -43,6 +43,17 @@ those external protocols and remain unchanged. They are not parallel Minicloud
 product APIs. Stored migration metadata preserves existing resources without
 publishing identity-resolution aliases.
 
+## Runtime log ingestion
+
+`POST /api/runtime/ingest/logs` scopes records to the runtime server identified by
+its bearer token. A log is identified by its source, cursor and observed
+timestamp within that server. Replaying a retained log or sending it more than
+once in a batch does not write another row. `accepted` counts newly written
+rows, `rejected` counts records from sources not allowed for the deployment, and
+`lastAcceptedCursorBySource` acknowledges the last eligible cursor in request
+order for each source, including duplicates. An invalid request fails validation
+as a whole.
+
 ## Development workspace selections
 
 Workspace list/detail responses include optional `createdBy` (the workspace
