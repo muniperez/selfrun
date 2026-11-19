@@ -5,6 +5,11 @@ Current implementation is a **component smoke**, not the complete C/R/A/S suite.
 Raw SQL deployment fixtures supply organization-unique `YYYYMMDD.counter` numbers
 using each row's UTC creation date and seed the corresponding daily counters before
 workers start, because these inserts bypass the production EF number allocator.
+Before seeding, the smoke waits for the packaged API's `/health`: API startup
+awaits all migrations before serving. A positive but partial migration-history
+count is not readiness. The Docker-free Python readiness regression runs through
+the existing xUnit fixture runner and can also run directly with
+`python3 -B modules/tests/Minicloud.Tests/DeploymentIntegration/test_component_smoke.py`.
 
 The smoke pauses PostgreSQL for three seconds while both workers hold independent
 claims, resumes it, and verifies recovery without duplicate claim events. This tests

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import type { DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
+import { WorkspaceT3Connect } from "./WorkspaceT3Connect";
 
 type Props = {
   workspaceId: string;
@@ -16,6 +17,7 @@ type Props = {
   currency: string;
   refresh: () => Promise<void>;
   canManage: boolean;
+  canManageConnect?: boolean;
   variant?: "primary" | "embedded";
   retainedStorage?: { sizeGb: number; status?: string | null; estimatedMonthlyStorage: number };
 };
@@ -27,7 +29,7 @@ export function WorkspaceVmCard(props: Props) {
   return <VmGenerationCard key={`${props.organizationId}:${props.workspaceId}:${props.vm.id}:${props.vm.generation}`} {...props} />;
 }
 
-function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, canManage, variant = "primary", retainedStorage }: Props) {
+function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, canManage, canManageConnect = false, variant = "primary", retainedStorage }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<WorkspaceSelection>({
@@ -191,6 +193,10 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
       }}>Open authorized {launch.service === "t3" ? "T3 session" : `${launch.service} preview`} on VM {vm.id} generation {vm.generation}</a>
       <span className="ml-2 text-muted-foreground">Expires {launch.expiresAt}</span>
     </p>}
+    {vm.kind === "primary" && canManage && canManageConnect && <div className="border-t px-5 py-4">
+      <WorkspaceT3Connect workspaceId={workspaceId} vmId={vm.id} organizationId={organizationId}
+        generation={vm.generation} revision={vm.revision} ready={ready && !busy} />
+    </div>}
     <details className="min-w-0 border-t px-5 py-2 text-sm">
       <summary className="w-fit cursor-pointer text-xs text-muted-foreground hover:text-foreground">Advanced VM controls</summary>
       <div className="space-y-5 py-4">

@@ -177,6 +177,28 @@ class IdleTerminalTests(unittest.TestCase):
             with self.assertRaisesRegex(rt.Blocked, "[Uu]nregistered"):
                 self.inspect()
 
+    def test_connect_relay_is_infrastructure_only_for_pinned_supervised_command(self):
+        binary = self.telemetry_monitor()
+        argv = [str(binary), "tunnel", "--no-autoupdate", "--loglevel", "info",
+                "--output", "default", "--metrics", "127.0.0.1:0", "run"]
+        self.write(120, argv=argv)
+        (self.root / "120/environ").write_bytes(b"TUNNEL_TOKEN=synthetic-secret\0")
+        with patch.object(rt, "T3_RELAY_CLIENT", str(binary)), \
+                patch.object(rt, "T3_RELAY_CLIENT_SHA256", hashlib.sha256(binary.read_bytes()).hexdigest()), \
+                patch.object(rt.Linux, "verify_unit_file"):
+            self.inspect()
+            self.write(120, argv=argv[:-1] + ["--url", "http://other.invalid"])
+            with self.assertRaisesRegex(rt.Blocked, "unsupported arguments"):
+                self.inspect()
+            self.write(120, argv=argv)
+            (self.root / "120/environ").write_bytes(b"TUNNEL_TOKEN=secret\0LD_PRELOAD=evil\0")
+            with self.assertRaisesRegex(rt.Blocked, "unsafe environment"):
+                self.inspect()
+            (self.root / "120/environ").write_bytes(b"TUNNEL_TOKEN=secret\0")
+            binary.write_bytes(b"modified")
+            with self.assertRaisesRegex(rt.Blocked, "digest mismatch"):
+                self.inspect()
+
     def test_telemetry_helper_mutated_binary_owner_or_non_ipc_stdio_blocks(self):
         binary = self.telemetry_monitor()
         original = binary.read_bytes()

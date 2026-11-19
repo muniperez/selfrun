@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/core/auth/AuthProvider";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceVmCard } from "./WorkspaceVmCard";
@@ -41,6 +42,10 @@ export function WorkspaceDetail(props: Props) {
 }
 
 function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Props) {
+  const { profile, selectedOrganization } = useAuth();
+  const canManageConnect = canManage && Boolean(profile?.id) && item.organizationId === organizationId &&
+    selectedOrganization?.id === organizationId &&
+    (selectedOrganization.role.toLowerCase() === "owner" || item.createdBy === profile?.id);
   const vms = item.vms ?? [];
   const primary = vms.find(vm => vm.id === item.primaryVmId) ?? vms.find(vm => vm.kind === "primary");
   const ephemeral = vms.filter(vm => vm.kind === "ephemeral" && vm.id !== primary?.id);
@@ -113,8 +118,8 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
       </div>
       <TabsContent value="overview" className="space-y-8 pt-4">
         <section aria-label="Primary VM">
-          {primary ? <WorkspaceVmCard key={`${primary.id}:${primary.generation}`} workspaceId={item.id} organizationId={organizationId}
-            vm={primary} currency={item.currency} refresh={refresh} canManage={canManage} variant="primary"
+          {primary ? <WorkspaceVmCard key={`${primary.id}:${primary.generation}:${profile?.id ?? ""}`} workspaceId={item.id} organizationId={organizationId}
+            vm={primary} currency={item.currency} refresh={refresh} canManage={canManage} canManageConnect={canManageConnect} variant="primary"
             retainedStorage={{ sizeGb: item.volumeSizeGb, status: item.volumeStatus, estimatedMonthlyStorage: item.estimatedMonthlyStorage }} />
             : <Card><CardContent className="space-y-2 p-6 text-sm">
             <p className="font-medium">No primary VM reported.</p>

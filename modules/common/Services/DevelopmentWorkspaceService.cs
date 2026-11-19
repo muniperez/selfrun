@@ -273,7 +273,8 @@ public sealed partial class DevelopmentWorkspaceService(
             primary.ErrorCode, primary.ErrorMessage, primary.LastActivityAt, primary.ShutdownDeadline, primary.LastReadyAt,
             workspace.Vms.Where(x => x.ComputeReserved).Sum(x => x.ComputeHourlyRate * 720m), workspace.StorageMonthlyRate,
             workspace.Currency, workspace.PricingUpdatedAt, workspace.Revision, workspace.CreatedAt, workspace.UpdatedAt,
-            workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus);
+            workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus,
+            workspace.CreatedBy);
     }
 
     public DevelopmentWorkspaceVmResponse ToVmResponse(DevelopmentWorkspaceVm vm) =>

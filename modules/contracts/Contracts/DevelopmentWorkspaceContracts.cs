@@ -46,7 +46,8 @@ public sealed record DevelopmentWorkspaceResponse(
     DateTimeOffset UpdatedAt,
     IReadOnlyList<DevelopmentWorkspaceVmResponse>? Vms = null,
     string? PrimaryVmId = null,
-    string? VolumeStatus = null);
+    string? VolumeStatus = null,
+    string? CreatedBy = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseRequest(string TaskId, long Generation);
 public sealed record DevelopmentWorkspaceGenerationRequest(long Generation);

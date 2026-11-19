@@ -5,12 +5,19 @@ import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/cont
 import { WorkspaceDetail } from "./WorkspaceDetail";
 
 const vmCards = vi.hoisted(() => vi.fn());
+const releasedCards = vi.hoisted(() => vi.fn());
+const auth = vi.hoisted(() => ({
+  profile: { id: "creator" },
+  selectedOrganization: { id: "org-a", role: "owner" },
+}));
+vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
 vi.mock("@/api/workspacesApi", () => ({ launchEphemeralVm: vi.fn(), workspaceOperation: vi.fn() }));
 vi.mock("./WorkspaceVmCard", () => ({
   WorkspaceVmCard: (props: {
     workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm; currency: string; canManage: boolean;
     variant?: "primary" | "embedded"; retainedStorage?: { sizeGb: number; status?: string | null; estimatedMonthlyStorage: number };
   }) => {
+    useEffect(() => () => releasedCards(props.vm.id), [props.vm.id]);
     vmCards(props);
     const { workspaceId, organizationId, vm, currency, canManage } = props;
     return <article aria-label={`VM ${vm.id}`}>
@@ -82,11 +89,45 @@ function showCosts() {
 }
 
 beforeEach(() => {
+  auth.profile = { id: "creator" };
+  auth.selectedOrganization = { id: "org-a", role: "owner" };
   vi.mocked(launchEphemeralVm).mockResolvedValue(workspace());
   vi.mocked(workspaceOperation).mockResolvedValue(workspace());
   refresh.mockResolvedValue(undefined);
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+
+it.each([
+  ["owner", "someone-else", true], ["developer", "creator", true],
+  ["admin", "someone-else", false], ["developer", "someone-else", false],
+])("offers primary-only account management to the creator or organization owner: %s", (role, createdBy, allowed) => {
+  auth.selectedOrganization.role = role as string;
+  render(detail(workspace({ createdBy: createdBy as string })));
+  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({
+    vm: expect.objectContaining({ kind: "primary" }), canManageConnect: allowed,
+  }));
+  expect(launchEphemeralVm).not.toHaveBeenCalled();
+  expect(workspaceOperation).not.toHaveBeenCalled();
+});
+
+it("fences Connect ownership against organization context and read-only management", () => {
+  auth.selectedOrganization.id = "different-org";
+  const view = render(detail(workspace({ createdBy: "creator" })));
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
+  auth.selectedOrganization.id = "org-a";
+  view.rerender(detail(workspace({ createdBy: "creator" }), false));
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
+});
+
+it("releases the previous primary management context when the signed-in actor changes, even between organization owners", () => {
+  const item = workspace();
+  const view = render(detail(item));
+  expect(releasedCards).not.toHaveBeenCalled();
+  auth.profile = { id: "another-owner" };
+  view.rerender(detail(item));
+  expect(releasedCards).toHaveBeenCalledWith("primary");
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: true }));
+});
 
 it("resolves the primary by identity and passes observed state and retained storage into one unified card without starting compute", () => {
   const item = workspace();
@@ -274,3 +315,4 @@ it("keeps read-only metadata and costs available and discards launch state on or
   expect(within(nextForm).getByLabelText("Selections for org-c/workspace")).toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
+import { useEffect } from "react";

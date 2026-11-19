@@ -135,6 +135,86 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     [InlineData(true, true)]
     [InlineData(false, false)]
     [InlineData(false, true)]
+    public async Task ConnectPublicationRequiresTrustedAdmissionEvenWithSpoofedHttp200AndCachedReference(bool admitted, bool cached)
+    {
+        var (workspace, vm, _) = await Seed("session");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        runtime.ConnectAdmitted = admitted;
+        if (cached)
+            db.DevelopmentWorkspaceGatewayRoutes.Add(new()
+            {
+                Id = "cached-connect", OrganizationId = "org", WorkspaceId = workspace.Id,
+                VmId = vm.Id, Generation = vm.Generation, Service = "connect", LoopbackPort = tunnels.Port,
+                RegisteredAt = clock.GetUtcNow(), ExpiresAt = clock.GetUtcNow().AddMinutes(30),
+                T3CredentialReference = secrets.Add("connect", new string('c', 64))
+            });
+        await db.SaveChangesAsync();
+        using var http = new HttpClient();
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"http://127.0.0.1:{tunnels.Port}/")).StatusCode);
+
+        Assert.True(await Processor().ProcessNextAsync(default));
+
+        var route = await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleOrDefaultAsync(x => x.Service == "connect");
+        Assert.Equal(1, runtime.ConnectAdmissionChecks);
+        Assert.Equal(admitted && !cached ? 1 : 0, runtime.ConnectCredentialReads);
+        Assert.Equal(admitted, tunnels.Requests.Contains((774, "connect")));
+        if (admitted) Assert.NotNull(route);
+        else Assert.True(route is null || route.RevokedAt is not null);
+        Assert.Null((await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync(x => x.Service == "t3")).RevokedAt);
+        Assert.True((await CurrentVm(vm.Id)).GatewayReady);
+        Assert.Equal("ready", (await CurrentVm(vm.Id)).Phase);
+    }
+
+    [Fact]
+    public async Task ConnectCredentialExportRejectionAfterAdmissionDoesNotHideOrdinaryT3()
+    {
+        var (_, vm, _) = await Seed("session");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        runtime.FailConnectExport = true;
+        await db.SaveChangesAsync();
+
+        Assert.True(await Processor().ProcessNextAsync(default));
+
+        Assert.Equal(1, runtime.ConnectAdmissionChecks);
+        Assert.Equal(1, runtime.ConnectCredentialReads);
+        Assert.False(await db.DevelopmentWorkspaceGatewayRoutes.AnyAsync(x => x.Service == "connect"));
+        Assert.Null((await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync(x => x.Service == "t3")).RevokedAt);
+        Assert.True((await CurrentVm(vm.Id)).GatewayReady);
+        Assert.Equal("ready", (await CurrentVm(vm.Id)).Phase);
+    }
+
+    [Fact]
+    public async Task CachedConnectRouteIsRevokedWhenTrustedAdmissionFailsDespiteHttp200()
+    {
+        var (workspace, vm, operation) = await Seed("session");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        await db.SaveChangesAsync();
+        Assert.True(await Processor().ProcessNextAsync(default));
+        Assert.Equal(1, runtime.ConnectCredentialReads);
+        var reference = (await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking()
+            .SingleAsync(x => x.Service == "connect")).T3CredentialReference;
+        runtime.ConnectAdmitted = false;
+        tunnels.Requests.Clear();
+
+        var refresh = typeof(DevelopmentWorkspaceProcessor).GetMethod("RefreshRuntimeAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await (Task)refresh.Invoke(Processor(), [workspace, vm, operation.Id, CancellationToken.None, false, true])!;
+
+        var route = await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync(x => x.Service == "connect");
+        Assert.NotNull(route.RevokedAt);
+        Assert.Equal(reference, route.T3CredentialReference);
+        Assert.Equal(2, runtime.ConnectAdmissionChecks);
+        Assert.Equal(1, runtime.ConnectCredentialReads);
+        Assert.DoesNotContain((774, "connect"), tunnels.Requests);
+        Assert.True((await CurrentVm(vm.Id)).GatewayReady);
+        Assert.Null((await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync(x => x.Service == "t3")).RevokedAt);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
     public async Task BootstrapConfigStopsOnlyToolingAndExplicitlyRegisteredUserWork(bool ephemeral, bool preview)
     {
         var (_, vm, _) = await Seed("bootstrap", ephemeral);
@@ -926,6 +1006,10 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
 
     private sealed class FakeRuntime : IWorkspaceRuntimeTransport
     {
+        public bool ConnectAdmitted { get; set; } = true;
+        public bool FailConnectExport { get; set; }
+        public int ConnectAdmissionChecks { get; private set; }
+        public int ConnectCredentialReads { get; private set; }
         public bool TaskRunning { get; set; }
         public string? Inventory { get; set; } = "IdleCandidate";
         public bool GitClean { get; set; } = true;
@@ -998,6 +1082,18 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
                 "workspace_git_recovery_source_changed", "Synthetic changed saved source.");
             return Task.CompletedTask;
         }
+        public Task<bool> CheckConnectAdmissionAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
+        {
+            ConnectAdmissionChecks++;
+            return Task.FromResult(ConnectAdmitted);
+        }
+        public Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct)
+        {
+            ConnectCredentialReads++;
+            if (FailConnectExport) throw new InvalidOperationException("Management listener no longer admitted.");
+            return Task.FromResult(new string('c', 64));
+        }
+
         public Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct)
         {
             SessionsIssued++;

@@ -12,6 +12,13 @@ Outputs: ignored `.local/artifacts/issue110/runtime/`. Fixtures use two real ind
 clones and a local bare remote; injected process/mount/encryption/transport adapters test
 failure handling. This is not a real ext4, systemd-freezer, age, or live restore qualification.
 
+Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
+primary VM and managed T3 unit, a private memory-only approval page on loopback
+774, and a distinct root-only management credential. Normal gateway scopes do
+not expand. Pending approval fences shutdown. Its updated native probe and
+hosted cross-device/lifecycle acceptance remain unqualified; never run the
+upstream service installer or show device approval in T3 terminal history.
+
 ## Prepared image
 
 `image/manifest.lock.json` pins the Ubuntu cloud-image **serial and SHA256**, immutable

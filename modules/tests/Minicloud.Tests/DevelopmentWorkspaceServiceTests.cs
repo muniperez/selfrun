@@ -304,6 +304,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         var response = Service().ToResponse(another);
         Assert.Equal(2, response.EstimatedMonthlyStorage);
         Assert.Equal(144, response.EstimatedMonthlyCompute);
+        Assert.Equal("actor", response.CreatedBy);
         Assert.DoesNotContain("CredentialRef", System.Text.Json.JsonSerializer.Serialize(response));
     }
 

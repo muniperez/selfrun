@@ -16,6 +16,67 @@ namespace Minicloud.WorkspaceGateway.Tests;
 public sealed class GatewayAuthorizationTests
 {
     [Theory]
+    [InlineData("creator", true)]
+    [InlineData("owner", true)]
+    [InlineData("admin", false)]
+    [InlineData("developer", false)]
+    [InlineData("outsider", false)]
+    [InlineData("api-key", false)]
+    public async Task ConnectRequiresPrimaryWorkspaceCreatorOrOrganizationOwner(string identity, bool accepted)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.DevelopmentWorkspaceVms.ExecuteDeleteAsync();
+        fixture.Db.ChangeTracker.Clear();
+        var vm = new DevelopmentWorkspaceVm
+        {
+            Id = "vm", WorkspaceId = "ws", OrganizationId = "org", Kind = "primary", Generation = 1,
+            Phase = "ready", DesiredState = "running", LastHeartbeatAt = fixture.Clock.Now, GatewayReady = true
+        };
+        FillRequiredStrings(fixture.Db, vm);
+        fixture.Db.DevelopmentWorkspaceVms.Add(vm);
+        var workspace = new DevelopmentWorkspace { Id = "ws", OrganizationId = "org", CreatedBy = "creator" };
+        FillRequiredStrings(fixture.Db, workspace);
+        fixture.Db.DevelopmentWorkspaces.Add(workspace);
+        if (identity is not ("outsider" or "api-key"))
+        {
+            var member = new OrganizationMember
+            {
+                OrganizationId = "org", UserId = identity,
+                Role = identity switch
+                {
+                    "owner" => OrganizationRole.Owner,
+                    "admin" => OrganizationRole.Admin,
+                    _ => OrganizationRole.Developer
+                }
+            };
+            FillRequiredStrings(fixture.Db, member);
+            fixture.Db.OrganizationMembers.Add(member);
+        }
+        var route = await fixture.Db.DevelopmentWorkspaceGatewayRoutes.SingleAsync();
+        route.Service = "connect";
+        route.T3CredentialReference = JsonSerializer.Serialize(new StoredSecretReference("test", "org/ws/vm/g1/connect", "1"));
+        await fixture.Db.SaveChangesAsync();
+        var principal = identity == "api-key" ? fixture.Principal :
+            new ControlPlanePrincipal("browser_session", identity, null, null, new HashSet<string>());
+        var launch = await fixture.Service.LaunchAsync(principal, "ws", "vm", new(1, "connect"), default);
+        Assert.Equal(accepted, launch is not null);
+        if (launch is null) return;
+        var host = fixture.Options.Host("vm", 1, "connect")!;
+        var redeemed = (await fixture.Service.RedeemAsync(new(host, launch.Url.Split("code=")[1]), default))!;
+        var target = await fixture.Service.ResolveAsync(new(host, redeemed.Session), default);
+        Assert.Equal("secret-management-only", target!.Bearer);
+        var membership = await fixture.Db.OrganizationMembers.SingleAsync();
+        fixture.Db.OrganizationMembers.Remove(membership);
+        await fixture.Db.SaveChangesAsync();
+        Assert.Null(await fixture.Service.ResolveAsync(new(host, redeemed.Session), default));
+        fixture.Db.OrganizationMembers.Add(membership);
+        await fixture.Db.SaveChangesAsync();
+        vm.Generation++;
+        await fixture.Db.SaveChangesAsync();
+        Assert.Null(await fixture.Service.ResolveAsync(new(host, redeemed.Session), default));
+    }
+
+    [Theory]
     [InlineData("""{"provider":"test","path":"org/ws/vm/g1","version":"1"}""", true)]
     [InlineData("""{"Provider":"test","Path":"org/ws/vm/g1","Version":"1"}""", true)]
     [InlineData("{}", false)]
@@ -411,6 +472,8 @@ public sealed class GatewayAuthorizationTests
     {
         public Task<string> GetAsync(StoredSecretReference reference, CancellationToken cancellationToken)
         {
+            if (reference == new StoredSecretReference("test", "org/ws/vm/g1/connect", "1"))
+                return Task.FromResult("secret-management-only");
             Assert.Equal(new StoredSecretReference("test", "org/ws/vm/g1", "1"), reference);
             return Task.FromResult("secret-only-server-side");
         }

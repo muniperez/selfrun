@@ -54,6 +54,31 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
+it("embeds opt-in Connect only in an explicitly owner-authorized primary card", () => {
+  const props = { workspaceId: "workspace", organizationId: "org", currency: "EUR", refresh, canManage: true };
+  const view = render(<WorkspaceVmCard {...props} vm={vm({ kind: "primary" })} canManageConnect />);
+  expect(screen.getByRole("button", { name: "Manage T3 Connect" })).toBeEnabled();
+  expect(getWorkspaceLaunchUrl).not.toHaveBeenCalled();
+  view.rerender(<WorkspaceVmCard {...props} vm={vm({ kind: "primary" })} canManageConnect={false} />);
+  expect(screen.queryByRole("button", { name: "Manage T3 Connect" })).not.toBeInTheDocument();
+  view.rerender(<WorkspaceVmCard {...props} vm={vm()} canManageConnect />);
+  expect(screen.queryByRole("button", { name: "Manage T3 Connect" })).not.toBeInTheDocument();
+});
+
+it("closes pending Connect authorization when primary ownership is lost", async () => {
+  const popup = { opener: null, close: vi.fn(), location: { replace: vi.fn() } };
+  vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+  let resolve!: (result: { url: string; expiresAt: string }) => void;
+  vi.mocked(getWorkspaceLaunchUrl).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const props = { workspaceId: "workspace", organizationId: "org", currency: "EUR", refresh, canManage: true, vm: vm({ kind: "primary" }) };
+  const view = render(<WorkspaceVmCard {...props} canManageConnect />);
+  fireEvent.click(screen.getByRole("button", { name: "Manage T3 Connect" }));
+  view.rerender(<WorkspaceVmCard {...props} canManageConnect={false} />);
+  await act(async () => resolve({ url: "https://connect.example/launch", expiresAt: "2099-01-01T00:00:00Z" }));
+  expect(popup.close).toHaveBeenCalled();
+  expect(popup.location.replace).not.toHaveBeenCalled();
+});
+
 it("viewing a sleeping VM never starts compute or authorizes sessions; start uses current generation", async () => {
   render(card(vm({ phase: "stopped", desiredState: "stopped", computeReserved: false })));
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();

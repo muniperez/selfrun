@@ -45,6 +45,13 @@ publishing identity-resolution aliases.
 
 ## Development workspace selections
 
+Workspace list/detail responses include optional `createdBy` (the workspace
+creator's actor ID). The dashboard uses it only to present primary T3 Connect
+management to the creator or an organization Owner. The Connect launch and
+gateway endpoints independently reauthorize the current dashboard identity;
+this field does not confer authority and ordinary workspace managers do not
+automatically receive account-linking permission.
+
 `GET /api/development-workspaces/selections?organizationId={id}` requires
 authentication and organization app-read permission (`apps:read` for API keys).
 Add `&workspaceId={id}` for next-start resize or ephemeral launch choices: these
