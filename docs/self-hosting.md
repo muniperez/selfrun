@@ -227,6 +227,9 @@ The exported metric contract is:
 | `dotnet.gc.heap.total_allocated` | `By` | none |
 | `dotnet.gc.pause.time` | `s` | none |
 | `dotnet.thread_pool.queue.length` | `{work_item}` | none |
+| `minicloud.worker.claims` | `{claim}` | `outcome` (`claimed`, `empty`, `refused`) |
+| `minicloud.worker.queue.wait` | `s` | none |
+| `minicloud.worker.step.duration` | `s` | `operation` (`resolve-provision`, `dns-setup`, `ssh-deploy`, `health-finalize`, `rollback`), `outcome` |
 | `minicloud.db.commands` | `{command}` | `operation`, `outcome` |
 | `minicloud.db.command.duration` | `s` | `operation`, `outcome` |
 | `minicloud.gateway.connections.active` | `{connection}` | `operation` (`http`, `websocket`) |
@@ -245,7 +248,11 @@ The telemetry service emits OTLP ingestion stage spans named `otlp.auth`,
 `otlp.read`, `otlp.gzip`, `otlp.decode`, `otlp.normalize`, `otlp.quota`,
 `otlp.encode` and `otlp.forward`. See
 [OTLP ingestion cost](performance/otlp-ingestion/README.md).
-Worker pipeline-step spans are separate work.
+The worker starts a `worker.deployment` span at the durable claim time and a
+`worker.step` child span per pipeline step (`operation` is the step name, or
+`rollback`); concurrent DNS and SSH steps keep separate intervals. Queue wait is
+claim time minus the durable queued timestamp. See
+[Worker claim polling](performance/worker-queue/README.md).
 
 Exported spans allow only `http.request.method`, `http.response.status_code`,
 `http.route`, `network.protocol.version`, `operation` and `outcome`. SQL,
