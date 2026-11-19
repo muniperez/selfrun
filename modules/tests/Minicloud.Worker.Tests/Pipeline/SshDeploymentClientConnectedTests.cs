@@ -16,56 +16,118 @@ public sealed class SshDeploymentClientConnectedTests
     public async Task DatabaseOperationTransferUsesExistingWritableStagingParent(string missingParent)
     {
         if (OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException(); }
-        var fixture = Directory.CreateTempSubdirectory("minicloud-operation-transfer-");
-        var container = "minicloud-operation-transfer-" + Guid.NewGuid().ToString("N");
-        var started = false;
-        try
+        await using var host = await DisposableSshHost.StartAsync("minicloud-operation-transfer-");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var operationId = "dbop_" + Guid.NewGuid().ToString("N");
+        var client = new SshDeploymentClient(new SshDeploymentOptions
         {
-            using var key = RSA.Create(2048);
-            var privateKey = key.ExportRSAPrivateKeyPem();
-            var keyPath = Path.Combine(fixture.FullName, "key");
-            await File.WriteAllTextAsync(keyPath, privateKey);
-            File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            await File.WriteAllTextAsync(keyPath + ".pub", await RunFixtureCommand("ssh-keygen", "-y", "-f", keyPath));
-            await RunFixtureCommand("docker", "run", "--rm", "-d", "--name", container,
-                "-p", "127.0.0.1::22", "-v", keyPath + ".pub:/root/.ssh/authorized_keys:ro",
-                "--entrypoint", "/bin/bash", Environment.GetEnvironmentVariable("MINICLOUD_TEST_PREFLIGHT_SSH_IMAGE")!, "-c",
-                "ssh-keygen -A; mkdir -p /run/sshd /opt/minicloud; exec /usr/sbin/sshd -D -e -o PasswordAuthentication=no -o PermitRootLogin=prohibit-password -o StrictModes=no");
-            started = true;
-            var port = int.Parse((await RunFixtureCommand("docker", "port", container, "22/tcp")).Trim().Split(':')[^1]);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            while (true)
+            Port = host.Port, ConnectionTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5)
+        });
+        var request = new SshDeploymentRequest("127.0.0.1", "root", host.PrivateKey,
+            missingParent + operationId, "{}",
+            "#!/bin/bash\necho __MINICLOUD_DEPLOY_COMPLETE__=" + operationId + "\n", [], TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<SftpPathNotFoundException>(() => client.ExecuteDeploymentAsync(
+            request, (_, _) => Task.CompletedTask, timeout.Token));
+        var completed = await client.ExecuteDeploymentAsync(request with
+        {
+            RemoteDirectory = SshDeployStep.RemoteDirectoryFor(operationId)
+        }, (_, _) => Task.CompletedTask, timeout.Token);
+        Assert.Equal(0, completed.ExitCode);
+        Assert.True(completed.CompletionMarkerFound);
+        Assert.Equal(operationId, completed.CompletionSha);
+    }
+
+    [SourcePreflightTheory]
+    [InlineData(240, 24)]
+    public async Task ConcurrentFastDeploymentsNeverLoseTrailingCompletionMarker(int runs, int parallelism)
+    {
+        if (OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException(); }
+        // SSH.NET's EndExecute drains OutputStream through SshCommand.Result. Under load
+        // that raced the stdout pump and swallowed the final marker line of short scripts.
+        await using var host = await DisposableSshHost.StartAsync("minicloud-marker-race-",
+            "-o", "MaxStartups=200:30:300", "-o", "MaxSessions=100");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var client = new SshDeploymentClient(new SshDeploymentOptions
+        {
+            Port = host.Port, ConnectionTimeout = TimeSpan.FromSeconds(30), CommandTimeout = TimeSpan.FromSeconds(30)
+        });
+        var missing = new System.Collections.Concurrent.ConcurrentBag<string>();
+        await Parallel.ForEachAsync(Enumerable.Range(0, runs),
+            new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = timeout.Token },
+            async (_, ct) =>
             {
-                try
-                {
-                    using var probe = new TcpClient();
-                    await probe.ConnectAsync("127.0.0.1", port, timeout.Token);
-                    break;
-                }
-                catch (SocketException) { await Task.Delay(50, timeout.Token); }
-            }
-            var operationId = "dbop_" + Guid.NewGuid().ToString("N");
-            var client = new SshDeploymentClient(new SshDeploymentOptions
-            {
-                Port = port, ConnectionTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5)
+                var operationId = "dbop_" + Guid.NewGuid().ToString("N");
+                var result = await client.ExecuteDeploymentAsync(new SshDeploymentRequest("127.0.0.1", "root",
+                    host.PrivateKey, SshDeployStep.RemoteDirectoryFor(operationId), "{}",
+                    "#!/bin/bash\necho __MINICLOUD_DEPLOY_COMPLETE__=" + operationId + "\n", [],
+                    TimeSpan.FromSeconds(30)), (_, _) => Task.CompletedTask, ct);
+                Assert.Equal(0, result.ExitCode);
+                if (result.CompletionSha != operationId) { missing.Add(operationId); }
             });
-            var request = new SshDeploymentRequest("127.0.0.1", "root", privateKey,
-                missingParent + operationId, "{}",
-                "#!/bin/bash\necho __MINICLOUD_DEPLOY_COMPLETE__=" + operationId + "\n", [], TimeSpan.FromSeconds(5));
-            await Assert.ThrowsAsync<SftpPathNotFoundException>(() => client.ExecuteDeploymentAsync(
-                request, (_, _) => Task.CompletedTask, timeout.Token));
-            var completed = await client.ExecuteDeploymentAsync(request with
-            {
-                RemoteDirectory = SshDeployStep.RemoteDirectoryFor(operationId)
-            }, (_, _) => Task.CompletedTask, timeout.Token);
-            Assert.Equal(0, completed.ExitCode);
-            Assert.True(completed.CompletionMarkerFound);
-            Assert.Equal(operationId, completed.CompletionSha);
-        }
-        finally
+        Assert.True(missing.IsEmpty, $"Completion marker lost in {missing.Count}/{runs} deployments.");
+    }
+
+    private sealed class DisposableSshHost : IAsyncDisposable
+    {
+        private readonly DirectoryInfo _fixture;
+        private readonly string _container;
+
+        private DisposableSshHost(DirectoryInfo fixture, string container, int port, string privateKey)
         {
-            if (started) { await RunFixtureCommand("docker", "rm", "-f", container); }
-            fixture.Delete(true);
+            _fixture = fixture;
+            _container = container;
+            Port = port;
+            PrivateKey = privateKey;
+        }
+
+        public int Port { get; }
+        public string PrivateKey { get; }
+
+        public static async Task<DisposableSshHost> StartAsync(string prefix, params string[] sshdOptions)
+        {
+            var fixture = Directory.CreateTempSubdirectory(prefix);
+            var container = prefix + Guid.NewGuid().ToString("N");
+            var started = false;
+            try
+            {
+                using var key = RSA.Create(2048);
+                var privateKey = key.ExportRSAPrivateKeyPem();
+                var keyPath = Path.Combine(fixture.FullName, "key");
+                await File.WriteAllTextAsync(keyPath, privateKey);
+                File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                await File.WriteAllTextAsync(keyPath + ".pub", await RunFixtureCommand("ssh-keygen", "-y", "-f", keyPath));
+                await RunFixtureCommand("docker", "run", "--rm", "-d", "--name", container,
+                    "-p", "127.0.0.1::22", "-v", keyPath + ".pub:/root/.ssh/authorized_keys:ro",
+                    "--entrypoint", "/bin/bash", Environment.GetEnvironmentVariable("MINICLOUD_TEST_PREFLIGHT_SSH_IMAGE")!, "-c",
+                    "ssh-keygen -A; mkdir -p /run/sshd /opt/minicloud; exec /usr/sbin/sshd -D -e -o PasswordAuthentication=no -o PermitRootLogin=prohibit-password -o StrictModes=no " +
+                    string.Join(' ', sshdOptions));
+                started = true;
+                var port = int.Parse((await RunFixtureCommand("docker", "port", container, "22/tcp")).Trim().Split(':')[^1]);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                while (true)
+                {
+                    try
+                    {
+                        using var probe = new TcpClient();
+                        await probe.ConnectAsync("127.0.0.1", port, timeout.Token);
+                        break;
+                    }
+                    catch (SocketException) { await Task.Delay(50, timeout.Token); }
+                }
+                return new DisposableSshHost(fixture, container, port, privateKey);
+            }
+            catch
+            {
+                if (started) { await RunFixtureCommand("docker", "rm", "-f", container); }
+                fixture.Delete(true);
+                throw;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await RunFixtureCommand("docker", "rm", "-f", _container);
+            _fixture.Delete(true);
         }
     }
 
