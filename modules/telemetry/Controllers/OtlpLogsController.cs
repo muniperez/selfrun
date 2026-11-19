@@ -1,9 +1,12 @@
+using System.Buffers;
+using System.Diagnostics;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Minicloud.Telemetry.Otlp;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Services;
+using Minicloud.Common.Diagnostics;
 using Minicloud.Telemetry.Services;
 
 namespace Minicloud.Telemetry.Controllers;
@@ -34,6 +37,7 @@ public sealed class OtlpLogsController(
         TelemetryAuthSnapshot identity;
         try
         {
+            using var stage = StartStage("otlp.auth");
             var snapshot = await auth.AuthenticateAsync(
                 authorizationValues.Count == 1 ? authorizationValues[0] : null,
                 cancellationToken);
@@ -135,7 +139,8 @@ public sealed class OtlpLogsController(
         byte[] encoded;
         try
         {
-            encoded = await ReadBoundedAsync(Request.Body, TelemetryLimits.MaxEncodedBytes, cancellationToken);
+            using var stage = StartStage("otlp.read");
+            encoded = await ReadBoundedAsync(Request.Body, Request.ContentLength, TelemetryLimits.MaxEncodedBytes, cancellationToken);
         }
         catch (OtlpRequestValidationException ex)
         {
@@ -147,6 +152,7 @@ public sealed class OtlpLogsController(
         {
             try
             {
+                using var stage = StartStage("otlp.gzip");
                 payload = await DecompressBoundedAsync(encoded, cancellationToken);
             }
             catch (OtlpRequestValidationException ex)
@@ -166,6 +172,7 @@ public sealed class OtlpLogsController(
         OtlpExportRequest request;
         try
         {
+            using var stage = StartStage("otlp.decode");
             request = OtlpProtobuf.ParseExportRequest(payload);
         }
         catch (OtlpDecodeException ex)
@@ -177,6 +184,7 @@ public sealed class OtlpLogsController(
         OtlpNormalizationResult normalized;
         try
         {
+            using var stage = StartStage("otlp.normalize");
             normalized = await normalization.NormalizeAsync(request, identity, receivedAt, cancellationToken);
         }
         catch (OtlpRequestValidationException ex)
@@ -199,8 +207,13 @@ public sealed class OtlpLogsController(
                 null);
         }
 
-        var quota = await quotas.ReserveAsync(
-            identity.AppId, identity.OrganizationId, normalized.NormalizedBytes, cancellationToken);
+        TelemetryQuotaDecision quota;
+        using (StartStage("otlp.quota"))
+        {
+            quota = await quotas.ReserveAsync(
+                identity.AppId, identity.OrganizationId, normalized.NormalizedBytes, cancellationToken);
+        }
+
         if (!quota.Admitted)
         {
             logger.LogWarning(
@@ -214,9 +227,18 @@ public sealed class OtlpLogsController(
                 quota.RetryAfter);
         }
 
-        var forwardBody = normalized.ForwardRequest.ToByteArray();
-        var outcome = await forwarder.ForwardAsync(
-            identity.TenantId, forwardBody, normalized.RejectedRecords, normalized.Notice, cancellationToken);
+        byte[] forwardBody;
+        using (StartStage("otlp.encode"))
+        {
+            forwardBody = normalized.ForwardRequest.ToByteArray();
+        }
+
+        OtlpForwardOutcome outcome;
+        using (StartStage("otlp.forward"))
+        {
+            outcome = await forwarder.ForwardAsync(
+                identity.TenantId, forwardBody, normalized.RejectedRecords, normalized.Notice, cancellationToken);
+        }
 
         if (outcome.StatusCode is >= 200 and <= 299)
         {
@@ -225,6 +247,10 @@ public sealed class OtlpLogsController(
 
         return OtlpResult(outcome.StatusCode, outcome.ResponseBody, outcome.RetryAfter);
     }
+
+    // Sequential stage spans; created only when an operator diagnostics listener samples them.
+    private static Activity? StartStage(string name) =>
+        OperatorDiagnostics.Activities.StartActivity(name)?.SetTag("operation", name);
 
     private IActionResult OtlpError(int statusCode, string message, TimeSpan? retryAfter) =>
         OtlpResult(statusCode, OtlpProtobuf.EncodeExportResponse(0, message), retryAfter);
@@ -241,21 +267,29 @@ public sealed class OtlpLogsController(
         return File(body, OtlpProtobuf.ProtobufContentType);
     }
 
-    private static async Task<byte[]> ReadBoundedAsync(Stream source, long maxBytes, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadBoundedAsync(Stream source, long? contentLength, long maxBytes, CancellationToken cancellationToken)
     {
-        using var destination = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        var total = 0L;
-        int read;
-        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        // Content-Length was already checked against maxBytes; presizing avoids MemoryStream regrowth copies.
+        using var destination = new MemoryStream(contentLength is > 0 ? (int)Math.Min(contentLength.Value, maxBytes) : 0);
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            total += read;
-            if (total > maxBytes)
+            var total = 0L;
+            int read;
+            while ((read = await source.ReadAsync(buffer.AsMemory(0, 64 * 1024), cancellationToken)) > 0)
             {
-                throw new OtlpRequestValidationException($"Encoded request exceeds {maxBytes} bytes.");
-            }
+                total += read;
+                if (total > maxBytes)
+                {
+                    throw new OtlpRequestValidationException($"Encoded request exceeds {maxBytes} bytes.");
+                }
 
-            destination.Write(buffer, 0, read);
+                destination.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         return destination.ToArray();
@@ -266,19 +300,26 @@ public sealed class OtlpLogsController(
         using var source = new MemoryStream(encoded, writable: false);
         await using var gzip = new GZipStream(source, CompressionMode.Decompress);
         using var destination = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        var total = 0L;
-        int read;
-        while ((read = await gzip.ReadAsync(buffer, cancellationToken)) > 0)
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            total += read;
-            if (total > TelemetryLimits.MaxDecompressedBytes)
+            var total = 0L;
+            int read;
+            while ((read = await gzip.ReadAsync(buffer.AsMemory(0, 64 * 1024), cancellationToken)) > 0)
             {
-                throw new OtlpRequestValidationException(
-                    $"Decompressed request exceeds {TelemetryLimits.MaxDecompressedBytes} bytes.");
-            }
+                total += read;
+                if (total > TelemetryLimits.MaxDecompressedBytes)
+                {
+                    throw new OtlpRequestValidationException(
+                        $"Decompressed request exceeds {TelemetryLimits.MaxDecompressedBytes} bytes.");
+                }
 
-            destination.Write(buffer, 0, read);
+                destination.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         return destination.ToArray();

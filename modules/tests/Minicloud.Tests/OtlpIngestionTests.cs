@@ -313,6 +313,38 @@ public sealed class OtlpIngestionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OversizedChunkedBody_IsBoundedWhileReading()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var seed = await SeedAsync("org_otlp_chunk", "app_otlp_chunk", "mcl_" + RandomHex(32), now);
+        var stub = _factory!.LokiStub;
+        stub.Reset();
+        using var client = _factory.CreateClient();
+
+        using var content = new UnknownLengthContent(new byte[TelemetryLimits.MaxEncodedBytes + 1]);
+        content.Headers.ContentType = new("application/x-protobuf");
+        using var message = new HttpRequestMessage(HttpMethod.Post, "/otlp/v1/logs") { Content = content };
+        message.Headers.TryAddWithoutValidation("Authorization", $"Bearer {seed.RawToken}");
+        message.Headers.TransferEncodingChunked = true;
+        Assert.Null(content.Headers.ContentLength);
+        var response = await client.SendAsync(message);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Empty(stub.Requests);
+    }
+
+    private sealed class UnknownLengthContent(byte[] body) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(body).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    [Fact]
     public async Task TooManyRecords_RejectedWithoutForward()
     {
         var now = DateTimeOffset.UtcNow;
@@ -945,5 +977,90 @@ public sealed class TelemetryQuotaServiceTests : IAsyncLifetime
                 services.AddDbContext<TelemetryDbContext>(options => options.UseSqlite(connection));
             });
         }
+    }
+}
+
+public sealed class OtlpProtobufDecodeTests
+{
+    [Fact]
+    public void ParseExportRequest_RoundTripsNestedFieldsInPlace()
+    {
+        static OtlpAnyValue Str(string value) => new() { Kind = OtlpValueKind.String, StringValue = value };
+        var nested = new OtlpAnyValue
+        {
+            Kind = OtlpValueKind.KvList,
+            KvValues =
+            [
+                new OtlpKeyValue { Key = "array", Value = new OtlpAnyValue { Kind = OtlpValueKind.Array, ArrayValues = [Str("a"), new OtlpAnyValue { Kind = OtlpValueKind.Int, IntValue = -7 }] } },
+                new OtlpKeyValue { Key = "bytes", Value = new OtlpAnyValue { Kind = OtlpValueKind.Bytes, BytesValue = [1, 2, 3] } },
+                new OtlpKeyValue { Key = "double", Value = new OtlpAnyValue { Kind = OtlpValueKind.Double, DoubleValue = 1.5 } },
+                new OtlpKeyValue { Key = "bool", Value = new OtlpAnyValue { Kind = OtlpValueKind.Bool, BoolValue = true } },
+            ],
+        };
+        var request = new OtlpExportRequest();
+        for (var r = 0; r < 2; r++)
+        {
+            var resource = new OtlpResourceLogs
+            {
+                Resource = new OtlpResource { Attributes = [new OtlpKeyValue { Key = "service.name", Value = Str($"svc-{r}") }], DroppedAttributesCount = 2 },
+                SchemaUrl = "https://example.invalid/resource",
+            };
+            var scope = new OtlpScopeLogs
+            {
+                Scope = new OtlpScope { Name = "scope", Version = "1", Attributes = [new OtlpKeyValue { Key = "nested", Value = nested }], DroppedAttributesCount = 1 },
+                SchemaUrl = "https://example.invalid/scope",
+            };
+            for (var i = 0; i < 3; i++)
+            {
+                scope.LogRecords.Add(new OtlpLogRecord
+                {
+                    TimeUnixNano = 1_700_000_000_000_000_000UL + (ulong)i,
+                    ObservedTimeUnixNano = 1_700_000_000_000_000_001UL,
+                    SeverityNumber = 9,
+                    SeverityText = "INFO",
+                    Body = Str(new string('x', 200 * (i + 1))),
+                    Attributes = [new OtlpKeyValue { Key = "k", Value = nested }],
+                    DroppedAttributesCount = 3,
+                    Flags = 1,
+                    TraceId = Enumerable.Range(1, 16).Select(b => (byte)(b + i)).ToArray(),
+                    SpanId = Enumerable.Range(1, 8).Select(b => (byte)(b + r)).ToArray(),
+                    EventName = "event",
+                });
+            }
+
+            resource.ScopeLogs.Add(scope);
+            request.ResourceLogs.Add(resource);
+        }
+
+        var encoded = request.ToByteArray();
+        var parsed = OtlpProtobuf.ParseExportRequest(encoded);
+
+        Assert.Equal(encoded, parsed.ToByteArray());
+        var last = parsed.ResourceLogs[1].ScopeLogs.Single().LogRecords[2];
+        Assert.Equal(600, last.Body!.StringValue.Length);
+        Assert.Equal(new byte[] { 2, 3, 4, 5, 6, 7, 8, 9 }, last.SpanId);
+        Assert.Equal(new byte[] { 1, 2, 3 }, last.Attributes.Single().Value.KvValues[1].Value.BytesValue);
+    }
+
+    [Fact]
+    public void ParseExportRequest_RejectsNestedLengthBeyondParentAndExcessiveDepth()
+    {
+        // ResourceLogs (5 bytes) declares a ScopeLogs field of 100 bytes but contains only 3.
+        var overrun = new byte[] { 0x0A, 0x05, 0x12, 0x64, 0x01, 0x02, 0x03 };
+        Assert.Throws<OtlpDecodeException>(() => OtlpProtobuf.ParseExportRequest(overrun));
+
+        var value = new OtlpAnyValue { Kind = OtlpValueKind.String, StringValue = "leaf" };
+        for (var depth = 0; depth <= TelemetryLimits.MaxAttributeNestingDepth + 1; depth++)
+        {
+            value = new OtlpAnyValue { Kind = OtlpValueKind.Array, ArrayValues = [value] };
+        }
+
+        var request = new OtlpExportRequest();
+        var scope = new OtlpScopeLogs();
+        scope.LogRecords.Add(new OtlpLogRecord { Body = value });
+        var resource = new OtlpResourceLogs();
+        resource.ScopeLogs.Add(scope);
+        request.ResourceLogs.Add(resource);
+        Assert.Throws<OtlpDecodeException>(() => OtlpProtobuf.ParseExportRequest(request.ToByteArray()));
     }
 }

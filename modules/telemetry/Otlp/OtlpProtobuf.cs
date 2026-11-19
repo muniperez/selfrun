@@ -610,14 +610,15 @@ public static class OtlpProtobuf
         try
         {
             var request = new OtlpExportRequest();
-            var input = new CodedInputStream(bytes);
+            var reader = new MessageReader(bytes, 0, bytes.Length);
+            var input = reader.Input;
             uint tag;
             while ((tag = input.ReadTag()) != 0)
             {
                 if (WireFormat.GetTagFieldNumber(tag) == 1 &&
                     WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
                 {
-                    request.ResourceLogs.Add(ParseResourceLogs(input.ReadBytes().ToByteArray()));
+                    request.ResourceLogs.Add(ParseResourceLogs(reader.Nested()));
                 }
                 else
                 {
@@ -725,10 +726,56 @@ public static class OtlpProtobuf
             : message[..MaxErrorMessageLength];
     }
 
-    private static OtlpResourceLogs ParseResourceLogs(byte[] bytes)
+
+    // Nested messages are decoded in place over the request buffer. Copying each nested message
+    // (ReadBytes().ToByteArray()) at every level allocated roughly 25x the decoded payload.
+    private readonly struct MessageReader
+    {
+        private readonly byte[] _buffer;
+        private readonly int _offset;
+        private readonly long _origin;
+
+        public MessageReader(byte[] buffer, int offset, int length)
+        {
+            _buffer = buffer;
+            _offset = offset;
+            Input = new CodedInputStream(buffer, offset, length);
+            _origin = Input.Position;
+        }
+
+        public CodedInputStream Input { get; }
+
+        // Call after ReadTag returned a length-delimited field. SkipLastField validates the declared
+        // length against the remaining input exactly as ReadBytes did.
+        public MessageReader Nested()
+        {
+            var (start, length) = SkipLengthDelimited();
+            return new MessageReader(_buffer, start, length);
+        }
+
+        public byte[] NestedBytes()
+        {
+            var (start, length) = SkipLengthDelimited();
+            return _buffer.AsSpan(start, length).ToArray();
+        }
+
+        private (int Start, int Length) SkipLengthDelimited()
+        {
+            var start = _offset + (int)(Input.Position - _origin);
+            Input.SkipLastField();
+            var end = _offset + (int)(Input.Position - _origin);
+            while ((_buffer[start++] & 0x80) != 0)
+            {
+            }
+
+            return (start, end - start);
+        }
+    }
+
+    private static OtlpResourceLogs ParseResourceLogs(MessageReader reader)
     {
         var resource = new OtlpResourceLogs();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -742,11 +789,11 @@ public static class OtlpProtobuf
 
             if (field == 1)
             {
-                resource.Resource = ParseResource(input.ReadBytes().ToByteArray());
+                resource.Resource = ParseResource(reader.Nested());
             }
             else if (field == 2)
             {
-                resource.ScopeLogs.Add(ParseScopeLogs(input.ReadBytes().ToByteArray()));
+                resource.ScopeLogs.Add(ParseScopeLogs(reader.Nested()));
             }
             else if (field == 3)
             {
@@ -761,10 +808,10 @@ public static class OtlpProtobuf
         return resource;
     }
 
-    private static OtlpResource ParseResource(byte[] bytes)
+    private static OtlpResource ParseResource(MessageReader reader)
     {
         var resource = new OtlpResource();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -772,7 +819,7 @@ public static class OtlpProtobuf
             var wireType = WireFormat.GetTagWireType(tag);
             if (field == 1 && wireType == WireFormat.WireType.LengthDelimited)
             {
-                resource.Attributes.Add(ParseKeyValue(input.ReadBytes().ToByteArray(), 0));
+                resource.Attributes.Add(ParseKeyValue(reader.Nested(), 0));
             }
             else if (field == 2 && wireType == WireFormat.WireType.Varint)
             {
@@ -787,10 +834,10 @@ public static class OtlpProtobuf
         return resource;
     }
 
-    private static OtlpScopeLogs ParseScopeLogs(byte[] bytes)
+    private static OtlpScopeLogs ParseScopeLogs(MessageReader reader)
     {
         var scopeLogs = new OtlpScopeLogs();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -804,11 +851,11 @@ public static class OtlpProtobuf
 
             if (field == 1)
             {
-                scopeLogs.Scope = ParseScope(input.ReadBytes().ToByteArray());
+                scopeLogs.Scope = ParseScope(reader.Nested());
             }
             else if (field == 2)
             {
-                scopeLogs.LogRecords.Add(ParseLogRecord(input.ReadBytes().ToByteArray()));
+                scopeLogs.LogRecords.Add(ParseLogRecord(reader.Nested()));
             }
             else if (field == 3)
             {
@@ -823,10 +870,10 @@ public static class OtlpProtobuf
         return scopeLogs;
     }
 
-    private static OtlpScope ParseScope(byte[] bytes)
+    private static OtlpScope ParseScope(MessageReader reader)
     {
         var scope = new OtlpScope();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -842,7 +889,7 @@ public static class OtlpProtobuf
             }
             else if (field == 3 && wireType == WireFormat.WireType.LengthDelimited)
             {
-                scope.Attributes.Add(ParseKeyValue(input.ReadBytes().ToByteArray(), 0));
+                scope.Attributes.Add(ParseKeyValue(reader.Nested(), 0));
             }
             else if (field == 4 && wireType == WireFormat.WireType.Varint)
             {
@@ -857,10 +904,10 @@ public static class OtlpProtobuf
         return scope;
     }
 
-    private static OtlpLogRecord ParseLogRecord(byte[] bytes)
+    private static OtlpLogRecord ParseLogRecord(MessageReader reader)
     {
         var record = new OtlpLogRecord();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -878,10 +925,10 @@ public static class OtlpProtobuf
                     record.SeverityText = input.ReadString();
                     break;
                 case 5 when wireType == WireFormat.WireType.LengthDelimited:
-                    record.Body = ParseAnyValue(input.ReadBytes().ToByteArray(), 0);
+                    record.Body = ParseAnyValue(reader.Nested(), 0);
                     break;
                 case 6 when wireType == WireFormat.WireType.LengthDelimited:
-                    record.Attributes.Add(ParseKeyValue(input.ReadBytes().ToByteArray(), 0));
+                    record.Attributes.Add(ParseKeyValue(reader.Nested(), 0));
                     break;
                 case 7 when wireType == WireFormat.WireType.Varint:
                     record.DroppedAttributesCount = input.ReadUInt32();
@@ -890,10 +937,10 @@ public static class OtlpProtobuf
                     record.Flags = input.ReadFixed32();
                     break;
                 case 9 when wireType == WireFormat.WireType.LengthDelimited:
-                    record.TraceId = input.ReadBytes().ToByteArray();
+                    record.TraceId = reader.NestedBytes();
                     break;
                 case 10 when wireType == WireFormat.WireType.LengthDelimited:
-                    record.SpanId = input.ReadBytes().ToByteArray();
+                    record.SpanId = reader.NestedBytes();
                     break;
                 case 11 when wireType == WireFormat.WireType.Fixed64:
                     record.ObservedTimeUnixNano = input.ReadFixed64();
@@ -910,10 +957,10 @@ public static class OtlpProtobuf
         return record;
     }
 
-    private static OtlpKeyValue ParseKeyValue(byte[] bytes, int depth)
+    private static OtlpKeyValue ParseKeyValue(MessageReader reader, int depth)
     {
         var pair = new OtlpKeyValue();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -925,7 +972,7 @@ public static class OtlpProtobuf
             }
             else if (field == 2 && wireType == WireFormat.WireType.LengthDelimited)
             {
-                pair.Value = ParseAnyValue(input.ReadBytes().ToByteArray(), depth);
+                pair.Value = ParseAnyValue(reader.Nested(), depth);
             }
             else
             {
@@ -936,7 +983,7 @@ public static class OtlpProtobuf
         return pair;
     }
 
-    private static OtlpAnyValue ParseAnyValue(byte[] bytes, int depth)
+    private static OtlpAnyValue ParseAnyValue(MessageReader reader, int depth)
     {
         if (depth > TelemetryLimits.MaxAttributeNestingDepth)
         {
@@ -944,7 +991,7 @@ public static class OtlpProtobuf
         }
 
         var value = new OtlpAnyValue();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -970,15 +1017,15 @@ public static class OtlpProtobuf
                     break;
                 case 5 when wireType == WireFormat.WireType.LengthDelimited:
                     value.Kind = OtlpValueKind.Array;
-                    value.ArrayValues = ParseArrayValue(input.ReadBytes().ToByteArray(), depth + 1);
+                    value.ArrayValues = ParseArrayValue(reader.Nested(), depth + 1);
                     break;
                 case 6 when wireType == WireFormat.WireType.LengthDelimited:
                     value.Kind = OtlpValueKind.KvList;
-                    value.KvValues = ParseKvList(input.ReadBytes().ToByteArray(), depth + 1);
+                    value.KvValues = ParseKvList(reader.Nested(), depth + 1);
                     break;
                 case 7 when wireType == WireFormat.WireType.LengthDelimited:
                     value.Kind = OtlpValueKind.Bytes;
-                    value.BytesValue = input.ReadBytes().ToByteArray();
+                    value.BytesValue = reader.NestedBytes();
                     break;
                 default:
                     input.SkipLastField();
@@ -989,7 +1036,7 @@ public static class OtlpProtobuf
         return value;
     }
 
-    private static List<OtlpAnyValue> ParseArrayValue(byte[] bytes, int depth)
+    private static List<OtlpAnyValue> ParseArrayValue(MessageReader reader, int depth)
     {
         if (depth > TelemetryLimits.MaxAttributeNestingDepth)
         {
@@ -997,14 +1044,14 @@ public static class OtlpProtobuf
         }
 
         var values = new List<OtlpAnyValue>();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
             if (WireFormat.GetTagFieldNumber(tag) == 1 &&
                 WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
             {
-                values.Add(ParseAnyValue(input.ReadBytes().ToByteArray(), depth));
+                values.Add(ParseAnyValue(reader.Nested(), depth));
             }
             else
             {
@@ -1015,7 +1062,7 @@ public static class OtlpProtobuf
         return values;
     }
 
-    private static List<OtlpKeyValue> ParseKvList(byte[] bytes, int depth)
+    private static List<OtlpKeyValue> ParseKvList(MessageReader reader, int depth)
     {
         if (depth > TelemetryLimits.MaxAttributeNestingDepth)
         {
@@ -1023,14 +1070,14 @@ public static class OtlpProtobuf
         }
 
         var values = new List<OtlpKeyValue>();
-        var input = new CodedInputStream(bytes);
+        var input = reader.Input;
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
             if (WireFormat.GetTagFieldNumber(tag) == 1 &&
                 WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
             {
-                values.Add(ParseKeyValue(input.ReadBytes().ToByteArray(), depth));
+                values.Add(ParseKeyValue(reader.Nested(), depth));
             }
             else
             {
