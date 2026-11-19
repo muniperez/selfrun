@@ -37,6 +37,7 @@ public sealed class DevelopmentWorkspaceProfile
 
 public sealed class DevelopmentWorkspaceImage
 {
+    public string? DisplayName { get; set; }
     public string ProviderImageId { get; set; } = string.Empty;
     public string Architecture { get; set; } = "linux/amd64";
     public string ManifestSha256 { get; set; } = string.Empty;
