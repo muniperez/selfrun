@@ -169,6 +169,30 @@ it("filters primary and ephemeral independently and sorts missing activity last"
   expect(rows[2]).toHaveTextContent("Coding");
 });
 
+it("shows creation time for a new environment and sorts it with recorded activity by the shown time", async () => {
+  sessionStorage.setItem("org-a:workspaces", JSON.stringify({ sort: "activity", direction: "desc" }));
+  vi.mocked(listDevelopmentWorkspaces).mockResolvedValue([
+    workspace({ id: "older", name: "Older", createdAt: "2026-11-01T08:00:00Z",
+      vms: [vm("primary", { lastActivityAt: "2026-11-10T09:00:00Z" })] }),
+    workspace({ id: "new", name: "New", createdAt: "2026-11-15T10:00:00Z", vms: [vm("primary", { phase: "provisioning" })] }),
+    workspace({ id: "active", name: "Active", createdAt: "2026-10-01T08:00:00Z", lastActivityAt: "2026-11-12T09:00:00Z",
+      vms: [vm("primary", { lastActivityAt: "2026-11-18T09:00:00Z" })] }),
+  ]);
+  load();
+  await screen.findByRole("link", { name: "New" });
+  const table = screen.getByRole("table", { name: "Dev environments" });
+  const rows = within(table).getAllByRole("row");
+  expect(rows.slice(1).map(row => within(row).getByRole("link").textContent)).toEqual(["Active", "New", "Older"]);
+  expect(rows[2]).toHaveTextContent(`Created ${new Date("2026-11-15T10:00:00Z").toLocaleString()}`);
+  expect(rows[2]).not.toHaveTextContent("Unavailable");
+  expect(rows[2].querySelector("time")).toHaveAttribute("dateTime", "2026-11-15T10:00:00.000Z");
+  expect(rows[1].querySelector("time")).toHaveAttribute("dateTime", "2026-11-18T09:00:00.000Z");
+  expect(rows[1]).not.toHaveTextContent("Created");
+  expect(rows[3].querySelector("time")).toHaveAttribute("dateTime", "2026-11-10T09:00:00.000Z");
+  expect(lastActivity(workspace({ createdAt: "2026-11-15T10:00:00Z", vms: [vm()] })))
+    .toEqual({ at: Date.parse("2026-11-15T10:00:00Z"), source: "created" });
+});
+
 it("distinguishes empty organizations, no matches and refresh failure while retaining rows", async () => {
   load();
   await screen.findByRole("link", { name: "Coding" });

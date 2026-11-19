@@ -120,8 +120,8 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
   const filtered = items.filter(workspace => workspace.name.toLocaleLowerCase().includes(query.search.trim().toLocaleLowerCase())
     && (!query.filters.primary || primaryState(workspace).value === query.filters.primary)
     && (!query.filters.ephemeral || ephemeralSummary(workspace).state === query.filters.ephemeral))
-    .sort((a, b) => compareRecords(query.sort === "activity" ? lastActivity(a) : a.name,
-      query.sort === "activity" ? lastActivity(b) : b.name, query.direction, a.id, b.id));
+    .sort((a, b) => compareRecords(query.sort === "activity" ? lastActivity(a)?.at ?? null : a.name,
+      query.sort === "activity" ? lastActivity(b)?.at ?? null : b.name, query.direction, a.id, b.id));
   return <PageScaffold title={workspaceId ? item?.name ?? "Dev environment" : "Dev Environments"}
     breadcrumbs={workspaceId ? [{ label: "Dev Environments", to: "/workspaces" }, { label: item?.name ?? "Dev environment" }] : undefined}
     actions={workspaceId ? <Button variant="outline" disabled={loading} onClick={checkStatus}>Refresh status</Button> : undefined}>
@@ -187,7 +187,9 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
               <TableCell data-label="Primary VM"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${phaseStyle}`}>{phase.label}</span></TableCell>
               <TableCell data-label="Temporary VMs"><span className={ephemeral.state === "attention" ? "text-warning" : ""}>{ephemeral.label}</span></TableCell>
               <TableCell data-label="Storage">{Number.isFinite(workspace.volumeSizeGb) ? `${workspace.volumeSizeGb} GB` : "Unavailable"}</TableCell>
-              <TableCell data-label="Last activity">{activity === null ? "Unavailable" : <time dateTime={new Date(activity).toISOString()}>{new Date(activity).toLocaleString()}</time>}</TableCell>
+              <TableCell data-label="Last activity">{activity === null ? "Unavailable" : <>
+                {activity.source === "created" && "Created "}
+                <time dateTime={new Date(activity.at).toISOString()}>{new Date(activity.at).toLocaleString()}</time></>}</TableCell>
             </TableRow>;
           })}</TableBody>
         </Table>
