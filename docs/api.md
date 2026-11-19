@@ -43,7 +43,13 @@ those external protocols and remain unchanged. They are not parallel Minicloud
 product APIs. Stored migration metadata preserves existing resources without
 publishing identity-resolution aliases.
 
-## Development workspace selections
+## Development workspace status and selections
+
+`GET /api/development-workspaces/{id}?organizationId={id}` can report
+`vms[].startupStage` for the VM's current startup operation: `preparing_vm`,
+`preparing_storage` (primary only), `setting_up`, or `checking_readiness`.
+An absent stage means the precise startup step is unknown. A blocked start
+can report its last recorded stage; only a ready VM phase confirms readiness.
 
 Workspace list/detail responses include optional `createdBy` (the workspace
 creator's actor ID). The dashboard uses it only to present primary T3 Connect

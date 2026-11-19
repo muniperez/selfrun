@@ -262,6 +262,40 @@ public sealed partial class DevelopmentWorkspaceService(
     public async Task<DevelopmentWorkspace?> GetAsync(string workspaceId, string organizationId, CancellationToken ct) =>
         await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(x => x.Id == workspaceId && x.OrganizationId == organizationId, ct);
 
+    public async Task<DevelopmentWorkspaceResponse> ToDetailResponseAsync(DevelopmentWorkspace workspace, CancellationToken ct)
+    {
+        var response = ToResponse(workspace);
+        var starting = workspace.Vms.Where(vm => vm is { DesiredState: "running", Phase: not "ready", OperationId: not null })
+            .ToDictionary(vm => vm.Id);
+        if (starting.Count == 0) return response;
+        var operationIds = starting.Values.Select(vm => vm.OperationId!).ToArray();
+        var operations = await db.DevelopmentWorkspaceOperations.AsNoTracking()
+            .Where(op => op.WorkspaceId == workspace.Id && op.Kind == "start" && operationIds.Contains(op.Id))
+            .Select(op => new { op.Id, op.VmId, op.Generation, op.Step }).ToDictionaryAsync(op => op.Id, ct);
+
+        return response with
+        {
+            Vms = response.Vms!.Select(vm =>
+            {
+                if (!starting.TryGetValue(vm.Id, out var machine) ||
+                    !operations.TryGetValue(machine.OperationId!, out var op) ||
+                    op.VmId != vm.Id || op.Generation != vm.Generation) return vm;
+                return vm with
+                {
+                    StartupStage = op.Step switch
+                    {
+                        "pending" or "git-recovery-pending" or "bootstrap-secret" or "volume" or "volume-ready"
+                            or "firewall" or "allocate" or "server-ready" => "preparing_vm",
+                        "attach" or "mount" when vm.Kind == DevelopmentWorkspaceVmKinds.Primary => "preparing_storage",
+                        "bootstrap" => "setting_up",
+                        "session" => "checking_readiness",
+                        _ => null
+                    }
+                };
+            }).ToArray()
+        };
+    }
+
     public DevelopmentWorkspaceResponse ToResponse(DevelopmentWorkspace workspace)
     {
         var primary = workspace.Vms.Single(x => x.Id == workspace.PrimaryVmId && x.Kind == DevelopmentWorkspaceVmKinds.Primary);

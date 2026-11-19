@@ -15,7 +15,14 @@ vi.mock("./CreateWorkspaceDialog", () => ({
   CreateWorkspaceDialog: ({ canManage }: { canManage: boolean }) => canManage ? <button>Create workspace</button> : null,
 }));
 vi.mock("./WorkspaceDetail", () => ({
-  WorkspaceDetail: ({ item }: { item: DevelopmentWorkspace }) => <article aria-label={`Workspace ${item.name}`}><Link to="/workspaces">All workspaces</Link></article>,
+  WorkspaceDetail: ({ item, refresh }: { item: DevelopmentWorkspace; refresh: (observed?: DevelopmentWorkspace) => Promise<void> }) =>
+    <article aria-label={`Workspace ${item.name}`}>
+      {item.vms.map(vm => <p key={vm.id}>{vm.id}: {vm.phase}</p>)}
+      <p>{item.estimatedMonthlyStorage} {item.currency} storage</p>
+      <Link to="/workspaces">All workspaces</Link>
+      <button onClick={() => void refresh({ ...item, revision: item.revision + 1,
+        vms: item.vms.map(machine => ({ ...machine, desiredState: "running", phase: "provisioning" })) })}>Observe accepted start</button>
+    </article>,
 }));
 
 function vm(id = "primary", overrides: Partial<DevelopmentWorkspaceVm> = {}): DevelopmentWorkspaceVm {
@@ -46,7 +53,77 @@ beforeEach(() => {
   vi.mocked(listDevelopmentWorkspaces).mockResolvedValue([workspace()]);
   vi.mocked(getWorkspace).mockResolvedValue(workspace());
 });
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
+
+function loadDetail() {
+  return render(<MemoryRouter initialEntries={["/workspaces/workspace"]}><Routes>
+    <Route path="/workspaces/:workspaceId" element={<WorkspacesModule />} />
+    <Route path="/workspaces" element={<WorkspacesModule />} />
+  </Routes></MemoryRouter>);
+}
+
+it("keeps an accepted start and costs visible after a failed read; checks status until ready", async () => {
+  vi.useFakeTimers();
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ vms: [vm()] }))
+    .mockRejectedValueOnce(new Error("Network unavailable"))
+    .mockResolvedValueOnce(workspace({ revision: 3, vms: [vm("primary", { phase: "ready", desiredState: "running" })] }));
+  loadDetail();
+  await act(async () => {});
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Observe accepted start" })));
+  expect(screen.getByRole("alert")).toHaveTextContent(/Status refresh failed.*showing the last reported status/);
+  expect(screen.getByText("primary: provisioning")).toBeInTheDocument();
+  expect(screen.getByText("1 EUR storage")).toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  expect(screen.getByText("primary: ready")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(getWorkspace).toHaveBeenCalledTimes(3);
+});
+
+it("shows slow startup for a temporary VM, bounds automatic reads, and lets a manual read recover", async () => {
+  vi.useFakeTimers();
+  vi.mocked(getWorkspace).mockResolvedValue(workspace({
+    vms: [vm(), vm("temporary", { phase: "provisioning", desiredState: "running" })],
+  }));
+  loadDetail();
+  await act(async () => {});
+  await act(async () => vi.advanceTimersByTimeAsync(46_000));
+  expect(screen.getByText(/Startup is taking longer/)).toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTimeAsync(135_000));
+  expect(screen.getByText(/Automatic status checks paused/)).toBeInTheDocument();
+  const reads = vi.mocked(getWorkspace).mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(180_000));
+  expect(getWorkspace).toHaveBeenCalledTimes(reads);
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ vms: [vm(), vm("temporary", { phase: "blocked", desiredState: "running" })] }));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh workspace status" })));
+  expect(screen.getByText("temporary: blocked")).toBeInTheDocument();
+  expect(screen.queryByText(/Automatic status checks paused/)).not.toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTimeAsync(180_000));
+  expect(getWorkspace).toHaveBeenCalledTimes(reads + 1);
+});
+
+it("times out one status read at a time and aborts a pending read when leaving detail", async () => {
+  vi.useFakeTimers();
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ vms: [vm("primary", { phase: "provisioning", desiredState: "running" })] }))
+    .mockImplementation((_id, _org, signal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+  loadDetail();
+  await act(async () => {});
+  await act(async () => vi.advanceTimersByTimeAsync(17_000));
+  expect(getWorkspace).toHaveBeenCalledTimes(2);
+  const timedOut = vi.mocked(getWorkspace).mock.calls[1][2];
+  await act(async () => vi.advanceTimersByTimeAsync(1_000));
+  expect(timedOut?.aborted).toBe(true);
+  expect(screen.getByRole("alert")).toHaveTextContent(/status request timed out/i);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry status check" })));
+  const retry = vi.mocked(getWorkspace).mock.calls[2][2];
+  expect(retry?.aborted).toBe(false);
+  await act(async () => fireEvent.click(screen.getByRole("link", { name: "All workspaces" })));
+  expect(retry?.aborted).toBe(true);
+  await act(async () => vi.advanceTimersByTimeAsync(180_000));
+  expect(getWorkspace).toHaveBeenCalledTimes(3);
+});
 
 it("shows a stopped primary independently of a blocked sibling and performs reads only", async () => {
   load();
@@ -118,6 +195,7 @@ it("clears previous organization data and ignores a late response", async () => 
   let resolveFirst!: (items: DevelopmentWorkspace[]) => void;
   vi.mocked(listDevelopmentWorkspaces).mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }));
   const view = load();
+  await waitFor(() => expect(listDevelopmentWorkspaces).toHaveBeenCalledTimes(1));
   auth.selectedOrganization = { id: "org-b", role: "viewer" };
   vi.mocked(listDevelopmentWorkspaces).mockResolvedValueOnce([workspace({ id: "other", name: "Other organization", organizationId: "org-b" })]);
   view.rerender(<MemoryRouter><WorkspacesModule /></MemoryRouter>);
