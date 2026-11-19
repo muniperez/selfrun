@@ -5,6 +5,16 @@ not another VM type or an always-on compute plan. Viewing status, signing in on
 another device and opening a link never start compute. Ordinary **Open T3**
 continues to use only terminal/orchestration read and operate permissions.
 
+On the workspace detail page, primary and ephemeral VMs show the startup
+stages reported by the control plane. The dashboard checks status automatically
+for a limited time and keeps the last reported status and costs visible if a
+check fails. **Refresh workspace status** checks again without starting compute.
+
+After you request an **Open T3** or **Open preview** link, its countdown shows
+how long you have to open that single-use link, not how long the session lasts.
+If it expires, select **Request new link**. The dashboard does not request or
+open a replacement automatically.
+
 ## Link, check and unlink
 
 1. As the workspace creator or an organization Owner, open a **ready primary**

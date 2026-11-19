@@ -445,4 +445,5 @@ export type DevelopmentWorkspaceVm = {
   computeHourlyRate: number; estimatedMonthlyCompute: number; computeReserved: boolean; revision: number;
   taskLeases?: DevelopmentWorkspaceTaskLease[];
   startAfterStop?: boolean;
+  startupStage?: string | null;
 };

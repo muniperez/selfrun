@@ -70,7 +70,8 @@ public sealed record DevelopmentWorkspaceVmResponse(
     string? NextImageId, string? NextProfile, string? NextPlanId,
     decimal ComputeHourlyRate, decimal EstimatedMonthlyCompute, bool ComputeReserved, long Revision,
     IReadOnlyList<DevelopmentWorkspaceTaskLeaseResponse>? TaskLeases = null,
-    bool StartAfterStop = false);
+    bool StartAfterStop = false,
+    string? StartupStage = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseResponse(
     string VmId, string TaskId, long Generation, string Status, DateTimeOffset ExpiresAt);

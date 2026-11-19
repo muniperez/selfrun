@@ -9,10 +9,17 @@ import { compareRecords, useCollectionQuery } from "@/core/components/collection
 import { useAuth } from "@/core/auth/AuthProvider";
 import { listDevelopmentWorkspaces } from "@/api/environmentsApi";
 import { getWorkspace } from "@/api/workspacesApi";
-import type { DevelopmentWorkspace } from "@/models/controlPlane";
+import { ApiError, type DevelopmentWorkspace } from "@/models/controlPlane";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { WorkspaceDetail } from "./WorkspaceDetail";
 import { ephemeralSummary, lastActivity, primaryVm, workspacePhase } from "./workspaceCollection";
+import { vmStartup } from "./WorkspaceVmStartup";
+
+const fastPollMs = 3_000;
+const slowPollMs = 10_000;
+const slowStartupMs = 45_000;
+const autoRefreshLimitMs = 180_000;
+const statusRequestTimeoutMs = 15_000;
 
 export function WorkspacesModule() {
   const { selectedOrganization } = useAuth();
@@ -30,31 +37,86 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [created, setCreated] = useState<DevelopmentWorkspace | null>(null);
+  const [delayed, setDelayed] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [pollCycle, setPollCycle] = useState(0);
   const [query, setQuery] = useCollectionQuery(`${organizationId}:workspaces`, "name", "asc");
   const active = useRef(true);
-  const revision = useRef(0);
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    const request = ++revision.current;
+  const request = useRef<{ controller: AbortController; done: Promise<void> } | null>(null);
+  const refresh = useCallback((observation?: DevelopmentWorkspace) => {
+    if (!active.current) return Promise.resolve();
+    if (observation && observation.id === workspaceId && observation.organizationId === organizationId) {
+      setItems(items => !items[0] || items[0].revision < observation.revision ? [observation] : items);
+      request.current?.controller.abort();
+    } else if (request.current) return request.current.done;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const timeout = workspaceId ? window.setTimeout(() => controller.abort("status timeout"), statusRequestTimeoutMs) : undefined;
     setLoading(true);
-    try {
-      const result = workspaceId ? [await getWorkspace(workspaceId, organizationId, signal)]
-        : await listDevelopmentWorkspaces(organizationId, signal);
-      if (active.current && request === revision.current) { setItems(result); setError(null); }
-    } catch (reason) {
-      if (active.current && !signal?.aborted && request === revision.current)
-        setError(reason instanceof Error ? reason.message : "Unable to load workspaces.");
-    } finally {
-      if (active.current && request === revision.current) setLoading(false);
-    }
+    const done = Promise.resolve().then(async () => {
+      try {
+        if (signal.aborted) return;
+        const result = workspaceId ? [await getWorkspace(workspaceId, organizationId, signal)]
+          : await listDevelopmentWorkspaces(organizationId, signal);
+        if (active.current && request.current?.controller === controller && !signal.aborted) {
+          setItems(result);
+          setError(null);
+        }
+      } catch (reason) {
+        if (active.current && request.current?.controller === controller && !signal.aborted) {
+          if (workspaceId && reason instanceof ApiError && [401, 403, 404].includes(reason.status)) setItems([]);
+          setError(reason instanceof Error ? reason.message : "Unable to load workspaces.");
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        if (active.current && request.current?.controller === controller) {
+          if (signal.reason === "status timeout") setError("The status request timed out.");
+          request.current = null;
+          setLoading(false);
+        }
+      }
+    });
+    request.current = { controller, done };
+    return done;
   }, [organizationId, workspaceId]);
   useEffect(() => {
     active.current = true;
-    const controller = new AbortController();
-    void refresh(controller.signal);
-    return () => { active.current = false; controller.abort(); ++revision.current; };
+    void refresh();
+    return () => {
+      active.current = false;
+      request.current?.controller.abort();
+      request.current = null;
+    };
   }, [refresh]);
 
   const item = items[0];
+  const startingGenerations = workspaceId ? (item?.vms ?? [])
+    .filter(vm => vm.startAfterStop || vmStartup(vm).starting)
+    .map(vm => `${vm.id}:${vm.generation}`).sort().join(",") : "";
+  useEffect(() => {
+    setDelayed(false);
+    setPaused(false);
+    if (!startingGenerations) return;
+    let active = true;
+    let timer: number | undefined;
+    const started = Date.now();
+    const schedule = () => {
+      if (!active) return;
+      const elapsed = Date.now() - started;
+      if (elapsed >= slowStartupMs) setDelayed(true);
+      if (elapsed >= autoRefreshLimitMs) { setPaused(true); return; }
+      timer = window.setTimeout(async () => {
+        if (Date.now() - started < autoRefreshLimitMs) await refresh();
+        schedule();
+      }, Math.min(elapsed >= slowStartupMs ? slowPollMs : fastPollMs, autoRefreshLimitMs - elapsed));
+    };
+    schedule();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [startingGenerations, pollCycle, refresh]);
+  const checkStatus = () => {
+    if (paused) setPollCycle(cycle => cycle + 1);
+    void refresh();
+  };
   const filtered = items.filter(workspace => workspace.name.toLocaleLowerCase().includes(query.search.trim().toLocaleLowerCase())
     && (!query.filters.primary || workspacePhase(primaryVm(workspace)?.phase).value === query.filters.primary)
     && (!query.filters.ephemeral || ephemeralSummary(workspace).state === query.filters.ephemeral))
@@ -62,7 +124,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       query.sort === "activity" ? lastActivity(b) : b.name, query.direction, a.id, b.id));
   return <PageScaffold title={workspaceId ? item?.name ?? "Workspace" : "Workspaces"}
     breadcrumbs={workspaceId ? [{ label: "Workspaces", to: "/workspaces" }, { label: item?.name ?? "Workspace" }] : undefined}
-    actions={workspaceId ? <Button variant="outline" disabled={loading} onClick={() => void refresh()}>Refresh workspace status</Button> : undefined}>
+    actions={workspaceId ? <Button variant="outline" disabled={loading} onClick={checkStatus}>Refresh workspace status</Button> : undefined}>
     {!workspaceId && <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0 flex-1"><CollectionToolbar label="workspaces" query={query}
@@ -89,8 +151,13 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       </p>}
     </>}
     {error && <div role="alert" className="space-y-2 text-sm text-destructive">
-      <p>{error}</p><Button variant="outline" onClick={() => void refresh()} disabled={loading}>Retry</Button>
+      <p>{workspaceId && item ? `Status refresh failed. Updates are delayed; showing the last reported status. ${error}` : error}</p>
+      <Button variant="outline" onClick={checkStatus} disabled={loading}>{workspaceId && item ? "Retry status check" : "Retry"}</Button>
     </div>}
+    {workspaceId && <p role="status" className="text-sm text-muted-foreground">
+      {startingGenerations && (paused ? "Automatic status checks paused. Refresh workspace status to check again."
+        : delayed && !error ? "Still waiting for the VM to be ready. Startup is taking longer than usual." : "")}
+    </p>}
     {loading && !items.length && <p role="status">Loading {workspaceId ? "workspace" : "workspaces"}…</p>}
     {!loading && !error && !items.length && <p>{workspaceId ? "Workspace not found." : "No workspaces yet."}
       {!workspaceId && !canManage ? " Ask an organization administrator to create a workspace." : ""}</p>}

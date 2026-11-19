@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { ChevronDown, ChevronRight, GitBranch, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, GitBranch, LoaderCircle, Plus } from "lucide-react";
 import { launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,12 @@ import { useAuth } from "@/core/auth/AuthProvider";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceVmCard } from "./WorkspaceVmCard";
+import { vmStartup } from "./WorkspaceVmStartup";
 
 type Props = {
   item: DevelopmentWorkspace;
   organizationId: string;
-  refresh: () => Promise<void>;
+  refresh: (observation?: DevelopmentWorkspace) => Promise<void>;
   canManage: boolean;
 };
 
@@ -30,9 +31,12 @@ function message(reason: unknown) {
 }
 
 function phaseLabel(vm: DevelopmentWorkspaceVm) {
+  const { starting, failed, ready } = vmStartup(vm);
   if (vm.phase === "awaiting_git_save") return "Git save blocked";
+  if (failed) return "VM startup failed";
+  if (starting) return "Starting VM…";
   if (vm.errorCode) return `Blocked · ${vm.phase.replaceAll("_", " ")}`;
-  if (vm.phase === "ready" && vm.desiredState === "running") return "Ready";
+  if (ready) return "Ready";
   if (vm.phase === "stopped") return "Stopped";
   return vm.phase.replaceAll("_", " ");
 }
@@ -60,8 +64,8 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setStopConfirmation(null); setStopError(null); }, [stopSnapshot, canManage]);
 
-  const refreshAfterMutation = async () => {
-    try { await refresh(); }
+  const refreshAfterMutation = async (observation?: DevelopmentWorkspace) => {
+    try { await refresh(observation); }
     catch (reason) { if (mounted.current) setRefreshError(`Operation accepted. Refresh failed: ${message(reason)}`); }
   };
   const stopAll = async () => {
@@ -71,15 +75,15 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
     setStopError(null);
     setRefreshError(null);
     try {
-      await workspaceOperation(item.id, organizationId, "stop-all");
+      const observation = await workspaceOperation(item.id, organizationId, "stop-all");
       if (!mounted.current) return;
       setStopConfirmation(null);
-      await refreshAfterMutation();
+      await refreshAfterMutation(observation);
     } catch (reason) { if (mounted.current) setStopError(message(reason)); }
     finally { stopPending.current = false; if (mounted.current) setStopping(false); }
   };
   return <div className="min-w-0 space-y-6">
-    {item.errorCode && <p role="alert" className="text-sm text-destructive">{item.errorCode}: {item.errorMessage}</p>}
+    {item.errorCode && !(primary && vmStartup(primary).failed) && <p role="alert" className="text-sm text-destructive">{item.errorCode}: {item.errorMessage}</p>}
     {refreshError && <p role="alert" className="text-sm text-destructive">{refreshError}</p>}
     {!canManage && <p className="text-sm text-muted-foreground">Read-only access. Workspace management requires an owner or admin.</p>}
     <Tabs defaultValue="overview" className="min-w-0">
@@ -135,7 +139,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
             <LaunchEphemeralDialog item={item} organizationId={organizationId} refresh={refreshAfterMutation} canManage={canManage} />
           </div>
           <EphemeralTable vms={ephemeral} workspaceId={item.id} organizationId={organizationId}
-            currency={item.currency} refresh={refresh} canManage={canManage} />
+            currency={item.currency} refresh={refresh} canManage={canManage} actorId={profile?.id} />
         </section>
       </TabsContent>
       <TabsContent value="storage" className="space-y-6 pt-4">
@@ -184,9 +188,9 @@ function Metric({ label, value }: { label: string; value: string }) {
   return <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value}</dd></div>;
 }
 
-function EphemeralTable({ vms, workspaceId, organizationId, currency, refresh, canManage }: {
+function EphemeralTable({ vms, workspaceId, organizationId, currency, refresh, canManage, actorId }: {
   vms: DevelopmentWorkspaceVm[]; workspaceId: string; organizationId: string; currency: string;
-  refresh: () => Promise<void>; canManage: boolean;
+  refresh: Props["refresh"]; canManage: boolean; actorId?: string;
 }) {
   return <div className="overflow-hidden rounded-lg border">
     <Table aria-label="Ephemeral VMs">
@@ -196,7 +200,7 @@ function EphemeralTable({ vms, workspaceId, organizationId, currency, refresh, c
         <TableHead scope="col"><span className="sr-only">Details</span></TableHead>
       </TableRow></TableHeader>
       <TableBody>
-        {vms.map(vm => <EphemeralRow key={`${vm.id}:${vm.generation}`} vm={vm} workspaceId={workspaceId}
+        {vms.map(vm => <EphemeralRow key={`${vm.id}:${vm.generation}:${actorId ?? ""}`} vm={vm} workspaceId={workspaceId}
           organizationId={organizationId} currency={currency} refresh={refresh} canManage={canManage} />)}
         {!vms.length && <TableRow><TableCell colSpan={4} className="space-y-1 py-10 text-center">
           <p className="font-medium">No ephemeral VMs</p>
@@ -209,10 +213,11 @@ function EphemeralTable({ vms, workspaceId, organizationId, currency, refresh, c
 
 function EphemeralRow({ vm, workspaceId, organizationId, currency, refresh, canManage }: {
   vm: DevelopmentWorkspaceVm; workspaceId: string; organizationId: string; currency: string;
-  refresh: () => Promise<void>; canManage: boolean;
+  refresh: Props["refresh"]; canManage: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [visited, setVisited] = useState(false);
+  const { starting, failed, ready } = vmStartup(vm);
+  const [expanded, setExpanded] = useState(starting || failed);
+  const [visited, setVisited] = useState(starting || failed);
   const detailsId = useId();
   return <Fragment>
     <TableRow>
@@ -225,9 +230,9 @@ function EphemeralRow({ vm, workspaceId, organizationId, currency, refresh, canM
           </div>
         </div>
       </TableCell>
-      <TableCell><Badge variant={vm.errorCode && vm.phase !== "awaiting_git_save" ? "destructive" : "secondary"}
+      <TableCell><Badge role={expanded ? undefined : "status"} variant={failed || vm.errorCode && vm.phase !== "awaiting_git_save" ? "destructive" : "secondary"}
         className={vm.phase === "awaiting_git_save" ? "border-warning/30 bg-warning-surface text-warning"
-          : vm.phase === "ready" && vm.desiredState === "running" && !vm.errorCode ? "border-success/30 bg-success-surface text-success" : undefined}>{phaseLabel(vm)}</Badge></TableCell>
+          : ready ? "border-success/30 bg-success-surface text-success" : undefined}>{phaseLabel(vm)}</Badge></TableCell>
       <TableCell>{vm.gitStatus.replaceAll("_", " ").replace(/^./, character => character.toUpperCase())}</TableCell>
       <TableCell>
         <Button size="icon" variant="ghost" aria-label={`${expanded ? "Collapse" : "Expand"} VM ${vm.id}`}
@@ -285,12 +290,12 @@ function LaunchEphemeralDialog({ item, organizationId, refresh, canManage }: Pro
     const payload = JSON.stringify(request);
     if (requestKey.current?.payload !== payload) requestKey.current = { payload, key: crypto.randomUUID() };
     try {
-      await launchEphemeralVm(item.id, organizationId, { ...request, idempotencyKey: requestKey.current.key });
+      const observation = await launchEphemeralVm(item.id, organizationId, { ...request, idempotencyKey: requestKey.current.key });
       if (!mounted.current) return;
       requestKey.current = null;
       reset();
       setOpen(false);
-      await refresh();
+      await refresh(observation);
     } catch (reason) { if (mounted.current) setError(message(reason)); }
     finally { pending.current = false; if (mounted.current) setBusy(false); }
   };
@@ -316,8 +321,12 @@ function LaunchEphemeralDialog({ item, organizationId, refresh, canManage }: Pro
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <DialogFooter className="gap-2">
           <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel launch</Button>
-          <Button disabled={!canManage || !valid || busy}>{busy ? "Launching…" : "Launch ephemeral VM"}</Button>
+          <Button disabled={!canManage || !valid || busy}>
+            {busy && <LoaderCircle aria-hidden="true" className="mr-2 size-4 motion-safe:animate-spin" />}
+            {busy ? "Starting VM…" : "Launch ephemeral VM"}
+          </Button>
         </DialogFooter>
+        <p role="status" className="sr-only">{busy ? "Starting VM…" : ""}</p>
       </form>
     </DialogContent>
   </Dialog>;
