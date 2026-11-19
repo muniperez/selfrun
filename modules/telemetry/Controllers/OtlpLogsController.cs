@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Mvc;
@@ -139,7 +140,7 @@ public sealed class OtlpLogsController(
         try
         {
             using var stage = StartStage("otlp.read");
-            encoded = await ReadBoundedAsync(Request.Body, TelemetryLimits.MaxEncodedBytes, cancellationToken);
+            encoded = await ReadBoundedAsync(Request.Body, Request.ContentLength, TelemetryLimits.MaxEncodedBytes, cancellationToken);
         }
         catch (OtlpRequestValidationException ex)
         {
@@ -266,21 +267,29 @@ public sealed class OtlpLogsController(
         return File(body, OtlpProtobuf.ProtobufContentType);
     }
 
-    private static async Task<byte[]> ReadBoundedAsync(Stream source, long maxBytes, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadBoundedAsync(Stream source, long? contentLength, long maxBytes, CancellationToken cancellationToken)
     {
-        using var destination = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        var total = 0L;
-        int read;
-        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        // Content-Length was already checked against maxBytes; presizing avoids MemoryStream regrowth copies.
+        using var destination = new MemoryStream(contentLength is > 0 ? (int)Math.Min(contentLength.Value, maxBytes) : 0);
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            total += read;
-            if (total > maxBytes)
+            var total = 0L;
+            int read;
+            while ((read = await source.ReadAsync(buffer.AsMemory(0, 64 * 1024), cancellationToken)) > 0)
             {
-                throw new OtlpRequestValidationException($"Encoded request exceeds {maxBytes} bytes.");
-            }
+                total += read;
+                if (total > maxBytes)
+                {
+                    throw new OtlpRequestValidationException($"Encoded request exceeds {maxBytes} bytes.");
+                }
 
-            destination.Write(buffer, 0, read);
+                destination.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         return destination.ToArray();
@@ -291,19 +300,26 @@ public sealed class OtlpLogsController(
         using var source = new MemoryStream(encoded, writable: false);
         await using var gzip = new GZipStream(source, CompressionMode.Decompress);
         using var destination = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        var total = 0L;
-        int read;
-        while ((read = await gzip.ReadAsync(buffer, cancellationToken)) > 0)
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            total += read;
-            if (total > TelemetryLimits.MaxDecompressedBytes)
+            var total = 0L;
+            int read;
+            while ((read = await gzip.ReadAsync(buffer.AsMemory(0, 64 * 1024), cancellationToken)) > 0)
             {
-                throw new OtlpRequestValidationException(
-                    $"Decompressed request exceeds {TelemetryLimits.MaxDecompressedBytes} bytes.");
-            }
+                total += read;
+                if (total > TelemetryLimits.MaxDecompressedBytes)
+                {
+                    throw new OtlpRequestValidationException(
+                        $"Decompressed request exceeds {TelemetryLimits.MaxDecompressedBytes} bytes.");
+                }
 
-            destination.Write(buffer, 0, read);
+                destination.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         return destination.ToArray();
