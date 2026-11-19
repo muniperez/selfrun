@@ -17,7 +17,10 @@ public sealed class DevelopmentWorkspaceWorkerOptions
     public string? BackupDestinationIdentity { get; set; }
     public int BackupRetentionDays { get; set; } = 7;
     public bool ObservedTerminalInputs { get; set; }
-    public Dictionary<string, DevelopmentWorkspacePreviewService> PreviewServices { get; set; } = [];
+    public Dictionary<string, DevelopmentWorkspacePreviewService> PreviewServices { get; set; } = new()
+    {
+        ["connect"] = new() { Port = 774 }
+    };
 }
 
 public sealed class DevelopmentWorkspacePreviewService

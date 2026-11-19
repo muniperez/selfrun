@@ -21,6 +21,8 @@ import uuid
 
 T3_RESOURCE_MONITOR = "/opt/minicloud-t3/t3-0.1.9-linux-x64/resource-monitor/linux-x64/t3-resource-monitor"
 T3_RESOURCE_MONITOR_SHA256 = "1b8040fc50484f8089c56aaaefc359dbfc9ff2d1d85dbf6b3df26aeceabda286"
+T3_RELAY_CLIENT = "/usr/local/bin/cloudflared"
+T3_RELAY_CLIENT_SHA256 = "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42"
 
 
 class Blocked(Exception):
@@ -475,6 +477,38 @@ class Procfs:
         return "frozen 1" in (Path("/sys/fs/cgroup" + group.removeprefix("0::")) /
                               "cgroup.events").read_text().splitlines()
 
+    def t3_relay_client(self, process, inventory, t3_pids):
+        executable = self.executable(process["pid"])
+        if executable["path"] != T3_RELAY_CLIENT:
+            return False
+        directory = self.root / str(process["pid"])
+        require(process["ppid"] in t3_pids and process["uids"] == (2000,) * 4 and
+                process["tty"] == 0 and process["state"] in ("R", "S") and
+                process["cgroup"] == inventory[process["ppid"]]["cgroup"] ==
+                "0::/minicloudwork.slice/minicloud-t3.service",
+                "Pinned T3 relay has an unknown process identity")
+        require(executable["uid"] == 0 and not executable["mode"] & 0o022,
+                "Pinned T3 relay is not root-owned immutable code")
+        Linux.verify_unit_file(T3_RELAY_CLIENT)
+        with Path(T3_RELAY_CLIENT).open("rb") as binary:
+            require(hashlib.file_digest(binary, "sha256").hexdigest() == T3_RELAY_CLIENT_SHA256,
+                    "Pinned T3 relay digest mismatch")
+        argv = (directory / "cmdline").read_bytes().split(b"\0")
+        expected = [os.fsencode(T3_RELAY_CLIENT), b"tunnel", b"--no-autoupdate",
+                    b"--loglevel", b"info", b"--output", b"default", b"--metrics", b"127.0.0.1:0"]
+        require(argv in (expected + [b"run", b""],
+                         expected + [b"--protocol", b"http2", b"run", b""]) and
+                not any(p["ppid"] == process["pid"] for p in inventory.values()) and
+                not (directory / "task" / str(process["pid"]) / "children").read_text().strip(),
+                "Pinned T3 relay has unsupported arguments or unregistered children")
+        environment = {entry.split(b"=", 1)[0] for entry in
+                       (directory / "environ").read_bytes().split(b"\0") if entry}
+        require(b"TUNNEL_TOKEN" in environment and
+                not environment.intersection({b"LD_PRELOAD", b"LD_LIBRARY_PATH", b"LD_AUDIT",
+                                              b"GLIBC_TUNABLES"}),
+                "Pinned T3 relay has an unsafe environment")
+        return True
+
     def t3_resource_monitor(self, process, inventory, t3_pids):
         executable = self.executable(process["pid"])
         if executable["path"] != T3_RESOURCE_MONITOR:
@@ -805,6 +839,8 @@ class Linux:
                     "Coding process escaped supervised work slice")
             if process["pid"] not in allowed and self.processes.t3_resource_monitor(process, inventory, t3_pids):
                 allowed[process["pid"]] = "pinned-t3-resource-monitor"
+            if process["pid"] not in allowed and self.processes.t3_relay_client(process, inventory, t3_pids):
+                allowed[process["pid"]] = "pinned-t3-relay-client"
             if process["pid"] not in allowed:
                 require(self.config.get("observedTerminalInputs") is True,
                         "Unregistered live coding process; terminal input observation is not qualified")
@@ -957,6 +993,8 @@ class Runtime:
                           filesystemReadOnly=self.s.get("filesystemReadOnly", False))
             if request.get("includeWorkInventory") is True:
                 try:
+                    require(not (self.root / "connect-operation.json").exists(),
+                            "T3 account approval is pending")
                     self.adapter.idle(self.s["tasks"])
                     result["workInventory"] = dict(state="IdleCandidate", authoritative=False)
                 except Blocked as error:
@@ -1064,6 +1102,8 @@ class Runtime:
             return self.receipt("RuntimeResumed", operation)
         if action in ("quiesce", "git-save", "discard"):
             self.diagnostic_stage = "freeze-guard"
+            require(not (self.root / "connect-operation.json").exists(),
+                    "T3 account approval is pending")
             require(request.get("gatewayAdmissionsFenced") is True and
                     request.get("unobservableToolsAbsent") is True,
                     "Fence gateway/in-flight mutations and verify no unobservable tools before shutdown")

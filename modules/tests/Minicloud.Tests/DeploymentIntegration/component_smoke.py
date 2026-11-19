@@ -102,13 +102,12 @@ def main():
 
         compose("up", "-d", "--no-build", "--pull", "never", "postgres", "openbao", "api", timeout=1200)
 
-        def migrated():
-            probe = compose("exec", "-T", "postgres", "psql", "-X", "-A", "-t",
-                            "-U", "minicloud", "-d", "minicloud_test", "-c",
-                            'SELECT count(*) FROM "__EFMigrationsHistory"', check=False)
-            return probe.returncode == 0 and probe.stdout.strip().isdigit() and int(probe.stdout.strip()) > 0
+        def api_ready():
+            probe = compose("exec", "-T", "api", "curl", "--fail", "--silent",
+                            "--max-time", "2", "http://127.0.0.1:8080/health", check=False)
+            return probe.returncode == 0
 
-        until(migrated, 120, "API did not migrate empty PostgreSQL database")
+        until(api_ready, 120, "API did not finish migrations and become ready")
         result["migrationCount"] = int(sql('SELECT count(*) FROM "__EFMigrationsHistory"'))
         sql("CREATE DATABASE minicloud_unmigrated")
         try:

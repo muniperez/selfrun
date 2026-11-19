@@ -9,11 +9,13 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import urllib.request
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from runtime import Blocked, atomic_json, require, run
+from copilot_provider import probe as probe_copilot
 
 
 def builder_guard(acknowledgement):
@@ -57,6 +59,46 @@ def install_systemd_units(source_directory, destination_directory):
         destination.chmod(0o644)
 
 
+def install_copilot(lock, cache):
+    artifact = cache / "copilot.tar.gz"
+    download(lock["copilot"], artifact)
+    destination = Path("/opt/minicloud-copilot")
+    destination.mkdir(parents=True, exist_ok=True)
+    destination.chmod(0o755)
+    run(["tar", "--no-same-owner", "-xf", str(artifact), "-C", str(destination)])
+    require((destination / "copilot").is_file(), "Unexpected Copilot release archive layout")
+    (destination / "copilot").chmod(0o755)
+    wrapper = Path("/usr/local/bin/copilot")
+    wrapper.write_text("#!/bin/sh\nexport COPILOT_AUTO_UPDATE=false\n"
+                       'exec /opt/minicloud-copilot/copilot "$@"\n')
+    wrapper.chmod(0o755)
+    return probe_copilot(expected_version=lock["copilot"]["version"],
+                         environment=dict(PATH="/usr/local/bin:/usr/bin:/bin", HOME=str(cache)))
+
+
+def install_source_control_clis(lock, cache):
+    for name in ("gh", "glab"):
+        item = lock[name]
+        artifact = cache / (name + ".tar.gz")
+        download(item, artifact)
+        destination = Path("/usr/local/bin") / name
+        # Copy only the pinned executable; never extract archive paths or follow links.
+        with tarfile.open(artifact, "r:gz") as archive:
+            members = [member for member in archive.getmembers() if member.name == item["executable"]]
+            require(len(members) == 1 and members[0].isfile() and
+                    0 < members[0].size <= 256 * 1024**2, "Unexpected source-control CLI archive layout")
+            require(not destination.exists() and not destination.is_symlink(),
+                    "Source-control CLI destination already exists")
+            with archive.extractfile(members[0]) as source, destination.open("xb") as output:
+                shutil.copyfileobj(source, output)
+        os.chown(destination, 0, 0)
+        destination.chmod(0o755)
+        output = run([str(destination), "--version"],
+                     env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(cache), "LC_ALL": "C"})
+        require(re.search(r"(?:^|\s)v?" + re.escape(item["version"]) + r"(?:$|[\s,])", output),
+                "Wrong source-control CLI version")
+
+
 def install(source_revision, builder):
     require(re.fullmatch(r"[a-f0-9]{40}", source_revision), "Exact source commit required")
     require(builder, "Builder provenance identity required")
@@ -97,6 +139,10 @@ def install(source_revision, builder):
     t3 = list(Path("/opt/minicloud-t3").rglob("t3"))
     require(len(t3) == 1 and t3[0].is_file(), "Unexpected T3 release archive layout")
     Path("/usr/local/bin/t3").symlink_to(t3[0])
+    relay = Path("/usr/local/bin/cloudflared")
+    download(lock["t3"]["relayClient"], relay)
+    relay.chmod(0o755)
+    install_source_control_clis(lock, cache)
     monitor = Path("/opt/minicloud-t3") / lock["t3"]["resourceMonitor"]["path"]
     with monitor.open("rb") as binary:
         require(hashlib.file_digest(binary, "sha256").hexdigest() ==
@@ -108,12 +154,15 @@ def install(source_revision, builder):
     run(["npm", "ci", "--prefix", str(tools), "--ignore-scripts", "--omit=dev"],
         env=dict(os.environ, HOME=str(cache), npm_config_cache=str(cache / "npm")), timeout=600)
     Path("/usr/local/bin/codex").symlink_to(tools / "node_modules/.bin/codex")
+    # ACP initialize needs no credentials and never creates a coding thread.
+    copilot = install_copilot(lock, cache)
     run(["groupadd", "--gid", "2000", "coding"])
     run(["useradd", "--uid", "2000", "--gid", "2000", "--home-dir", "/workspace/home",
          "--no-create-home", "--shell", "/usr/sbin/nologin", "coding"])
     runtime = Path("/opt/minicloud-workspace")
     runtime.mkdir(exist_ok=True)
-    for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py"):
+    for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py",
+                 "t3_connect.py", "t3-connect.html", "t3-connect.js", "copilot_provider.py"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
     install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))
@@ -137,9 +186,13 @@ def install(source_revision, builder):
     require(all(option in help_text for option in
                 ("--token-only", "--ttl", "--subject", "--scope", "--base-dir")),
             "Installed T3 lacks required headless session issuance")
+    connect_help = run(["t3", "connect", "link", "--help"])
+    require(all(option in connect_help for option in ("--headless", "--base-dir")),
+            "Installed T3 lacks supported non-service-installing Connect enrollment")
     lock["provenance"].update(sourceRevision=source_revision, builderIdentity=builder,
                               installedPackages=run(["dpkg-query", "-W", "-f=${Package}=${Version}\n"]),
                               toolArtifactsVerified=True, headlessAuthOptionsChecked=True)
+    lock["provenance"]["copilotStdioAcpVersionChecked"] = copilot["version"]
     atomic_json("/opt/minicloud-workspace/image-manifest.json", lock)
     shutil.rmtree(cache)
 
@@ -147,7 +200,8 @@ def install(source_revision, builder):
 def generalize():
     # Guard is applied by main before either install or this destructive operation.
     os.chdir("/")
-    for unit in ("minicloud-workspace.service", "minicloud-t3.service"):
+    for unit in ("minicloud-workspace.service", "minicloud-t3.service",
+                 "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service"):
         subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=120, check=False)
     require(not os.path.ismount("/workspace"), "Never erase an attached workspace")
     for path in ("/workspace", "/root/.codex", "/root/.t3", "/root/.config", "/root/.cache",

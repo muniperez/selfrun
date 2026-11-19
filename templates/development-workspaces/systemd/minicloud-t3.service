@@ -2,6 +2,7 @@
 Description=Pinned loopback-only T3; no invented drain API
 After=minicloud-workspace.service
 Requires=minicloud-workspace.service
+Wants=minicloud-t3-connect.service
 ConditionPathIsDirectory=/workspace/t3
 
 [Service]
@@ -11,6 +12,8 @@ Slice=minicloudwork.slice
 WorkingDirectory=/workspace
 Environment=HOME=/workspace/home
 Environment=CODEX_HOME=/workspace/home/.codex
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStartPre=-/usr/bin/python3 -B /opt/minicloud-workspace/copilot_provider.py configure --base-dir /workspace/t3
 ExecStart=/usr/local/bin/t3 serve --host 127.0.0.1 --port 3773 --base-dir /workspace/t3 --no-browser
 Restart=no
 SuccessExitStatus=130

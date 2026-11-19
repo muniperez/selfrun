@@ -37,7 +37,7 @@ public sealed class DevelopmentWorkspaceGatewayService(
         // DNS-safe host hashes are intentionally not reversible; keep this private lookup bounded.
         foreach (var route in await routes.ToListAsync(ct))
             if (route.ExpiresAt > now && route.Vm.LastHeartbeatAt > heartbeatDeadline &&
-                (service != "t3" || !string.IsNullOrEmpty(route.T3CredentialReference)) &&
+                (service is not ("t3" or "connect") || !string.IsNullOrEmpty(route.T3CredentialReference)) &&
                 Options.Host(route.VmId, generation, service) == domain && await IsAdmittedVmAsync(route.Vm, ct))
                 return true;
         return false;
@@ -98,7 +98,7 @@ public sealed class DevelopmentWorkspaceGatewayService(
         var route = await AuthorizedRouteAsync(receipt, request.Host, ct);
         if (route is null) return null;
         string? bearer = null;
-        if (receipt.Service == "t3")
+        if (receipt.Service is "t3" or "connect")
         {
             if (string.IsNullOrEmpty(route.T3CredentialReference)) return null;
             StoredSecretReference? reference;
@@ -145,12 +145,26 @@ public sealed class DevelopmentWorkspaceGatewayService(
             x.WorkspaceId == receipt.WorkspaceId && x.OrganizationId == receipt.OrganizationId, ct);
         if (vm is null || vm.Generation != receipt.Generation || !await IsAdmittedVmAsync(vm, ct) || vm.LastHeartbeatAt is null ||
             vm.LastHeartbeatAt <= now.AddSeconds(-Math.Clamp(workspaces.Value.HeartbeatTimeoutSeconds, 10, 300))) return null;
+        if (receipt.Service == "connect" && (vm.Kind != DevelopmentWorkspaceVmKinds.Primary ||
+            vm.DesiredState != "running" || vm.Phase != "ready" ||
+            !await CanManageConnectAsync(receipt, ct))) return null;
         var route = await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleOrDefaultAsync(x =>
             x.VmId == receipt.VmId && x.Generation == receipt.Generation && x.Service == receipt.Service &&
             x.WorkspaceId == receipt.WorkspaceId && x.OrganizationId == receipt.OrganizationId, ct);
         return route is not null && route.RevokedAt is null && route.ExpiresAt > now &&
-            (receipt.Service != "t3" || !string.IsNullOrEmpty(route.T3CredentialReference)) &&
+            (receipt.Service is not ("t3" or "connect") || !string.IsNullOrEmpty(route.T3CredentialReference)) &&
             route.LoopbackPort >= Options.MinimumRelayPort && route.LoopbackPort <= Options.MaximumRelayPort ? route : null;
+    }
+
+    private async Task<bool> CanManageConnectAsync(DevelopmentWorkspaceGatewaySession receipt, CancellationToken ct)
+    {
+        if (receipt.UserId is null || receipt.ApiKeyId is not null) return false;
+        return await db.DevelopmentWorkspaces.AsNoTracking().AnyAsync(x =>
+            x.Id == receipt.WorkspaceId && x.OrganizationId == receipt.OrganizationId &&
+            x.CreatedBy == receipt.UserId, ct) ||
+            await db.OrganizationMembers.AsNoTracking().AnyAsync(x =>
+                x.OrganizationId == receipt.OrganizationId && x.UserId == receipt.UserId &&
+                x.Role == OrganizationRole.Owner, ct);
     }
 
     private async Task<bool> IsAdmittedVmAsync(DevelopmentWorkspaceVm vm, CancellationToken ct)

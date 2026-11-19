@@ -5,9 +5,7 @@ public sealed class DevelopmentWorkspaceOptions
     public const string SectionName = "DevelopmentWorkspaces";
 
     public bool Enabled { get; set; }
-    public int MaxActiveWorkspaces { get; set; } = 3;
     public int MaxActiveVms { get; set; } = 9;
-    public int MaxWorkspacesPerOrganization { get; set; } = 2;
     public int MaxVmsPerWorkspace { get; set; } = 3;
     public int MaxVmsPerOrganization { get; set; } = 3;
     public decimal MaxEstimatedMonthlySpendPerOrganization { get; set; }
@@ -37,6 +35,7 @@ public sealed class DevelopmentWorkspaceProfile
 
 public sealed class DevelopmentWorkspaceImage
 {
+    public string? DisplayName { get; set; }
     public string ProviderImageId { get; set; } = string.Empty;
     public string Architecture { get; set; } = "linux/amd64";
     public string ManifestSha256 { get; set; } = string.Empty;

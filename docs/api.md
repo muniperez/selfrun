@@ -43,6 +43,77 @@ those external protocols and remain unchanged. They are not parallel Minicloud
 product APIs. Stored migration metadata preserves existing resources without
 publishing identity-resolution aliases.
 
+## Development workspace selections
+
+Workspace list/detail responses include optional `createdBy` (the workspace
+creator's actor ID). The dashboard uses it only to present primary T3 Connect
+management to the creator or an organization Owner. The Connect launch and
+gateway endpoints independently reauthorize the current dashboard identity;
+this field does not confer authority and ordinary workspace managers do not
+automatically receive account-linking permission.
+
+`GET /api/development-workspaces/selections?organizationId={id}` requires
+authentication and organization app-read permission (`apps:read` for API keys).
+Add `&workspaceId={id}` for next-start resize or ephemeral launch choices: these
+must remain in that workspace's fixed provider account and region. A missing or
+foreign workspace returns `404 workspace_not_found`; organization access denial
+returns 403, and anonymous requests return 401.
+
+The uncached response is:
+
+```json
+{
+  "available": true,
+  "unavailableReason": null,
+  "options": [
+    {
+      "imageId": "qualified-dev-image",
+      "imageName": "Development tools",
+      "profile": "standard",
+      "planId": "plan_example",
+      "planName": "Development standard",
+      "providerAccountName": "Primary Hetzner",
+      "region": "nbg1",
+      "sku": "cx-example"
+    }
+  ]
+}
+```
+
+Submit `imageId`, `profile` and `planId` unchanged to the existing create, resize
+or ephemeral-launch write contracts. IDs are stable configuration/plan identities,
+not labels or option indexes; labels may change. Configure the optional
+`DevelopmentWorkspaces:Images:{imageId}:DisplayName` for a human-readable image
+label. Existing configurations, omitted labels and blank labels display the image
+configuration key (`imageId`); supplied labels are trimmed.
+
+Discovery shares selection eligibility with writes: explicitly enabled,
+runtime-qualified amd64 images with a valid manifest and qualification timestamp;
+approved 8/16 GiB profiles with positive CPU/pricing and explicit plan, SKU and
+region allowlists; and enabled organization-owned Hetzner accounts/plans with
+matching image account, architecture and regions. Cross-organization entries and
+credential references are never returned. Discovery only reads control-plane
+metadata: it performs no credential resolution, provider requests, reservation,
+allocation or mutation.
+
+- `available: true` with an empty `options` array means configuration is available
+  but no compatible selections exist for this organization/placement.
+- `available: false`, a human-readable `unavailableReason` and empty `options`
+  means workspaces are disabled or required quota/pricing/lease configuration is
+  unavailable or invalid (including stale pricing).
+- Catalog database/time-out failures return sanitized HTTP 503
+  `workspace_selections_unavailable`, not an empty catalog. Other HTTP failures
+  remain failures, not configuration states.
+
+Discovery is advisory, not a capacity, spend or credential-availability guarantee.
+Writes revalidate current selection and placement policy. Creation leaves the
+workspace stopped and checks retained-storage spend. Starting or launching
+compute checks VM concurrency and compute-plus-storage spend; provider quotas
+still apply. Neither operation limits the number of workspace records or the
+number of distinct active workspaces. Resize records a next-start selection
+without reserving compute; start revalidates it again. Existing idempotency,
+generation and repository-approval requirements are unchanged.
+
 ## Browser accounts
 
 The dashboard uses credentialed requests only to its configured API origin.

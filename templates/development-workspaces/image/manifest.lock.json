@@ -25,12 +25,35 @@
     "integrity": "sha512-KhzYlkKPxoNssR8CEm45IjqnFWn7UtlF4CiD3tOJPea51xBs7MaHy0UQG9GSbCqk6Lrjn5QdJDV0QD1/FgWlGw==",
     "dependencyLock": "tools/package-lock.json"
   },
+  "copilot": {
+    "version": "1.0.114",
+    "source": "https://github.com/github/copilot-cli/releases/tag/v1.0.114",
+    "url": "https://github.com/github/copilot-cli/releases/download/v1.0.114/copilot-linux-x64.tar.gz",
+    "sha256": "b91a96f2257297cfb67ed6784a2a658609a6b8c2ee2ded18af9c9abe8cc790ae"
+  },
+  "gh": {
+    "version": "2.83.1",
+    "url": "https://github.com/cli/cli/releases/download/v2.83.1/gh_2.83.1_linux_amd64.tar.gz",
+    "sha256": "1c5252d4ce3db07b51c01ff0b909583da6364ff3fdc06d0c2e75e62dc0380a34",
+    "executable": "gh_2.83.1_linux_amd64/bin/gh"
+  },
+  "glab": {
+    "version": "1.74.0",
+    "url": "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/1%2E74%2E0/glab_1%2E74%2E0_linux_amd64.tar.gz",
+    "sha256": "75008e8d57825547d944a3193a66a018188b433a4ecb1cf36500ffbafe4689ff",
+    "executable": "bin/glab"
+  },
   "t3": {
     "version": "0.1.9",
     "source": "https://github.com/pingdotgg/t3code",
     "commit": "24e77473ecf41bc1f7142529c7911c1c1aae1d76",
     "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.9/t3-0.1.9-linux-x64.tar.gz",
     "sha256": "0141025335da334759cecd8db3483e09772f3600ca03674698524e7d94291362",
+    "relayClient": {
+      "version": "2026.10.4",
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-linux-amd64",
+      "sha256": "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42"
+    },
     "resourceMonitor": {
       "path": "t3-0.1.9-linux-x64/resource-monitor/linux-x64/t3-resource-monitor",
       "sha256": "1b8040fc50484f8089c56aaaefc359dbfc9ff2d1d85dbf6b3df26aeceabda286"
@@ -46,7 +69,7 @@
     "fonts-liberation", "libgtk-3-0t64"
   ],
   "provenance": {
-    "retrievedFrom": "Official Ubuntu SHA256SUMS, Node SHASUMS256.txt, .NET 10 releases.json, npm registry integrity, GitHub release asset digest",
+    "retrievedFrom": "Official Ubuntu SHA256SUMS, Node SHASUMS256.txt, .NET 10 releases.json, npm registry integrity, GitHub release asset digest, GitLab glab v1.74.0 checksums.txt",
     "sourceRevision": "REQUIRED_AT_BUILD",
     "builderIdentity": "REQUIRED_AT_BUILD",
     "qualification": "Recipe only; no provider image has been built or registered by default tests"

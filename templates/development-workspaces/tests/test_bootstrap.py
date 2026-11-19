@@ -222,6 +222,17 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(["minicloud-workspace.service", "minicloud-t3.service"], started)
         unit_file.assert_not_called()
 
+    def test_optional_connect_management_failure_preserves_routine_primary_enrollment(self):
+        started, process, opener = self.preview_startup()
+        self.config["kind"] = "primary"
+        def commands(argv, **kwargs):
+            if argv == ["systemctl", "start", "minicloud-t3-connect.service"]:
+                raise runtime.Blocked("Connect management unavailable")
+            return process(argv, **kwargs)
+        result = self.execute(opener, commands)
+        self.assertEqual("EnrollmentAccepted", result["type"])
+        self.assertIn("minicloud-t3.service", started)
+
     def test_unstarted_user_service_is_not_implicitly_activated_or_needed_for_tooling(self):
         started, process, opener = self.preview_startup(safe=False)
         with patch.object(runtime, "run", side_effect=process), \

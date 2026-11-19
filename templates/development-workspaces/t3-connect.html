@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Managed workspace · T3 Connect</title><script src="/connect.js" defer></script></head>
+<body><main>
+<h1>T3 Connect · existing primary VM</h1>
+<p>Opt in to make this running environment available to devices signed in to your T3 account.
+Linked devices receive T3's standard client permissions, including shell and provider management.
+Their relay sessions bypass Minicloud login, membership checks and gateway session expiry.
+Removing Minicloud access does not revoke a T3 link. Only authorize your own account.</p>
+<p>This does not create or start compute. Linking uses this VM's existing T3 data and provider sign-ins.
+Do not run <code>t3 up</code> or bare <code>t3 connect</code>: they manage a different background service.</p>
+<button id="link">Link my T3 account</button>
+<p>To change accounts or replace inherited authorization, unlink and sign out first.</p>
+<section id="approval" hidden><h2>Approve on your own device</h2>
+<p>Confirm this code matches before approving: <strong id="code"></strong></p>
+<a id="url" target="_blank" rel="noopener noreferrer">Open T3 account approval</a>
+<p>Do not copy this code into logs, screenshots or a T3 terminal.
+Pending approval is cancelled after at most 15 minutes; T3 may expire it sooner.</p></section>
+<p>After approval, activation restarts only the existing managed T3 service. Running agent turns and T3 terminals
+will be interrupted. Save work and finish turns first. The VM, projects, threads and sign-ins are retained.</p>
+<button id="activate">Activate link (restart managed T3)</button>
+<button id="refresh">Refresh link status</button>
+<button id="unlink">Unlink and sign out T3 Connect</button>
+<pre id="status" role="status">Loading…</pre>
+<p>After activation, sign in to the same T3 account on app.t3.codes or a supported T3 app.
+Choose this environment and an existing project/thread. Unlink also attempts relay-side registration removal;
+if removal cannot be confirmed, remove the machine in your T3 account. Existing paired/direct sessions are separate.</p>
+<p>Stopping compute makes the environment offline. A retained primary volume keeps its environment identity;
+replacement using that same volume can recover its tunnel after an explicit Minicloud Start.
+Restoring an older backup or using a new volume may require account-side stale-machine removal and re-linking.
+Never mount or run copies of the same identity concurrently.</p>
+</main></body></html>
