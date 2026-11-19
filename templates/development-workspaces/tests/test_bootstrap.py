@@ -365,6 +365,8 @@ class VolumeFormatTests(unittest.TestCase):
         stack.enter_context(patch.object(bootstrap.Path, "resolve", return_value=Path("/dev/vdb")))
         stack.enter_context(patch("builtins.open", unittest.mock.mock_open(read_data=mounts)))
         stack.enter_context(patch.object(bootstrap, "block_signatures", side_effect=signatures))
+        lock_dir = stack.enter_context(tempfile.TemporaryDirectory())
+        stack.enter_context(patch.object(bootstrap, "FORMAT_LOCK", os.path.join(lock_dir, "format.lock")))
         calls = []
 
         def fake_run(argv, **kwargs):
@@ -384,6 +386,20 @@ class VolumeFormatTests(unittest.TestCase):
         mkfs = [argv for argv in calls if argv[0] == "mkfs.ext4"]
         self.assertEqual(1, len(mkfs))
         self.assertNotIn("-F", mkfs[0])
+        self.assertIn("nodiscard,lazy_itable_init=1,lazy_journal_init=1", mkfs[0])
+
+    def test_format_in_progress_blocks_retry_without_touching_device(self):
+        import fcntl
+        stack, calls = self.patched([{}])
+        with stack:
+            held = os.open(bootstrap.FORMAT_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                with self.assertRaises(runtime.Blocked):
+                    bootstrap.format_volume(self.device, "virtio-ewr-0123456789ab")
+            finally:
+                os.close(held)
+        self.assertFalse([argv for argv in calls if argv[0] in ("mkfs.ext4", "blkid")])
 
     def test_retry_after_format_only_probes(self):
         stack, calls = self.patched([{"TYPE": "ext4", "UUID": "x"}])

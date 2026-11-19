@@ -172,24 +172,42 @@ def block_signatures(device):
     return dict(line.split("=", 1) for line in found.stdout.splitlines() if "=" in line)
 
 
+FORMAT_LOCK = "/run/minicloud-workspace/volume-format.lock"
+
+
 def format_volume(device, provider_device_id):
     """Create ext4 once on a blank volume the worker just created; idempotent on retry."""
+    import fcntl
     import stat
     path = Path(device)
     require(str(path).startswith("/dev/disk/by-id/") and path.name == provider_device_id,
             "Expected provider device identity required")
     require(stat.S_ISBLK(path.stat().st_mode), "Expected block device unavailable")
     resolved = str(path.resolve())
-    with open("/proc/mounts") as mounts:
-        sources = {line.split()[0] for line in mounts if line.strip()}
-    require(device not in sources and resolved not in sources, "Refusing to format a mounted device")
-    signatures = block_signatures(device)
-    if signatures.get("TYPE") == "ext4":
-        return probe(device, provider_device_id)
-    require(not signatures, "Refusing to format a volume that already has a signature")
-    # No -F: mkfs refuses mounted or partitioned devices on its own as well.
-    run(["mkfs.ext4", "-q", "-L", "minicloud-ws", device], timeout=1800)
-    return dict(probe(device, provider_device_id), formatted=True)
+    Path(FORMAT_LOCK).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock = os.open(FORMAT_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        # A retry after a management SSH timeout must not race a format that is still running on the
+        # guest, or adopt its half-written filesystem. mkfs inherits the lock so it is held until it exits.
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Blocked("A volume format is still in progress; retry later")
+        with open("/proc/mounts") as mounts:
+            sources = {line.split()[0] for line in mounts if line.strip()}
+        require(device not in sources and resolved not in sources, "Refusing to format a mounted device")
+        signatures = block_signatures(device)
+        if signatures.get("TYPE") == "ext4":
+            return probe(device, provider_device_id)
+        require(not signatures, "Refusing to format a volume that already has a signature")
+        # No -F: mkfs refuses mounted or partitioned devices on its own as well. The volume is new and blank,
+        # so skip the whole-device discard and defer inode/journal zeroing to keep mkfs well inside the
+        # worker's management command timeout regardless of volume size.
+        run(["mkfs.ext4", "-q", "-E", "nodiscard,lazy_itable_init=1,lazy_journal_init=1",
+             "-L", "minicloud-ws", device], timeout=1800, pass_fds=(lock,))
+        return dict(probe(device, provider_device_id), formatted=True)
+    finally:
+        os.close(lock)
 
 
 def main():
