@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Services;
 
 namespace Minicloud.Worker.DevelopmentWorkspaces;
@@ -141,7 +140,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 if (!await WaitActionsAsync(cloud, evidence, ct)) { await SaveAsync(op, evidence, op.Step, null, ct); break; }
                 var retained = await cloud.GetWorkspaceVolumeAsync(workspace.ProviderVolumeId!, ct)
                     ?? throw new InvalidOperationException("The retained volume disappeared.");
-                HetznerClient.RequireWorkspaceOwnership(retained.Labels, VolumeLabels(workspace));
+                WorkspaceOwnership.Require(retained.Labels, VolumeLabels(workspace));
                 if (retained.ServerId is not null) throw new InvalidOperationException("The primary writer has not been detached.");
                 await SaveAsync(op, evidence, "delete-intent", (_, _, fresh) =>
                 { fresh.VolumeAttachedVmId = null; fresh.VolumeStatus = "retained"; }, ct); break;
@@ -173,7 +172,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 var server = await cloud.GetWorkspaceServerAsync(vm.ProviderServerId!, ct);
                 if (server is not null)
                 {
-                    HetznerClient.RequireWorkspaceOwnership(server.Labels, ComputeLabels(workspace, vm));
+                    WorkspaceOwnership.Require(server.Labels, ComputeLabels(workspace, vm));
                     if (server.Status != "deleting")
                     {
                         var deletion = await cloud.DeleteWorkspaceServerAsync(server.Id, ComputeLabels(workspace, vm), ct);
@@ -192,7 +191,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 {
                     var preserved = await cloud.GetWorkspaceVolumeAsync(workspace.ProviderVolumeId!, ct)
                         ?? throw new InvalidOperationException("Retained volume absence must never be treated as a successful stop.");
-                    HetznerClient.RequireWorkspaceOwnership(preserved.Labels, VolumeLabels(workspace));
+                    WorkspaceOwnership.Require(preserved.Labels, VolumeLabels(workspace));
                     if (preserved.ServerId is not null) throw new InvalidOperationException("The retained volume still has an attached writer.");
                 }
                 if (vm.ProviderIpId is not null) await cloud.DeleteWorkspacePrimaryIpAsync(vm.ProviderIpId, ComputeLabels(workspace, vm), ct);

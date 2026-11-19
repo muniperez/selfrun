@@ -12,7 +12,7 @@ using System.Net.Http;
 
 namespace Minicloud.Common.Providers.DigitalOcean;
 
-public sealed class DigitalOceanClient : IVpsProviderClient, IVpsProviderSshKeyClient
+public sealed partial class DigitalOceanClient : IVpsProviderClient, IVpsProviderSshKeyClient
 {
     private readonly HttpClient _httpClient;
     private readonly DigitalOceanOptions _options;

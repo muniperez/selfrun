@@ -6,7 +6,8 @@ import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSe
 
 vi.mock("@/api/workspacesApi", () => ({ getWorkspaceSelections: vi.fn() }));
 const choices: WorkspaceSelectionOption[] = [
-  { imageId: "image-one", imageName: "Ubuntu · Coding tools", profile: "Standard", planId: "plan-one", planName: "Dev small", providerAccountName: "Team Hetzner", region: "fsn1", sku: "cx23" },
+  { imageId: "image-one", imageName: "Ubuntu · Coding tools", profile: "Standard", planId: "plan-one", planName: "Dev small", providerAccountName: "Team Hetzner", region: "fsn1", sku: "cx23",
+    agents: [{ id: "claude", name: "Claude Code", version: "2.1.328" }] },
   { imageId: "image-one", imageName: "Ubuntu · Coding tools", profile: "Heavy", planId: "plan-two", planName: "Dev large", providerAccountName: "Team Hetzner", region: "fsn1", sku: "cx43" },
   { imageId: "image-two", imageName: "Debian · Tools", profile: "Heavy", planId: "plan-two", planName: "Dev large", providerAccountName: "Team Hetzner", region: "fsn1", sku: "cx43" },
 ];
@@ -30,6 +31,7 @@ describe("WorkspaceSelectionFields", () => {
     render(<Fields />);
     expect(await screen.findByRole("option", { name: "Ubuntu · Coding tools" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Dev small · Team Hetzner · fsn1 · cx23/ })).toBeInTheDocument();
+    expect(screen.getByText("Agents: Claude Code 2.1.328")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Size"), { target: { value: "Heavy" } });
     expect(screen.getByLabelText("Plan")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-two" } });

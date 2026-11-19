@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot prepared-image bootstrap. Never installs tools or formats storage."""
+"""One-shot prepared-image bootstrap. Never installs tools; formats only blank new raw volumes."""
 import argparse
 import errno
 import hashlib
@@ -158,9 +158,61 @@ def probe(device, provider_device_id):
                 device=device, filesystemUuid=fs_uuid, filesystem="ext4", formatted=False)
 
 
+def block_signatures(device):
+    """Return low-level signatures (filesystem, RAID, partition table); blkid exits 2 for none."""
+    import subprocess
+    try:
+        found = subprocess.run(["blkid", "-p", "-o", "export", device], text=True, capture_output=True,
+                               timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise Blocked("Tool unavailable or failed: blkid") from error
+    if found.returncode == 2:
+        return {}
+    require(found.returncode == 0, "Cannot inspect the volume signature")
+    return dict(line.split("=", 1) for line in found.stdout.splitlines() if "=" in line)
+
+
+FORMAT_LOCK = "/run/minicloud-workspace/volume-format.lock"
+
+
+def format_volume(device, provider_device_id):
+    """Create ext4 once on a blank volume the worker just created; idempotent on retry."""
+    import fcntl
+    import stat
+    path = Path(device)
+    require(str(path).startswith("/dev/disk/by-id/") and path.name == provider_device_id,
+            "Expected provider device identity required")
+    require(stat.S_ISBLK(path.stat().st_mode), "Expected block device unavailable")
+    resolved = str(path.resolve())
+    Path(FORMAT_LOCK).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock = os.open(FORMAT_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        # A retry after a management SSH timeout must not race a format that is still running on the
+        # guest, or adopt its half-written filesystem. mkfs inherits the lock so it is held until it exits.
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Blocked("A volume format is still in progress; retry later")
+        with open("/proc/mounts") as mounts:
+            sources = {line.split()[0] for line in mounts if line.strip()}
+        require(device not in sources and resolved not in sources, "Refusing to format a mounted device")
+        signatures = block_signatures(device)
+        if signatures.get("TYPE") == "ext4":
+            return probe(device, provider_device_id)
+        require(not signatures, "Refusing to format a volume that already has a signature")
+        # No -F: mkfs refuses mounted or partitioned devices on its own as well. The volume is new and blank,
+        # so skip the whole-device discard and defer inode/journal zeroing to keep mkfs well inside the
+        # worker's management command timeout regardless of volume size.
+        run(["mkfs.ext4", "-q", "-E", "nodiscard,lazy_itable_init=1,lazy_journal_init=1",
+             "-L", "minicloud-ws", device], timeout=1800, pass_fds=(lock,))
+        return dict(probe(device, provider_device_id), formatted=True)
+    finally:
+        os.close(lock)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("bootstrap", "volume-probe"))
+    parser.add_argument("action", choices=("bootstrap", "volume-probe", "volume-format"))
     parser.add_argument("--config", default="/etc/minicloud-workspace/runtime.json")
     parser.add_argument("--enrollment", default="/run/minicloud-workspace/enrollment.json")
     parser.add_argument("--state-dir", default="/var/lib/minicloud-workspace")
@@ -170,8 +222,12 @@ def main():
     require(os.geteuid() == 0, "Bootstrap requires root over pinned management SSH")
     os.umask(0o077)
     try:
-        result = probe(args.device, args.provider_device_id) if args.action == "volume-probe" else \
-            bootstrap(args.config, args.enrollment, args.state_dir)
+        if args.action == "volume-probe":
+            result = probe(args.device, args.provider_device_id)
+        elif args.action == "volume-format":
+            result = format_volume(args.device, args.provider_device_id)
+        else:
+            result = bootstrap(args.config, args.enrollment, args.state_dir)
         print(json.dumps(dict(ok=True, result=result), sort_keys=True))
     except Blocked as error:
         print(json.dumps(dict(ok=False, state=error.state, reason=str(error))))

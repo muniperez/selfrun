@@ -149,6 +149,14 @@ it("resolves the primary by identity and passes observed state and retained stor
   expect(screen.getByText("No temporary VMs")).toBeInTheDocument();
 });
 
+it("lists installed coding agents with versions only when the image reports them", () => {
+  const view = render(detail(workspace({ agents: [{ id: "claude", name: "Claude Code", version: "2.1.328" }, { id: "muse", name: "Muse Code", version: "1.4.24-R9131.1" }] })));
+  const agents = screen.getByRole("region", { name: "Coding agents" });
+  expect(within(agents).getAllByRole("listitem").map(item => item.textContent)).toEqual(["Claude Code 2.1.328", "Muse Code 1.4.24-R9131.1"]);
+  view.rerender(detail(workspace()));
+  expect(screen.queryByRole("region", { name: "Coding agents" })).not.toBeInTheDocument();
+});
+
 it("falls back to explicit primary kind and never substitutes an ephemeral VM when primary metadata is missing", () => {
   const view = render(detail(workspace({ primaryVmId: null })));
   expect(within(screen.getByRole("region", { name: "Primary VM" })).getByRole("article", { name: "VM primary" })).toBeInTheDocument();
@@ -208,7 +216,7 @@ it("shows retained storage and observed per-VM estimates in the costs tab, prima
   expect(rows[3]).toHaveTextContent("Not allocated");
   expect(within(costs).getAllByText("0.1250 EUR")).toHaveLength(3);
   expect(screen.getByText(/Storage is charged even when all VMs are stopped/)).toBeInTheDocument();
-  expect(screen.getByText(/rounds up to whole hours/)).toBeInTheDocument();
+  expect(screen.getByText(/may round up to whole hours/)).toBeInTheDocument();
   expect(screen.getByText(/not invoices or a billing guarantee/)).toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });

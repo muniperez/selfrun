@@ -1127,6 +1127,46 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         return (workspace, vm, operation);
     }
 
+    [Theory]
+    [InlineData(true, true, "format:virtio-volume-retained")]
+    [InlineData(true, false, "probe:virtio-volume-retained")]
+    [InlineData(false, false, "probe:scsi-0HC_Volume_volume-retained")]
+    public async Task MountFormatsOnlyARawVolumeThisOperationCreated(bool formatInGuest, bool newVolume, string expected)
+    {
+        var (workspace, vm, operation) = await Seed("mount");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        if (newVolume) workspace.VolumeFilesystemUuid = null;
+        operation.ProviderEvidenceJson = JsonSerializer.Serialize(new { newVolume }, Json);
+        await db.SaveChangesAsync();
+        cloud.FormatInGuest = formatInGuest;
+        if (formatInGuest) cloud.Volume = cloud.Volume! with { Filesystem = null };
+        runtime.VolumeFilesystemUuid = "filesystem-retained";
+
+        Assert.True(await Processor().ProcessNextAsync(default));
+
+        Assert.Equal([expected], runtime.VolumeCalls);
+        var saved = await db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync(x => x.Id == operation.Id);
+        Assert.Equal("bootstrap", saved.Step);
+        Assert.Equal(expected.Split(':')[1], JsonDocument.Parse(saved.ProviderEvidenceJson!).RootElement.GetProperty("volumeDeviceId").GetString());
+        Assert.Equal("filesystem-retained", (await db.DevelopmentWorkspaces.AsNoTracking().SingleAsync(x => x.Id == workspace.Id)).VolumeFilesystemUuid);
+    }
+
+    [Fact]
+    public async Task MountRefusesAProviderVolumeWithoutFilesystemWhenTheProviderFormatsVolumes()
+    {
+        var (_, vm, operation) = await Seed("mount");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        await db.SaveChangesAsync();
+        cloud.Volume = cloud.Volume! with { Filesystem = null };
+        runtime.VolumeFilesystemUuid = "filesystem-retained";
+
+        Assert.True(await Processor().ProcessNextAsync(default));
+
+        Assert.Empty(runtime.VolumeCalls);
+        Assert.Equal("workspace_reconciliation_required", (await CurrentVm(vm.Id)).ErrorCode);
+        Assert.Equal("mount", (await db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync(x => x.Id == operation.Id)).Step);
+    }
+
     [Fact]
     public async Task HeartbeatStoresOnlyValidatedResourceSamplesForTheCurrentGeneration()
     {
@@ -1458,8 +1498,18 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
                 } }, Json));
             return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, result = new { receiptId = "receipt-owned" } }, Json));
         }
+        public string? VolumeFilesystemUuid { get; set; }
+        public List<string> VolumeCalls { get; } = [];
         public Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct) =>
-            throw new InvalidOperationException("Volume probe was not expected in this stage.");
+            Volume("probe", volumeId);
+        public Task<JsonElement> VolumeFormatAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct) =>
+            Volume("format", volumeId);
+        private Task<JsonElement> Volume(string action, string volumeId)
+        {
+            if (VolumeFilesystemUuid is null) throw new InvalidOperationException("Volume access was not expected in this stage.");
+            VolumeCalls.Add(action + ":" + volumeId);
+            return Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, result = new { filesystemUuid = VolumeFilesystemUuid } }, Json));
+        }
         public Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct)
         {
             BootstrapConfiguration = JsonSerializer.SerializeToElement(config, Json);
@@ -1605,6 +1655,10 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public bool LoseCreateResponse { get; set; }
         public bool LoseDeleteVolumeResponse { get; set; }
         public Func<Task>? BeforeCreate { get; set; }
+        public bool FormatInGuest { get; set; }
+        bool IDevelopmentWorkspaceProvider.WorkspaceVolumesFormatInGuest => FormatInGuest;
+        string IDevelopmentWorkspaceProvider.GetWorkspaceVolumeDeviceId(WorkspaceCloudVolume volume) =>
+            FormatInGuest ? "virtio-" + volume.Id : "scsi-0HC_Volume_" + volume.Id;
         public WorkspaceCloudServer Server(IReadOnlyDictionary<string, string> labels) =>
             new("server-owned", "owned", "running", "nbg1", "standard-test", "image-qualified",
                 "198.51.100.10", "ip-owned", new Dictionary<string, string>(labels), ["firewall-owned"], true);

@@ -431,6 +431,7 @@ export type DevelopmentWorkspace = {
   updatedAt: string;
   primaryVmId?: string | null;
   volumeStatus?: string | null;
+  agents?: { id: string; name: string; version: string }[] | null;
   vms: DevelopmentWorkspaceVm[];
 };
 

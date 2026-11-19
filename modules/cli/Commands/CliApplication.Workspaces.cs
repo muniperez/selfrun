@@ -237,7 +237,8 @@ public sealed partial class CliApplication
             return;
         }
         foreach (var option in selections.Options)
-            _console.WriteLine($"--image {option.ImageId} --profile {option.Profile} --plan {option.PlanId}  # {option.ImageName}; {option.PlanName} on {option.ProviderAccountName} {option.Region}/{option.Sku}");
+            _console.WriteLine($"--image {option.ImageId} --profile {option.Profile} --plan {option.PlanId}  # {option.ImageName}; {option.PlanName} on {option.ProviderAccountName} {option.Region}/{option.Sku}"
+                + (option.Agents is { Count: > 0 } agents ? "; agents: " + string.Join(", ", agents.Select(x => x.Id)) : ""));
         if (selections.Options.Count == 0) _console.WriteLine("No eligible image, profile and plan combinations.");
     }
 
@@ -296,6 +297,8 @@ public sealed partial class CliApplication
                 : "Idle stop: timeout unavailable.");
         _console.WriteLine($"Primary retained storage: {workspace.VolumeSizeGb} GB; {workspace.VolumeStatus ?? "status unavailable"}; storage charges continue while stopped.");
         _console.WriteLine($"Estimated storage: {workspace.EstimatedMonthlyStorage:F2} {workspace.Currency}/month; rates {(workspace.PricingUpdatedAt?.ToString("O") ?? "timestamp unavailable")}");
+        if (workspace.Agents is { Count: > 0 } agents)
+            _console.WriteLine("Agents: " + string.Join(", ", agents.Select(x => $"{x.Name} {x.Version}")));
         foreach (var vm in workspace.Vms ?? []) WriteWorkspaceVm(vm);
     }
 

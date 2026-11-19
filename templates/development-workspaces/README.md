@@ -23,7 +23,7 @@ upstream service installer or show device approval in T3 terminal history.
 
 `image/manifest.lock.json` pins the Ubuntu cloud-image **serial and SHA256**, immutable
 Ubuntu apt snapshot, Node 24.11.1, .NET SDK 10.0.100, Codex 0.169.0 (npm integrity lock),
-GitHub CLI **2.83.1** and GitLab CLI **1.74.0** (official linux/amd64 release
+the coding agents listed under [Coding agents](#coding-agents), GitHub CLI **2.83.1** and GitLab CLI **1.74.0** (official linux/amd64 release
 archives, SHA256-verified before copying only their executables to `/usr/local/bin`),
 T3 0.1.9 / commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`
 and Chromium shared libraries. The default supplies the coding environment, not an
@@ -56,6 +56,51 @@ Generalization erases root/user homes, agent logins, build source, workspace and
 enrollment/runtime state, cloud-init seed/state/logs, machine IDs, SSH host keys and logs.
 First boot regenerates identity/host keys through systemd/cloud-init. Do not execute more
 interactive build commands after generalization. Capture only after power-off.
+
+### Provider images (Hetzner, DigitalOcean, Vultr)
+
+The same recipe produces the image for every supported provider; only capture and
+registration differ. Build in the provider account and region that will run the
+workspaces, from the pinned Ubuntu 24.04 cloud image or that provider's stock Ubuntu
+24.04 x64 image **only when its `/etc/cloud/build.info` serial matches the lock** (the
+guard refuses any other serial; import the pinned cloud image otherwise).
+
+| Provider | Builder | Capture | `ProviderImageId` |
+| --- | --- | --- | --- |
+| Hetzner | Server without volumes | Server snapshot after power-off | numeric image ID |
+| DigitalOcean | Droplet without volumes, or import the pinned `.img` as a custom image and boot it | Droplet snapshot after power-off | numeric image ID of the snapshot |
+| Vultr | Instance without block storage | Instance snapshot after power-off | snapshot UUID |
+
+Each `DevelopmentWorkspaces:Images:<image-key>` entry names exactly one
+`ProviderAccountId` and `ProviderImageId`. Register one image key per provider account
+(for example `t3-connect-2026-11-hetzner`, `…-digitalocean`, `…-vultr`) with the same
+`ManifestSha256`, and list the regions where the image is available in `AllowedRegions`
+(DigitalOcean and Vultr snapshots are regional; transfer them first if needed). Copy the
+installed manifest's `agents` array into the entry's `Agents` so the API, CLI and
+dashboard show what the image contains:
+
+```json
+"Agents": [
+  {"Id": "codex", "Name": "Codex", "Version": "0.169.0"},
+  {"Id": "claude", "Name": "Claude Code", "Version": "2.1.328"}
+]
+```
+
+Provider differences that affect isolation and operations:
+
+* **Volumes.** Hetzner and DigitalOcean create ext4 volumes; the worker only probes them.
+  Vultr block storage is created raw, so the worker formats it with `bootstrap.py
+  volume-format` **only** when the volume was created by the same operation and no
+  filesystem is present; an existing volume without a filesystem blocks instead of being
+  formatted. Stable devices are `scsi-0HC_Volume_<id>` (Hetzner), `scsi-0DO_Volume_<name>`
+  (DigitalOcean) and `virtio-<first 20 characters of the mount ID>` (Vultr).
+* **Firewalls.** Hetzner and DigitalOcean firewalls allow inbound SSH only from the
+  management addresses and restrict egress to HTTP(S), DNS and NTP. Vultr firewall
+  groups are **inbound only**: the same SSH restriction applies, but egress is not
+  provider-filtered. Treat Vultr workspaces as having weaker network isolation.
+* **Root password e-mail.** DigitalOcean e-mails a root password when no provider SSH
+  key is attached. The image's SSH configuration disables password authentication, and
+  management access uses only the cloud-init key.
 
 Installed manifest: `/opt/minicloud-workspace/image-manifest.json`, including actual dpkg
 versions, source revision, builder identity, artifact integrity and runtime CLI checks.
@@ -163,6 +208,33 @@ select an agent-reported model, send a project prompt and a follow-up in the sam
 Also verify Codex chat, then reapply setup/restart safely on an already signed-in volume and
 confirm both providers and existing threads still work. No authenticated browser prompt,
 follow-up, or hosted Codex result is claimed without that session.
+
+## Coding agents
+
+All agents are pinned in `image/manifest.lock.json` and installed root-owned with
+self-update disabled; patch them by building a new image. The manifest's `agents` array
+records the IDs, names and versions shown by the API, CLI and dashboard.
+
+| Agent | Version | Install | T3 provider |
+| --- | --- | --- | --- |
+| Codex | 0.169.0 | npm lockfile integrity (`tools/package-lock.json`) | built-in `codex` |
+| GitHub Copilot CLI | 1.0.114 | release archive SHA-256 | `minicloud-copilot` (local ACP, above) |
+| Claude Code | 2.1.328 | native `@anthropic-ai/claude-code-linux-x64` package, npm lockfile integrity; `/usr/local/bin/claude` sets `DISABLE_AUTOUPDATER=1` | built-in `claudeAgent` (enabled by default, uses `claude` from `PATH`) |
+| Antigravity | 1.4.5 | ACP server zip SHA-256 and size; only `agy_acp_server.par` and `localharness_external` are copied to `/opt/minicloud-antigravity` | `minicloud-antigravity` (`antigravity` driver, `binaryPath` set) |
+| Muse Code | 1.4.24-R9131.1 | release binary SHA-256 and size at `/opt/minicloud-muse/muse`; `/usr/local/bin/muse` sets `MUSE_NO_AUTO_UPDATE=1` | `minicloud-muse` (`muse` driver, `binaryPath` set) |
+
+T3 0.1.9 supports all of these natively. Its `antigravity` and `muse` drivers are disabled
+by default, so `copilot_provider.py configure` adds an enabled instance for each one whose
+pinned executable exists. Any existing instance of the same driver, including a disabled
+one, is the user's choice and is left alone. An occupied instance ID is reported in the
+setup result without blocking T3. The Claude Code build verifies `claude --version`.
+Antigravity and Muse are verified by digest and size only, because their version commands
+need a signed-in home.
+
+The image includes no agent logins. Sign in privately as `coding` (HOME=/workspace/home)
+from an unrecorded management terminal, as for Copilot: `claude` (then `/login`) for Claude
+Code and `muse login` for Muse. Choose the Antigravity sign-in method in **Settings →
+Providers**. The three agent binaries add about 1.8 GB to the image.
 
 ## GitHub and GitLab source control
 
@@ -279,6 +351,13 @@ Example **primary** (replace synthetic values; root fields outside this schema f
   "stopUnits": ["minicloud-t3.service"]
 }
 ```
+
+The examples use a Hetzner device. On DigitalOcean the device is
+`/dev/disk/by-id/scsi-0DO_Volume_<volume-name>`, and on Vultr it is
+`/dev/disk/by-id/virtio-<first 20 characters of the block mount ID>`. Vultr volumes are
+created raw. For a new Vultr volume only, the worker first runs `bootstrap.py volume-format`
+with the same `--device` and `--provider-device-id`, which refuses any other filesystem or
+signature and returns the existing ext4 volume on retry; it then probes.
 
 For a **newly provider-formatted empty volume only**, the trusted worker first probes:
 

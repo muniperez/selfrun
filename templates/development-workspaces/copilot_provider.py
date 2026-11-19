@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed the pinned T3 local ACP provider before T3 starts; never handle credentials."""
+"""Seed the pinned T3 provider instances before T3 starts; never handle credentials."""
 import argparse
 import json
 import os
@@ -14,6 +14,15 @@ from runtime import Blocked, atomic_json, require
 VERSION = "1.0.114"
 EXECUTABLE = "/usr/local/bin/copilot"
 INSTANCE_ID = "minicloud-copilot"
+# T3 drivers that are disabled by default; seeded only when the image installed their pinned executable.
+# Claude Code needs no instance: T3 enables its default claudeAgent instance and finds `claude` on PATH.
+AGENTS = (
+    dict(instanceId="minicloud-antigravity", driver="antigravity", displayName="Antigravity",
+         executable="/opt/minicloud-antigravity/agy_acp_server.par", environment=[]),
+    dict(instanceId="minicloud-muse", driver="muse", displayName="Muse Code",
+         executable="/usr/local/bin/muse",
+         environment=[dict(name="MUSE_NO_AUTO_UPDATE", value="1", sensitive=False)]),
+)
 SIGN_IN = ("Run copilot login --device-code as coding (HOME=/workspace/home) in an "
            "unrecorded management terminal, then retry the provider in Settings → Providers.")
 
@@ -33,8 +42,13 @@ def is_copilot(instance):
                     for argument in arguments))
 
 
-def configure(settings_path):
+def installed_agents():
+    return [agent for agent in AGENTS if Path(agent["executable"]).is_file()]
+
+
+def configure(settings_path, agents=None):
     """Called only by ExecStartPre, under the same UID/HOME as the T3 service."""
+    agents = installed_agents() if agents is None else agents
     settings_path = Path(settings_path)
     require(not settings_path.is_symlink(), "Copilot setup refuses symlinked T3 settings")
     try:
@@ -45,19 +59,38 @@ def configure(settings_path):
     instances = settings.get("providerInstances", {})
     require(isinstance(instances, dict), "T3 providerInstances must be an object")
     # Keep user overrides, disabled providers, Codex settings and thread IDs intact.
-    for instance_id, instance in instances.items():
-        if is_copilot(instance):
-            return dict(state="AlreadyConfigured", instanceId=instance_id)
-    require(INSTANCE_ID not in instances,
-            "Provider ID minicloud-copilot is occupied; rename it in Settings → Providers")
-    instances[INSTANCE_ID] = dict(
-        driver="acpRegistry", displayName="GitHub Copilot CLI", enabled=True,
-        environment=[dict(name="COPILOT_AUTO_UPDATE", value="false", sensitive=False)],
-        config=dict(source="local", commandPath=EXECUTABLE, commandArgs=["--acp", "--stdio"]))
-    settings["providerInstances"] = instances
-    settings_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    atomic_json(settings_path, settings)
-    return dict(state="Configured", instanceId=INSTANCE_ID)
+    existing = next((instance_id for instance_id, instance in instances.items() if is_copilot(instance)), None)
+    if existing is not None:
+        result = dict(state="AlreadyConfigured", instanceId=existing)
+    else:
+        require(INSTANCE_ID not in instances,
+                "Provider ID minicloud-copilot is occupied; rename it in Settings → Providers")
+        instances[INSTANCE_ID] = dict(
+            driver="acpRegistry", displayName="GitHub Copilot CLI", enabled=True,
+            environment=[dict(name="COPILOT_AUTO_UPDATE", value="false", sensitive=False)],
+            config=dict(source="local", commandPath=EXECUTABLE, commandArgs=["--acp", "--stdio"]))
+        result = dict(state="Configured", instanceId=INSTANCE_ID)
+    changed = existing is None
+    if agents:
+        result["agents"] = {}
+    for agent in agents:
+        # Any instance of the driver, even a disabled one, is the user's choice; never add a second.
+        if any(isinstance(instance, dict) and instance.get("driver") == agent["driver"]
+               for instance in instances.values()):
+            state = "AlreadyConfigured"
+        elif agent["instanceId"] in instances:
+            state = "InstanceIdOccupied"
+        else:
+            instances[agent["instanceId"]] = dict(
+                driver=agent["driver"], displayName=agent["displayName"], enabled=True,
+                environment=list(agent["environment"]), config=dict(binaryPath=agent["executable"]))
+            state, changed = "Configured", True
+        result["agents"][agent["driver"]] = state
+    if changed:
+        settings["providerInstances"] = instances
+        settings_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        atomic_json(settings_path, settings)
+    return result
 
 
 def probe(executable=EXECUTABLE, expected_version=VERSION, timeout=30, environment=None):

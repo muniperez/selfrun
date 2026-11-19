@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+import zipfile
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -38,6 +39,10 @@ def builder_guard(acknowledgement):
     require(not os.path.ismount("/workspace") and
             not list(Path("/dev/disk/by-id").glob("*Volume*")), "Builder has workspace volume")
     require(run(["systemd-detect-virt", "--vm"]) not in ("", "none"), "A disposable VM is required")
+
+
+def verify_size(item, target):
+    require("size" not in item or target.stat().st_size == item["size"], "Pinned artifact size mismatch")
 
 
 def download(item, target):
@@ -74,6 +79,56 @@ def install_copilot(lock, cache):
     wrapper.chmod(0o755)
     return probe_copilot(expected_version=lock["copilot"]["version"],
                          environment=dict(PATH="/usr/local/bin:/usr/bin:/bin", HOME=str(cache)))
+
+
+def write_wrapper(path, environment, executable):
+    path.write_text("#!/bin/sh\nexport " + environment + "\nexec " + executable + ' "$@"\n')
+    path.chmod(0o755)
+
+
+def install_claude(lock, tools, wrapper=Path("/usr/local/bin/claude")):
+    item = lock["claude"]
+    binary = tools / item["executable"]
+    require(binary.is_file() and not binary.is_symlink(), "Unexpected Claude Code package layout")
+    # npm verified the lockfile integrity; the wrapper keeps the pinned build from self-updating.
+    write_wrapper(wrapper, "DISABLE_AUTOUPDATER=1", str(binary))
+    output = run([str(wrapper), "--version"],
+                 env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tools), "LC_ALL": "C"})
+    require(re.match(re.escape(item["version"]) + r"(?:\s|$)", output), "Wrong Claude Code version")
+
+
+def install_antigravity(lock, cache, destination=Path("/opt/minicloud-antigravity")):
+    item = lock["antigravity"]
+    artifact = cache / "antigravity.zip"
+    download(item, artifact)
+    verify_size(item, artifact)
+    destination.mkdir(mode=0o755)
+    # Copy only the pinned regular members by exact name; never extract archive paths or links.
+    with zipfile.ZipFile(artifact) as archive:
+        entries = {entry.filename: entry for entry in archive.infolist()}
+        for name, size in item["members"].items():
+            entry = entries.get(name)
+            require(entry is not None and not entry.is_dir() and entry.file_size == size and
+                    (entry.external_attr >> 16) & 0o170000 in (0, 0o100000),
+                    "Unexpected Antigravity release archive layout")
+            target = destination / name
+            with archive.open(entry) as source, target.open("xb") as output:
+                shutil.copyfileobj(source, output, 1024 * 1024)
+            require(target.stat().st_size == size, "Antigravity member size mismatch")
+            os.chown(target, 0, 0)
+            target.chmod(0o755)
+    artifact.unlink()
+
+
+def install_muse(lock, cache, destination=Path("/opt/minicloud-muse"), wrapper=Path("/usr/local/bin/muse")):
+    item = lock["muse"]
+    destination.mkdir(mode=0o755)
+    binary = destination / "muse"
+    download(item, binary)
+    verify_size(item, binary)
+    os.chown(binary, 0, 0)
+    binary.chmod(0o755)
+    write_wrapper(wrapper, "MUSE_NO_AUTO_UPDATE=1", str(binary))
 
 
 def install_source_control_clis(lock, cache):
@@ -154,6 +209,9 @@ def install(source_revision, builder):
     run(["npm", "ci", "--prefix", str(tools), "--ignore-scripts", "--omit=dev"],
         env=dict(os.environ, HOME=str(cache), npm_config_cache=str(cache / "npm")), timeout=600)
     Path("/usr/local/bin/codex").symlink_to(tools / "node_modules/.bin/codex")
+    install_claude(lock, tools)
+    install_antigravity(lock, cache)
+    install_muse(lock, cache)
     # ACP initialize needs no credentials and never creates a coding thread.
     copilot = install_copilot(lock, cache)
     run(["groupadd", "--gid", "2000", "coding"])
@@ -194,6 +252,7 @@ def install(source_revision, builder):
                               installedPackages=run(["dpkg-query", "-W", "-f=${Package}=${Version}\n"]),
                               toolArtifactsVerified=True, headlessAuthOptionsChecked=True)
     lock["provenance"]["copilotStdioAcpVersionChecked"] = copilot["version"]
+    lock["provenance"]["agentArtifactsVerified"] = [agent["id"] for agent in lock["agents"]]
     atomic_json("/opt/minicloud-workspace/image-manifest.json", lock)
     shutil.rmtree(cache)
 

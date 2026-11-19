@@ -650,7 +650,8 @@ minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|-
 ```
 
 - `selections` lists the eligible `--image`, `--profile` and `--plan`
-  combinations for `create`.
+  combinations for `create`, with the coding agents each image installs.
+  `status` shows the agents and versions in the workspace's image.
 - `create` records a stopped workspace. Without `--idempotency-key`, the key is
   derived from the organization and name. Repeating the same create returns the
   existing workspace. Different options fail with an actionable conflict. After

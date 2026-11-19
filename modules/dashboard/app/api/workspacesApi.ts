@@ -75,7 +75,10 @@ export type WorkspaceSelectionOption = {
   memoryGiB?: number;
   computeHourlyRate?: number;
   isDefault?: boolean;
+  agents?: WorkspaceAgent[] | null;
 };
+
+export type WorkspaceAgent = { id: string; name: string; version: string };
 
 export type WorkspaceSelections = {
   available: boolean;

@@ -144,6 +144,15 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
             <p className="text-muted-foreground">Select Refresh status to load it. A temporary VM is never used instead. Storage: {item.volumeSizeGb} GB · {item.volumeStatus ?? "status unavailable"}.</p>
           </CardContent></Card>}
         </section>
+        {!!item.agents?.length && <section aria-labelledby="agents-heading" className="space-y-2">
+          <h2 id="agents-heading" className="text-lg font-semibold">Coding agents</h2>
+          <ul className="flex flex-wrap gap-2 text-sm">
+            {item.agents.map(agent => <li key={agent.id} className="rounded-md border px-3 py-1.5">
+              <span className="font-medium">{agent.name}</span> <span className="text-muted-foreground">{agent.version}</span>
+            </li>)}
+          </ul>
+          <p className="text-sm text-muted-foreground">Installed in this dev environment's image and available in T3. Sign in to each agent from T3 before first use.</p>
+        </section>}
         <section aria-labelledby="ephemeral-heading" className="min-w-0 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -193,7 +202,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
             </Table>
           </div>
           <p className="text-sm text-muted-foreground">These are estimates based on your operator's prices, not invoices or a billing guarantee. Currency: {item.currency}. Prices last updated: {item.pricingUpdatedAt ?? "unavailable"}.</p>
-          <p className="text-sm text-muted-foreground">Hetzner charges for a VM's server until it's deleted, not just powered off, and rounds up to whole hours. Repeated short sessions may each cost an hour. Backups, snapshots, IPs, traffic and the control plane may cost extra.</p>
+          <p className="text-sm text-muted-foreground">Cloud providers charge for a VM's server until it's deleted, not just powered off, and may round up to whole hours. Repeated short sessions may each cost an hour. Backups, snapshots, IPs, traffic and the control plane may cost extra.</p>
         </section>
       </TabsContent>
       <TabsContent value="settings" className="pt-4">
