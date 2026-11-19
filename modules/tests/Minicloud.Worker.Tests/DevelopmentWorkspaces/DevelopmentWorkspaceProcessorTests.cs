@@ -815,7 +815,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     [Fact]
     public async Task PermanentDeleteReleasesNameAndCreateIdempotencyKey()
     {
-        CreateDevelopmentWorkspaceRequest request = new("org", "Reused", "image", "standard", "plan", 20, "org:reused");
+        // The CLI's default create key for organization "org" and name "Reused" (pinned in CliWorkspaceTests).
+        CreateDevelopmentWorkspaceRequest request = new("org", "Reused", "image", "standard", "plan", 20, "cli-c8da2dba717feac74db7f3315846c5d05c0ed396");
         var deleted = await lifecycle.CreateAsync(request, "actor", default);
         await lifecycle.DeleteAsync(deleted.Id, "org", true, "actor", default);
         await Hop();

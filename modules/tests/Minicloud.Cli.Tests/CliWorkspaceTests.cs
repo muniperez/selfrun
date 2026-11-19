@@ -244,6 +244,8 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal(keys[0], keys[1]);
         Assert.Equal(CliApplication.DefaultWorkspaceCreateKey("org", "Coding"), keys[0]);
         Assert.NotEqual(keys[0], CliApplication.DefaultWorkspaceCreateKey("other", "Coding"));
+        // DevelopmentWorkspaceProcessorTests recreates a permanently deleted workspace with this exact key.
+        Assert.Equal("cli-c8da2dba717feac74db7f3315846c5d05c0ed396", CliApplication.DefaultWorkspaceCreateKey("org", "Reused"));
         Assert.Equal("Coding", _handler.Requests.Last().Body.GetProperty("name").GetString());
 
         _handler.CreateConflict = true;
