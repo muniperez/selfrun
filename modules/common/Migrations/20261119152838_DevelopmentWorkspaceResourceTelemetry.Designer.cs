@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Minicloud.Common.Migrations
 {
     [DbContext(typeof(MinicloudDbContext))]
-    [Migration("20261119151427_DevelopmentWorkspaceResourceTelemetry")]
+    [Migration("20261119152838_DevelopmentWorkspaceResourceTelemetry")]
     partial class DevelopmentWorkspaceResourceTelemetry
     {
         /// <inheritdoc />
@@ -1503,6 +1503,10 @@ namespace Minicloud.Common.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("idempotency_key");
+
+                    b.Property<int?>("IdleTimeoutMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("idle_timeout_minutes");
 
                     b.Property<DateTimeOffset?>("LastBackupAt")
                         .HasColumnType("timestamp with time zone")
