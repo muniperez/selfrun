@@ -1,0 +1,88 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  bearertokenauth/operator:
+    token: ${env:MINICLOUD_OPERATOR_OTLP_TOKEN}
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth/operator
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+    spike_limit_mib: 32
+  filter/operator_logs:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'instrumentation_scope.name != "Minicloud.OperatorDiagnostics"'
+  transform/operator_logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - keep_keys(attributes, ["Service", "Operation", "Outcome", "WindowDurationMs", "Count", "TotalDurationMs", "Bytes", "Failures", "TraceId"])
+          - set(body, "")
+      - context: resource
+        statements:
+          - keep_keys(attributes, ["service.name"])
+  batch:
+    timeout: 1s
+    send_batch_size: 128
+    send_batch_max_size: 256
+
+exporters:
+  otlphttp/operator_loki:
+    endpoint: http://loki:3100/otlp
+    headers:
+      X-Scope-OrgID: operator
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      queue_size: 128
+      num_consumers: 2
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 5s
+      max_elapsed_time: 30s
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      queue_size: 128
+      num_consumers: 2
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 5s
+      max_elapsed_time: 30s
+  prometheus:
+    endpoint: 0.0.0.0:9464
+    send_timestamps: true
+    metric_expiration: 5m
+
+service:
+  extensions: [health_check, bearertokenauth/operator]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/operator_logs, transform/operator_logs, batch]
+      exporters: [otlphttp/operator_loki]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
