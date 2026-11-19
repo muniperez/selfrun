@@ -653,7 +653,8 @@ minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|-
   combinations for `create`.
 - `create` records a stopped workspace. Without `--idempotency-key`, the key is
   derived from the organization and name. Repeating the same create returns the
-  existing workspace. Different options fail with an actionable conflict.
+  existing workspace. Different options fail with an actionable conflict. After
+  a permanent delete completes, the same name creates a new workspace.
 - `start` provisions or resumes the primary VM. The worker records provider
   identity before readiness and reconciles retries. Use `status` to follow its
   readiness stage and any blocking error.

@@ -262,7 +262,9 @@ ordinary compute cleanup can report the same phase while retaining the volume.
 Check progress with `GET /api/development-workspaces/{id}?organizationId={organizationId}`.
 If the phase is `delete_failed`, address the reported error and repeat the
 confirmed DELETE to retry. The organization-scoped list excludes deleted
-workspaces; the authorized GET by ID still returns the deleted tombstone.
+workspaces; the authorized GET by ID still returns the deleted tombstone. Once
+deletion completes, its name and create `idempotencyKey` can be used for a new
+workspace.
 
 ## Browser accounts
 
