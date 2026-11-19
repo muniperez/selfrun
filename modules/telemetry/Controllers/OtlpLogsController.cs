@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Minicloud.Telemetry.Otlp;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Services;
+using Minicloud.Common.Diagnostics;
 using Minicloud.Telemetry.Services;
 
 namespace Minicloud.Telemetry.Controllers;
@@ -34,6 +36,7 @@ public sealed class OtlpLogsController(
         TelemetryAuthSnapshot identity;
         try
         {
+            using var stage = StartStage("otlp.auth");
             var snapshot = await auth.AuthenticateAsync(
                 authorizationValues.Count == 1 ? authorizationValues[0] : null,
                 cancellationToken);
@@ -135,6 +138,7 @@ public sealed class OtlpLogsController(
         byte[] encoded;
         try
         {
+            using var stage = StartStage("otlp.read");
             encoded = await ReadBoundedAsync(Request.Body, TelemetryLimits.MaxEncodedBytes, cancellationToken);
         }
         catch (OtlpRequestValidationException ex)
@@ -147,6 +151,7 @@ public sealed class OtlpLogsController(
         {
             try
             {
+                using var stage = StartStage("otlp.gzip");
                 payload = await DecompressBoundedAsync(encoded, cancellationToken);
             }
             catch (OtlpRequestValidationException ex)
@@ -166,6 +171,7 @@ public sealed class OtlpLogsController(
         OtlpExportRequest request;
         try
         {
+            using var stage = StartStage("otlp.decode");
             request = OtlpProtobuf.ParseExportRequest(payload);
         }
         catch (OtlpDecodeException ex)
@@ -177,6 +183,7 @@ public sealed class OtlpLogsController(
         OtlpNormalizationResult normalized;
         try
         {
+            using var stage = StartStage("otlp.normalize");
             normalized = await normalization.NormalizeAsync(request, identity, receivedAt, cancellationToken);
         }
         catch (OtlpRequestValidationException ex)
@@ -199,8 +206,13 @@ public sealed class OtlpLogsController(
                 null);
         }
 
-        var quota = await quotas.ReserveAsync(
-            identity.AppId, identity.OrganizationId, normalized.NormalizedBytes, cancellationToken);
+        TelemetryQuotaDecision quota;
+        using (StartStage("otlp.quota"))
+        {
+            quota = await quotas.ReserveAsync(
+                identity.AppId, identity.OrganizationId, normalized.NormalizedBytes, cancellationToken);
+        }
+
         if (!quota.Admitted)
         {
             logger.LogWarning(
@@ -214,9 +226,18 @@ public sealed class OtlpLogsController(
                 quota.RetryAfter);
         }
 
-        var forwardBody = normalized.ForwardRequest.ToByteArray();
-        var outcome = await forwarder.ForwardAsync(
-            identity.TenantId, forwardBody, normalized.RejectedRecords, normalized.Notice, cancellationToken);
+        byte[] forwardBody;
+        using (StartStage("otlp.encode"))
+        {
+            forwardBody = normalized.ForwardRequest.ToByteArray();
+        }
+
+        OtlpForwardOutcome outcome;
+        using (StartStage("otlp.forward"))
+        {
+            outcome = await forwarder.ForwardAsync(
+                identity.TenantId, forwardBody, normalized.RejectedRecords, normalized.Notice, cancellationToken);
+        }
 
         if (outcome.StatusCode is >= 200 and <= 299)
         {
@@ -225,6 +246,10 @@ public sealed class OtlpLogsController(
 
         return OtlpResult(outcome.StatusCode, outcome.ResponseBody, outcome.RetryAfter);
     }
+
+    // Sequential stage spans; created only when an operator diagnostics listener samples them.
+    private static Activity? StartStage(string name) =>
+        OperatorDiagnostics.Activities.StartActivity(name)?.SetTag("operation", name);
 
     private IActionResult OtlpError(int statusCode, string message, TimeSpan? retryAfter) =>
         OtlpResult(statusCode, OtlpProtobuf.EncodeExportResponse(0, message), retryAfter);
