@@ -147,6 +147,10 @@ Public registration is disabled. Email recovery is optional and requires
 separate SMTP/integration qualification; password-only use does not depend on
 either optional method.
 
+When the dashboard detects an expired sign-in form, it requests a fresh browser
+flow. It does not resubmit a password or start a Google redirect automatically;
+the user continues sign-in from the new form.
+
 ### Optional Google sign-in
 
 Google is off by default (`Kratos:GoogleEnabled=false`). The packaged installer
