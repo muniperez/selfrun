@@ -22,7 +22,7 @@ public sealed class RoutingApplier(AgentConfig config, IProcessRunner processRun
             var temporary = requestPath + ".tmp";
             await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(desired, JsonDefaults.Options), cancellationToken);
             File.Move(temporary, requestPath, overwrite: true);
-            var apply = await processRunner.RunAsync("sudo", ["-n", "/opt/minicloud/agent/apply-minicloud-routing"], cancellationToken);
+            var apply = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "sudo", ["-n", "/opt/minicloud/agent/apply-minicloud-routing"], cancellationToken);
             if (apply.ExitCode != 0)
             {
                 return desired.Routes.Select(route => new RuntimeRoutingApplyResult(route.BindingId, "failed", "pending", "routing_apply_failed",

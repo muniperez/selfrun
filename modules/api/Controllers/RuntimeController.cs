@@ -42,100 +42,130 @@ public sealed class RuntimeController : ControllerBase
     [AllowAnonymous]
     public async Task<IResult> IngestLogs([FromBody] RuntimeLogIngestRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
-        var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
-        if (auth is null)
+        using var measurement = RuntimeIngestionDiagnostics.Start("ingest.logs", Request.ContentLength ?? -1, request.Records.Count, cancellationToken);
+        try
         {
-            return Results.Unauthorized();
-        }
-
-        var validation = ValidateRuntimeLogRequest(request, timeProvider.GetUtcNow());
-        if (!validation.IsValid)
-        {
-            return EndpointResults.ValidationProblem("Runtime log request is invalid.", validation);
-        }
-
-        var deployedServices = await LatestDeploymentServicesAsync(db, auth.Server.AppId, cancellationToken);
-        var now = timeProvider.GetUtcNow();
-        var accepted = 0;
-        var rejected = 0;
-        var cursors = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        foreach (var record in request.Records)
-        {
-            if (!RuntimeSourceAllowedForServices(record.Source, record.Service, deployedServices))
+            var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
+            if (auth is null)
             {
-                rejected++;
-                continue;
+                return Results.Unauthorized();
             }
 
-            var exists = await db.RuntimeLogRecords.AnyAsync(x =>
-                x.RuntimeServerId == auth.Server.Id &&
-                x.Source == record.Source &&
-                x.Cursor == record.Cursor &&
-                x.ObservedAt == record.ObservedAt,
-                cancellationToken);
-            if (exists)
+            var validation = ValidateRuntimeLogRequest(request, timeProvider.GetUtcNow());
+            if (!validation.IsValid)
             {
+                return EndpointResults.ValidationProblem("Runtime log request is invalid.", validation);
+            }
+
+            var deployedServices = await LatestDeploymentServicesAsync(db, auth.Server.AppId, cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            var accepted = 0;
+            var rejected = 0;
+            var cursors = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            foreach (var record in request.Records)
+            {
+                if (!RuntimeSourceAllowedForServices(record.Source, record.Service, deployedServices))
+                {
+                    rejected++;
+                    continue;
+                }
+
+                var exists = await db.RuntimeLogRecords.AnyAsync(x =>
+                    x.RuntimeServerId == auth.Server.Id &&
+                    x.Source == record.Source &&
+                    x.Cursor == record.Cursor &&
+                    x.ObservedAt == record.ObservedAt,
+                    cancellationToken);
+                if (exists)
+                {
+                    cursors[record.Source] = record.Cursor;
+                    continue;
+                }
+
+                db.RuntimeLogRecords.Add(new RuntimeLogRecord
+                {
+                    Id = ids.NewId("rtlog"),
+                    OrganizationId = auth.Server.OrganizationId,
+                    AppId = auth.Server.AppId,
+                    RuntimeServerId = auth.Server.Id,
+                    Source = record.Source,
+                    Service = record.Service,
+                    Stream = NormalizeStream(record.Stream),
+                    Cursor = record.Cursor,
+                    Content = LogRedactor.Redact(record.Message),
+                    ObservedAt = record.ObservedAt,
+                    ReceivedAt = now
+                });
+                accepted++;
                 cursors[record.Source] = record.Cursor;
-                continue;
             }
 
-            db.RuntimeLogRecords.Add(new RuntimeLogRecord
-            {
-                Id = ids.NewId("rtlog"),
-                OrganizationId = auth.Server.OrganizationId,
-                AppId = auth.Server.AppId,
-                RuntimeServerId = auth.Server.Id,
-                Source = record.Source,
-                Service = record.Service,
-                Stream = NormalizeStream(record.Stream),
-                Cursor = record.Cursor,
-                Content = LogRedactor.Redact(record.Message),
-                ObservedAt = record.ObservedAt,
-                ReceivedAt = now
-            });
-            accepted++;
-            cursors[record.Source] = record.Cursor;
+            await PruneRuntimeLogsAsync(db, auth.Server.AppId, now, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            measurement.Complete("success");
+            return Results.Ok(new RuntimeLogIngestResponse(accepted, rejected, cursors));
         }
-
-        await PruneRuntimeLogsAsync(db, auth.Server.AppId, now, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
-        return Results.Ok(new RuntimeLogIngestResponse(accepted, rejected, cursors));
+        catch (OperationCanceledException)
+        {
+            measurement.Complete("cancelled");
+            throw;
+        }
+        catch
+        {
+            measurement.Complete("failure");
+            throw;
+        }
     }
 
     [HttpPost("ingest/status")]
     [AllowAnonymous]
     public async Task<IResult> IngestStatus([FromBody] RuntimeStatusIngestRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
-        var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
-        if (auth is null)
+        using var measurement = RuntimeIngestionDiagnostics.Start("ingest.status", Request.ContentLength ?? -1, request.Services.Count, cancellationToken);
+        try
         {
-            return Results.Unauthorized();
-        }
+            var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
+            if (auth is null)
+            {
+                return Results.Unauthorized();
+            }
 
-        if (request.ObservedAt > timeProvider.GetUtcNow().Add(RuntimeIngestionLimits.MaxFutureSkew))
-        {
-            return Results.BadRequest(new ErrorResponse(new ErrorBody("validation_failed", "Runtime status request is invalid.", [new("observedAt", "Observed timestamp is too far in the future.")])));
-        }
+            if (request.ObservedAt > timeProvider.GetUtcNow().Add(RuntimeIngestionLimits.MaxFutureSkew))
+            {
+                return Results.BadRequest(new ErrorResponse(new ErrorBody("validation_failed", "Runtime status request is invalid.", [new("observedAt", "Observed timestamp is too far in the future.")])));
+            }
 
-        var now = timeProvider.GetUtcNow();
-        auth.Server.AgentVersion = request.AgentVersion ?? auth.Server.AgentVersion;
-        auth.Server.LastSeenAt = now;
-        auth.Server.UpdatedAt = now;
-        var stored = new StoredRuntimeStatus(request.AgentVersion, request.ObservedAt, request.ComposeProject, request.Services, request.Caddy);
-        db.RuntimeStatusSnapshots.Add(new RuntimeStatusSnapshot
+            var now = timeProvider.GetUtcNow();
+            auth.Server.AgentVersion = request.AgentVersion ?? auth.Server.AgentVersion;
+            auth.Server.LastSeenAt = now;
+            auth.Server.UpdatedAt = now;
+            var stored = new StoredRuntimeStatus(request.AgentVersion, request.ObservedAt, request.ComposeProject, request.Services, request.Caddy);
+            db.RuntimeStatusSnapshots.Add(new RuntimeStatusSnapshot
+            {
+                Id = ids.NewId("rtstat"),
+                OrganizationId = auth.Server.OrganizationId,
+                AppId = auth.Server.AppId,
+                RuntimeServerId = auth.Server.Id,
+                AgentVersion = request.AgentVersion,
+                StatusJson = JsonSerializer.Serialize(stored, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                ObservedAt = request.ObservedAt,
+                ReceivedAt = now
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            measurement.Complete("success");
+            return Results.Ok(new { accepted = true, serverId = auth.Server.Id });
+        }
+        catch (OperationCanceledException)
         {
-            Id = ids.NewId("rtstat"),
-            OrganizationId = auth.Server.OrganizationId,
-            AppId = auth.Server.AppId,
-            RuntimeServerId = auth.Server.Id,
-            AgentVersion = request.AgentVersion,
-            StatusJson = JsonSerializer.Serialize(stored, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-            ObservedAt = request.ObservedAt,
-            ReceivedAt = now
-        });
-        await db.SaveChangesAsync(cancellationToken);
-        return Results.Ok(new { accepted = true, serverId = auth.Server.Id });
+            measurement.Complete("cancelled");
+            throw;
+        }
+        catch
+        {
+            measurement.Complete("failure");
+            throw;
+        }
     }
 
     [HttpGet("routing")]
@@ -188,45 +218,60 @@ public sealed class RuntimeController : ControllerBase
     [AllowAnonymous]
     public async Task<IResult> IngestRoutingApplyResults([FromBody] RuntimeRoutingApplyResultsRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
-        var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
-        if (auth is null)
+        using var measurement = RuntimeIngestionDiagnostics.Start("routing.results", Request.ContentLength ?? -1, request.Results.Count, cancellationToken);
+        try
         {
-            return Results.Unauthorized();
-        }
-
-        var ids = request.Results.Select(x => x.BindingId).ToHashSet(StringComparer.Ordinal);
-        var bindings = await db.Domains
-            .Where(x => x.AppId == auth.Server.AppId && ids.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, StringComparer.Ordinal, cancellationToken);
-        var now = timeProvider.GetUtcNow();
-        var accepted = 0;
-
-        foreach (var result in request.Results)
-        {
-            if (!bindings.TryGetValue(result.BindingId, out var binding) || binding.Status == DomainBindingService.StatusDisabled ||
-                !DateTimeOffset.TryParse(request.Version, out var requestedVersion) || binding.UpdatedAt > requestedVersion)
+            var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
+            if (auth is null)
             {
-                continue;
+                return Results.Unauthorized();
             }
 
-            binding.ApplyStatus = NormalizeApplyStatus(result.ApplyStatus);
-            binding.SslStatus = NormalizeSslStatus(result.SslStatus);
-            binding.FailureCode = result.FailureCode;
-            binding.FailureMessage = result.FailureMessage;
-            binding.LastAppliedAt = result.ObservedAt;
-            binding.UpdatedAt = now;
-            binding.Status = binding.ApplyStatus == DomainBindingService.ApplyFailed
-                ? DomainBindingService.StatusFailed
-                : binding.DnsStatus != DomainBindingService.DnsVerified
-                    ? binding.Kind == DomainBindingService.KindCustomDomain ? DomainBindingService.StatusPendingDns : DomainBindingService.StatusPendingApply
-                    : binding.SslStatus == DomainBindingService.SslReady
-                        ? DomainBindingService.StatusActive
-                        : DomainBindingService.StatusSslPending;
-            accepted++;
-        }
+            var ids = request.Results.Select(x => x.BindingId).ToHashSet(StringComparer.Ordinal);
+            var bindings = await db.Domains
+                .Where(x => x.AppId == auth.Server.AppId && ids.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, StringComparer.Ordinal, cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            var accepted = 0;
 
-        await db.SaveChangesAsync(cancellationToken);
-        return Results.Ok(new { accepted });
+            foreach (var result in request.Results)
+            {
+                if (!bindings.TryGetValue(result.BindingId, out var binding) || binding.Status == DomainBindingService.StatusDisabled ||
+                    !DateTimeOffset.TryParse(request.Version, out var requestedVersion) || binding.UpdatedAt > requestedVersion)
+                {
+                    continue;
+                }
+
+                binding.ApplyStatus = NormalizeApplyStatus(result.ApplyStatus);
+                binding.SslStatus = NormalizeSslStatus(result.SslStatus);
+                binding.FailureCode = result.FailureCode;
+                binding.FailureMessage = result.FailureMessage;
+                binding.LastAppliedAt = result.ObservedAt;
+                binding.UpdatedAt = now;
+                binding.Status = binding.ApplyStatus == DomainBindingService.ApplyFailed
+                    ? DomainBindingService.StatusFailed
+                    : binding.DnsStatus != DomainBindingService.DnsVerified
+                        ? binding.Kind == DomainBindingService.KindCustomDomain ? DomainBindingService.StatusPendingDns : DomainBindingService.StatusPendingApply
+                        : binding.SslStatus == DomainBindingService.SslReady
+                            ? DomainBindingService.StatusActive
+                            : DomainBindingService.StatusSslPending;
+                accepted++;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            measurement.Complete("success");
+            return Results.Ok(new { accepted });
+        }
+        catch (OperationCanceledException)
+        {
+            measurement.Complete("cancelled");
+            throw;
+        }
+        catch
+        {
+            measurement.Complete("failure");
+            throw;
+        }
     }
 
     [HttpPost("servers")]

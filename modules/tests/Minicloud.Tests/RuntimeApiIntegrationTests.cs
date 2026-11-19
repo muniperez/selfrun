@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -78,6 +81,55 @@ public sealed class RuntimeApiIntegrationTests : IAsyncLifetime
         Assert.Equal(2, logs!.Length);
         Assert.Contains(logs, log => log.Source == "service:api" && log.Content.Contains("[REDACTED]", StringComparison.Ordinal));
         Assert.DoesNotContain(logs, log => log.Content.Contains("hunter2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RuntimeLogIngestion_RecordsOneBoundedMeasurementPerBatch()
+    {
+        var now = new DateTimeOffset(2026, 5, 4, 10, 0, 0, TimeSpan.Zero);
+        var seed = await SeedAsync("org_runtime_metrics", "app_runtime_metrics", now);
+        var points = new ConcurrentBag<MetricPoint>();
+        var activities = new ConcurrentBag<Activity>();
+        using var listener = CreateListener(points, "Minicloud.RuntimeIngestion");
+        using var activityListener = CreateActivityListener(activities, "Minicloud.RuntimeIngestion");
+        using var client = _factory!.CreateClient();
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", seed.RuntimeToken);
+        var accepted = await client.PostAsJsonAsync("/api/runtime/ingest/logs", new
+        {
+            records = new[]
+            {
+                new
+                {
+                    source = "service:api",
+                    service = "api",
+                    stream = "stdout",
+                    observedAt = now,
+                    cursor = "service:api:000000000001",
+                    message = "synthetic runtime event"
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = null;
+        var rejected = await client.PostAsJsonAsync("/api/runtime/ingest/logs", new { records = Array.Empty<object>() });
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+
+        var calls = points.Where(point => point.Name == "minicloud.runtime.ingestion.calls" && point.Operation == "ingest.logs").ToArray();
+        Assert.Equal(2, calls.Length);
+        Assert.Contains(calls, point => point.Outcome == "success");
+        Assert.Contains(calls, point => point.Outcome == "failure");
+        Assert.Equal(2, points.Count(point => point.Name == "minicloud.runtime.ingestion.duration" && point.Operation == "ingest.logs"));
+        Assert.Equal(2, points.Count(point => point.Name == "minicloud.runtime.ingestion.bytes" && point.Operation == "ingest.logs"));
+        Assert.Contains(points, point => point.Name == "minicloud.runtime.ingestion.bytes" && point.Operation == "ingest.logs" && (long)point.Value > 0);
+        Assert.Equal(2, points.Count(point => point.Name == "minicloud.runtime.ingestion.records" && point.Operation == "ingest.logs"));
+        Assert.Contains(points, point => point.Name == "minicloud.runtime.ingestion.records" && point.Operation == "ingest.logs" && (long)point.Value == 1);
+        Assert.Contains(points, point => point.Name == "minicloud.runtime.ingestion.records" && point.Operation == "ingest.logs" && (long)point.Value == 0);
+        Assert.Contains(activities, activity => activity.OperationName == "ingest.logs" && activity.GetTagItem("outcome")?.ToString() == "success");
+        Assert.Contains(activities, activity => activity.OperationName == "ingest.logs" && activity.GetTagItem("outcome")?.ToString() == "failure");
+        Assert.All(points.Where(point => point.Operation is not null), point =>
+            Assert.Contains(point.Operation, new[] { "ingest.logs", "ingest.status", "routing.results" }));
     }
 
     [Fact]
@@ -586,4 +638,51 @@ public sealed class RuntimeApiIntegrationTests : IAsyncLifetime
             });
         }
     }
+
+    private static MeterListener CreateListener(ConcurrentBag<MetricPoint> points, string meterName)
+    {
+        var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, currentListener) =>
+            {
+                if (instrument.Meter.Name == meterName)
+                {
+                    currentListener.EnableMeasurementEvents(instrument);
+                }
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+            points.Add(new MetricPoint(instrument.Name, measurement, GetTag(tags, "operation"), GetTag(tags, "outcome"))));
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
+            points.Add(new MetricPoint(instrument.Name, measurement, GetTag(tags, "operation"), GetTag(tags, "outcome"))));
+        listener.Start();
+        return listener;
+    }
+
+    private static string? GetTag(ReadOnlySpan<KeyValuePair<string, object?>> tags, string name)
+    {
+        foreach (var tag in tags)
+        {
+            if (tag.Key == name)
+            {
+                return tag.Value?.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    private static ActivityListener CreateActivityListener(ConcurrentBag<Activity> activities, string sourceName)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { activities.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
+    }
+
+    private sealed record MetricPoint(string Name, object Value, string? Operation, string? Outcome);
 }
