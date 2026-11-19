@@ -23,15 +23,22 @@ public sealed partial class DevelopmentWorkspaceService
                     operation.Status = "superseded"; operation.Revision++; operation.UpdatedAt = Now;
                     continue;
                 }
-                if (operation.Kind == "stop" && vm.ShutdownDeadline > Now) continue;
+                var now = Now;
                 if (operation.Kind == "stop" && vm.ShutdownReason == "idle" && operation.Attempts == 0)
                 {
-                    if (vm.ShutdownDeadline is null || vm.Phase is not ("ready" or "draining")
-                        || vm.LastHeartbeatAt is null || vm.LastHeartbeatAt < Now.AddSeconds(-Policy.HeartbeatTimeoutSeconds)
-                        || vm.LastActivityAt is null)
+                    if (vm.ShutdownDeadline is null || !CanCancelIdleStop(vm)
+                        || !HasFreshHeartbeat(vm, now) || vm.LastActivityAt is null)
                         continue;
-                    var workspace = await FindAsync(vm.WorkspaceId, vm.OrganizationId, ct);
-                    if (vm.LastActivityAt > Now.AddMinutes(-Policy.IdleGraceMinutes) || await HasUnresolvedTasksAsync(vm, ct))
+                    var workspace = await db.DevelopmentWorkspaces.SingleAsync(
+                        x => x.Id == vm.WorkspaceId && x.OrganizationId == vm.OrganizationId, ct);
+                    if (!HasIdleElapsed(vm, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes), now))
+                    {
+                        CancelUnclaimedIdleStop(vm, operation);
+                        Touch(workspace);
+                        continue;
+                    }
+                    if (vm.ShutdownDeadline > now) continue;
+                    if (await HasUnresolvedTasksAsync(vm, ct))
                     {
                         await CancelIdleCoreAsync(workspace, vm, ct);
                         Touch(workspace);
@@ -40,6 +47,7 @@ public sealed partial class DevelopmentWorkspaceService
                     vm.DesiredState = "stopped"; vm.Phase = "draining";
                     Touch(vm); Touch(workspace);
                 }
+                else if (operation.Kind == "stop" && vm.ShutdownDeadline > now) continue;
                 operation.Status = "running"; operation.LeaseOwner = workerId;
                 operation.LeaseToken = ids.NewId("workspacelease");
                 operation.LeaseExpiresAt = Now.AddSeconds(Policy.OperationLeaseSeconds);

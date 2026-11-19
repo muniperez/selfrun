@@ -1501,6 +1501,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("idempotency_key");
 
+                    b.Property<int?>("IdleTimeoutMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("idle_timeout_minutes");
+
                     b.Property<DateTimeOffset?>("LastBackupAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_backup_at");

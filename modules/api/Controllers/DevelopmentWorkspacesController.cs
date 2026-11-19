@@ -64,6 +64,11 @@ public sealed class DevelopmentWorkspacesController(
         catch (DevelopmentWorkspaceException error) { return Error(error); }
     }
 
+    [HttpPut("{id}/idle-timeout")]
+    public Task<IResult> UpdateIdleTimeout(string id, [FromQuery] string organizationId,
+        [FromBody] UpdateDevelopmentWorkspaceIdleTimeoutRequest request, CancellationToken ct) =>
+        MutateAsync(organizationId, () => workspaces.UpdateIdleTimeoutAsync(id, organizationId, request.IdleTimeoutMinutes, ct), ct);
+
     [HttpPost("{id}/start")]
     public Task<IResult> Start(string id, [FromQuery] string organizationId, CancellationToken ct) =>
         MutateAsync(organizationId, () => workspaces.StartAsync(id, organizationId, ct), ct);

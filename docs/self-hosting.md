@@ -108,6 +108,23 @@ independent random values:
   `host-pins` line is `<host> SHA256:<fingerprint>`, and the worker refuses
   unpinned hosts.
 
+### Coding workspace idle timeout
+
+Upgrade the database and roll out the API and workspace worker together before
+reopening workspace operations. Existing and new workspaces without a saved
+override inherit the operator's `DevelopmentWorkspaces:IdleGraceMinutes`
+(`DevelopmentWorkspaces__IdleGraceMinutes` in the API and worker environment).
+Configure the same value in both services. Keep a deliberate override (including
+30 minutes) to preserve that behavior; otherwise omit it to use 360 minutes
+(6 hours). The migration leaves existing rows unset rather than writing a new
+value over them. Existing positive operator values are preserved as defaults,
+even outside the supported user range of 1–10,080 whole minutes.
+
+A saved workspace override takes precedence over that operator default for both
+primary and ephemeral VMs. Resetting the setting restores inheritance. See the
+[API contract](api.md#development-workspace-idle-timeout) for countdown and cost
+behavior.
+
 ### Optional packaged Google OIDC
 
 Password-only installation remains the default. Omitting `googleOidc`, or

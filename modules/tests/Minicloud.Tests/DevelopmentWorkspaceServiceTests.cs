@@ -746,13 +746,111 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OperatorFallbackChangeRechecksPendingIdleStopBeforeTheDeadline()
+    {
+        policy.IdleGraceMinutes = 30;
+        var workspace = await Service().StartAsync((await Workspace()).Id, "org", default);
+        var vmId = Primary(workspace).Id;
+        await Ready(vmId, idle: true);
+        await Service().ScheduleIdleStopAsync(workspace.Id, "org", vmId, 1, clock.GetUtcNow().AddMinutes(1), default);
+
+        policy.IdleGraceMinutes = 720;
+        Assert.Null(await Service().ClaimOperationAsync("worker", default));
+        var current = Primary((await Service().GetAsync(workspace.Id, "org", default))!);
+        Assert.Null(current.ShutdownDeadline);
+        Assert.False(await Service().IsIdleAsync(current, default));
+        Assert.Equal(clock.GetUtcNow().AddMinutes(-361), current.LastActivityAt);
+    }
+
+    [Theory]
+    [InlineData(-1, false)]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    public async Task BothVmKindsUseTheWorkspaceThresholdAtAdmissionAndClaim(int offsetTicks, bool idle)
+    {
+        policy.IdleGraceMinutes = 600;
+        var workspace = await Service().CreateAsync(Create() with { IdleTimeoutMinutes = 75 }, "actor", default);
+        await Service().StartAsync(workspace.Id, "org", default);
+        workspace = await Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default);
+        var activity = clock.GetUtcNow();
+        clock.Advance(TimeSpan.FromMinutes(75) + TimeSpan.FromTicks(offsetTicks));
+        foreach (var vm in workspace.Vms)
+        {
+            await Ready(vm.Id);
+            (await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id)).LastActivityAt = activity;
+            await db.SaveChangesAsync();
+        }
+
+        var vms = (await Service().GetAsync(workspace.Id, "org", default))!.Vms;
+        foreach (var vm in vms)
+        {
+            Assert.Equal(idle, await Service().IsIdleAsync(vm, default));
+            if (idle)
+                await Service().ScheduleIdleStopAsync(workspace.Id, "org", vm.Id, vm.Generation, clock.GetUtcNow(), default);
+            else
+                await AssertCode("workspace_active", () => Service().ScheduleIdleStopAsync(
+                    workspace.Id, "org", vm.Id, vm.Generation, clock.GetUtcNow(), default));
+        }
+
+        var claims = new HashSet<string>();
+        while (await Service().ClaimOperationAsync("worker", default) is { } claim)
+            Assert.True(claims.Add(claim.VmId));
+        Assert.Equal(idle ? vms.Select(x => x.Id).Order() : [], claims.Order());
+    }
+
+    [Fact]
+    public async Task TimeoutUpdateKeepsValidCountdownsAndCancelsOnlyUnclaimedPrematureOnes()
+    {
+        var workspace = await Service().CreateAsync(Create() with { IdleTimeoutMinutes = 30 }, "actor", default);
+        await Service().StartAsync(workspace.Id, "org", default);
+        workspace = await Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default);
+        var deadline = clock.GetUtcNow().AddMinutes(1);
+        foreach (var vm in workspace.Vms)
+        {
+            await Ready(vm.Id, idle: true);
+            await Service().ScheduleIdleStopAsync(workspace.Id, "org", vm.Id, vm.Generation, deadline, default);
+        }
+        workspace = await Service().UpdateIdleTimeoutAsync(workspace.Id, "org", 60, default);
+        Assert.All(workspace.Vms, vm => Assert.Equal(deadline, vm.ShutdownDeadline));
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var claimed = (await Service().ClaimOperationAsync("worker", default))!;
+        var pending = Assert.Single(workspace.Vms, vm => vm.Id != claimed.VmId);
+        workspace = await Service().UpdateIdleTimeoutAsync(workspace.Id, "org", 480, default);
+        var cancelled = workspace.Vms.Single(vm => vm.Id == pending.Id);
+        Assert.Null(cancelled.ShutdownDeadline);
+        Assert.Equal(pending.LastActivityAt, cancelled.LastActivityAt);
+        Assert.Equal("running", cancelled.DesiredState);
+        Assert.False(await Service().IsIdleAsync(cancelled, default));
+        Assert.Equal("cancelled", (await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == pending.OperationId)).Status);
+        var committed = workspace.Vms.Single(vm => vm.Id == claimed.VmId);
+        Assert.Equal("draining", committed.Phase);
+        Assert.Equal("stopped", committed.DesiredState);
+        Assert.Equal(claimed.Id, committed.OperationId);
+        Assert.Equal(deadline, committed.ShutdownDeadline);
+        Assert.Equal("running", (await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == claimed.Id)).Status);
+        await using var reloaded = Context();
+        Assert.Equal(480, (await Service(reloaded).GetAsync(workspace.Id, "org", default))!.IdleTimeoutMinutes);
+
+        await Service().UpdateIdleTimeoutAsync(workspace.Id, "org", 20, default);
+        Assert.True(await Service().IsIdleAsync(cancelled, default));
+        var nextDeadline = clock.GetUtcNow().AddMinutes(1);
+        workspace = await Service().ScheduleIdleStopAsync(workspace.Id, "org", cancelled.Id, cancelled.Generation, nextDeadline, default);
+        Assert.Equal(nextDeadline, workspace.Vms.Single(vm => vm.Id == cancelled.Id).ShutdownDeadline);
+        Assert.Null(await Service().ClaimOperationAsync("worker", default));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(cancelled.Id, (await Service().ClaimOperationAsync("worker", default))!.VmId);
+    }
+
+    [Fact]
     public async Task ManualStopDuringIdleGraceImmediatelyFencesAdmissionAndSupersedesDeadline()
     {
         var workspace = await Service().StartAsync((await Workspace()).Id, "org", default);
         var vmId = Primary(workspace).Id;
         await Ready(vmId, idle: true);
         await Service().ScheduleIdleStopAsync(workspace.Id, "org", vmId, 1, clock.GetUtcNow().AddMinutes(1), default);
-        workspace = await Service().StopAsync(workspace.Id, "org", default);
+        await Service().StopAsync(workspace.Id, "org", default);
+        workspace = await Service().UpdateIdleTimeoutAsync(workspace.Id, "org", 600, default);
         Assert.Equal("stopped", Primary(workspace).DesiredState);
         Assert.Equal("draining", Primary(workspace).Phase);
         Assert.Equal("manual", Primary(workspace).ShutdownReason);
@@ -1147,7 +1245,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         db.ChangeTracker.Clear();
         var vm = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == id);
         vm.Phase = "ready"; vm.LastHeartbeatAt = clock.GetUtcNow();
-        vm.LastActivityAt = clock.GetUtcNow().AddMinutes(idle ? -31 : 0);
+        vm.LastActivityAt = clock.GetUtcNow().AddMinutes(idle ? -361 : 0);
         var operation = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == vm.OperationId);
         operation.Status = "completed";
         await db.SaveChangesAsync();

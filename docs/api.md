@@ -130,6 +130,32 @@ number of distinct active workspaces. Resize records a next-start selection
 without reserving compute; start revalidates it again. Existing idempotency,
 generation and repository-approval requirements are unchanged.
 
+## Development workspace idle timeout
+
+Workspace list and detail responses include `idleTimeoutMinutes` (the saved
+whole-minute override, or `null` to inherit) and `effectiveIdleTimeoutMinutes`
+(the whole-minute timeout in use). They use the existing organization app-read
+authorization. `POST /api/development-workspaces` accepts optional
+`idleTimeoutMinutes`; omission or `null` inherits and remains compatible with
+existing create callers and idempotent retries.
+
+`PUT /api/development-workspaces/{id}/idle-timeout?organizationId={id}` takes
+`{"idleTimeoutMinutes":90}` and returns the updated workspace. Send explicit
+`null` to restore inheritance. The field is required on update, and overrides
+must be JSON integers from 1 through 10,080 minutes (7 days); zero does not
+disable shutdown. Updates use the existing workspace-management authorization
+(organization app-write, `apps:write` for API keys) and browser CSRF protection.
+
+Each VM uses its workspace's effective timeout independently: the saved override
+wins, then `DevelopmentWorkspaces:IdleGraceMinutes`, then 360 minutes (6 hours).
+The timeout measures inactivity, not maximum VM lifetime. Changing it applies
+to running and future VMs, can cancel a premature unclaimed idle countdown,
+and does not undo a claimed shutdown. A shorter timeout lets eligible VMs enter
+the normal countdown on the next monitor pass. The countdown and gateway drain
+are separate. Shutdown deletes compute while retaining primary storage; compute
+charges continue until deletion is confirmed, and a longer timeout may increase
+cost. Dashboard users manage the value in **Workspaces → workspace → Settings**.
+
 ## Browser accounts
 
 The dashboard uses credentialed requests only to its configured API origin.

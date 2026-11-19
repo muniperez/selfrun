@@ -24,6 +24,12 @@ export function workspaceOperation(id: string, organizationId: string, operation
   });
 }
 
+export function updateWorkspaceIdleTimeout(id: string, organizationId: string, idleTimeoutMinutes: number | null) {
+  return apiRequest<DevelopmentWorkspace>(workspacePath(id, organizationId, "idle-timeout"), {
+    method: "PUT", body: { idleTimeoutMinutes },
+  });
+}
+
 export function launchEphemeralVm(id: string, organizationId: string, request: EphemeralLaunch) {
   return workspaceOperation(id, organizationId, "vms/ephemeral", request);
 }
