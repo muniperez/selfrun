@@ -29,6 +29,7 @@ public sealed class DevelopmentWorkspaceProfile
     public int CpuCount { get; set; }
     public decimal ComputeHourlyRate { get; set; }
     public string[] AllowedPlanIds { get; set; } = [];
+    public string[] DefaultPlanIdsForNewWorkspaces { get; set; } = [];
     public string[] AllowedSkus { get; set; } = [];
     public string[] AllowedRegions { get; set; } = [];
 }

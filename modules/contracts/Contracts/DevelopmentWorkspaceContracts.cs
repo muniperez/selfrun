@@ -2,10 +2,12 @@ namespace Minicloud.Common.Contracts;
 
 public sealed record WorkspaceSelectionOption(
     string ImageId, string ImageName, string Profile, string PlanId, string PlanName,
-    string ProviderAccountName, string Region, string Sku);
+    string ProviderAccountName, string Region, string Sku, int CpuCount, int MemoryGiB,
+    decimal ComputeHourlyRate, bool IsDefault);
 
 public sealed record WorkspaceSelections(
-    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options);
+    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options,
+    string? Currency = null, decimal? VolumeMonthlyRatePerGb = null);
 
 public sealed record CreateDevelopmentWorkspaceRequest(
     string OrganizationId,

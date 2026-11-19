@@ -30,12 +30,12 @@ function ScopedT3Connect({ workspaceId, vmId, organizationId, generation, ready,
   }, [context]);
   return <section aria-label="T3 Connect account linking" className="space-y-2 text-sm">
     <h4 className="font-medium">T3 Connect (optional)</h4>
-    <p>Link this existing primary VM to your own T3 account. Your other signed-in devices can resume
-      the same projects and threads while compute is running. This never starts or provisions compute.</p>
-    <p>Linked devices have independent shell/provider access through T3, bypassing Minicloud session controls.
-      Only the workspace creator or organization owner can open linking management.
-      Approval, link status and unlink are handled on a private page, never in recorded T3 terminal output.
-      Activation explicitly restarts the existing managed T3 service and interrupts turns and terminals.</p>
+    <p>Link this primary VM to your own T3 account. Your other signed-in devices can resume
+      the same projects and threads while the VM is running. Linking never starts a VM.</p>
+    <p>Linked devices get their own shell and provider access through T3, outside Minicloud's session controls.
+      Only the dev environment's creator or an organization owner can manage linking.
+      Approval, link status and unlinking happen on a private page, never in recorded T3 terminal output.
+      Turning linking on restarts T3 on this VM and interrupts running turns and terminals.</p>
     <Button variant="outline" disabled={!ready || busy} onClick={() => {
       if (!ready || inFlight.current) return;
       const popup = window.open("about:blank", "_blank");
@@ -59,7 +59,7 @@ function ScopedT3Connect({ workspaceId, vmId, organizationId, generation, ready,
       }).catch(() => {
         popup.close();
         if (mounted.current && sequence.current === request && currentContext.current === expectedContext)
-          setError("Link management requires a running, qualified primary VM and workspace-owner access. No compute was started.");
+          setError("Managing T3 Connect needs a running primary VM and owner access. This didn't start the VM.");
       }).finally(() => {
         if (pending.current === popup) pending.current = null;
         if (mounted.current && sequence.current === request) { inFlight.current = false; setBusy(false); }

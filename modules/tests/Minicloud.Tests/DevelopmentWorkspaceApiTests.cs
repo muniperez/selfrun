@@ -143,7 +143,7 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
             Assert.True(choices.Available);
             Assert.Null(choices.UnavailableReason);
             Assert.Equal(new WorkspaceSelectionOption("image", "Development tools", "standard", "plan",
-                "Standard", "Synthetic", "nbg1", "cx-test"), Assert.Single(choices.Options));
+                "Standard", "Synthetic", "nbg1", "cx-test", 4, 8, .1m, false), Assert.Single(choices.Options));
             var raw = await response.Content.ReadAsStringAsync();
             Assert.DoesNotContain("sensitive", raw);
             Assert.DoesNotContain("credential", raw, StringComparison.OrdinalIgnoreCase);
