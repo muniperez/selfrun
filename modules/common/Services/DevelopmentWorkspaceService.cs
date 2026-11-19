@@ -34,7 +34,8 @@ public sealed partial class DevelopmentWorkspaceService(
             if (request.VolumeSizeGb is < 10 or > 10000) throw Invalid("workspace_volume_size_invalid", "Volume size must be 10–10,000 GB.");
             var digest = Digest(request with { Name = request.Name.Trim() });
             var existing = await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(
-                x => x.OrganizationId == request.OrganizationId && x.IdempotencyKey == request.IdempotencyKey, ct);
+                x => x.OrganizationId == request.OrganizationId && x.IdempotencyKey == request.IdempotencyKey
+                    && x.VolumeStatus != "deleted", ct);
             if (existing is not null)
             {
                 if (existing.RequestDigest != digest) throw Conflict("workspace_idempotency_conflict", "Idempotency key already has a different request.");

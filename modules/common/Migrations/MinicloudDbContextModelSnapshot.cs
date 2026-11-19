@@ -1590,7 +1590,8 @@ namespace Minicloud.Common.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("OrganizationId", "IdempotencyKey")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("volume_status <> 'deleted'");
 
                     b.HasIndex("OrganizationId", "Name")
                         .IsUnique()

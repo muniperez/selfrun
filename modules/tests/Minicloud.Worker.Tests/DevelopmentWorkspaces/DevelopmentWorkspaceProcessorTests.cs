@@ -812,6 +812,24 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Empty(cloud.DeletedVolumes);
     }
 
+    [Fact]
+    public async Task PermanentDeleteReleasesNameAndCreateIdempotencyKey()
+    {
+        CreateDevelopmentWorkspaceRequest request = new("org", "Reused", "image", "standard", "plan", 20, "org:reused");
+        var deleted = await lifecycle.CreateAsync(request, "actor", default);
+        await lifecycle.DeleteAsync(deleted.Id, "org", true, "actor", default);
+        await Hop();
+        Assert.Equal("deleted", (await CurrentWorkspace(deleted.Id)).VolumeStatus);
+
+        var recreated = await lifecycle.CreateAsync(request, "actor", default);
+        Assert.NotEqual(deleted.Id, recreated.Id);
+        Assert.Equal("Reused", recreated.Name);
+        Assert.Equal(recreated.Id, (await lifecycle.CreateAsync(request, "actor", default)).Id);
+        var conflict = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() =>
+            lifecycle.CreateAsync(request with { VolumeSizeGb = 30 }, "actor", default));
+        Assert.Equal("workspace_idempotency_conflict", conflict.Code);
+    }
+
     private async Task<DevelopmentWorkspace> SeedRetainedVolume()
     {
         var workspace = await lifecycle.CreateAsync(
