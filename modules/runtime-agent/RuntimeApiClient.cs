@@ -47,7 +47,7 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<RuntimeDesiredRoutingResponse>(JsonDefaults.Options, cancellationToken)
-            ?? new RuntimeDesiredRoutingResponse("", config.AppId, config.ComposeProject, []);
+            ?? throw new InvalidOperationException("Runtime routing response was empty.");
     }
 
     public async Task SendRoutingApplyResultsAsync(RuntimeRoutingApplyResultsRequest results, CancellationToken cancellationToken)
@@ -59,7 +59,14 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
+        var acknowledgement = await response.Content.ReadFromJsonAsync<RoutingAcknowledgement>(JsonDefaults.Options, cancellationToken);
+        if (acknowledgement?.Accepted != results.Results.Count)
+        {
+            throw new InvalidOperationException("Runtime API did not accept all routing results; reconciliation will retry.");
+        }
     }
+
+    private sealed record RoutingAcknowledgement(int? Accepted);
 }
 
 public sealed record RuntimeLogIngestRequest(IReadOnlyList<AgentLogRecord> Records);

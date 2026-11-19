@@ -14,8 +14,15 @@ using var httpClient = new HttpClient
 var api = new RuntimeApiClient(httpClient, config, token);
 var processRunner = new ProcessRunner();
 var routing = new RoutingApplier(config, processRunner);
+var statusPublisher = new RuntimeStatusPublisher();
 
 while (true)
+{
+    await RunCycleAsync();
+    await Task.Delay(TimeSpan.FromSeconds(15));
+}
+
+async Task RunCycleAsync()
 {
     const string agentVersion = "0.2.0";
     using var collector = new RuntimeCollector(config, processRunner);
@@ -23,14 +30,21 @@ while (true)
     await AgentOperations.TryAsync("status", async () =>
     {
         var status = await collector.CollectStatusAsync(agentVersion, CancellationToken.None);
-        await api.SendStatusAsync(status, CancellationToken.None);
+        await statusPublisher.PublishAsync(status, api.SendStatusAsync, CancellationToken.None);
     });
     await AgentOperations.TryAsync("routing", async () =>
     {
-        var desired = await api.GetRoutingAsync(CancellationToken.None);
-        var results = await routing.ApplyAsync(desired, CancellationToken.None);
-        await api.SendRoutingApplyResultsAsync(new RuntimeRoutingApplyResultsRequest(desired.Version, results), CancellationToken.None);
-        return results;
+        RuntimeDesiredRoutingResponse desired;
+        try
+        {
+            desired = await api.GetRoutingAsync(CancellationToken.None);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            routing.Invalidate();
+            throw;
+        }
+        return await routing.ReconcileAsync(desired, api.SendRoutingApplyResultsAsync, CancellationToken.None);
     }, results => results.Any(result => result.ApplyStatus == "failed"));
     await AgentOperations.TryAsync("logs", async () =>
     {
@@ -41,5 +55,4 @@ while (true)
             await cursorStore.SaveAsync(response.LastAcceptedCursorBySource, CancellationToken.None);
         }
     });
-    await Task.Delay(TimeSpan.FromSeconds(15));
 }
