@@ -200,11 +200,15 @@ T3 account. See [image registration](t3-connect.md#registering-an-image-for-new-
   `workspace_selections_unavailable`, not an empty catalog. Other HTTP failures
   remain failures, not configuration states.
 
-Discovery is advisory, not a capacity, spend or credential-availability guarantee.
+Discovery is advisory, not a capacity or credential-availability guarantee.
 Writes revalidate current selection and placement policy. Creation leaves the
-workspace stopped and checks retained-storage spend. Starting or launching
-compute checks VM concurrency and compute-plus-storage spend; provider quotas
-still apply. Neither operation limits the number of workspace records or the
+workspace stopped. Starting or launching compute checks VM concurrency; provider
+quotas still apply. Projected cost is informational at every amount: creation,
+manual or queued starts and temporary VM launches never reject a request
+because of estimated spend, and responses keep returning `computeHourlyRate`,
+`estimatedMonthlyCompute` (the hourly rate × 720 hours) and
+`estimatedMonthlyStorage`. The former `workspace_spend_limit` error code is no
+longer emitted. Neither operation limits the number of workspace records or the
 number of distinct active workspaces. Resize records a next-start selection
 without reserving compute; start revalidates it again. Existing idempotency,
 generation and repository-approval requirements are unchanged.
@@ -250,8 +254,7 @@ shutdown. Automatic idle-stop admission returns `409 workspace_keep_running`.
 
 Keep running does not start a stopped machine or bypass safeguards. Manual
 stop and stop-all, task leases, Git-save guards, generation fencing, quotas
-and organization spend limits (which already reserve a full month of compute
-per started machine) apply unchanged. Compute is billed for every running
+and VM concurrency limits apply unchanged. Compute is billed for every running
 machine until it is stopped and deletion is confirmed.
 
 ## Permanent development workspace deletion

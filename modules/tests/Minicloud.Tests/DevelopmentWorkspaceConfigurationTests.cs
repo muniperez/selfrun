@@ -25,7 +25,7 @@ public sealed class DevelopmentWorkspaceConfigurationTests
     }
 
     [Fact]
-    public void Explicit_file_is_loaded_legacy_workspace_counts_are_ignored_and_environment_still_wins()
+    public void Explicit_file_is_loaded_legacy_counts_and_spend_limits_are_ignored_and_environment_still_wins()
     {
         var root = FindRepositoryRoot();
         var directory = Path.Combine(root, ".local", "artifacts", "issue110", "packaging",
@@ -34,7 +34,8 @@ public sealed class DevelopmentWorkspaceConfigurationTests
         var file = Path.Combine(directory, "workspace.json");
         File.WriteAllText(file, """
             {"DevelopmentWorkspaces":{"Enabled":true,"MaxActiveVms":2,
-              "MaxActiveWorkspaces":"obsolete","MaxWorkspacesPerOrganization":"obsolete"}}
+              "MaxActiveWorkspaces":"obsolete","MaxWorkspacesPerOrganization":"obsolete",
+              "MaxEstimatedMonthlySpend":1,"MaxEstimatedMonthlySpendPerOrganization":"obsolete"}}
             """);
         var priorLimit = Environment.GetEnvironmentVariable("DevelopmentWorkspaces__MaxActiveVms");
         try

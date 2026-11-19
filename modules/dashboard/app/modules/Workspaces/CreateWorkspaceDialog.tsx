@@ -7,27 +7,16 @@ import { Label } from "@/components/ui/label";
 import { createDevelopmentWorkspace } from "@/api/environmentsApi";
 import { getWorkspaceSelections, type WorkspaceSelectionOption, type WorkspaceSelections } from "@/api/workspacesApi";
 import { ApiError, type DevelopmentWorkspace } from "@/models/controlPlane";
+import { formatPrice, WorkspaceCostEstimate } from "./WorkspaceCostEstimate";
 
 type Props = { organizationId: string; onCreated: (workspace: DevelopmentWorkspace) => void; canManage: boolean };
 type Catalog = { state: "loading" } | { state: "error"; message: string } | { state: "ready"; value: WorkspaceSelections };
 
 const defaultStorageGb = "20";
-const hoursPerMonth = 720;
 const staleCodes = ["workspace_image_invalid", "workspace_profile_invalid", "workspace_plan_invalid", "workspace_placement_invalid"];
 const selectClass = "h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const optionKey = (option: WorkspaceSelectionOption) => JSON.stringify([option.imageId, option.profile, option.planId]);
-
-export function formatPrice(amount: number | null | undefined, currency: string | null | undefined) {
-  if (typeof amount !== "number" || !Number.isFinite(amount)) return null;
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency", currency: currency || "USD", minimumFractionDigits: 2, maximumFractionDigits: amount > 0 && amount < 1 ? 4 : 2,
-    }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency ?? ""}`.trim();
-  }
-}
 
 function sizeLabel(option: WorkspaceSelectionOption) {
   const specs = [option.cpuCount ? `${option.cpuCount} vCPU` : null, option.memoryGiB ? `${option.memoryGiB} GB RAM` : null].filter(Boolean);
@@ -101,9 +90,7 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
   const choiceRequired = !!ready?.available && options.length > 0 && !selected;
   const canSubmit = !busy && validName && validVolume && !!selected;
   const storageMonthly = validVolume && typeof ready?.volumeMonthlyRatePerGb === "number"
-    ? formatPrice(ready.volumeMonthlyRatePerGb * volumeSizeGb, currency) : null;
-  const vmHourly = formatPrice(selected?.computeHourlyRate, currency);
-  const vmMonthly = typeof selected?.computeHourlyRate === "number" ? formatPrice(selected.computeHourlyRate * hoursPerMonth, currency) : null;
+    ? ready.volumeMonthlyRatePerGb * volumeSizeGb : null;
 
   const reset = () => {
     setName(""); setChoice(""); setVolumeSize(defaultStorageGb); setCustomizing(false); setNotice(null); setError(null);
@@ -196,9 +183,9 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
               <dt className="text-muted-foreground">Storage</dt><dd>{validVolume ? `${volumeSizeGb} GB` : "Enter 10–10,000 GB"}</dd>
               <dt className="text-muted-foreground">Image</dt><dd className="break-words">{selected.imageName}</dd>
             </dl>
-            <p>{vmHourly ? `VM: ${vmHourly}/hour while running (about ${vmMonthly}/month if never stopped). ` : "VM: charged while running. "}
-              {storageMonthly ? `Storage: ${storageMonthly}/month, ` : "Storage is charged "}until you delete the environment, even when the VM is stopped.</p>
-            <p className="text-xs text-muted-foreground">Creating doesn't start the VM or link a T3 account. Storage keeps your files between starts but isn't a backup.</p>
+            <WorkspaceCostEstimate computeHourlyRate={selected.computeHourlyRate} monthlyStorage={storageMonthly} currency={currency}
+              className="space-y-2 border-t pt-2" />
+            <p className="text-xs text-muted-foreground">Creating doesn't start the VM or link a T3 account. Storage keeps your files between starts and is charged until you delete the environment, but isn't a backup.</p>
           </section>}
           {ready?.available && options.length > 0 && <div className="space-y-4">
             <Button type="button" variant="ghost" size="sm" className="-ml-2" aria-expanded={customizing}

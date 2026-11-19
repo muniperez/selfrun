@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/core/auth/AuthProvider";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import { hoursPerMonth, WorkspaceCostEstimate } from "./WorkspaceCostEstimate";
 import { WorkspaceIdleTimeoutSettings } from "./WorkspaceIdleTimeoutSettings";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceVmCard } from "./WorkspaceVmCard";
@@ -144,6 +145,11 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
             <p className="text-muted-foreground">Select Refresh status to load it. A temporary VM is never used instead. Storage: {item.volumeSizeGb} GB · {item.volumeStatus ?? "status unavailable"}.</p>
           </CardContent></Card>}
         </section>
+        {primary && <section aria-labelledby="cost-estimate-heading" className="space-y-2">
+          <h2 id="cost-estimate-heading" className="text-lg font-semibold">Projected cost</h2>
+          <WorkspaceCostEstimate computeHourlyRate={primary.computeHourlyRate} monthlyStorage={item.estimatedMonthlyStorage}
+            currency={item.currency} className="space-y-2 rounded-md border p-4 text-sm" />
+        </section>}
         {!!item.agents?.length && <section aria-labelledby="agents-heading" className="space-y-2">
           <h2 id="agents-heading" className="text-lg font-semibold">Coding agents</h2>
           <ul className="flex flex-wrap gap-2 text-sm">
@@ -187,7 +193,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
               <TableHeader><TableRow>
                 <TableHead scope="col">VM</TableHead><TableHead scope="col">Status</TableHead>
                 <TableHead scope="col">Server</TableHead><TableHead scope="col">Per hour</TableHead>
-                <TableHead scope="col">Per month if running</TableHead>
+                <TableHead scope="col">Per month if running {hoursPerMonth} hours</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {[...(primary ? [primary] : []), ...vms.filter(vm => vm.id !== primary?.id)].map(vm => <TableRow key={vm.id}>

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
@@ -19,7 +20,6 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     {
         Enabled = true, MaxActiveVms = 5,
         MaxVmsPerWorkspace = 3, MaxVmsPerOrganization = 4,
-        MaxEstimatedMonthlySpend = 10000, MaxEstimatedMonthlySpendPerOrganization = 5000,
         VolumeMonthlyRatePerGb = .1m, PricingUpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
         Repositories = [new() { OrganizationId = "org", Repository = "https://git.example.test/team/repo.git",
             AllowedBaseRefs = ["refs/heads/main"], AllowPush = true }],
@@ -202,15 +202,10 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DiscoveryDoesNotReserveSpendOrBypassCurrentAdmission()
+    public async Task DiscoveryDoesNotBypassCurrentAdmission()
     {
         var workspace = await Workspace();
         Assert.NotEmpty((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options);
-        policy.MaxEstimatedMonthlySpendPerOrganization = 3;
-        await AssertCode("workspace_spend_limit", () => Service().CreateAsync(Create("Second", "second"), "actor", default));
-        await AssertCode("workspace_spend_limit", () => Service().StartAsync(workspace.Id, "org", default));
-        await AssertCode("workspace_spend_limit", () => Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default));
-        policy.MaxEstimatedMonthlySpendPerOrganization = 5000;
         await Service().StartAsync(workspace.Id, "org", default);
         policy.MaxVmsPerWorkspace = 1;
         Assert.NotEmpty((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options);
@@ -239,11 +234,10 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CreatesStoppedWorkspacesBeyondPreviousCountCapUntilStorageSpendLimit()
+    public async Task CreatesStoppedWorkspacesBeyondPreviousCountCap()
     {
-        policy.MaxEstimatedMonthlySpend = 12;
         var service = Service();
-        for (var i = 1; i <= 6; i++)
+        for (var i = 1; i <= 7; i++)
         {
             var workspace = await service.CreateAsync(Create($"Workspace {i}", $"create-{i}"), "actor", default);
             Assert.Equal("stopped", Primary(workspace).Phase);
@@ -251,9 +245,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
             Assert.Null(workspace.ProviderVolumeId);
         }
 
-        await AssertCode("workspace_spend_limit",
-            () => service.CreateAsync(Create("Workspace 7", "create-7"), "actor", default));
-        Assert.Equal(6, await db.DevelopmentWorkspaces.CountAsync());
+        Assert.Equal(7, await db.DevelopmentWorkspaces.CountAsync());
         Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
     }
 
@@ -342,17 +334,38 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         Assert.Single(await db.DevelopmentWorkspaceVms.Where(x => x.ComputeReserved).ToListAsync());
     }
 
-    [Fact]
-    public async Task StorageAndProposedComputeAreIncludedInOrgSpendCap()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProjectedCostIsInformationalWithOrWithoutLegacySpendSettings(bool legacySpendSettings)
     {
-        policy.MaxEstimatedMonthlySpendPerOrganization = 73;
-        var workspace = await Workspace(); // storage = 2, proposed compute = 72.
-        await AssertCode("workspace_spend_limit", () => Service().StartAsync(workspace.Id, "org", default));
-        Assert.False((await db.DevelopmentWorkspaceVms.SingleAsync()).ComputeReserved);
-        Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
-        policy.MaxEstimatedMonthlySpendPerOrganization = 1;
-        await AssertCode("workspace_spend_limit", () => Service().CreateAsync(Create("Second", "second"), "actor", default));
-        Assert.Single(await db.DevelopmentWorkspaces.ToListAsync());
+        if (legacySpendSettings)
+        {
+            // Removed settings, configured far below the projected cost, must bind cleanly and have no effect.
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["DevelopmentWorkspaces:MaxEstimatedMonthlySpend"] = "1",
+                ["DevelopmentWorkspaces:MaxEstimatedMonthlySpendPerOrganization"] = "0.01",
+            }).Build().GetSection(DevelopmentWorkspaceOptions.SectionName).Bind(policy);
+        }
+
+        var workspace = await Workspace(); // storage = 2, compute = 0.1/hour.
+        var created = Service().ToResponse(workspace);
+        Assert.Equal(2, created.EstimatedMonthlyStorage);
+        Assert.Equal(.1m, Assert.Single(created.Vms!).ComputeHourlyRate);
+        workspace = await Service().StartAsync(workspace.Id, "org", default);
+        Assert.True(Primary(workspace).ComputeReserved);
+        workspace = await Service().LaunchEphemeralAsync(workspace.Id, "org", Launch(), "actor", default);
+        Assert.True(workspace.Vms.Single(x => x.Kind == "ephemeral").ComputeReserved);
+        // Queued automatic starts use the same VM start path as the worker.
+        var second = await Service().CreateAsync(Create("Second", "second"), "actor", default);
+        second = await Service().StartVmAsync(second.Id, "org", Primary(second).Id, 0, default);
+        Assert.True(Primary(second).ComputeReserved);
+
+        var response = Service().ToResponse(workspace);
+        Assert.Equal(2, response.EstimatedMonthlyStorage);
+        Assert.Equal(144, response.EstimatedMonthlyCompute);
+        Assert.Equal(3, await db.DevelopmentWorkspaceVms.CountAsync(x => x.ComputeReserved));
     }
 
     [Fact]
@@ -1307,7 +1320,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         policy.Enabled = false;
         await AssertCode("workspaces_disabled", () => Workspace());
         Assert.Empty(await db.DevelopmentWorkspaces.ToListAsync());
-        policy.Enabled = true; policy.MaxEstimatedMonthlySpendPerOrganization = 0;
+        policy.Enabled = true; policy.VolumeMonthlyRatePerGb = 0;
         await AssertCode("workspace_policy_invalid", () => Workspace());
     }
 

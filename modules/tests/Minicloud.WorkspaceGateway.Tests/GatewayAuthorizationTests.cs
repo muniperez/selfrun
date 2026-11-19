@@ -326,8 +326,7 @@ public sealed class GatewayAuthorizationTests
         var lifecycle = new DevelopmentWorkspaceService(fixture.Db, new IdGenerator(), fixture.Clock,
             Microsoft.Extensions.Options.Options.Create(new DevelopmentWorkspaceOptions
             {
-                Enabled = true, MaxEstimatedMonthlySpend = 1000, MaxEstimatedMonthlySpendPerOrganization = 1000,
-                VolumeMonthlyRatePerGb = 1, PricingUpdatedAt = fixture.Clock.Now
+                Enabled = true, VolumeMonthlyRatePerGb = 1, PricingUpdatedAt = fixture.Clock.Now
             }));
         var context = new DefaultHttpContext();
         var controller = new DevelopmentWorkspaceGatewayController { ControllerContext = new() { HttpContext = context } };

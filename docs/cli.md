@@ -670,8 +670,8 @@ minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|-
   available while no client is connected. `create` accepts the same
   `--idle-timeout <minutes>` or `--keep-running`. With Keep running, compute is
   billed for every running machine until you run `stop` or `stop-all`; the
-  command prints the estimated monthly compute for the primary machine.
-  Organization spend limits still apply when machines start. Keep running
+  command prints the estimated monthly compute for the primary machine. The
+  estimate is informational and never blocks a start. Keep running
   keeps the saved minutes so `--minutes` or the dashboard can turn it off again.
 - Sign in to coding providers inside T3. Repository access uses the organization's
   [GitHub App](github-app.md). For optional T3 account linking, see
