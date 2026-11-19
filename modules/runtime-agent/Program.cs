@@ -12,12 +12,13 @@ using var httpClient = new HttpClient
     Timeout = TimeSpan.FromSeconds(15)
 };
 var api = new RuntimeApiClient(httpClient, config, token);
-var collector = new RuntimeCollector(config, new ProcessRunner());
-var routing = new RoutingApplier(config, new ProcessRunner());
+var processRunner = new ProcessRunner();
+var routing = new RoutingApplier(config, processRunner);
 
 while (true)
 {
     const string agentVersion = "0.2.0";
+    using var collector = new RuntimeCollector(config, processRunner);
     await AgentOperations.TryAsync("heartbeat", () => api.SendHeartbeatAsync(agentVersion, CancellationToken.None));
     await AgentOperations.TryAsync("status", async () =>
     {

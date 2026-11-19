@@ -58,21 +58,22 @@ public sealed class RuntimeAgentTests
         [{"Id":"abc","Name":"/minicloud-demo-api-1","Config":{"Image":"api:v1","Labels":{"com.docker.compose.service":"api"}},"State":{"Status":"running","Health":{"Status":"healthy"}},"RestartCount":2},
          {"Id":"def","Name":"/minicloud-demo-worker-1","Config":{"Image":"worker:v1","Labels":{"com.docker.compose.service":"worker"}},"State":{"Status":"exited"},"RestartCount":0}]
         """;
+    private const string DockerPs = "docker ps -aq --filter label=com.docker.compose.project=minicloud-demo";
 
     [Fact]
     public async Task CollectorReadsPrivateAndStoppedContainersWithoutComposeFile()
     {
         var config = new AgentConfig("srv", "org", "app_1", "https://api.example", "minicloud-demo", "/missing/app.compose.json", "/tmp/token", "/tmp/state");
-        var runner = new FakeProcessRunner(new Dictionary<string, ProcessResult>
+        var runner = new RecordingProcessRunner(new Dictionary<string, ProcessResult>
         {
-            ["docker ps -aq --filter label=com.docker.compose.project=minicloud-demo"] = new(0, "abc\ndef", ""),
+            [DockerPs] = new(0, "abc\ndef", ""),
             ["docker inspect abc def"] = new(0, Containers, ""),
             ["systemctl is-active caddy"] = new(0, "active", ""),
             ["docker logs --timestamps --since 20s --tail 100 abc"] = new(0, "2026-05-04T10:00:01Z booted", ""),
             ["docker logs --timestamps --since 20s --tail 100 def"] = new(0, "", ""),
             ["journalctl -u caddy --since 20 seconds ago --output short-iso --no-pager"] = new(0, "", "")
         });
-        var collector = new RuntimeCollector(config, runner);
+        using var collector = new RuntimeCollector(config, runner);
         var status = await collector.CollectStatusAsync("0.2.0", CancellationToken.None);
         Assert.Equal(2, status.Services.Count);
         Assert.Equal("healthy", status.Services[0].Health);
@@ -82,13 +83,74 @@ public sealed class RuntimeAgentTests
         Assert.True(status.Caddy.Active);
         var logs = await collector.CollectLogsAsync(CancellationToken.None);
         Assert.Contains(logs, log => log.Service == "api" && log.Message == "booted");
+        Assert.Single(runner.Calls, call => call == DockerPs);
+        Assert.Single(runner.Calls, call => call == "docker inspect abc def");
+    }
+
+    [Theory]
+    [InlineData(0, "")]
+    [InlineData(1, "")]
+    [InlineData(0, "{}")]
+    public async Task DiscoveryCachesEmptyHostsButRetriesFailedInspection(int exitCode, string inspection)
+    {
+        var config = new AgentConfig("srv", "org", "app_1", "https://api.example", "minicloud-demo", "/missing", "/tmp/token", "/tmp/state");
+        var responses = new Dictionary<string, ProcessResult>
+        {
+            [DockerPs] = new(0, inspection == "" && exitCode == 0 ? "" : "abc", ""),
+            ["docker inspect abc"] = new(exitCode, inspection, ""),
+            ["systemctl is-active caddy"] = new(0, "active", ""),
+            ["journalctl -u caddy --since 20 seconds ago --output short-iso --no-pager"] = new(0, "journal line", "")
+        };
+        var runner = new RecordingProcessRunner(responses);
+        using var collector = new RuntimeCollector(config, runner);
+        var emptyHost = inspection == "" && exitCode == 0;
+        if (emptyHost)
+        {
+            Assert.Empty((await collector.CollectStatusAsync("0.2.0", CancellationToken.None)).Services);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => collector.CollectStatusAsync("0.2.0", CancellationToken.None));
+            responses[DockerPs] = new(0, "", "");
+        }
+
+        Assert.Equal("journal line", Assert.Single(await collector.CollectLogsAsync(CancellationToken.None)).Message);
+        Assert.Equal(emptyHost ? 1 : 2, runner.Calls.Count(call => call == DockerPs));
+        Assert.Equal(emptyHost ? 0 : 1, runner.Calls.Count(call => call.StartsWith("docker inspect", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task DiscoveryRefreshesOnNextCycleAfterContainerChurn()
+    {
+        var config = new AgentConfig("srv", "org", "app_1", "https://api.example", "minicloud-demo", "/missing", "/tmp/token", "/tmp/state");
+        var responses = new Dictionary<string, ProcessResult>
+        {
+            [DockerPs] = new(0, "abc\ndef", ""),
+            ["docker inspect abc def"] = new(0, Containers, ""),
+            ["systemctl is-active caddy"] = new(0, "active", ""),
+            ["docker logs --timestamps --since 20s --tail 100 abc"] = new(1, "", "No such container"),
+            ["docker logs --timestamps --since 20s --tail 100 def"] = new(0, "2026-05-04T10:00:01Z worker alive", ""),
+            ["journalctl -u caddy --since 20 seconds ago --output short-iso --no-pager"] = new(0, "journal alive", "")
+        };
+        var runner = new RecordingProcessRunner(responses);
+        using (var collector = new RuntimeCollector(config, runner))
+        {
+            Assert.Equal(2, (await collector.CollectStatusAsync("0.2.0", CancellationToken.None)).Services.Count);
+            responses[DockerPs] = new(0, "", "");
+            var logs = await collector.CollectLogsAsync(CancellationToken.None);
+            Assert.Equal(["minicloud-agent", "service:worker", "caddy"], logs.Select(log => log.Source));
+        }
+
+        using var next = new RuntimeCollector(config, runner);
+        Assert.Empty((await next.CollectStatusAsync("0.2.0", CancellationToken.None)).Services);
+        Assert.Equal(2, runner.Calls.Count(call => call == DockerPs));
     }
 
     [Fact]
     public async Task CollectionFailureDoesNotBecomeEmptySuccessfulSnapshot()
     {
         var config = new AgentConfig("srv", "org", "app_1", "https://api.example", "minicloud-demo", "/missing", "/tmp/token", "/tmp/state");
-        var collector = new RuntimeCollector(config, new FakeProcessRunner(new Dictionary<string, ProcessResult>()));
+        using var collector = new RuntimeCollector(config, new FakeProcessRunner(new Dictionary<string, ProcessResult>()));
         await Assert.ThrowsAsync<InvalidOperationException>(() => collector.CollectStatusAsync("0.2.0", CancellationToken.None));
         var reached = false;
         await AgentOperations.TryAsync("routing", () => throw new IOException("Denied"));
@@ -117,7 +179,7 @@ public sealed class RuntimeAgentTests
             ["docker logs --timestamps --since 20s --tail 100 def"] = new(0, "", ""),
             ["journalctl -u caddy --since 20 seconds ago --output short-iso --no-pager"] = new(0, "", "")
         });
-        var collector = new RuntimeCollector(config, runner);
+        using var collector = new RuntimeCollector(config, runner);
         await AgentOperations.TryAsync("logs", () => collector.CollectLogsAsync(CancellationToken.None), _ => false);
 
         Assert.Contains(points, point => point.Name == "minicloud.runtime.agent.operation.calls" && point.Operation == "heartbeat" && point.Outcome == "success");
@@ -128,7 +190,7 @@ public sealed class RuntimeAgentTests
         Assert.Contains(points, point => point.Name == "minicloud.runtime.agent.bytes" && point.Operation == "docker.inspect" && (long)point.Value > 0);
         Assert.Contains(points, point => point.Name == "minicloud.runtime.agent.records" && point.Operation == "logs" && (long)point.Value > 0);
         Assert.All(points.Where(point => point.Operation is not null), point =>
-            Assert.Contains(point.Operation, new[] { "heartbeat", "status", "routing", "logs", "docker.inspect", "docker.logs", "routing.apply", "journal.logs", "systemctl.status" }));
+            Assert.Contains(point.Operation, new[] { "heartbeat", "status", "routing", "logs", "docker.ps", "docker.inspect", "docker.logs", "routing.apply", "journal.logs", "systemctl.status" }));
     }
 
     [Fact]

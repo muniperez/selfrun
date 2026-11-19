@@ -81,6 +81,7 @@ public static class RuntimeAgentDiagnostics
     private static string ProcessOperation(string fileName, IReadOnlyList<string> args) => fileName switch
     {
         "docker" when args.Count > 0 && args[0] == "logs" => "docker.logs",
+        "docker" when args.Count > 0 && args[0] == "ps" => "docker.ps",
         "docker" => "docker.inspect",
         "sudo" => "routing.apply",
         "journalctl" => "journal.logs",
@@ -91,7 +92,7 @@ public static class RuntimeAgentDiagnostics
     private static string NormalizeOperation(string operation) => operation switch
     {
         "heartbeat" or "status" or "routing" or "logs" or
-        "docker.inspect" or "docker.logs" or "routing.apply" or "journal.logs" or "systemctl.status" => operation,
+        "docker.ps" or "docker.inspect" or "docker.logs" or "routing.apply" or "journal.logs" or "systemctl.status" => operation,
         _ => "other"
     };
 
