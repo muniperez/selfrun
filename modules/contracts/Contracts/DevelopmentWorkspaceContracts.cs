@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Minicloud.Common.Contracts;
 
 public sealed record WorkspaceSelectionOption(
@@ -14,7 +16,12 @@ public sealed record CreateDevelopmentWorkspaceRequest(
     string Profile,
     string PlanId,
     int VolumeSizeGb,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonNumberHandling(JsonNumberHandling.Strict)]
+    int? IdleTimeoutMinutes = null);
+
+public sealed record UpdateDevelopmentWorkspaceIdleTimeoutRequest(
+    [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes);
 
 public sealed record DevelopmentWorkspaceResponse(
     string Id,
@@ -47,7 +54,9 @@ public sealed record DevelopmentWorkspaceResponse(
     IReadOnlyList<DevelopmentWorkspaceVmResponse>? Vms = null,
     string? PrimaryVmId = null,
     string? VolumeStatus = null,
-    string? CreatedBy = null);
+    string? CreatedBy = null,
+    int? IdleTimeoutMinutes = null,
+    int? EffectiveIdleTimeoutMinutes = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseRequest(string TaskId, long Generation);
 public sealed record DevelopmentWorkspaceGenerationRequest(long Generation);

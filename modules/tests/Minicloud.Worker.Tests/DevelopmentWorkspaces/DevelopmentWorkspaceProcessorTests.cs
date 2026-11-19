@@ -447,6 +447,37 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MonitorAppliesLiveWorkspaceTimeoutAndResumesAfterCountdownCancellation(bool ephemeral)
+    {
+        var (workspace, vm, start) = await Seed("ready", ephemeral);
+        vm.Phase = "ready"; vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        vm.LastActivityAt = clock.GetUtcNow().AddMinutes(-60);
+        start.Status = "completed";
+        await db.SaveChangesAsync();
+
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+        Assert.Null((await CurrentVm(vm.Id)).ShutdownDeadline);
+        await lifecycle.UpdateIdleTimeoutAsync(workspace.Id, "org", 60, default);
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+        var deadline = clock.GetUtcNow().AddSeconds(workerOptions.IdleShutdownDelaySeconds);
+        Assert.Equal(deadline, (await CurrentVm(vm.Id)).ShutdownDeadline);
+
+        await lifecycle.UpdateIdleTimeoutAsync(workspace.Id, "org", 90, default);
+        Assert.Null((await CurrentVm(vm.Id)).ShutdownDeadline);
+        clock.Advance(TimeSpan.FromMinutes(30));
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+        var current = await CurrentVm(vm.Id);
+        Assert.Equal(clock.GetUtcNow(), current.LastHeartbeatAt);
+        Assert.Equal(clock.GetUtcNow().AddSeconds(workerOptions.IdleShutdownDelaySeconds), current.ShutdownDeadline);
+        Assert.NotNull(current.AllocationOperationId);
+        Assert.Equal("running", current.DesiredState);
+        Assert.Equal(0, cloud.Deletes);
+        Assert.Equal(0, cloud.Detaches);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(true, true)]
@@ -1217,6 +1248,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public bool FailFilesystemStart { get; set; }
         public Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct)
         {
+            ArgumentException.ThrowIfNullOrEmpty(operationId);
             Actions.Add(action);
             BeforeAction?.Invoke(action);
             if (action is "quiesce" or "git-save" or "discard")

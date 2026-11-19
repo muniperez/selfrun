@@ -401,6 +401,8 @@ export type DevelopmentWorkspace = {
   id: string;
   organizationId: string;
   createdBy?: string | null;
+  idleTimeoutMinutes?: number | null;
+  effectiveIdleTimeoutMinutes?: number | null;
   name: string;
   imageId: string;
   profile: string;

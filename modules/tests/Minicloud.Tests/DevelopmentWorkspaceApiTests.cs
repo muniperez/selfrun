@@ -22,9 +22,9 @@ using Minicloud.Common.Services;
 
 namespace Minicloud.Tests;
 
-public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
+public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
 {
-    private readonly SqliteConnection connection = new("Data Source=:memory:");
+    private readonly SqliteConnection connection = new($"Data Source=workspace-api-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Pooling=False");
     private WorkspaceApiFactory factory = default!;
     private string token = default!;
     private string otherToken = default!;
@@ -60,6 +60,8 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync($"{Root}?organizationId=org")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync($"{Root}/selections?organizationId=org")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(Root, Request())).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PutAsJsonAsync($"{Root}/fixture/idle-timeout?organizationId=org",
+            new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90))).StatusCode);
         await AssertNoCompute();
     }
 
@@ -78,6 +80,10 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.Forbidden, (await other.PostAsync($"{prefix}/{action}?organizationId=org", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PostAsJsonAsync(Root, Request())).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await other.GetAsync($"{prefix}?organizationId=other")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await other.PutAsJsonAsync($"{prefix}/idle-timeout?organizationId=org",
+            new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await other.PutAsJsonAsync($"{prefix}/idle-timeout?organizationId=other",
+            new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PostAsJsonAsync($"{prefix}/vms/{vm.Id}/discard?organizationId=org",
             new DevelopmentWorkspaceDiscardRequest(0, true, true))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PutAsJsonAsync($"{prefix}/vms/{vm.Id}/tasks/task/lease?organizationId=org",
@@ -505,13 +511,13 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Database:Provider"] = "Sqlite", ["Database:RunMigrationsOnStartup"] = "false",
-                ["ConnectionStrings:Minicloud"] = "Data Source=:memory:"
+                ["ConnectionStrings:Minicloud"] = connection.ConnectionString
             }));
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<DbContextOptions<MinicloudDbContext>>();
                 services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
-                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection));
+                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection.ConnectionString));
                 services.AddSingleton<IOptions<DevelopmentWorkspaceOptions>>(Options.Create(Policy));
             });
         }

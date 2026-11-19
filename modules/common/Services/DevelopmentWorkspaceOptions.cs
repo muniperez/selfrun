@@ -14,7 +14,7 @@ public sealed class DevelopmentWorkspaceOptions
     public string Currency { get; set; } = "USD";
     public DateTimeOffset? PricingUpdatedAt { get; set; }
     public int MaxPricingAgeDays { get; set; } = 30;
-    public int IdleGraceMinutes { get; set; } = 30;
+    public int IdleGraceMinutes { get; set; } = 360;
     public int TaskLeaseSeconds { get; set; } = 300;
     public int HeartbeatTimeoutSeconds { get; set; } = 120;
     public int OperationLeaseSeconds { get; set; } = 120;

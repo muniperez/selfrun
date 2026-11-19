@@ -6,6 +6,7 @@ public sealed class DevelopmentWorkspace
     public string OrganizationId { get; set; } = default!;
     public string CreatedBy { get; set; } = default!;
     public string Name { get; set; } = default!;
+    public int? IdleTimeoutMinutes { get; set; }
     public string PrimaryVmId { get; set; } = default!;
     public string ProviderAccountId { get; set; } = default!;
     public string Region { get; set; } = default!;

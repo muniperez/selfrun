@@ -72,7 +72,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await maintenance.EnsureCommitAuthorityAsync(db, ct);
         var fresh = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id, ct);
-        if (fresh.Generation != vm.Generation || fresh.OperationId != operationId ||
+        if (fresh.Generation != vm.Generation || fresh.OperationId != vm.OperationId ||
+            (fresh.OperationId ?? fresh.AllocationOperationId) != operationId ||
             (publishRoute && fresh.DesiredState != "running" && fresh.Phase is not ("draining" or "awaiting_git_save")))
             throw new InvalidOperationException("Runtime route publication lost its generation authority.");
         fresh.RuntimeCredentialRef = credentialRef; fresh.RuntimeTokenExpiresAt = expires;
@@ -240,11 +241,17 @@ public sealed partial class DevelopmentWorkspaceProcessor
         var vm = await db.DevelopmentWorkspaceVms.AsNoTracking()
             .Where(x => x.Phase == "ready" && x.DesiredState == "running")
             .OrderBy(x => x.LastHeartbeatAt).FirstOrDefaultAsync(ct);
-        if (vm is null) return;
+        if (vm is not null) await MonitorVmAsync(vm, ct);
+    }
+
+    internal async Task MonitorVmAsync(DevelopmentWorkspaceVm vm, CancellationToken ct)
+    {
         var workspace = await db.DevelopmentWorkspaces.AsNoTracking().SingleAsync(x => x.Id == vm.WorkspaceId, ct);
         try
         {
-            await RefreshRuntimeAsync(workspace, vm, vm.OperationId!, ct);
+            var operationId = vm.OperationId ?? vm.AllocationOperationId
+                ?? throw new InvalidOperationException("Ready VM has no runtime operation identity.");
+            await RefreshRuntimeAsync(workspace, vm, operationId, ct);
             try { await RefreshRepositoryCredentialAsync(vm, ct); }
             catch (DevelopmentWorkspaceException)
             {
@@ -252,12 +259,13 @@ public sealed partial class DevelopmentWorkspaceProcessor
             }
             db.ChangeTracker.Clear();
             vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == vm.Id, ct);
-            if (!await IsRuntimeIdleAsync(vm, vm.OperationId!, ct))
+            if (vm.Phase != "ready" || vm.DesiredState != "running") return;
+            if (!await IsRuntimeIdleAsync(vm, vm.OperationId ?? vm.AllocationOperationId ?? operationId, ct))
             {
                 await lifecycle.ActivityAsync(vm.WorkspaceId, vm.OrganizationId, vm.Id, vm.Generation, ct);
                 return;
             }
-            if (await lifecycle.IsIdleAsync(vm, ct) && vm.ShutdownDeadline is null)
+            if (vm.ShutdownDeadline is null && await lifecycle.IsIdleAsync(vm, ct))
                 await lifecycle.ScheduleIdleStopAsync(vm.WorkspaceId, vm.OrganizationId, vm.Id, vm.Generation,
                     Now.AddSeconds(Math.Clamp(options.Value.IdleShutdownDelaySeconds, 30, 600)), ct);
         }

@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -17,6 +18,34 @@ public sealed class MigrationConsistencyTests
     {
         using var db = CreateContext();
         Assert.False(db.Database.HasPendingModelChanges());
+    }
+
+    [Fact]
+    public async Task WorkspaceIdleTimeoutMigrationLeavesExistingRowsUnset()
+    {
+        const string previous = "20261117100000_DevelopmentWorkspaceVms";
+        const string current = "20261119145527_DevelopmentWorkspaceIdleTimeout";
+        using var postgres = CreateContext();
+        var script = postgres.GetService<IMigrator>().GenerateScript(previous, current);
+        Assert.Contains("ALTER TABLE development_workspaces ADD idle_timeout_minutes integer;", script);
+        Assert.DoesNotContain("DEFAULT", script);
+
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new MinicloudDbContext(new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE "__EFMigrationsHistory" ("MigrationId" TEXT PRIMARY KEY, "ProductVersion" TEXT NOT NULL);
+            CREATE TABLE development_workspaces (id TEXT PRIMARY KEY);
+            INSERT INTO development_workspaces (id) VALUES ('old-workspace');
+            """);
+        foreach (var migration in db.Database.GetMigrations().TakeWhile(id => id != current))
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") VALUES ({migration}, '10.0.5')");
+
+        await db.Database.MigrateAsync(current);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT idle_timeout_minutes FROM development_workspaces WHERE id = 'old-workspace'";
+        Assert.Equal(DBNull.Value, await command.ExecuteScalarAsync());
     }
 
     [Fact]

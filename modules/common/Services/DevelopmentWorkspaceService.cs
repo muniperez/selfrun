@@ -30,6 +30,7 @@ public sealed partial class DevelopmentWorkspaceService(
         {
             ValidateText(request.OrganizationId, 128); ValidateText(request.Name, 128);
             ValidateText(request.IdempotencyKey, 128); ValidateText(actorId, 256);
+            ValidateIdleTimeout(request.IdleTimeoutMinutes);
             if (request.VolumeSizeGb is < 10 or > 10000) throw Invalid("workspace_volume_size_invalid", "Volume size must be 10–10,000 GB.");
             var digest = Digest(request with { Name = request.Name.Trim() });
             var existing = await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(
@@ -47,6 +48,7 @@ public sealed partial class DevelopmentWorkspaceService(
             {
                 Id = ids.NewId("workspace"), OrganizationId = request.OrganizationId, CreatedBy = actorId,
                 Name = request.Name.Trim(), ProviderAccountId = selection.Plan.ProviderAccountId, Region = selection.Plan.Region,
+                IdleTimeoutMinutes = request.IdleTimeoutMinutes,
                 VolumeSizeGb = request.VolumeSizeGb, StorageMonthlyRate = Policy.VolumeMonthlyRatePerGb * request.VolumeSizeGb,
                 Currency = Policy.Currency, PricingUpdatedAt = Policy.PricingUpdatedAt,
                 IdempotencyKey = request.IdempotencyKey, RequestDigest = digest, CreatedAt = Now, UpdatedAt = Now
@@ -136,15 +138,24 @@ public sealed partial class DevelopmentWorkspaceService(
 
     private async Task CancelIdleCoreAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, CancellationToken ct)
     {
-        if (vm.Phase is not ("ready" or "draining") || vm.ShutdownReason != "idle"
-            || vm.OperationId is null || vm.QuiescedGeneration == vm.Generation)
+        if (!CanCancelIdleStop(vm))
             throw Conflict("workspace_shutdown_committed", "Only an uncommitted idle stop can be cancelled.");
         var operation = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Id == vm.OperationId, ct);
         // A claimed worker may already be freezing writes. Do not race an in-flight remote command.
         if (operation.Attempts > 0) throw Conflict("workspace_shutdown_committed", "Shutdown has already been claimed for reconciliation.");
+        CancelUnclaimedIdleStop(vm, operation);
+        vm.LastActivityAt = Now;
+    }
+
+    private static bool CanCancelIdleStop(DevelopmentWorkspaceVm vm) =>
+        vm.Phase is "ready" or "draining" && vm.ShutdownReason == "idle"
+        && vm.OperationId is not null && vm.QuiescedGeneration != vm.Generation;
+
+    private void CancelUnclaimedIdleStop(DevelopmentWorkspaceVm vm, DevelopmentWorkspaceOperation operation)
+    {
         operation.Status = "cancelled"; operation.Revision++; operation.UpdatedAt = Now;
         vm.DesiredState = "running"; vm.Phase = "ready"; vm.OperationId = null;
-        vm.ShutdownReason = null; vm.ShutdownDeadline = null; vm.LastActivityAt = Now;
+        vm.ShutdownReason = null; vm.ShutdownDeadline = null;
         Touch(vm);
     }
 
@@ -244,16 +255,10 @@ public sealed partial class DevelopmentWorkspaceService(
         {
             if (!(await maintenance.CheckAsync(db, requireOpen: true, token)).IsAdmitted)
                 throw Conflict("workspace_maintenance_fenced", "Maintenance authority is not open for automatic idle-stop admission.");
-            if (deadline < Now || !await IsIdleAsync(vm, token))
+            if (deadline < Now || !await IsIdleAsync(vm, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes), token))
                 throw Conflict("workspace_active", "Activity, missing heartbeat or unresolved tasks prevent idle shutdown.");
             await StopCoreAsync(workspace, vm, "idle", deadline, token);
         }, ct);
-
-    public async Task<bool> IsIdleAsync(DevelopmentWorkspaceVm vm, CancellationToken ct) =>
-        vm.DesiredState == "running" && vm.Phase == "ready" && vm.LastActivityAt is not null
-        && vm.LastActivityAt <= Now.AddMinutes(-Policy.IdleGraceMinutes)
-        && vm.LastHeartbeatAt >= Now.AddSeconds(-Policy.HeartbeatTimeoutSeconds)
-        && !await HasUnresolvedTasksAsync(vm, ct);
 
     public async Task<bool> HasUnresolvedTasksAsync(DevelopmentWorkspaceVm vm, CancellationToken ct) =>
         await db.DevelopmentWorkspaceTaskLeases.AnyAsync(x => x.VmId == vm.Id && x.Generation == vm.Generation && x.Status == "active", ct);
@@ -308,7 +313,7 @@ public sealed partial class DevelopmentWorkspaceService(
             workspace.Vms.Where(x => x.ComputeReserved).Sum(x => x.ComputeHourlyRate * 720m), workspace.StorageMonthlyRate,
             workspace.Currency, workspace.PricingUpdatedAt, workspace.Revision, workspace.CreatedAt, workspace.UpdatedAt,
             workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus,
-            workspace.CreatedBy);
+            workspace.CreatedBy, workspace.IdleTimeoutMinutes, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes));
     }
 
     public DevelopmentWorkspaceVmResponse ToVmResponse(DevelopmentWorkspaceVm vm) =>

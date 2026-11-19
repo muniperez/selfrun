@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/core/auth/AuthProvider";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import { WorkspaceIdleTimeoutSettings } from "./WorkspaceIdleTimeoutSettings";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceVmCard } from "./WorkspaceVmCard";
 import { vmStartup } from "./WorkspaceVmStartup";
@@ -91,6 +92,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
         <TabsList aria-label="Workspace details" className="h-auto gap-6 rounded-none bg-transparent p-0">
           <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Overview</TabsTrigger>
           <TabsTrigger value="storage" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Storage &amp; costs</TabsTrigger>
+          <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Settings</TabsTrigger>
         </TabsList>
         <Dialog open={stopOpen} onOpenChange={open => {
           if (stopping) return;
@@ -179,6 +181,9 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
           <p className="text-sm text-muted-foreground">These are operator-configured estimates and observed reservations, not provider invoices or a billing guarantee. Currency: {item.currency}. Operator rates updated: {item.pricingUpdatedAt ?? "timestamp unavailable"}.</p>
           <p className="text-sm text-muted-foreground">Hetzner compute billing ends on deletion, not power-off, and rounds up to whole hours. Repeated short sessions may each incur an hour. Backups, snapshots, IPs, traffic and the control plane may cost extra.</p>
         </section>
+      </TabsContent>
+      <TabsContent value="settings" className="pt-4">
+        <WorkspaceIdleTimeoutSettings item={item} organizationId={organizationId} refresh={refreshAfterMutation} canManage={canManage} />
       </TabsContent>
     </Tabs>
   </div>;
