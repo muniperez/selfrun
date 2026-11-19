@@ -25,6 +25,18 @@
     "integrity": "sha512-KhzYlkKPxoNssR8CEm45IjqnFWn7UtlF4CiD3tOJPea51xBs7MaHy0UQG9GSbCqk6Lrjn5QdJDV0QD1/FgWlGw==",
     "dependencyLock": "tools/package-lock.json"
   },
+  "gh": {
+    "version": "2.83.1",
+    "url": "https://github.com/cli/cli/releases/download/v2.83.1/gh_2.83.1_linux_amd64.tar.gz",
+    "sha256": "1c5252d4ce3db07b51c01ff0b909583da6364ff3fdc06d0c2e75e62dc0380a34",
+    "executable": "gh_2.83.1_linux_amd64/bin/gh"
+  },
+  "glab": {
+    "version": "1.74.0",
+    "url": "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/1%2E74%2E0/glab_1%2E74%2E0_linux_amd64.tar.gz",
+    "sha256": "75008e8d57825547d944a3193a66a018188b433a4ecb1cf36500ffbafe4689ff",
+    "executable": "bin/glab"
+  },
   "t3": {
     "version": "0.1.9",
     "source": "https://github.com/pingdotgg/t3code",
@@ -46,7 +58,7 @@
     "fonts-liberation", "libgtk-3-0t64"
   ],
   "provenance": {
-    "retrievedFrom": "Official Ubuntu SHA256SUMS, Node SHASUMS256.txt, .NET 10 releases.json, npm registry integrity, GitHub release asset digest",
+    "retrievedFrom": "Official Ubuntu SHA256SUMS, Node SHASUMS256.txt, .NET 10 releases.json, npm registry integrity, GitHub release asset digest, GitLab glab v1.74.0 checksums.txt",
     "sourceRevision": "REQUIRED_AT_BUILD",
     "builderIdentity": "REQUIRED_AT_BUILD",
     "qualification": "Recipe only; no provider image has been built or registered by default tests"
