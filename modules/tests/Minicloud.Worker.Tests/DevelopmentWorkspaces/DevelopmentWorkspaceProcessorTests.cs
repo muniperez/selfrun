@@ -65,7 +65,6 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         policy = new()
         {
             Enabled = true, MaxActiveVms = 5, MaxVmsPerWorkspace = 3, MaxVmsPerOrganization = 5,
-            MaxEstimatedMonthlySpend = 10000, MaxEstimatedMonthlySpendPerOrganization = 10000,
             VolumeMonthlyRatePerGb = .1m, PricingUpdatedAt = clock.GetUtcNow().AddMinutes(-1),
             Profiles = new()
             {

@@ -47,8 +47,11 @@ describe("CreateWorkspaceDialog", () => {
     expect(summary).toHaveTextContent("standard · 2 vCPU, 8 GB RAM");
     expect(summary).toHaveTextContent("20 GB");
     expect(summary).toHaveTextContent("Muni T3 with Connect");
-    expect(summary).toHaveTextContent("$0.05/hour while running");
-    expect(summary).toHaveTextContent("Storage: $1.00/month");
+    const estimate = within(summary).getByRole("group", { name: "Projected monthly cost" });
+    expect(estimate).toHaveTextContent("VM rate$0.05/hour while running");
+    expect(estimate).toHaveTextContent("Storage$1.00/month, even while the VM is stopped");
+    expect(estimate).toHaveTextContent("Projected monthly total$37.00 if the VM runs 720 hours this month");
+    expect(estimate).toHaveTextContent("never blocks creating or starting a VM");
     expect(summary).toHaveTextContent("doesn't start the VM or link a T3 account");
     expect(submitButton()).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
@@ -85,7 +88,9 @@ describe("CreateWorkspaceDialog", () => {
       expect(submitButton()).toBeDisabled();
     }
     fireEvent.change(screen.getByLabelText("Storage (GB)"), { target: { value: "40" } });
-    expect(screen.getByRole("region", { name: "Summary" })).toHaveTextContent("Storage: $2.00/month");
+    const estimate = screen.getByRole("group", { name: "Projected monthly cost" });
+    expect(estimate).toHaveTextContent("Storage$2.00/month");
+    expect(estimate).toHaveTextContent("Projected monthly total$74.00 if the VM runs 720 hours this month");
     fireEvent.click(submitButton());
     await waitFor(() => expect(createDevelopmentWorkspace).toHaveBeenCalledWith(expect.objectContaining({ planId: "plan-two", volumeSizeGb: 40 })));
   });

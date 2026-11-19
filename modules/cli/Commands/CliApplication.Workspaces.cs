@@ -248,7 +248,7 @@ public sealed partial class CliApplication
         var estimate = primary is null ? "" : $" The primary machine at its current size is estimated at {primary.ComputeHourlyRate * 720m:F2} {workspace.Currency}/month.";
         return "Keep running is on: machines in this dev environment are never stopped for inactivity. "
             + "Compute is billed for every running machine until you stop it with 'minicloud workspaces stop' or 'stop-all'." + estimate
-            + " Organization spend limits still apply when machines start.";
+            + " Cost estimates are informational and never block a start.";
     }
 
     private static void ValidateWorkspaceDeletion(string[] args)

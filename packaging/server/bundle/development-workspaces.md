@@ -19,7 +19,7 @@ workspace image first.
    root:1654, mode 0440, with its parent directory root-only.
    The example intentionally has no image IDs, organization IDs, provider
    credentials or available capacity. Populate qualified image manifests,
-   allowed plans/SKUs/regions, current pricing and explicit spend ceilings,
+   allowed plans/SKUs/regions, current pricing,
    per-organization repository/ref policies and `DevelopmentWorkspaceWorker`
    `ManagementAddresses` (every control-plane/private management address to
    block). Only then set `DevelopmentWorkspaces.Enabled=true`.
@@ -68,7 +68,8 @@ For workspaces without a saved idle timeout, `DevelopmentWorkspaces.IdleGraceMin
 is the operator default in the protected JSON. Keep a deliberately configured
 value; when omitted it defaults to 360 minutes (6 hours). A saved workspace
 setting takes precedence for both VM kinds. A dev environment set to **Keep
-running** never stops for inactivity; spend limits and manual stop still apply.
+running** never stops for inactivity; VM concurrency limits and manual stop
+still apply.
 Apply the database migration and update the API and worker together before
 reopening workspace operations.
 
@@ -119,11 +120,11 @@ even without an access log.
 ## Isolation and limits
 
 Workspace records are not subject to a count limit. Creating a workspace leaves
-its primary VM stopped and checks the retained-storage estimate against the
-configured spend caps. Starting a VM checks global, per-organization and
-per-workspace VM concurrency limits and the combined compute and storage
-estimate. Provider quotas still apply. Obsolete workspace-count settings in
-existing policy files are ignored and can be removed.
+its primary VM stopped. Starting a VM checks global, per-organization and
+per-workspace VM concurrency limits. Provider quotas still apply. Projected
+compute and storage costs are shown to users but are informational and never
+block creation or startup. Obsolete workspace-count and monthly spend-limit
+settings in existing policy files are ignored and can be removed.
 
 The gateway is separately supervised: 0.5 CPU, 256 MiB memory, 128 PIDs,
 read-only root, bounded 16 MiB `/tmp` tmpfs, no capabilities, no privilege

@@ -126,8 +126,10 @@ primary and ephemeral VMs. Resetting the setting restores inheritance. See the
 behavior.
 
 Users can also choose **Keep running** per dev environment, which turns
-automatic idle stop off; manual stop, quotas and the configured monthly spend
-limits still apply. The additive `keep_running` column defaults existing rows to
+automatic idle stop off; manual stop and VM concurrency limits and provider
+quotas still apply. Projected costs are informational: the former
+`MaxEstimatedMonthlySpend` and `MaxEstimatedMonthlySpendPerOrganization`
+settings are ignored if still present and can be removed. The additive `keep_running` column defaults existing rows to
 idle stop. Roll it out with the API and worker together like the idle timeout.
 
 ### Optional packaged Google OIDC
