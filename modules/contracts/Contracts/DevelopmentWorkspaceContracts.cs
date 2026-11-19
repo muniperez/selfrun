@@ -4,10 +4,12 @@ namespace Minicloud.Common.Contracts;
 
 public sealed record WorkspaceSelectionOption(
     string ImageId, string ImageName, string Profile, string PlanId, string PlanName,
-    string ProviderAccountName, string Region, string Sku);
+    string ProviderAccountName, string Region, string Sku, int CpuCount, int MemoryGiB,
+    decimal ComputeHourlyRate, bool IsDefault);
 
 public sealed record WorkspaceSelections(
-    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options);
+    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options,
+    string? Currency = null, decimal? VolumeMonthlyRatePerGb = null);
 
 public sealed record CreateDevelopmentWorkspaceRequest(
     string OrganizationId,
@@ -84,7 +86,8 @@ public sealed record DevelopmentWorkspaceVmResponse(
     decimal ComputeHourlyRate, decimal EstimatedMonthlyCompute, bool ComputeReserved, long Revision,
     IReadOnlyList<DevelopmentWorkspaceTaskLeaseResponse>? TaskLeases = null,
     bool StartAfterStop = false,
-    string? StartupStage = null);
+    string? StartupStage = null,
+    DevelopmentWorkspaceVmResources? Resources = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseResponse(
     string VmId, string TaskId, long Generation, string Status, DateTimeOffset ExpiresAt);

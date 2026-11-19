@@ -126,6 +126,90 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task FolderSizesAndDeletionRequireWriteAccessExactConfirmationAndHideFilesystemIdentity()
+    {
+        using var owner = Client(token);
+        var workspace = await Create(owner);
+        var vmId = workspace.Vms!.Single().Id;
+        string readToken;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            readToken = AddKey(db, scope.ServiceProvider.GetRequiredService<IApiKeyTokenService>(), "org", [ApiKeyScopes.AppsRead]);
+            var machine = await db.DevelopmentWorkspaceVms.SingleAsync();
+            machine.Phase = "ready"; machine.DesiredState = "running";
+            machine.RuntimeCapabilities = "directory-delete-v1,disk-usage-v1,resources-v1";
+            machine.ResourceSampleGeneration = machine.Generation; machine.ResourceSampleReceivedAt = DateTimeOffset.UtcNow;
+            machine.ResourceSampleJson = DevelopmentWorkspaceService.NormalizeResourceSample(JsonSerializer.SerializeToElement(new
+            {
+                resources = new
+                {
+                    schemaVersion = 1, vmId, generation = machine.Generation, observedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    cpu = new { logicalCount = 2, utilizationPercent = (double?)null, windowSeconds = (double?)null },
+                    memory = new { totalBytes = 4096L, availableBytes = 1024L }, filesystems = Array.Empty<object>(),
+                    unavailable = new Dictionary<string, string> { ["cpu.utilizationPercent"] = "warming_up" }
+                }
+            }), vmId, machine.Generation, DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+        }
+        var prefix = $"{Root}/{workspace.Id}/vms/{vmId}";
+        var generation = workspace.Vms!.Single().Generation;
+        using var reader = Client(readToken);
+        var resources = Assert.Single((await reader.GetFromJsonAsync<DevelopmentWorkspaceResponse>(
+            $"{Root}/{workspace.Id}?organizationId=org"))!.Vms!).Resources!;
+        Assert.Equal("current", resources.State);
+        Assert.Null(resources.Cpu!.UtilizationPercent);
+        Assert.Equal("warming_up", resources.Unavailable["cpu.utilizationPercent"]);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.PostAsJsonAsync($"{prefix}/disk-usage/scans?organizationId=org",
+            new DevelopmentWorkspaceDiskUsageScanRequest(generation, "scan-key-0001"))).StatusCode);
+        using var other = Client(otherToken);
+        Assert.Equal(HttpStatusCode.Forbidden, (await other.PostAsJsonAsync($"{prefix}/disk-usage/scans?organizationId=org",
+            new DevelopmentWorkspaceDiskUsageScanRequest(generation, "scan-key-0001"))).StatusCode);
+
+        var started = await owner.PostAsJsonAsync($"{prefix}/disk-usage/scans?organizationId=org",
+            new DevelopmentWorkspaceDiskUsageScanRequest(generation, "scan-key-0001"));
+        Assert.Equal(HttpStatusCode.Accepted, started.StatusCode);
+        var job = (await started.Content.ReadFromJsonAsync<DevelopmentWorkspaceFilesystemJobResponse>())!;
+        Assert.Equal(("queued", "/workspace"), (job.State, job.Path));
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.GetAsync($"{prefix}/filesystem-jobs/{job.Id}?organizationId=org")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync($"{prefix}/filesystem-jobs/missing?organizationId=org")).StatusCode);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<DevelopmentWorkspaceService>();
+            Assert.Equal(job.Id, (await service.ClaimFilesystemJobAsync(1, default))!.Id);
+            await service.RecordFilesystemJobAsync(job.Id, JsonSerializer.SerializeToElement(new
+            {
+                state = "completed", result = new
+                {
+                    schemaVersion = 1, mode = "scan", policyVersion = 1, path = Array.Empty<string>(),
+                    target = new { dev = 64769, ino = 731_001, uid = 2000 }, complete = true, totalBytes = 5000, filesHereBytes = 0,
+                    omittedEntries = 0, omittedBytes = 0, errors = new { },
+                    entries = new[] { new { name = "artifacts", bytes = 5000, state = "complete", errors = Array.Empty<string>(),
+                        selectable = true, deletable = false, uid = 2000, dev = 64769, ino = 731_002 } }
+                }
+            }), null, default);
+        }
+        var scanned = await owner.GetAsync($"{prefix}/filesystem-jobs/{job.Id}?organizationId=org");
+        var raw = await scanned.Content.ReadAsStringAsync();
+        Assert.True(scanned.Headers.CacheControl?.NoStore);
+        Assert.DoesNotContain("731002", raw);
+        Assert.DoesNotContain("64769", raw);
+        var entry = Assert.Single(JsonSerializer.Deserialize<DevelopmentWorkspaceFilesystemJobResponse>(raw,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.DiskUsage!.Entries);
+        Assert.Equal(("/workspace/artifacts", false), (entry.Path, entry.CanDelete));
+
+        var deletion = new DevelopmentWorkspaceDirectoryDeletionRequest(generation, entry.TargetToken!, "/workspace/artifacts", true, "delete-key-01");
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.PostAsJsonAsync($"{prefix}/directory-deletions?organizationId=org", deletion)).StatusCode);
+        var refused = await owner.PostAsJsonAsync($"{prefix}/directory-deletions?organizationId=org", deletion);
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Contains("workspace_folder_protected", await refused.Content.ReadAsStringAsync());
+        var stale = await owner.PostAsJsonAsync($"{prefix}/disk-usage/scans?organizationId=org",
+            new DevelopmentWorkspaceDiskUsageScanRequest(generation + 1, "scan-key-0002", entry.TargetToken));
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+    }
+
+    [Fact]
     public async Task DiscoveryNeedsOnlyReadPermissionAndReturnsPublicMetadataWithoutAllocating()
     {
         string readToken, noReadToken;
@@ -149,7 +233,7 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
             Assert.True(choices.Available);
             Assert.Null(choices.UnavailableReason);
             Assert.Equal(new WorkspaceSelectionOption("image", "Development tools", "standard", "plan",
-                "Standard", "Synthetic", "nbg1", "cx-test"), Assert.Single(choices.Options));
+                "Standard", "Synthetic", "nbg1", "cx-test", 4, 8, .1m, false), Assert.Single(choices.Options));
             var raw = await response.Content.ReadAsStringAsync();
             Assert.DoesNotContain("sensitive", raw);
             Assert.DoesNotContain("credential", raw, StringComparison.OrdinalIgnoreCase);

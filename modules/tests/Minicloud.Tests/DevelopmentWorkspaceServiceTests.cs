@@ -76,7 +76,8 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         Assert.Equal(2, choices.Options.Count);
         var standard = Assert.Single(choices.Options, x => x.Profile == "standard");
         Assert.Equal(new WorkspaceSelectionOption("qualified", "qualified", "standard", "plan",
-            "Standard", "Test", "nbg1", "cx-test"), standard);
+            "Standard", "Test", "nbg1", "cx-test", 4, 8, .1m, false), standard);
+        Assert.Equal(("USD", .1m), (choices.Currency, choices.VolumeMonthlyRatePerGb));
         Assert.Empty(db.ChangeTracker.Entries());
         Assert.Empty(await db.DevelopmentWorkspaces.ToListAsync());
         Assert.Empty(await db.DevelopmentWorkspaceOperations.ToListAsync());
@@ -96,6 +97,17 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
                 { ImageId = choice.ImageId, Profile = choice.Profile, PlanId = choice.PlanId }, "actor", default);
             Assert.Equal(choice.PlanId, Primary(workspace).PlanId);
         }
+    }
+
+    [Fact]
+    public async Task DiscoveryMarksConfiguredDefaultOnlyForNewWorkspaces()
+    {
+        policy.Profiles["standard"].DefaultPlanIdsForNewWorkspaces = ["plan", "missing-plan"];
+        var choices = await Service().GetSelectionsAsync("org", null, default);
+        Assert.Equal("standard", Assert.Single(choices.Options, x => x.IsDefault).Profile);
+        Assert.False(Assert.Single(choices.Options, x => x.Profile == "heavy").IsDefault);
+        var workspace = await Workspace();
+        Assert.All((await Service().GetSelectionsAsync("org", workspace.Id, default)).Options, x => Assert.False(x.IsDefault));
     }
 
     [Fact]

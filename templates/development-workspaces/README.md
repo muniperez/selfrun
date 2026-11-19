@@ -426,6 +426,24 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
   writes/services/admissions reopen. This lets users resolve Awaiting Git save; use a new
   shutdown operation after editing/pushing. Failed partial resumes remain blocked.
 
+* `status` also returns `capabilities` (`resources-v1`, plus `disk-usage-v1` and
+  `directory-delete-v1` when the adapter can run folder jobs) and a cached, read-only
+  `resources` sample (CPU utilization over a delta window, memory, `/` and `/workspace`
+  filesystem bytes and inodes). Sampling never walks directories, never sleeps on the
+  request path and does not change `revision`; a sampling failure reports
+  `resources.unavailable` instead of failing status.
+* `fs-job-start`: `jobId`, `mode` `scan` or `delete`, `path` (component list under
+  `/workspace`) and, for delete, `expect:{dev,ino}` from the scan. The job record is
+  persisted before `systemd-run` launches `disk_usage.py` as the coding user with a
+  time and entry budget; a repeated `jobId` returns the same job and is never relaunched.
+  One job runs at a time and jobs are refused while stopping. The helper opens each path
+  component with `O_NOFOLLOW` relative to the parent descriptor, stays on one filesystem,
+  and deletes only strict descendants of `repos`, `home` or `artifacts` owned by the
+  coding user whose device/inode still match the scan.
+* `fs-job-status` / `fs-job-cancel`: report `running`, `completed` (with the helper's
+  JSON result), `lost` or `not_found`. Quiesce, Git save and discard stop running
+  folder jobs before freezing.
+
 Normal stop checkpoints a bounded, sanitized runtime rejection in the operation's
 `providerEvidenceJson.lastRuntimeRejection` **before** attempting to reopen a failed
 freeze. A refused recovery `status`/`resume`/`cancel-drain` is retained separately as

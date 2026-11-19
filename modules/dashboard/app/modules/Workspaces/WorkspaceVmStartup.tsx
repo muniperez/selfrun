@@ -3,7 +3,7 @@ import type { DevelopmentWorkspaceVm } from "@/models/controlPlane";
 
 const stages = [
   { id: "preparing_vm", label: "Preparing VM" },
-  { id: "preparing_storage", label: "Preparing retained storage" },
+  { id: "preparing_storage", label: "Preparing storage" },
   { id: "setting_up", label: "Setting up VM" },
   { id: "checking_readiness", label: "Checking readiness" },
   { id: "ready", label: "Ready" },
@@ -40,7 +40,7 @@ export function WorkspaceVmStartup({ vm, pending = false }: { vm: DevelopmentWor
     </ol>}
     {failed && <p className="text-muted-foreground">
       {stage ? `Last reported stage: ${stage.label}. ` : ""}
-      Check workspace status again or contact your operator if startup remains blocked. Checking status does not start another VM.
+      Select Refresh status to check again, or contact your operator if startup stays blocked. Checking status doesn't start another VM.
     </p>}
     {(pending || starting) && <p className="text-muted-foreground">T3 and previews become available when the VM is ready.</p>}
   </div>;

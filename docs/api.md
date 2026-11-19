@@ -62,6 +62,48 @@ as a whole.
 An absent stage means the precise startup step is unknown. A blocked start
 can report its last recorded stage; only a ready VM phase confirms readiness.
 
+### Dev environment resources, folder sizes and folder deletion
+
+Each VM response can include `resources`, the latest CPU, memory and disk sample
+the dev environment reported with its status heartbeat. `resources.state` is
+`current`, `stale` (no fresh sample for 120 seconds), `historical` (the VM is not
+running; values are the last known sample) or `unsupported` (the image predates
+resource telemetry). Samples are bounded and validated by the control plane,
+belong to one VM generation, and never start compute. `filesystems[]` reports
+`/` and `/workspace` available/total bytes and file slots (inodes);
+`diskUsageSupported` and `directoryDeletionSupported` reflect the image's
+advertised capabilities.
+
+Folder sizes are measured only on request. All folder endpoints require
+organization app-write permission (`apps:write` for API keys), a running and ready
+VM with the matching `generation`, an image that advertises the capability, and an
+`idempotencyKey`. Responses are `Cache-Control: no-store`; one folder job runs at a
+time per VM (`409 workspace_filesystem_job_active`).
+
+- `POST /api/development-workspaces/{id}/vms/{vmId}/disk-usage/scans?organizationId={id}`
+  with `{ "generation", "idempotencyKey", "targetToken"? }` returns `202` with a
+  folder job. Omit `targetToken` to measure `/workspace`; pass an entry's
+  `targetToken` from a completed scan to measure that child folder.
+- `POST /api/development-workspaces/{id}/vms/{vmId}/directory-deletions?organizationId={id}`
+  with `{ "generation", "targetToken", "confirmationPath", "acknowledgePermanentLoss": true, "idempotencyKey" }`
+  returns `202`. `confirmationPath` must exactly equal the entry's full `path`.
+  The request and its outcome are audited.
+- `GET .../vms/{vmId}/filesystem-jobs/{jobId}` polls a job;
+  `POST .../filesystem-jobs/{jobId}/cancel` requests cancellation.
+
+Scan results list immediate child folders by allocated size with `state`
+`complete`, `partial` (at least this size), `unreadable` or `excluded` (separate
+disk); unknown sizes are `null`, never `0`. `filesHereBytes` covers files directly
+in the folder. Target tokens are opaque and expire with `targetsExpireAt`, five
+minutes after the scan completes or as soon as a later deletion is requested; then
+`workspace_folder_selection_expired` requires a new scan. Filesystem device/inode
+identities are never returned. Only folders at least two levels inside
+`/workspace/repos`, `/workspace/home` or `/workspace/artifacts`, owned by the dev
+environment user and on the same disk, have `canDelete: true`; others report a
+`protectedReason`. Deletion jobs finish in `succeeded`, `partially_deleted`,
+`failed`, `cancelled` or `outcome_unknown`. Deletion is permanent and backups are
+not an undo.
+
 Workspace list/detail responses include optional `createdBy` (the workspace
 creator's actor ID). The dashboard uses it only to present primary T3 Connect
 management to the creator or an organization Owner. The Connect launch and
@@ -93,11 +135,26 @@ The uncached response is:
       "planName": "Development standard",
       "providerAccountName": "Primary Hetzner",
       "region": "nbg1",
-      "sku": "cx-example"
+      "sku": "cx-example",
+      "cpuCount": 4,
+      "memoryGiB": 8,
+      "computeHourlyRate": 0.1,
+      "isDefault": true
     }
-  ]
+  ],
+  "currency": "EUR",
+  "volumeMonthlyRatePerGb": 0.0605
 }
 ```
+
+`cpuCount`, `memoryGiB` and `computeHourlyRate` come from the approved profile;
+`currency` and `volumeMonthlyRatePerGb` come from the pricing policy and are
+`null` when unavailable. They are configured estimates, not invoices. The portal
+uses them to show a price before creation. `isDefault` is `true` only for
+unscoped (new environment) discovery when the option's plan is listed in
+`DevelopmentWorkspaces:Profiles:{profile}:DefaultPlanIdsForNewWorkspaces`. The
+portal preselects one default option, or the only option. If there are several
+options and not exactly one default, it asks the user to choose.
 
 Submit `imageId`, `profile` and `planId` unchanged to the existing create, resize
 or ephemeral-launch write contracts. IDs are stable configuration/plan identities,

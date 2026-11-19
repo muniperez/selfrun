@@ -25,10 +25,10 @@ type Props = {
 };
 
 const initialSelection: WorkspaceSelection = { imageId: "", profile: "Standard", planId: "" };
-const lossDisclosure = "Ephemeral VMs have independent Git-only root disks and no access to the primary retained volume. Ignored, untracked and unpushed local data can be permanently lost; there is no filesystem backup.";
+const lossDisclosure = "A temporary VM has its own disk and can't see the primary VM's storage. Untracked files, files ignored by Git and unpushed work can be lost permanently; there is no backup.";
 
 function message(reason: unknown) {
-  return reason instanceof Error ? reason.message : "Workspace operation failed.";
+  return reason instanceof Error ? reason.message : "Something went wrong. Refresh status and try again.";
 }
 
 function phaseLabel(vm: DevelopmentWorkspaceVm) {
@@ -36,8 +36,8 @@ function phaseLabel(vm: DevelopmentWorkspaceVm) {
   if (vm.phase === "awaiting_git_save") return "Git save blocked";
   if (failed) return "VM startup failed";
   if (starting) return "Starting VM…";
-  if (vm.errorCode) return `Blocked · ${vm.phase.replaceAll("_", " ")}`;
-  if (ready) return "Ready";
+  if (vm.errorCode) return "Needs attention";
+  if (ready) return "Running";
   if (vm.phase === "stopped") return "Stopped";
   return vm.phase.replaceAll("_", " ");
 }
@@ -86,10 +86,10 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
   return <div className="min-w-0 space-y-6">
     {item.errorCode && !(primary && vmStartup(primary).failed) && <p role="alert" className="text-sm text-destructive">{item.errorCode}: {item.errorMessage}</p>}
     {refreshError && <p role="alert" className="text-sm text-destructive">{refreshError}</p>}
-    {!canManage && <p className="text-sm text-muted-foreground">Read-only access. Workspace management requires an owner or admin.</p>}
+    {!canManage && <p className="text-sm text-muted-foreground">You can view this dev environment but can't change it.</p>}
     <Tabs defaultValue="overview" className="min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
-        <TabsList aria-label="Workspace details" className="h-auto gap-6 rounded-none bg-transparent p-0">
+        <TabsList aria-label="Dev environment details" className="h-auto gap-6 rounded-none bg-transparent p-0">
           <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Overview</TabsTrigger>
           <TabsTrigger value="storage" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Storage &amp; costs</TabsTrigger>
           <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Settings</TabsTrigger>
@@ -106,14 +106,15 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
             onInteractOutside={event => { if (stopping) event.preventDefault(); }}>
             <DialogHeader>
               <DialogTitle>Stop all VMs?</DialogTitle>
-              <DialogDescription>Stop each listed VM independently. Primary volume data is retained. Every ephemeral VM must pass its own task and Git-save guards; blocked VMs remain allocated and may incur costs.</DialogDescription>
+              <DialogDescription>Each VM stops separately. Files on the primary VM's storage are kept, and storage charges continue. A temporary VM stops only after its tasks finish and its Git work is saved; a VM that can't stop keeps its server and may keep charging.</DialogDescription>
             </DialogHeader>
             <ul className="max-h-64 space-y-2 overflow-auto text-sm">
               {vms.map(vm => <li key={vm.id} className="break-words rounded-md border p-3">
-                <strong>{vm.id}</strong> · {vm.kind} · generation {vm.generation} · {vm.phase} · Git save: {vm.gitStatus}
+                <strong>{vm.kind === "primary" ? "Primary VM" : vm.workBranch ?? "Temporary VM"}</strong> · {phaseLabel(vm)} · Git save: {vm.gitStatus.replaceAll("_", " ")}
+                <span className="block text-xs text-muted-foreground">{vm.id} · generation {vm.generation}</span>
               </li>)}
             </ul>
-            <p className="text-sm text-muted-foreground">This does not discard unsaved data or stop unrelated workspaces. Ephemeral root disks are disposable after safe deletion; ignored files are not saved by Git.</p>
+            <p className="text-sm text-muted-foreground">Stopping doesn't discard unsaved work or affect other dev environments. A temporary VM's disk is deleted after it stops safely; files ignored by Git aren't saved.</p>
             {stopError && <p role="alert" className="text-sm text-destructive">{stopError}</p>}
             <DialogFooter className="gap-2">
               <Button variant="outline" disabled={stopping} onClick={() => setStopConfirmation(null)}>Cancel stop all</Button>
@@ -129,14 +130,14 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
             retainedStorage={{ sizeGb: item.volumeSizeGb, status: item.volumeStatus, estimatedMonthlyStorage: item.estimatedMonthlyStorage }} />
             : <Card><CardContent className="space-y-2 p-6 text-sm">
             <p className="font-medium">No primary VM reported.</p>
-            <p className="text-muted-foreground">Refresh workspace status to load its primary VM. An ephemeral VM is never used as a substitute. Retained volume: {item.volumeSizeGb} GB · {item.volumeStatus ?? "status unavailable"}.</p>
+            <p className="text-muted-foreground">Select Refresh status to load it. A temporary VM is never used instead. Storage: {item.volumeSizeGb} GB · {item.volumeStatus ?? "status unavailable"}.</p>
           </CardContent></Card>}
         </section>
         <section aria-labelledby="ephemeral-heading" className="min-w-0 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 id="ephemeral-heading" className="text-lg font-semibold">Ephemeral VMs</h2>
-              <p className="text-sm text-muted-foreground">Each VM works on its own Git branch and disposable disk. Siblings start and stop independently.</p>
+              <h2 id="ephemeral-heading" className="text-lg font-semibold">Temporary VMs</h2>
+              <p className="text-sm text-muted-foreground">Each temporary VM works on its own Git branch with its own disk, and starts and stops on its own.</p>
             </div>
             <LaunchEphemeralDialog item={item} organizationId={organizationId} refresh={refreshAfterMutation} canManage={canManage} />
           </div>
@@ -146,40 +147,40 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
       </TabsContent>
       <TabsContent value="storage" className="space-y-6 pt-4">
         <Card>
-          <CardHeader><CardTitle>Primary retained storage</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Storage</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <Metric label="Volume capacity" value={`${item.volumeSizeGb} GB`} />
-              <Metric label="Volume status" value={item.volumeStatus ?? "Status unavailable"} />
-              <Metric label="Estimated monthly storage" value={`${item.estimatedMonthlyStorage.toFixed(2)} ${item.currency}`} />
-              <Metric label="Operator rate timestamp" value={item.pricingUpdatedAt ?? "Timestamp unavailable"} />
+              <Metric label="Size" value={`${item.volumeSizeGb} GB`} />
+              <Metric label="Status" value={item.volumeStatus ?? "Status unavailable"} />
+              <Metric label="Estimated cost per month" value={`${item.estimatedMonthlyStorage.toFixed(2)} ${item.currency}`} />
+              <Metric label="Prices last updated" value={item.pricingUpdatedAt ?? "Unavailable"} />
             </dl>
-            <p className="text-sm text-muted-foreground">Retained storage continues to incur charges when all VMs are stopped. Only data on the primary retained volume survives compute replacement; primary root disks and all ephemeral disks are disposable. A retained volume is not a backup.</p>
+            <p className="text-sm text-muted-foreground">Storage is charged even when all VMs are stopped. Only files on this storage are kept when the primary VM is replaced; other disks, including every temporary VM's disk, are deleted. Storage isn't a backup.</p>
           </CardContent>
         </Card>
-        <section aria-label="Per-VM compute estimates" className="space-y-3">
-          <h2 className="text-lg font-semibold">Per-VM compute estimates</h2>
+        <section aria-label="VM costs" className="space-y-3">
+          <h2 className="text-lg font-semibold">VM costs</h2>
           <div className="overflow-hidden rounded-lg border">
             <Table>
               <TableHeader><TableRow>
-                <TableHead scope="col">VM</TableHead><TableHead scope="col">Observed phase</TableHead>
-                <TableHead scope="col">Reservation</TableHead><TableHead scope="col">Hourly estimate</TableHead>
-                <TableHead scope="col">Monthly estimate</TableHead>
+                <TableHead scope="col">VM</TableHead><TableHead scope="col">Status</TableHead>
+                <TableHead scope="col">Server</TableHead><TableHead scope="col">Per hour</TableHead>
+                <TableHead scope="col">Per month if running</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {[...(primary ? [primary] : []), ...vms.filter(vm => vm.id !== primary?.id)].map(vm => <TableRow key={vm.id}>
-                  <TableCell className="break-words font-medium">{vm.id}<span className="block text-xs text-muted-foreground">{vm.kind}</span></TableCell>
-                  <TableCell>{vm.phase}</TableCell>
-                  <TableCell>{vm.computeReserved ? "Reserved · charges may continue" : "Not reserved"}</TableCell>
+                  <TableCell className="break-words font-medium">{vm.kind === "primary" ? "Primary VM" : "Temporary VM"}<span className="block text-xs text-muted-foreground">{vm.id}</span></TableCell>
+                  <TableCell>{phaseLabel(vm)}</TableCell>
+                  <TableCell>{vm.computeReserved ? "Allocated · charges may continue" : "Not allocated"}</TableCell>
                   <TableCell className="whitespace-nowrap">{vm.computeHourlyRate.toFixed(4)} {item.currency}</TableCell>
                   <TableCell className="whitespace-nowrap">{vm.estimatedMonthlyCompute.toFixed(2)} {item.currency}</TableCell>
                 </TableRow>)}
-                {!vms.length && <TableRow><TableCell colSpan={5} className="py-6 text-center text-muted-foreground">No VM observations reported.</TableCell></TableRow>}
+                {!vms.length && <TableRow><TableCell colSpan={5} className="py-6 text-center text-muted-foreground">No VMs reported.</TableCell></TableRow>}
               </TableBody>
             </Table>
           </div>
-          <p className="text-sm text-muted-foreground">These are operator-configured estimates and observed reservations, not provider invoices or a billing guarantee. Currency: {item.currency}. Operator rates updated: {item.pricingUpdatedAt ?? "timestamp unavailable"}.</p>
-          <p className="text-sm text-muted-foreground">Hetzner compute billing ends on deletion, not power-off, and rounds up to whole hours. Repeated short sessions may each incur an hour. Backups, snapshots, IPs, traffic and the control plane may cost extra.</p>
+          <p className="text-sm text-muted-foreground">These are estimates based on your operator's prices, not invoices or a billing guarantee. Currency: {item.currency}. Prices last updated: {item.pricingUpdatedAt ?? "unavailable"}.</p>
+          <p className="text-sm text-muted-foreground">Hetzner charges for a VM's server until it's deleted, not just powered off, and rounds up to whole hours. Repeated short sessions may each cost an hour. Backups, snapshots, IPs, traffic and the control plane may cost extra.</p>
         </section>
       </TabsContent>
       <TabsContent value="settings" className="pt-4">
@@ -198,18 +199,18 @@ function EphemeralTable({ vms, workspaceId, organizationId, currency, refresh, c
   refresh: Props["refresh"]; canManage: boolean; actorId?: string;
 }) {
   return <div className="overflow-hidden rounded-lg border">
-    <Table aria-label="Ephemeral VMs">
+    <Table aria-label="Temporary VMs">
       <TableHeader><TableRow>
         <TableHead scope="col">Work branch / repository</TableHead>
-        <TableHead scope="col">VM status</TableHead><TableHead scope="col">Git save</TableHead>
+        <TableHead scope="col">Status</TableHead><TableHead scope="col">Git save</TableHead>
         <TableHead scope="col"><span className="sr-only">Details</span></TableHead>
       </TableRow></TableHeader>
       <TableBody>
         {vms.map(vm => <EphemeralRow key={`${vm.id}:${vm.generation}:${actorId ?? ""}`} vm={vm} workspaceId={workspaceId}
           organizationId={organizationId} currency={currency} refresh={refresh} canManage={canManage} />)}
         {!vms.length && <TableRow><TableCell colSpan={4} className="space-y-1 py-10 text-center">
-          <p className="font-medium">No ephemeral VMs</p>
-          <p className="text-muted-foreground">Launch an independent Git-only VM when you need parallel work. Viewing this page never starts compute.</p>
+          <p className="font-medium">No temporary VMs</p>
+          <p className="text-muted-foreground">Launch a separate Git-only VM when you need parallel work. Viewing this page never starts a VM.</p>
         </TableCell></TableRow>}
       </TableBody>
     </Table>
@@ -305,14 +306,14 @@ function LaunchEphemeralDialog({ item, organizationId, refresh, canManage }: Pro
     finally { pending.current = false; if (mounted.current) setBusy(false); }
   };
   return <Dialog open={open && canManage} onOpenChange={next => { if (!busy) { setOpen(next && canManage); setError(null); } }}>
-    {canManage && <DialogTrigger asChild><Button variant="outline"><Plus aria-hidden="true" className="mr-2 h-4 w-4" />Launch ephemeral VM</Button></DialogTrigger>}
+    {canManage && <DialogTrigger asChild><Button variant="outline"><Plus aria-hidden="true" className="mr-2 h-4 w-4" />Launch temporary VM</Button></DialogTrigger>}
     <DialogContent className="max-w-2xl" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}
       onInteractOutside={event => { if (busy) event.preventDefault(); }}>
       <DialogHeader>
-        <DialogTitle>Launch ephemeral VM</DialogTitle>
-        <DialogDescription>{lossDisclosure} Abrupt VM loss may lose everything since the last verified push.</DialogDescription>
+        <DialogTitle>Launch temporary VM</DialogTitle>
+        <DialogDescription>{lossDisclosure} If the VM is lost unexpectedly, you may lose everything since your last push.</DialogDescription>
       </DialogHeader>
-      <form aria-label={`Launch ephemeral VM in ${item.name}`} onSubmit={event => void submit(event)} className="space-y-4">
+      <form aria-label={`Launch temporary VM in ${item.name}`} onSubmit={event => void submit(event)} className="space-y-4">
         <fieldset disabled={busy} className="grid min-w-0 gap-4">
           <WorkspaceSelectionFields organizationId={organizationId} workspaceId={item.id} value={selection} onChange={setSelection} onReadyChange={setSelectionReady} disabled={busy} />
           <label className="space-y-1 text-sm font-medium">Repository URL<Input required value={repository} onChange={event => setRepository(event.target.value)} /></label>
@@ -320,15 +321,15 @@ function LaunchEphemeralDialog({ item, organizationId, refresh, canManage }: Pro
           <label className="space-y-1 text-sm font-medium">Resolved base commit SHA<Input required pattern="[a-fA-F0-9]{40}|[a-fA-F0-9]{64}" value={baseCommit} onChange={event => setBaseCommit(event.target.value)} /></label>
           <label className="space-y-1 text-sm font-medium">Repository credential reference (optional; not a token)<Input value={credentialRef} onChange={event => setCredentialRef(event.target.value)} /></label>
           <label className="flex items-start gap-2 text-sm"><input type="checkbox" required className="mt-1 accent-primary" checked={pushAuthorized} onChange={event => setPushAuthorized(event.target.checked)} /><span>I authorize task-scoped pushes to this repository's isolated work branch.</span></label>
-          <label className="flex items-start gap-2 text-sm"><input type="checkbox" required className="mt-1 accent-primary" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} /><span>I acknowledge ignored/untracked local data loss on ephemeral root deletion.</span></label>
+          <label className="flex items-start gap-2 text-sm"><input type="checkbox" required className="mt-1 accent-primary" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} /><span>I understand that untracked files and files ignored by Git are deleted with this VM.</span></label>
         </fieldset>
-        <p className="text-sm text-muted-foreground">Launch does not itself push, force-push, create a PR or merge. No primary or sibling files, credentials or retained storage are inherited. Launching explicitly allocates paid compute.</p>
+        <p className="text-sm text-muted-foreground">Launching doesn't push, force-push, open a PR or merge. Files, credentials and storage from other VMs aren't copied. Launching starts a VM right away, and it costs money while it runs.</p>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <DialogFooter className="gap-2">
           <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel launch</Button>
           <Button disabled={!canManage || !valid || busy}>
             {busy && <LoaderCircle aria-hidden="true" className="mr-2 size-4 motion-safe:animate-spin" />}
-            {busy ? "Starting VM…" : "Launch ephemeral VM"}
+            {busy ? "Starting VM…" : "Launch temporary VM"}
           </Button>
         </DialogFooter>
         <p role="status" className="sr-only">{busy ? "Starting VM…" : ""}</p>

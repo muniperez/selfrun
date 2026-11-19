@@ -31,9 +31,12 @@ public sealed class DevelopmentWorkspaceWorker(
     IOptions<DevelopmentWorkspaceWorkerOptions> options, ILogger<DevelopmentWorkspaceWorker> logger) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(LoopAsync(false, stoppingToken), LoopAsync(true, stoppingToken));
+        Task.WhenAll(LoopAsync(Loop.Process, stoppingToken), LoopAsync(Loop.Monitor, stoppingToken),
+            LoopAsync(Loop.Filesystem, stoppingToken));
 
-    private async Task LoopAsync(bool monitor, CancellationToken ct)
+    private enum Loop { Process, Monitor, Filesystem }
+
+    private async Task LoopAsync(Loop loop, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -43,7 +46,8 @@ public sealed class DevelopmentWorkspaceWorker(
                 {
                     using var scope = scopes.CreateScope();
                     var processor = scope.ServiceProvider.GetRequiredService<DevelopmentWorkspaceProcessor>();
-                    if (monitor) await processor.MonitorNextAsync(ct);
+                    if (loop == Loop.Monitor) await processor.MonitorNextAsync(ct);
+                    else if (loop == Loop.Filesystem) await processor.FilesystemNextAsync(ct);
                     else await processor.ProcessNextAsync(ct);
                 }
             }

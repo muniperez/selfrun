@@ -46,6 +46,12 @@ Leave the flag unset or `false` on older revisions; keep the qualified catalog
 entries and matching snapshots for existing VM restarts and rollback. Use a new
 image key for each new snapshot and manifest rather than replacing an old key.
 
+To make the portal's create flow a single name-and-create step when several
+size/location options are approved, list one plan ID in
+`DevelopmentWorkspaces:Profiles:<profile>:DefaultPlanIdsForNewWorkspaces`. With
+exactly one eligible option, it is preselected without this setting. Otherwise
+the portal asks the user to choose a size and location.
+
 Do not put provider tokens, SSH keys, OpenBao tokens/mounts, database credentials
 or the full workspace configuration in the gateway. It receives only its
 dedicated service credential and transport configuration.

@@ -49,7 +49,7 @@ export function WorkspaceSelectionFields({ organizationId, workspaceId, value, o
     }).catch(reason => {
       if (!controller.signal.aborted) {
         setCatalog(null);
-        setError(reason instanceof Error ? reason.message : "Could not load compatible workspace choices.");
+        setError(reason instanceof Error ? reason.message : "Couldn't load options.");
       }
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -78,45 +78,45 @@ export function WorkspaceSelectionFields({ organizationId, workspaceId, value, o
   const unavailable = !pending && !error && current && !current.available;
   return <div className="space-y-4">
     <div className="space-y-2">
-      <Label htmlFor={`${id}-image`}>Workspace image</Label>
+      <Label htmlFor={`${id}-image`}>Image</Label>
       <select id={`${id}-image`} className={selectClass} required disabled={disabled || pending || !images.length}
         value={value.imageId} onChange={event => onChange(compatible({ ...value, imageId: event.target.value }, options))}>
-        <option value="">Select qualified image</option>
+        <option value="">Select image</option>
         {images.map(option => <option key={option.imageId} value={option.imageId}>{option.imageName}</option>)}
       </select>
     </div>
     <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
       <div className="space-y-2">
-        <Label htmlFor={`${id}-profile`}>Profile</Label>
+        <Label htmlFor={`${id}-profile`}>Size</Label>
         <select id={`${id}-profile`} className={selectClass} required disabled={disabled || pending || !profiles.length}
           value={value.profile} onChange={event => onChange(compatible({ ...value, profile: event.target.value }, options))}>
-          <option value="">Select profile</option>
+          <option value="">Select size</option>
           {profiles.map(profile => <option key={profile}>{profile}</option>)}
         </select>
       </div>
       <div className="space-y-2">
-        <Label htmlFor={`${id}-plan`}>Approved plan</Label>
+        <Label htmlFor={`${id}-plan`}>Plan</Label>
         <select id={`${id}-plan`} className={selectClass} required disabled={disabled || pending || !plans.length}
           value={value.planId} onChange={event => onChange({ ...value, planId: event.target.value })}>
-          <option value="">Select approved plan</option>
+          <option value="">Select plan</option>
           {plans.map(option => <option key={option.planId} value={option.planId}>
             {option.planName} · {option.providerAccountName} · {option.region} · {option.sku}
           </option>)}
         </select>
       </div>
     </div>
-    {pending && <p role="status" className="text-sm text-muted-foreground">Loading compatible choices…</p>}
-    {error && <p role="alert" className="text-sm text-destructive">Could not load compatible choices. {error} Retry below.</p>}
+    {pending && <p role="status" className="text-sm text-muted-foreground">Loading options…</p>}
+    {error && <p role="alert" className="text-sm text-destructive">Couldn't load options. {error}</p>}
     {unavailable && <p role="status" className="text-sm text-muted-foreground">
-      {current.unavailableReason || "Workspace provisioning is disabled. Ask an administrator to enable it."}
+      {current.unavailableReason || "Dev environments are turned off. Ask an administrator to turn them on."}
     </p>}
     {!pending && !error && current?.available && !options.length && <p role="status" className="text-sm text-muted-foreground">
-      No compatible choices. Ask an administrator to qualify an image and approve a matching plan, then refresh.
+      No matching options. Ask an administrator to approve an image and a matching plan, then reload.
     </p>}
     <Button type="button" size="sm" variant="outline" disabled={disabled || pending} onClick={() => {
       setLoading(true);
       callbacks.current.onReadyChange?.(false);
       setRevision(previous => previous + 1);
-    }}>{error ? "Retry choices" : "Refresh choices"}</Button>
+    }}>{error ? "Retry" : "Reload options"}</Button>
   </div>;
 }
