@@ -86,6 +86,13 @@ even without an access log.
 
 ## Isolation and limits
 
+Workspace records are not subject to a count limit. Creating a workspace leaves
+its primary VM stopped and checks the retained-storage estimate against the
+configured spend caps. Starting a VM checks global, per-organization and
+per-workspace VM concurrency limits and the combined compute and storage
+estimate. Provider quotas still apply. Obsolete workspace-count settings in
+existing policy files are ignored and can be removed.
+
 The gateway is separately supervised: 0.5 CPU, 256 MiB memory, 128 PIDs,
 read-only root, bounded 16 MiB `/tmp` tmpfs, no capabilities, no privilege
 escalation and 3 x 10 MB rotated logs. It publishes no host port. Verify service
