@@ -364,7 +364,7 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PermanentDeleteRequiresConfirmationAndReleasesCapacityOnlyAfterWorkerCompletion()
+    public async Task PermanentDeleteRequiresConfirmationAndReleasesNameOnlyAfterWorkerCompletion()
     {
         using var client = Client(token);
         var workspace = await Create(client);
@@ -400,6 +400,7 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
         var replacementRequest = Request() with { IdempotencyKey = "replacement" };
         using var tooSoon = await client.PostAsJsonAsync(Root, replacementRequest);
         Assert.Equal(HttpStatusCode.Conflict, tooSoon.StatusCode);
+        Assert.Equal("workspace_reservation_conflict", (await tooSoon.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
         Assert.Equal(0, factory.Cloud.Deletions);
 
         for (var hop = 0; hop < 12; hop++)
@@ -558,8 +559,7 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
         public VolumeTransport Cloud { get; } = new();
         public DevelopmentWorkspaceOptions Policy { get; } = new()
         {
-            Enabled = true, MaxWorkspacesPerOrganization = 1,
-            MaxEstimatedMonthlySpend = 1000, MaxEstimatedMonthlySpendPerOrganization = 1000,
+            Enabled = true, MaxEstimatedMonthlySpend = 1000, MaxEstimatedMonthlySpendPerOrganization = 1000,
             VolumeMonthlyRatePerGb = .1m, PricingUpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
             Profiles = new()
             {

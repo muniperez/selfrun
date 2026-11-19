@@ -874,3 +874,7 @@ does not mean cleanup has finished. Check `status` until it reports `deleted`. I
 `delete_failed`, address the reported error and repeat the same delete command
 with explicit confirmation. `workspaces list` omits deleted workspaces, but
 `workspaces status` still shows the deletion record by ID.
+
+In the dashboard, open the workspace and use **Delete environment** at the
+bottom of the Overview tab. It is available once all VMs are stopped, asks you
+to type the environment name, and shows progress or a retry option afterwards.
