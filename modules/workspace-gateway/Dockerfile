@@ -1,11 +1,13 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY modules/contracts/Minicloud.Contracts.csproj modules/contracts/
+COPY modules/redaction/Minicloud.Redaction.csproj modules/redaction/
 COPY modules/common/Minicloud.Common.csproj modules/common/
 COPY modules/workspace-gateway/Minicloud.WorkspaceGateway.csproj modules/workspace-gateway/
 RUN dotnet restore modules/workspace-gateway/Minicloud.WorkspaceGateway.csproj \
     --disable-parallel -m:1 -p:UseSharedCompilation=false --disable-build-servers
 COPY modules/contracts modules/contracts
+COPY modules/redaction modules/redaction
 COPY modules/common modules/common
 COPY modules/workspace-gateway modules/workspace-gateway
 RUN dotnet publish modules/workspace-gateway/Minicloud.WorkspaceGateway.csproj \
