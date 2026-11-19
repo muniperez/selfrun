@@ -63,12 +63,18 @@ export type WorkspaceSelectionOption = {
   providerAccountName: string;
   region: string;
   sku: string;
+  cpuCount?: number;
+  memoryGiB?: number;
+  computeHourlyRate?: number;
+  isDefault?: boolean;
 };
 
 export type WorkspaceSelections = {
   available: boolean;
   unavailableReason?: string | null;
   options: WorkspaceSelectionOption[];
+  currency?: string | null;
+  volumeMonthlyRatePerGb?: number | null;
 };
 
 export function getWorkspaceSelections(organizationId: string, workspaceId?: string,

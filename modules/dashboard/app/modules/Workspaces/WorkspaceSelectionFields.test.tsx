@@ -30,18 +30,18 @@ describe("WorkspaceSelectionFields", () => {
     render(<Fields />);
     expect(await screen.findByRole("option", { name: "Ubuntu · Coding tools" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Dev small · Team Hetzner · fsn1 · cx23/ })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "Heavy" } });
-    expect(screen.getByLabelText("Approved plan")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("Approved plan"), { target: { value: "plan-two" } });
-    fireEvent.change(screen.getByLabelText("Workspace image"), { target: { value: "image-two" } });
-    expect(screen.getByLabelText("Profile")).toHaveValue("Heavy");
-    expect(screen.getByLabelText("Approved plan")).toHaveValue("plan-two");
-    fireEvent.change(screen.getByLabelText("Workspace image"), { target: { value: "image-one" } });
-    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "Standard" } });
-    fireEvent.change(screen.getByLabelText("Approved plan"), { target: { value: "plan-one" } });
-    fireEvent.change(screen.getByLabelText("Workspace image"), { target: { value: "image-two" } });
-    expect(screen.getByLabelText("Profile")).toHaveValue("");
-    expect(screen.getByLabelText("Approved plan")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Size"), { target: { value: "Heavy" } });
+    expect(screen.getByLabelText("Plan")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-two" } });
+    fireEvent.change(screen.getByLabelText("Image"), { target: { value: "image-two" } });
+    expect(screen.getByLabelText("Size")).toHaveValue("Heavy");
+    expect(screen.getByLabelText("Plan")).toHaveValue("plan-two");
+    fireEvent.change(screen.getByLabelText("Image"), { target: { value: "image-one" } });
+    fireEvent.change(screen.getByLabelText("Size"), { target: { value: "Standard" } });
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-one" } });
+    fireEvent.change(screen.getByLabelText("Image"), { target: { value: "image-two" } });
+    expect(screen.getByLabelText("Size")).toHaveValue("");
+    expect(screen.getByLabelText("Plan")).toHaveValue("");
   });
 
   it("reports loading, retries failures, and clears stale eligibility after a refresh", async () => {
@@ -50,14 +50,14 @@ describe("WorkspaceSelectionFields", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading");
     await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
     vi.mocked(getWorkspaceSelections).mockRejectedValueOnce(new Error("Service unavailable"));
-    fireEvent.click(screen.getByRole("button", { name: "Refresh choices" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reload options" }));
     expect(onReadyChange).toHaveBeenLastCalledWith(false);
     expect(await screen.findByRole("alert")).toHaveTextContent("Service unavailable");
     vi.mocked(getWorkspaceSelections).mockResolvedValueOnce({ available: true, options: [choices[1]] });
-    fireEvent.click(screen.getByRole("button", { name: "Retry choices" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByRole("option", { name: "Ubuntu · Coding tools" });
-    await waitFor(() => expect(screen.getByLabelText("Profile")).toHaveValue(""));
-    expect(screen.getByLabelText("Approved plan")).toHaveValue("");
+    await waitFor(() => expect(screen.getByLabelText("Size")).toHaveValue(""));
+    expect(screen.getByLabelText("Plan")).toHaveValue("");
     expect(onReadyChange).toHaveBeenLastCalledWith(false);
   });
 
@@ -65,10 +65,10 @@ describe("WorkspaceSelectionFields", () => {
     vi.mocked(getWorkspaceSelections).mockResolvedValueOnce({ available: false, unavailableReason: "Ask an operator to enable workspaces.", options: [] });
     render(<Fields />);
     expect(await screen.findByText("Ask an operator to enable workspaces.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workspace image")).toBeDisabled();
+    expect(screen.getByLabelText("Image")).toBeDisabled();
     vi.mocked(getWorkspaceSelections).mockResolvedValueOnce({ available: true, options: [] });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh choices" }));
-    expect(await screen.findByText(/No compatible choices/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reload options" }));
+    expect(await screen.findByText(/No matching options/)).toBeInTheDocument();
   });
 
   it("ignores an old organization's response and scopes workspace eligibility", async () => {
@@ -80,13 +80,13 @@ describe("WorkspaceSelectionFields", () => {
     expect(getWorkspaceSelections).toHaveBeenLastCalledWith("new-org", "workspace-two", expect.any(AbortSignal));
     resolveOld({ available: false, unavailableReason: "Old disabled state", options: [] });
     await waitFor(() => expect(screen.queryByText("Old disabled state")).not.toBeInTheDocument());
-    expect(screen.getByLabelText("Workspace image")).toHaveValue("image-one");
+    expect(screen.getByLabelText("Image")).toHaveValue("image-one");
   });
 
   it("locks all controls while an operation is pending", async () => {
     render(<Fields disabled />);
     await screen.findByRole("option", { name: "Ubuntu · Coding tools" });
     for (const control of screen.getAllByRole("combobox")) expect(control).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Refresh choices" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reload options" })).toBeDisabled();
   });
 });

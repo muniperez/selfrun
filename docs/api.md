@@ -93,11 +93,26 @@ The uncached response is:
       "planName": "Development standard",
       "providerAccountName": "Primary Hetzner",
       "region": "nbg1",
-      "sku": "cx-example"
+      "sku": "cx-example",
+      "cpuCount": 4,
+      "memoryGiB": 8,
+      "computeHourlyRate": 0.1,
+      "isDefault": true
     }
-  ]
+  ],
+  "currency": "EUR",
+  "volumeMonthlyRatePerGb": 0.0605
 }
 ```
+
+`cpuCount`, `memoryGiB` and `computeHourlyRate` come from the approved profile;
+`currency` and `volumeMonthlyRatePerGb` come from the pricing policy and are
+`null` when unavailable. They are configured estimates, not invoices. The portal
+uses them to show a price before creation. `isDefault` is `true` only for
+unscoped (new environment) discovery when the option's plan is listed in
+`DevelopmentWorkspaces:Profiles:{profile}:DefaultPlanIdsForNewWorkspaces`. The
+portal preselects one default option, or the only option. If there are several
+options and not exactly one default, it asks the user to choose.
 
 Submit `imageId`, `profile` and `planId` unchanged to the existing create, resize
 or ephemeral-launch write contracts. IDs are stable configuration/plan identities,

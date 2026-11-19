@@ -121,8 +121,8 @@ export function GitHubSettingsModule() {
     })}>Verify repository access</Button>}
     {repositories.length > 0 && <ul aria-label="Accessible repositories">{repositories.map(repo =>
       <li key={repo.id}>{repo.fullName}{repo.private ? " (private)" : ""}</li>)}</ul>}
-    <p>This connects the control plane only. Workspace Git credentials and Codex/Claude authentication are separate;
-      this does not enable automatic workspace clone, push or pull-request authentication.</p>
+    <p>This connects the control plane only. Dev environment Git credentials and Codex/Claude authentication are separate;
+      this does not enable automatic dev environment clone, push or pull-request authentication.</p>
   </PageScaffold>;
 }
 

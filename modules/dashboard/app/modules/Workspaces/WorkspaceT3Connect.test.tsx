@@ -30,7 +30,7 @@ it("does not navigate on unauthorized or unavailable management", async () => {
   vi.mocked(getWorkspaceLaunchUrl).mockRejectedValue(new Error("not authorized"));
   render(<WorkspaceT3Connect {...props} ready />);
   fireEvent.click(screen.getByRole("button", { name: "Manage T3 Connect" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("workspace-owner access");
+  expect(await screen.findByRole("alert")).toHaveTextContent("owner access");
   expect(popup.close).toHaveBeenCalled();
   expect(popup.location.replace).not.toHaveBeenCalled();
 });

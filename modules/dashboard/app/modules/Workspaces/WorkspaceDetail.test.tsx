@@ -65,8 +65,8 @@ function detail(item = workspace(), canManage = true, organizationId = "org-a") 
   return <WorkspaceDetail item={item} organizationId={organizationId} refresh={refresh} canManage={canManage} />;
 }
 function openLaunch() {
-  fireEvent.click(screen.getByRole("button", { name: "Launch ephemeral VM" }));
-  return screen.getByRole("form", { name: "Launch ephemeral VM in Coding" });
+  fireEvent.click(screen.getByRole("button", { name: "Launch temporary VM" }));
+  return screen.getByRole("form", { name: "Launch temporary VM in Coding" });
 }
 function fillLaunch(form: HTMLElement) {
   fireEvent.click(within(form).getByRole("button", { name: "Use eligible selection" }));
@@ -76,7 +76,7 @@ function fillLaunch(form: HTMLElement) {
 }
 function acknowledge(form: HTMLElement) {
   fireEvent.click(within(form).getByLabelText(/I authorize task-scoped pushes/));
-  fireEvent.click(within(form).getByLabelText(/I acknowledge ignored\/untracked/));
+  fireEvent.click(within(form).getByLabelText(/I understand that untracked files/));
 }
 function openStopAll() {
   fireEvent.click(screen.getByRole("button", { name: "Stop all VMs" }));
@@ -145,7 +145,7 @@ it("resolves the primary by identity and passes observed state and retained stor
   expect(workspaceOperation).not.toHaveBeenCalled();
   view.rerender(detail(workspace({ vms: [vm("primary", { kind: "primary", desiredState: "stopped", phase: "stopped" })] })));
   expect(within(primary).getByRole("article")).toHaveTextContent("stopped");
-  expect(screen.getByText("No ephemeral VMs")).toBeInTheDocument();
+  expect(screen.getByText("No temporary VMs")).toBeInTheDocument();
 });
 
 it("falls back to explicit primary kind and never substitutes an ephemeral VM when primary metadata is missing", () => {
@@ -164,7 +164,7 @@ it("expands siblings independently and delegates complete Git, generation and ac
     vm("sibling-one", { verifiedRemoteRef: "refs/heads/work/one", verifiedRemoteCommit: "c".repeat(40), finalHead: "c".repeat(40) }),
     vm("sibling-two", { phase: "awaiting_git_save", gitStatus: "remote_unavailable" }),
   ] })));
-  const table = screen.getByRole("table", { name: "Ephemeral VMs" });
+  const table = screen.getByRole("table", { name: "Temporary VMs" });
   expect(within(table).getByText("work/sibling-one")).toBeInTheDocument();
   expect(within(table).getByText("https://git.example/sibling-two.git")).toBeInTheDocument();
   expect(within(table).getByText("Remote unavailable")).toBeInTheDocument();
@@ -200,22 +200,22 @@ it("shows retained storage and observed per-VM estimates in the costs tab, prima
   expect(screen.getByText("retained")).toBeInTheDocument();
   expect(screen.getByText("1.25 EUR")).toBeInTheDocument();
   expect(screen.getByText("2026-11-15T00:00:00Z")).toBeInTheDocument();
-  const costs = screen.getByRole("region", { name: "Per-VM compute estimates" });
+  const costs = screen.getByRole("region", { name: "VM costs" });
   const rows = within(costs).getAllByRole("row");
   expect(rows[1]).toHaveTextContent("primary");
   expect(rows[2]).toHaveTextContent("sibling-one");
-  expect(rows[3]).toHaveTextContent("Not reserved");
+  expect(rows[3]).toHaveTextContent("Not allocated");
   expect(within(costs).getAllByText("0.1250 EUR")).toHaveLength(3);
-  expect(screen.getByText(/retained storage continues to incur charges/i)).toBeInTheDocument();
+  expect(screen.getByText(/Storage is charged even when all VMs are stopped/)).toBeInTheDocument();
   expect(screen.getByText(/rounds up to whole hours/)).toBeInTheDocument();
-  expect(screen.getByText(/not provider invoices or a billing guarantee/)).toBeInTheDocument();
+  expect(screen.getByText(/not invoices or a billing guarantee/)).toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
 
 it("guards launch on eligible selections, resolved SHA and both acknowledgments, including programmatic submits", () => {
   render(detail());
   const form = openLaunch();
-  expect(screen.getByRole("dialog")).toHaveTextContent(/no access to the primary retained volume/);
+  expect(screen.getByRole("dialog")).toHaveTextContent(/can't see the primary VM's storage/);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
   fillLaunch(form);
   fireEvent.submit(form);
@@ -223,13 +223,13 @@ it("guards launch on eligible selections, resolved SHA and both acknowledgments,
   fireEvent.click(within(form).getByLabelText(/I authorize task-scoped pushes/));
   fireEvent.submit(form);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
-  fireEvent.click(within(form).getByLabelText(/I acknowledge ignored\/untracked/));
+  fireEvent.click(within(form).getByLabelText(/I understand that untracked files/));
   fireEvent.change(within(form).getByLabelText("Resolved base commit SHA"), { target: { value: "not-a-commit" } });
   fireEvent.submit(form);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
   fireEvent.change(within(form).getByLabelText("Resolved base commit SHA"), { target: { value: "b".repeat(40) } });
   fireEvent.click(within(form).getByRole("button", { name: "Catalog unavailable" }));
-  expect(within(form).getByRole("button", { name: "Launch ephemeral VM" })).toBeDisabled();
+  expect(within(form).getByRole("button", { name: "Launch temporary VM" })).toBeDisabled();
   fireEvent.submit(form);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
@@ -259,7 +259,7 @@ it("retains idempotency on unchanged failed retries, changes it with payload, th
   const reopened = openLaunch();
   expect(within(reopened).getByLabelText("Repository URL")).toHaveValue("");
   expect(within(reopened).getByLabelText(/I authorize task-scoped pushes/)).not.toBeChecked();
-  expect(within(reopened).getByLabelText(/I acknowledge ignored\/untracked/)).not.toBeChecked();
+  expect(within(reopened).getByLabelText(/I understand that untracked files/)).not.toBeChecked();
 });
 
 it("enumerates all stop-all impacts, cancels without mutation and confirms only explicitly", async () => {
@@ -267,10 +267,10 @@ it("enumerates all stop-all impacts, cancels without mutation and confirms only 
   let dialog = openStopAll();
   const affected = within(dialog).getAllByRole("listitem");
   expect(affected).toHaveLength(3);
-  expect(affected[0]).toHaveTextContent("sibling-one · ephemeral · generation 3 · ready · Git save: pending");
-  expect(affected[1]).toHaveTextContent("primary · primary · generation 3");
-  expect(affected[2]).toHaveTextContent("sibling-two · ephemeral · generation 3 · stopped");
-  expect(dialog).toHaveTextContent(/blocked VMs remain allocated and may incur costs/);
+  expect(affected[0]).toHaveTextContent(/sibling-one · Running · Git save: pending.*sibling-one · generation 3/);
+  expect(affected[1]).toHaveTextContent(/Primary VM · Running .*primary · generation 3/);
+  expect(affected[2]).toHaveTextContent(/Stopped .*sibling-two · generation 3/);
+  expect(dialog).toHaveTextContent(/a VM that can't stop keeps its server and may keep charging/);
   expect(workspaceOperation).not.toHaveBeenCalled();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel stop all" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -294,14 +294,14 @@ it("closes a stop-all confirmation when a VM generation changes and when managem
   view.rerender(detail(changed, false));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Launch ephemeral VM" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
   expect(screen.getByRole("article", { name: "VM primary" })).toHaveTextContent("Read only");
   expect(workspaceOperation).not.toHaveBeenCalled();
 });
 
 it("keeps read-only metadata and costs available and discards launch state on organization changes", () => {
   const view = render(detail(workspace(), false));
-  expect(screen.queryByRole("button", { name: "Launch ephemeral VM" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
   showCosts();
   expect(screen.getByText("1.25 EUR")).toBeInTheDocument();
   view.rerender(detail(workspace(), true, "org-b"));
