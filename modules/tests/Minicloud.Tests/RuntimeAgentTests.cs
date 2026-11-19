@@ -44,6 +44,54 @@ public sealed class RuntimeAgentTests
     }
 
     [Fact]
+    public async Task CursorStore_SkipsUnchangedAcknowledgementsAfterRestart()
+    {
+        var root = Directory.CreateTempSubdirectory("minicloud-agent-state-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "state.json");
+            var initial = new Dictionary<string, string> { ["service:api"] = "api:2", ["caddy"] = "caddy:1" };
+            await new CursorStore(path).SaveAsync(initial, CancellationToken.None);
+            var store = new CursorStore(path);
+            await store.LoadAsync(CancellationToken.None);
+
+            var temp = Directory.CreateDirectory(path + ".tmp");
+            await store.SaveAsync(new Dictionary<string, string> { ["service:api"] = "api:2" }, CancellationToken.None);
+            await store.SaveAsync(new Dictionary<string, string>(), CancellationToken.None);
+            temp.Delete();
+
+            await store.SaveAsync(new Dictionary<string, string> { ["service:api"] = "api:3" }, CancellationToken.None);
+            var reloaded = new CursorStore(path);
+            await reloaded.LoadAsync(CancellationToken.None);
+            Assert.Equal("api:3", reloaded.Cursors["service:api"]);
+            Assert.Equal("caddy:1", reloaded.Cursors["caddy"]);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task CursorStore_RetriesFailedWritesEvenWhenNextAcknowledgementIsUnchanged()
+    {
+        var root = Directory.CreateTempSubdirectory("minicloud-agent-state-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "state.json");
+            var store = new CursorStore(path);
+            var acknowledgement = new Dictionary<string, string> { ["service:api"] = "api:1" };
+            var temp = Directory.CreateDirectory(path + ".tmp");
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.SaveAsync(acknowledgement, CancellationToken.None));
+            Assert.False(File.Exists(path));
+            temp.Delete();
+
+            await store.SaveAsync(acknowledgement, CancellationToken.None);
+            var reloaded = new CursorStore(path);
+            await reloaded.LoadAsync(CancellationToken.None);
+            Assert.Equal("api:1", reloaded.Cursors["service:api"]);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
     public void Redactor_RemovesCommonSecretShapesBeforeEgress()
     {
         var redacted = RuntimeLogRedactor.Redact("Authorization: Bearer abc.def password=hunter2 token=secret api_key=key");
