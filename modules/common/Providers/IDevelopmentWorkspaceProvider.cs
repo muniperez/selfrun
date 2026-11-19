@@ -38,6 +38,7 @@ public interface IDevelopmentWorkspaceProvider
     Task<WorkspaceCloudAction> GetWorkspaceActionAsync(string resource, string id, CancellationToken ct);
     Task<IReadOnlyList<WorkspaceCloudVolume>> FindWorkspaceVolumesAsync(IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudVolume?> GetWorkspaceVolumeAsync(string id, CancellationToken ct);
+    Task DeleteWorkspaceVolumeAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudVolumeAllocation> CreateWorkspaceVolumeAsync(string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudAction?> AttachWorkspaceVolumeAsync(string id, string serverId, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task<WorkspaceCloudAction?> DetachWorkspaceVolumeAsync(string id, string serverId, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
@@ -61,6 +62,15 @@ public interface IDevelopmentWorkspaceProvider
 
 public static class WorkspaceOwnership
 {
+    /// <summary>Permanent volume deletion needs the complete retained-volume identity, never a partial match.</summary>
+    public static void RequireRetainedVolumeLabels(IReadOnlyDictionary<string, string> labels)
+    {
+        if (!labels.TryGetValue("managed-by", out var manager) || manager != "minicloud-workspaces"
+            || !labels.TryGetValue("kind", out var kind) || kind != "primary"
+            || !labels.ContainsKey("workspace") || !labels.ContainsKey("organization"))
+            throw new InvalidOperationException("Complete retained workspace ownership labels are required.");
+    }
+
     private static readonly System.Text.RegularExpressions.Regex Label =
         new("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 

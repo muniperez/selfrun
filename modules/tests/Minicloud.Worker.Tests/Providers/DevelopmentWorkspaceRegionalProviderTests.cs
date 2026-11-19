@@ -171,6 +171,30 @@ public sealed class DevelopmentWorkspaceRegionalProviderTests
     }
 
     [Fact]
+    public async Task DigitalOceanVolumeDeletionRequiresOwnedDetachedVolumeAndToleratesDisappearance()
+    {
+        var volume = $$$"""{"volume":{"id":"{{{VolumeId}}}","name":"mc-workspace-test","size_gigabytes":20,"region":{"slug":"fra1"},"droplet_ids":[],"filesystem_type":"ext4","tags":{{{Tags(Labels())}}} }}""";
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse(volume);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        var client = Do(handler);
+
+        await client.DeleteWorkspaceVolumeAsync(VolumeId, Labels(), default);
+        await client.DeleteWorkspaceVolumeAsync(VolumeId, Labels(), default);
+
+        Assert.Equal(new[] { HttpMethod.Get, HttpMethod.Delete, HttpMethod.Get }, handler.RecordedRequests.Select(r => r.Method));
+        Assert.All(handler.RecordedRequests, r => Assert.Equal("/v2/volumes/" + VolumeId, new Uri(r.Uri).AbsolutePath));
+
+        var attached = new TestHttpMessageHandler();
+        attached.QueueJsonResponse(volume.Replace("\"droplet_ids\":[]", "\"droplet_ids\":[999]"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Do(attached).DeleteWorkspaceVolumeAsync(VolumeId, Labels(), default));
+        Assert.Single(attached.RecordedRequests);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Do(new TestHttpMessageHandler()).DeleteWorkspaceVolumeAsync(VolumeId, Labels("ephemeral"), default));
+    }
+
+    [Fact]
     public async Task DigitalOceanDeleteCompletesOnlyWhenTheDropletIsGone()
     {
         var handler = new TestHttpMessageHandler();
@@ -263,6 +287,32 @@ public sealed class DevelopmentWorkspaceRegionalProviderTests
         Assert.Empty(VultrClient.DecodeBlockLabel("mcw;w=a;w=b"));
         Assert.Empty(VultrClient.DecodeBlockLabel("unmanaged"));
         Assert.Throws<ArgumentException>(() => VultrClient.EncodeBlockLabel(new Dictionary<string, string>(labels) { ["team"] = "x" }));
+    }
+
+    [Fact]
+    public async Task VultrBlockDeletionRequiresOwnedDetachedBlock()
+    {
+        string Block(string attached, IReadOnlyDictionary<string, string> labels) => $$$"""
+            {"block":{"id":"blk-owned","label":"{{{VultrClient.EncodeBlockLabel(labels)}}}","size_gb":20,"region":"fra","status":"active",
+             "attached_to_instance":"{{{attached}}}","mount_id":"ewr-2f5d7a314fe44f0a8b"}}
+            """;
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse(Block("", Labels()));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        await Vultr(handler).DeleteWorkspaceVolumeAsync("blk-owned", Labels(), default);
+
+        Assert.Equal(HttpMethod.Delete, handler.RecordedRequests[1].Method);
+        Assert.Equal("/v2/blocks/blk-owned", new Uri(handler.RecordedRequests[1].Uri).AbsolutePath);
+
+        var foreignLabels = new Dictionary<string, string>(Labels()) { ["workspace"] = "workspace_other" };
+        foreach (var block in new[] { Block("inst-1", Labels()), Block("", foreignLabels) })
+        {
+            var refused = new TestHttpMessageHandler();
+            refused.QueueJsonResponse(block);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => Vultr(refused).DeleteWorkspaceVolumeAsync("blk-owned", Labels(), default));
+            Assert.Single(refused.RecordedRequests);
+        }
     }
 
     [Fact]

@@ -5,7 +5,7 @@ import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/cont
 import { WorkspacesModule } from "./WorkspacesModule";
 import { listDevelopmentWorkspaces } from "@/api/environmentsApi";
 import { getWorkspace } from "@/api/workspacesApi";
-import { ephemeralSummary, lastActivity, primaryVm, workspacePhase } from "./workspaceCollection";
+import { ephemeralSummary, lastActivity, permanentDeletion, primaryState, primaryVm, workspacePhase } from "./workspaceCollection";
 
 const auth = vi.hoisted(() => ({ selectedOrganization: { id: "org-a", role: "owner" } as { id: string; role: string } | null }));
 vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
@@ -231,4 +231,15 @@ it("uses observed identity, phases and activity with defined ephemeral precedenc
   expect(ephemeralSummary(workspace({ vms: [vm("a")] })).label).toBe("1 stopped");
   expect(ephemeralSummary(workspace({ vms: [] })).label).toBe("None");
   expect(lastActivity(workspace({ lastActivityAt: "invalid" }))).toBeNull();
+});
+
+it("labels permanent deletion from volume status, not from ordinary compute deletion", () => {
+  const computeDeletion = workspace({ phase: "deleting", vms: [vm("primary", { phase: "deleting" })] });
+  expect(permanentDeletion(computeDeletion)).toBeNull();
+  expect(primaryState(computeDeletion).label).toBe("Stopping");
+  const deleting = workspace({ volumeStatus: "deleting", phase: "deleting", vms: [vm("primary", { phase: "deleting" })] });
+  expect(primaryState(deleting)).toEqual({ value: "stopping", label: "Deleting environment" });
+  const failed = workspace({ volumeStatus: "deleting", phase: "delete_failed", vms: [vm("primary", { phase: "delete_failed" })] });
+  expect(primaryState(failed)).toEqual({ value: "attention", label: "Deletion failed" });
+  expect(permanentDeletion(workspace({ volumeStatus: "deleted" }))).toBe("deleted");
 });

@@ -61,11 +61,16 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         {
             var vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == operation.VmId, ct);
             var workspace = await db.DevelopmentWorkspaces.AsNoTracking().SingleAsync(x => x.Id == operation.WorkspaceId, ct);
+            if (operation.Kind == "delete-workspace" && (operation.ProviderAccountId != workspace.ProviderAccountId
+                || vm.ProviderAccountId != operation.ProviderAccountId || vm.OrganizationId != workspace.OrganizationId
+                || operation.ProviderResourceId != workspace.ProviderVolumeId || workspace.VolumeStatus != "deleting"))
+                throw DeleteBlocked("workspace_delete_identity_mismatch", "The recorded workspace provider account or volume changed. Contact an operator; no volume was deleted.");
             var client = await providers.CreateAsync(vm.OrganizationId, operation.ProviderAccountId, ct, allowDisabled: operation.Kind != "start" || vm.ProviderServerId is not null);
             if (client is not IDevelopmentWorkspaceProvider cloud) throw new InvalidOperationException("Workspace provider does not support development environments.");
             var evidence = operationEvidence = JsonSerializer.Deserialize<Evidence>(operation.ProviderEvidenceJson ?? "{}", Json)!;
             if (operation.Kind == "start") await StartStepAsync(cloud, workspace, vm, operation, evidence, ct);
             else if (operation.Kind == "stop") await StopStepAsync(cloud, workspace, vm, operation, evidence, ct);
+            else if (operation.Kind == "delete-workspace") await DeleteStepAsync(cloud, workspace, vm, operation, ct);
             else throw new InvalidOperationException("Unsupported workspace operation.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -80,6 +85,11 @@ public sealed partial class DevelopmentWorkspaceProcessor(
             {
                 await lifecycle.UpdateClaimedOperationAsync(operation.Id, token, (op, vm, _) =>
                 {
+                    if (op.Kind == "delete-workspace")
+                    {
+                        RecordDeleteFailure(op, vm, error);
+                        return;
+                    }
                     var recoveryError = error is DevelopmentWorkspaceException { Code:
                         "workspace_git_recovery_source_changed" or "workspace_git_recovery_source_unavailable" } recovery
                         ? recovery.Code : null;

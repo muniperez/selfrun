@@ -18,6 +18,13 @@ export function getWorkspace(id: string, organizationId: string, signal?: AbortS
   );
 }
 
+export function deleteWorkspace(id: string, organizationId: string) {
+  return apiRequest<DevelopmentWorkspace>(
+    `/api/development-workspaces/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}&confirmPermanentDeletion=true`,
+    { method: "DELETE" },
+  );
+}
+
 export function workspaceOperation(id: string, organizationId: string, operation: string, body?: unknown) {
   return apiRequest<DevelopmentWorkspace>(workspacePath(id, organizationId, operation), {
     method: "POST", ...(body === undefined ? {} : { body }),

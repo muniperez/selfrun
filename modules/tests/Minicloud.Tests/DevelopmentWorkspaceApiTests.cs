@@ -1,3 +1,5 @@
+extern alias WorkerAssembly;
+
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -12,13 +14,17 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Minicloud.Api.Auth;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Services;
+using WorkerAssembly::Minicloud.Worker.DevelopmentWorkspaces;
 
 namespace Minicloud.Tests;
 
@@ -84,6 +90,10 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
             new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await other.PutAsJsonAsync($"{prefix}/idle-timeout?organizationId=other",
             new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await other.DeleteAsync($"{prefix}?organizationId=org&confirmPermanentDeletion=true")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await other.DeleteAsync($"{prefix}?organizationId=other&confirmPermanentDeletion=true")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PostAsJsonAsync($"{prefix}/vms/{vm.Id}/discard?organizationId=org",
             new DevelopmentWorkspaceDiscardRequest(0, true, true))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PutAsJsonAsync($"{prefix}/vms/{vm.Id}/tasks/task/lease?organizationId=org",
@@ -354,6 +364,71 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PermanentDeleteRequiresConfirmationAndReleasesNameOnlyAfterWorkerCompletion()
+    {
+        using var client = Client(token);
+        var workspace = await Create(client);
+        var prefix = $"{Root}/{workspace.Id}";
+        var url = $"{prefix}?organizationId=org";
+        var confirmed = $"{url}&confirmPermanentDeletion=true";
+        using var stopped = await client.PostAsync($"{prefix}/stop?organizationId=org", null);
+        Assert.Equal(HttpStatusCode.OK, stopped.StatusCode);
+        Assert.Equal("stopped", (await stopped.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!.Phase);
+
+        foreach (var unconfirmed in new[] { url, $"{url}&confirmPermanentDeletion=false" })
+        {
+            using var refused = await client.DeleteAsync(unconfirmed);
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            Assert.Equal("workspace_delete_confirmation_required",
+                (await refused.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        }
+        await AssertNoCompute();
+
+        // Model a retained disk from a previous run without starting a real VM.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var retained = await db.DevelopmentWorkspaces.SingleAsync();
+            retained.ProviderVolumeId = "201";
+            retained.VolumeStatus = "retained";
+            await db.SaveChangesAsync();
+        }
+        factory.Cloud.WorkspaceId = workspace.Id;
+        using var queued = await client.DeleteAsync(confirmed);
+        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+        Assert.Equal("deleting", (await queued.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!.Phase);
+        var replacementRequest = Request() with { IdempotencyKey = "replacement" };
+        using var tooSoon = await client.PostAsJsonAsync(Root, replacementRequest);
+        Assert.Equal(HttpStatusCode.Conflict, tooSoon.StatusCode);
+        Assert.Equal("workspace_reservation_conflict", (await tooSoon.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        Assert.Equal(0, factory.Cloud.Deletions);
+        foreach (var mutation in new[] {
+            client.PostAsync($"{prefix}/start?organizationId=org", null),
+            client.PutAsJsonAsync($"{prefix}/idle-timeout?organizationId=org", new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90)) })
+        {
+            using var locked = await mutation;
+            Assert.Equal(HttpStatusCode.Conflict, locked.StatusCode);
+            Assert.Equal("workspace_permanent_deletion", (await locked.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        }
+
+        for (var hop = 0; hop < 12; hop++)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            if (!await scope.ServiceProvider.GetRequiredService<DevelopmentWorkspaceProcessor>().ProcessNextAsync(default))
+                break;
+        }
+
+        using var deleted = await client.DeleteAsync(confirmed);
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        Assert.Equal("deleted", (await deleted.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!.Phase);
+        Assert.Equal(1, factory.Cloud.Deletions);
+        Assert.Empty((await client.GetFromJsonAsync<DevelopmentWorkspaceResponse[]>($"{Root}?organizationId=org"))!);
+        using var replacement = await client.PostAsJsonAsync(Root, replacementRequest);
+        Assert.Equal(HttpStatusCode.Created, replacement.StatusCode);
+        Assert.NotEqual(workspace.Id, (await replacement.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!.Id);
+    }
+
+    [Fact]
     public async Task RepeatedGetAndVmListingNeverAllocateAndResponsesRedactRuntimeCredentials()
     {
         using var client = Client(token);
@@ -489,6 +564,7 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
 
     private sealed class WorkspaceApiFactory(SqliteConnection connection) : WebApplicationFactory<Program>
     {
+        public VolumeTransport Cloud { get; } = new();
         public DevelopmentWorkspaceOptions Policy { get; } = new()
         {
             Enabled = true, MaxEstimatedMonthlySpend = 1000, MaxEstimatedMonthlySpendPerOrganization = 1000,
@@ -519,7 +595,63 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
                 services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
                 services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection.ConnectionString));
                 services.AddSingleton<IOptions<DevelopmentWorkspaceOptions>>(Options.Create(Policy));
+                services.AddDevelopmentWorkspaceWorker(new ConfigurationBuilder().Build());
+                // Drive the real processor explicitly so tests control the queue and share SQLite safely.
+                services.Remove(services.Single(x => x.ServiceType == typeof(IHostedService)
+                    && x.ImplementationType == typeof(DevelopmentWorkspaceWorker)));
+                services.RemoveAll<ProviderAccountClientFactory>();
+                services.AddSingleton<ProviderAccountClientFactory>(new VolumeProviderFactory(Cloud));
             });
+        }
+    }
+
+    private sealed class VolumeProviderFactory(VolumeTransport cloud)
+        : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, NullLoggerFactory.Instance)
+    {
+        public override Task<IVpsProviderClient> CreateAsync(string organizationId, string providerAccountId,
+            CancellationToken ct, bool allowDisabled = true)
+        {
+            Assert.Equal("org", organizationId);
+            Assert.Equal("account", providerAccountId);
+            return Task.FromResult<IVpsProviderClient>(new HetznerClient(new HttpClient(cloud, disposeHandler: false),
+                new HetznerOptions { ApiToken = "synthetic", BaseUrl = "https://provider.test/v1/" }));
+        }
+    }
+
+    private sealed class VolumeTransport : HttpMessageHandler
+    {
+        public string? WorkspaceId { get; set; }
+        public int Deletions { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var volume = new
+            {
+                id = 201, name = "fixture-volume", size = 20, format = "ext4", server = (long?)null,
+                location = new { name = "nbg1" }, linux_device = "/dev/disk/by-id/fixture",
+                labels = new Dictionary<string, string>
+                {
+                    ["managed-by"] = "minicloud-workspaces", ["organization"] = "org",
+                    ["workspace"] = WorkspaceId!, ["kind"] = "primary"
+                }
+            };
+            if (request.RequestUri!.AbsolutePath == "/v1/volumes")
+            {
+                Assert.Equal(HttpMethod.Get, request.Method);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = JsonContent.Create(new { volumes = Deletions == 0 ? new[] { volume } : [] }) });
+            }
+            Assert.Equal("/v1/volumes/201", request.RequestUri!.AbsolutePath);
+            if (request.Method == HttpMethod.Delete)
+            {
+                Assert.Equal(0, Deletions++);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+            Assert.Equal(HttpMethod.Get, request.Method);
+            return Task.FromResult(Deletions > 0
+                ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = JsonContent.Create(new { volume }) });
         }
     }
 }

@@ -143,6 +143,17 @@ public sealed partial class VultrClient : IDevelopmentWorkspaceProvider
         return doc is null ? null : ReadBlock(doc.RootElement.GetProperty("block"));
     }
 
+    public async Task DeleteWorkspaceVolumeAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
+    {
+        WorkspaceOwnership.RequireRetainedVolumeLabels(labels);
+        var volume = await GetWorkspaceVolumeAsync(id, ct);
+        if (volume is null) return;
+        WorkspaceOwnership.Require(volume.Labels, labels);
+        if (volume.Id != id || volume.ServerId is not null)
+            throw new InvalidOperationException("Refusing to delete an unexpected or attached workspace volume.");
+        using var deleted = await VultrRequestAsync(HttpMethod.Delete, "blocks/" + VultrResourceId(id), null, ct);
+    }
+
     public async Task<WorkspaceCloudVolumeAllocation> CreateWorkspaceVolumeAsync(
         string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
     {

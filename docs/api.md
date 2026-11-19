@@ -254,6 +254,29 @@ and organization spend limits (which already reserve a full month of compute
 per started machine) apply unchanged. Compute is billed for every running
 machine until it is stopped and deletion is confirmed.
 
+## Permanent development workspace deletion
+
+Send `DELETE /api/development-workspaces/{id}?organizationId={organizationId}&confirmPermanentDeletion=true`
+with no request body. Explicit confirmation is required. This is irreversible:
+unlike stopping compute, deletion removes the primary retained volume and any
+remaining local VM data. Stop all workspace VMs and wait for compute cleanup
+to finish before requesting deletion.
+
+The response body is the normal workspace representation. `202 Accepted` means
+deletion is in progress or a retry has been queued; `200 OK` means the workspace
+is deleted, including on repeated requests for an already-deleted workspace.
+Read the top-level `phase` (`deleting`, `delete_failed`, or `deleted`) and
+top-level `errorCode` and `errorMessage` for failure details. A `deleting`
+phase indicates permanent deletion only when `volumeStatus` is also `deleting`;
+ordinary compute cleanup can report the same phase while retaining the volume.
+
+Check progress with `GET /api/development-workspaces/{id}?organizationId={organizationId}`.
+If the phase is `delete_failed`, address the reported error and repeat the
+confirmed DELETE to retry. The organization-scoped list excludes deleted
+workspaces; the authorized GET by ID still returns the deleted tombstone. Once
+deletion completes, its name and create `idempotencyKey` can be used for a new
+workspace.
+
 ## Browser accounts
 
 The dashboard uses credentialed requests only to its configured API origin.

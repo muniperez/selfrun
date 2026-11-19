@@ -12,7 +12,7 @@ import { getWorkspace } from "@/api/workspacesApi";
 import { ApiError, type DevelopmentWorkspace } from "@/models/controlPlane";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { WorkspaceDetail } from "./WorkspaceDetail";
-import { ephemeralSummary, lastActivity, primaryVm, workspacePhase } from "./workspaceCollection";
+import { ephemeralSummary, lastActivity, primaryState, primaryVm } from "./workspaceCollection";
 import { vmStartup } from "./WorkspaceVmStartup";
 
 const fastPollMs = 3_000;
@@ -118,7 +118,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
     void refresh();
   };
   const filtered = items.filter(workspace => workspace.name.toLocaleLowerCase().includes(query.search.trim().toLocaleLowerCase())
-    && (!query.filters.primary || workspacePhase(primaryVm(workspace)?.phase).value === query.filters.primary)
+    && (!query.filters.primary || primaryState(workspace).value === query.filters.primary)
     && (!query.filters.ephemeral || ephemeralSummary(workspace).state === query.filters.ephemeral))
     .sort((a, b) => compareRecords(query.sort === "activity" ? lastActivity(a) : a.name,
       query.sort === "activity" ? lastActivity(b) : b.name, query.direction, a.id, b.id));
@@ -170,7 +170,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
             <TableHead>Temporary VMs</TableHead><TableHead>Storage</TableHead><TableHead>Last activity</TableHead></TableRow></TableHeader>
           <TableBody>{filtered.map(workspace => {
             const primary = primaryVm(workspace);
-            const phase = workspacePhase(primary?.phase);
+            const phase = primaryState(workspace);
             const ephemeral = ephemeralSummary(workspace);
             const activity = lastActivity(workspace);
             const phaseStyle = phase.value === "ready" ? "bg-success-surface text-success"

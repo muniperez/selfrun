@@ -654,7 +654,8 @@ minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|-
   `status` shows the agents and versions in the workspace's image.
 - `create` records a stopped workspace. Without `--idempotency-key`, the key is
   derived from the organization and name. Repeating the same create returns the
-  existing workspace. Different options fail with an actionable conflict.
+  existing workspace. Different options fail with an actionable conflict. After
+  a permanent delete completes, the same name creates a new workspace.
 - `start` provisions or resumes the primary VM. The worker records provider
   identity before readiness and reconciles retries. Use `status` to follow its
   readiness stage and any blocking error.
@@ -854,3 +855,28 @@ minicloud environments update staging --ssh-key <key-id>
 
 Keep SSH selection out of `minicloud.yml`; it is environment provisioning
 configuration. The CLI does not generate keys or open SSH sessions.
+
+## Permanently delete a development workspace
+
+Stop all VMs and wait for compute cleanup to finish before deleting.
+
+```sh
+minicloud workspaces delete <workspace-id> --confirm-permanent-deletion --organization <id>
+minicloud workspaces status <workspace-id> --organization <id>
+```
+
+**This cannot be undone.** Permanent deletion removes the primary retained
+volume and any remaining local VM data, including unpushed, ignored, or
+untracked files. Use `workspaces stop` or `workspaces stop-all` instead if you
+want to stop compute and retain the primary volume. You can omit
+`--organization` if you have access to only one organization.
+
+A successful delete request may report permanent deletion in progress; it
+does not mean cleanup has finished. Check `status` until it reports `deleted`. If it reports
+`delete_failed`, address the reported error and repeat the same delete command
+with explicit confirmation. `workspaces list` omits deleted workspaces, but
+`workspaces status` still shows the deletion record by ID.
+
+In the dashboard, open the workspace and use **Delete environment** at the
+bottom of the Overview tab. It is available once all VMs are stopped, asks you
+to type the environment name, and shows progress or a retry option afterwards.

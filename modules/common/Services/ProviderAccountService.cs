@@ -165,9 +165,24 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
             if (observed is null || observed.Name != AppStorageService.VolumeName(stored.AppId, stored.Name)
                 || observed.Region != stored.Region || !observed.Labels.TryGetValue("app-id", out var appId) || appId != stored.AppId) throw ScopeUnverified();
         }
+        // A credential replacement that switches projects must not turn a pending workspace delete into a false 404.
+        var workspaceVolumes = await db.DevelopmentWorkspaces.AsNoTracking()
+            .Where(x => x.ProviderAccountId == account.Id && x.OrganizationId == account.OrganizationId && x.ProviderVolumeId != null)
+            .ToListAsync(ct);
+        foreach (var workspace in workspaceVolumes)
+        {
+            if (candidate is not IDevelopmentWorkspaceProvider workspaceProvider) throw ScopeUnverified();
+            var observed = await workspaceProvider.GetWorkspaceVolumeAsync(workspace.ProviderVolumeId!, ct);
+            if (observed is null || observed.Id != workspace.ProviderVolumeId || observed.Region != workspace.Region
+                || observed.Labels.GetValueOrDefault("managed-by") != "minicloud-workspaces"
+                || observed.Labels.GetValueOrDefault("organization") != workspace.OrganizationId
+                || observed.Labels.GetValueOrDefault("workspace") != workspace.Id
+                || observed.Labels.GetValueOrDefault("kind") != "primary")
+                throw ScopeUnverified();
+        }
         if (await db.Deployments.AnyAsync(x => x.ProviderAccountId == account.Id && x.ProviderCreationAttempted
             && !db.ServerInstances.Any(s => s.ProviderAccountId == account.Id && s.AppId == x.AppId), ct)) throw ScopeUnverified();
-        if (servers.Count == 0 && volumes.Count == 0
+        if (servers.Count == 0 && volumes.Count == 0 && workspaceVolumes.Count == 0
             && (await db.Deployments.AnyAsync(x => x.ProviderAccountId == account.Id, ct)
                 || await db.ProviderPlans.AnyAsync(x => x.ProviderAccountId == account.Id && x.ProvisioningLockedAt != null, ct)))
             throw ScopeUnverified();
