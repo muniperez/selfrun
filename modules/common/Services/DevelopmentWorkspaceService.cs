@@ -54,7 +54,6 @@ public sealed partial class DevelopmentWorkspaceService(
                 Currency = Policy.Currency, PricingUpdatedAt = Policy.PricingUpdatedAt,
                 IdempotencyKey = request.IdempotencyKey, RequestDigest = digest, CreatedAt = Now, UpdatedAt = Now
             };
-            await CheckSpendAsync(workspace.OrganizationId, workspace.StorageMonthlyRate, ct);
             var primary = NewVm(workspace, DevelopmentWorkspaceVmKinds.Primary, "primary", digest);
             ApplySelection(primary, selection, request.ImageId, request.Profile);
             workspace.PrimaryVmId = primary.Id;
@@ -366,7 +365,7 @@ public sealed partial class DevelopmentWorkspaceService(
             vm.StartAfterStop = true; vm.StartRequestedAt = Now; Touch(vm);
             return;
         }
-        await CheckAdmissionAsync(workspace, selection.Profile.ComputeHourlyRate, ct);
+        await CheckAdmissionAsync(workspace, ct);
         ApplySelection(vm, selection, imageId, profile);
         if (gitRecovery is not null) vm.BaseCommit = gitRecovery.Commit;
         vm.NextImageId = null; vm.NextProfile = null; vm.NextPlanId = null;
@@ -451,7 +450,7 @@ public sealed partial class DevelopmentWorkspaceService(
         return operation;
     }
 
-    private async Task CheckAdmissionAsync(DevelopmentWorkspace workspace, decimal rate, CancellationToken ct)
+    private async Task CheckAdmissionAsync(DevelopmentWorkspace workspace, CancellationToken ct)
     {
         var reserved = await db.DevelopmentWorkspaceVms.Where(x => x.ComputeReserved)
             .Select(x => new { x.OrganizationId, x.WorkspaceId }).ToListAsync(ct);
@@ -461,19 +460,6 @@ public sealed partial class DevelopmentWorkspaceService(
             throw Conflict("workspace_admission_limit", "Organization VM concurrency limit reached.");
         if (reserved.Count(x => x.WorkspaceId == workspace.Id) >= Policy.MaxVmsPerWorkspace)
             throw Conflict("workspace_admission_limit", "Per-workspace VM concurrency limit reached.");
-        await CheckSpendAsync(workspace.OrganizationId, rate * 720m, ct);
-    }
-
-    private async Task CheckSpendAsync(string organizationId, decimal additional, CancellationToken ct)
-    {
-        var storage = await db.DevelopmentWorkspaces.Select(x => new { x.OrganizationId, Rate = x.StorageMonthlyRate }).ToListAsync(ct);
-        var compute = await db.DevelopmentWorkspaceVms.Where(x => x.ComputeReserved)
-            .Select(x => new { x.OrganizationId, Rate = x.ComputeHourlyRate }).ToListAsync(ct);
-        var total = storage.Sum(x => x.Rate) + compute.Sum(x => x.Rate * 720m);
-        var org = storage.Where(x => x.OrganizationId == organizationId).Sum(x => x.Rate)
-            + compute.Where(x => x.OrganizationId == organizationId).Sum(x => x.Rate * 720m);
-        if (total + additional > Policy.MaxEstimatedMonthlySpend || org + additional > Policy.MaxEstimatedMonthlySpendPerOrganization)
-            throw Conflict("workspace_spend_limit", "Estimated compute plus retained storage exceeds the configured spend cap.");
     }
 
     private async Task<Selection> SelectAsync(string organizationId, string imageId, string profileId, string planId,
@@ -589,8 +575,7 @@ public sealed partial class DevelopmentWorkspaceService(
     {
         if (!Policy.Enabled) throw Conflict("workspaces_disabled", "Development workspaces are disabled by the operator.");
         if (Policy.MaxActiveVms < 1 || Policy.MaxVmsPerWorkspace < 1
-            || Policy.MaxVmsPerOrganization < 1 || Policy.MaxEstimatedMonthlySpend <= 0
-            || Policy.MaxEstimatedMonthlySpendPerOrganization <= 0 || Policy.VolumeMonthlyRatePerGb <= 0
+            || Policy.MaxVmsPerOrganization < 1 || Policy.VolumeMonthlyRatePerGb <= 0
             || Policy.MaxPricingAgeDays < 1 || Policy.PricingUpdatedAt is null || Policy.PricingUpdatedAt > Now
             || Policy.PricingUpdatedAt < Now.AddDays(-Policy.MaxPricingAgeDays) || Policy.Currency.Length != 3
             || Policy.IdleGraceMinutes < 1 || Policy.TaskLeaseSeconds is < 30 or > 900

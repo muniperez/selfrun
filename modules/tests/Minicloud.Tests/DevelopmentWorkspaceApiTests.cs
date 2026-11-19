@@ -589,8 +589,7 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
         public VolumeTransport Cloud { get; } = new();
         public DevelopmentWorkspaceOptions Policy { get; } = new()
         {
-            Enabled = true, MaxEstimatedMonthlySpend = 1000, MaxEstimatedMonthlySpendPerOrganization = 1000,
-            VolumeMonthlyRatePerGb = .1m, PricingUpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            Enabled = true, VolumeMonthlyRatePerGb = .1m, PricingUpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
             Profiles = new()
             {
                 ["standard"] = new() { CpuCount = 4, MemoryGiB = 8, ComputeHourlyRate = .1m,

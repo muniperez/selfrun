@@ -8,8 +8,6 @@ public sealed class DevelopmentWorkspaceOptions
     public int MaxActiveVms { get; set; } = 9;
     public int MaxVmsPerWorkspace { get; set; } = 3;
     public int MaxVmsPerOrganization { get; set; } = 3;
-    public decimal MaxEstimatedMonthlySpendPerOrganization { get; set; }
-    public decimal MaxEstimatedMonthlySpend { get; set; }
     public decimal VolumeMonthlyRatePerGb { get; set; }
     public string Currency { get; set; } = "USD";
     public DateTimeOffset? PricingUpdatedAt { get; set; }

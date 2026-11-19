@@ -149,6 +149,16 @@ it("resolves the primary by identity and passes observed state and retained stor
   expect(screen.getByText("No temporary VMs")).toBeInTheDocument();
 });
 
+it("shows the primary VM's hourly rate, storage and projected monthly total with the 720-hour assumption", () => {
+  render(detail(workspace({ currency: "USD" })));
+  const estimate = within(screen.getByRole("region", { name: "Projected cost" }))
+    .getByRole("group", { name: "Projected monthly cost" });
+  expect(estimate).toHaveTextContent("VM rate$0.125/hour while running");
+  expect(estimate).toHaveTextContent("Storage$1.25/month, even while the VM is stopped");
+  expect(estimate).toHaveTextContent("Projected monthly total$91.25 if the VM runs 720 hours this month");
+  expect(estimate).toHaveTextContent("never blocks creating or starting a VM");
+});
+
 it("lists installed coding agents with versions only when the image reports them", () => {
   const view = render(detail(workspace({ agents: [{ id: "claude", name: "Claude Code", version: "2.1.328" }, { id: "muse", name: "Muse Code", version: "1.4.24-R9131.1" }] })));
   const agents = screen.getByRole("region", { name: "Coding agents" });

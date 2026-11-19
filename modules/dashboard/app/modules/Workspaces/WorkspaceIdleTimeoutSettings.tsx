@@ -114,8 +114,7 @@ export function WorkspaceIdleTimeoutSettings({ item, organizationId, canManage, 
                 <AlertDialogTitle>Keep this dev environment running?</AlertDialogTitle>
                 <AlertDialogDescription>
                   Machines in this dev environment will not stop when idle. Compute is billed for every running machine
-                  until you stop it.{keepRunningCost(current)} Retained storage is billed separately, and organization
-                  spend limits still apply when machines start.
+                  until you stop it.{keepRunningCost(current)} Retained storage is billed separately.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

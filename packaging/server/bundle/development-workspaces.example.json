@@ -4,8 +4,6 @@
     "MaxActiveVms": 9,
     "MaxVmsPerWorkspace": 3,
     "MaxVmsPerOrganization": 3,
-    "MaxEstimatedMonthlySpend": 0,
-    "MaxEstimatedMonthlySpendPerOrganization": 0,
     "Profiles": {},
     "Images": {},
     "Repositories": []
