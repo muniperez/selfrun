@@ -24,7 +24,7 @@ namespace Minicloud.Tests;
 
 public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
 {
-    private readonly SqliteConnection connection = new("Data Source=:memory:");
+    private readonly SqliteConnection connection = new($"Data Source=workspace-api-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Pooling=False");
     private WorkspaceApiFactory factory = default!;
     private string token = default!;
     private string otherToken = default!;
@@ -427,13 +427,13 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Database:Provider"] = "Sqlite", ["Database:RunMigrationsOnStartup"] = "false",
-                ["ConnectionStrings:Minicloud"] = "Data Source=:memory:"
+                ["ConnectionStrings:Minicloud"] = connection.ConnectionString
             }));
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<DbContextOptions<MinicloudDbContext>>();
                 services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
-                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection));
+                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection.ConnectionString));
                 services.AddSingleton<IOptions<DevelopmentWorkspaceOptions>>(Options.Create(Policy));
             });
         }
