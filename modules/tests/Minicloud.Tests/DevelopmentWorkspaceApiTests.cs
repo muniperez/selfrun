@@ -402,6 +402,14 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Conflict, tooSoon.StatusCode);
         Assert.Equal("workspace_reservation_conflict", (await tooSoon.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
         Assert.Equal(0, factory.Cloud.Deletions);
+        foreach (var mutation in new[] {
+            client.PostAsync($"{prefix}/start?organizationId=org", null),
+            client.PutAsJsonAsync($"{prefix}/idle-timeout?organizationId=org", new UpdateDevelopmentWorkspaceIdleTimeoutRequest(90)) })
+        {
+            using var locked = await mutation;
+            Assert.Equal(HttpStatusCode.Conflict, locked.StatusCode);
+            Assert.Equal("workspace_permanent_deletion", (await locked.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        }
 
         for (var hop = 0; hop < 12; hop++)
         {
