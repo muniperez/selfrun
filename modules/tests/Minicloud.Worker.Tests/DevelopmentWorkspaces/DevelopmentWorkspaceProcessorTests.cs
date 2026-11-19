@@ -75,7 +75,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             {
                 ["image"] = new() { Enabled = true, RuntimeQualified = true, QualifiedAt = clock.GetUtcNow().AddMinutes(-1),
                     ProviderAccountId = "account", AllowedRegions = ["nbg1"], ProviderImageId = "image-qualified",
-                    ManifestSha256 = new('a', 64) }
+                    ManifestSha256 = new('a', 64), T3ConnectForNewWorkspaces = true }
             },
             Repositories = [new() { OrganizationId = "org", Repository = "https://github.com/fixture-owner/project.git",
                 AllowedBaseRefs = ["refs/heads/main"], AllowPush = true }]

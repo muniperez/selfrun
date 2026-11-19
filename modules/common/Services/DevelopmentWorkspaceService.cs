@@ -43,7 +43,8 @@ public sealed partial class DevelopmentWorkspaceService(
                 throw Invalid("workspace_organization_invalid", "Organization was not found.");
             if (await db.DevelopmentWorkspaces.CountAsync(x => x.OrganizationId == request.OrganizationId, ct) >= Policy.MaxWorkspacesPerOrganization)
                 throw Conflict("workspace_admission_limit", "Organization workspace limit reached.");
-            var selection = await SelectAsync(request.OrganizationId, request.ImageId, request.Profile, request.PlanId, ct);
+            var selection = await SelectAsync(request.OrganizationId, request.ImageId, request.Profile, request.PlanId, ct,
+                forNewWorkspace: true);
             var workspace = new DevelopmentWorkspace
             {
                 Id = ids.NewId("workspace"), OrganizationId = request.OrganizationId, CreatedBy = actorId,
@@ -124,6 +125,7 @@ public sealed partial class DevelopmentWorkspaceService(
         {
             var selection = await SelectAsync(organizationId, request.ImageId, request.Profile, request.PlanId, token);
             EnsurePlacement(workspace, selection.Plan);
+            EnsureRecordedImage(vm, request.ImageId, selection.Image);
             vm.NextImageId = request.ImageId; vm.NextProfile = request.Profile; vm.NextPlanId = request.PlanId;
             Touch(vm);
         }, ct);
@@ -293,22 +295,21 @@ public sealed partial class DevelopmentWorkspaceService(
         if (vm.Kind == DevelopmentWorkspaceVmKinds.Ephemeral)
             vm.RepositoryCredentialRef = RepositoryCredential(ApprovedRepository(workspace.OrganizationId, vm.Repository, vm.BaseRef),
                 workspace.OrganizationId);
-        if (vm.Phase is "draining" or "deleting" or "awaiting_git_save")
-        {
-            var next = await SelectAsync(workspace.OrganizationId, vm.NextImageId ?? vm.ImageId,
-                vm.NextProfile ?? vm.Profile, vm.NextPlanId ?? vm.PlanId, ct);
-            EnsurePlacement(workspace, next.Plan);
-            vm.StartAfterStop = true; vm.StartRequestedAt = Now; Touch(vm);
-            return;
-        }
-        if (vm.Phase != "stopped" || vm.ComputeReserved || vm.ProviderServerId is not null
-            || vm.ProviderFirewallId is not null || vm.ProviderIpId is not null)
+        var queueStart = vm.Phase is "draining" or "deleting" or "awaiting_git_save";
+        if (!queueStart && (vm.Phase != "stopped" || vm.ComputeReserved || vm.ProviderServerId is not null
+            || vm.ProviderFirewallId is not null || vm.ProviderIpId is not null))
             throw Conflict("workspace_transition_in_progress", "Previous generation must finish reconciliation before starting.");
-        var gitRecovery = await SavedGitSourceAsync(vm, ct);
+        var gitRecovery = queueStart ? null : await SavedGitSourceAsync(vm, ct);
         var imageId = vm.NextImageId ?? vm.ImageId;
         var profile = vm.NextProfile ?? vm.Profile;
         var selection = await SelectAsync(workspace.OrganizationId, imageId, profile, vm.NextPlanId ?? vm.PlanId, ct);
         EnsurePlacement(workspace, selection.Plan);
+        EnsureRecordedImage(vm, imageId, selection.Image);
+        if (queueStart)
+        {
+            vm.StartAfterStop = true; vm.StartRequestedAt = Now; Touch(vm);
+            return;
+        }
         await CheckAdmissionAsync(workspace, selection.Profile.ComputeHourlyRate, ct);
         ApplySelection(vm, selection, imageId, profile);
         if (gitRecovery is not null) vm.BaseCommit = gitRecovery.Commit;
@@ -418,11 +419,14 @@ public sealed partial class DevelopmentWorkspaceService(
             throw Conflict("workspace_spend_limit", "Estimated compute plus retained storage exceeds the configured spend cap.");
     }
 
-    private async Task<Selection> SelectAsync(string organizationId, string imageId, string profileId, string planId, CancellationToken ct)
+    private async Task<Selection> SelectAsync(string organizationId, string imageId, string profileId, string planId,
+        CancellationToken ct, bool forNewWorkspace = false)
     {
         ValidateText(imageId, 128); ValidateText(profileId, 32); ValidateText(planId, 128);
-        if (!Policy.Images.TryGetValue(imageId, out var image) || !EligibleImage(image))
-            throw Invalid("workspace_image_invalid", "Image must be explicitly enabled and runtime-qualified with an amd64 manifest.");
+        if (!Policy.Images.TryGetValue(imageId, out var image) || !EligibleImage(image, forNewWorkspace))
+            throw Invalid("workspace_image_invalid", forNewWorkspace
+                ? "New dev environments require an enabled, runtime-qualified amd64 T3 Connect image approved for creation."
+                : "Image must be explicitly enabled and runtime-qualified with an amd64 manifest.");
         if (!Policy.Profiles.TryGetValue(profileId, out var profile) || !EligibleProfile(profile, planId))
             throw Invalid("workspace_profile_invalid", "Profile is not approved for this immutable plan.");
         var plan = await db.ProviderPlans.Include(x => x.ProviderAccount).SingleOrDefaultAsync(
@@ -439,6 +443,14 @@ public sealed partial class DevelopmentWorkspaceService(
     {
         if (!MatchesPlacement(workspace, plan.ProviderAccountId, plan.Region))
             throw Invalid("workspace_placement_invalid", "All workspace generations must use the retained volume's account and region.");
+    }
+
+    private static void EnsureRecordedImage(DevelopmentWorkspaceVm vm, string imageId, DevelopmentWorkspaceImage image)
+    {
+        if (imageId == vm.ImageId && (image.ProviderImageId != vm.ProviderImage
+            || !string.Equals(image.ManifestSha256, vm.ImageManifestSha256, StringComparison.OrdinalIgnoreCase)))
+            throw Invalid("workspace_image_invalid", "The configured image no longer matches this VM's recorded revision. "
+                + "Restore the image configuration or explicitly select a different image ID for next start.");
     }
 
     private static void ApplySelection(DevelopmentWorkspaceVm vm, Selection selection, string imageId, string profile)

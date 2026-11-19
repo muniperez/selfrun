@@ -54,6 +54,8 @@ automatically receive account-linking permission.
 
 `GET /api/development-workspaces/selections?organizationId={id}` requires
 authentication and organization app-read permission (`apps:read` for API keys).
+Without `workspaceId`, it returns only qualified T3 Connect images explicitly
+approved for new dev environments.
 Add `&workspaceId={id}` for next-start resize or ephemeral launch choices: these
 must remain in that workspace's fixed provider account and region. A missing or
 foreign workspace returns `404 workspace_not_found`; organization access denial
@@ -67,8 +69,8 @@ The uncached response is:
   "unavailableReason": null,
   "options": [
     {
-      "imageId": "qualified-dev-image",
-      "imageName": "Development tools",
+      "imageId": "example-connect-revision",
+      "imageName": "Muni T3 with Connect",
       "profile": "standard",
       "planId": "plan_example",
       "planName": "Development standard",
@@ -84,8 +86,8 @@ Submit `imageId`, `profile` and `planId` unchanged to the existing create, resiz
 or ephemeral-launch write contracts. IDs are stable configuration/plan identities,
 not labels or option indexes; labels may change. Configure the optional
 `DevelopmentWorkspaces:Images:{imageId}:DisplayName` for a human-readable image
-label. Existing configurations, omitted labels and blank labels display the image
-configuration key (`imageId`); supplied labels are trimmed.
+label. Omitted or blank labels display the image configuration key (`imageId`);
+supplied labels are trimmed.
 
 Discovery shares selection eligibility with writes: explicitly enabled,
 runtime-qualified amd64 images with a valid manifest and qualification timestamp;
@@ -96,8 +98,16 @@ credential references are never returned. Discovery only reads control-plane
 metadata: it performs no credential resolution, provider requests, reservation,
 allocation or mutation.
 
+For new environments, the image entry must also have
+`DevelopmentWorkspaces:Images:{imageId}:T3ConnectForNewWorkspaces` set to `true`.
+Create rejects stale or unapproved image selections with `workspace_image_invalid`;
+there is no legacy fallback. This approval does not affect workspace-scoped
+selections or restart on an existing VM's recorded image, and does not link a
+T3 account. See [image registration](t3-connect.md#registering-an-image-for-new-dev-environments).
+
 - `available: true` with an empty `options` array means configuration is available
-  but no compatible selections exist for this organization/placement.
+  but no compatible selections exist for this organization/placement (for
+  unscoped discovery, no approved Connect image has a compatible plan).
 - `available: false`, a human-readable `unavailableReason` and empty `options`
   means workspaces are disabled or required quota/pricing/lease configuration is
   unavailable or invalid (including stale pricing).

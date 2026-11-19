@@ -124,6 +124,46 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreationRequiresExplicitConnectApprovalAndNeverFallsBackToLegacyImage()
+    {
+        using var client = Client(token);
+        const string discovery = $"{Root}/selections?organizationId=org";
+        factory.Policy.Images["legacy-image"] = new()
+        {
+            DisplayName = "Muni T3 with Connect", Enabled = true, RuntimeQualified = true,
+            QualifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1), ProviderAccountId = "account",
+            AllowedRegions = ["nbg1"], ProviderImageId = "legacy-snapshot", ManifestSha256 = new('b', 64)
+        };
+        var choices = (await client.GetFromJsonAsync<WorkspaceSelections>(discovery))!;
+        Assert.Equal("image", Assert.Single(choices.Options).ImageId);
+
+        var staleRequest = Request() with { ImageId = "legacy-image" };
+        using var rejected = await client.PostAsJsonAsync(Root, staleRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        var error = (await rejected.Content.ReadFromJsonAsync<ErrorResponse>())!.Error;
+        Assert.Equal("workspace_image_invalid", error.Code);
+        Assert.Contains("T3 Connect", error.Message);
+
+        var workspace = await Create(client);
+        var scoped = (await client.GetFromJsonAsync<WorkspaceSelections>($"{discovery}&workspaceId={workspace.Id}"))!;
+        Assert.Contains(scoped.Options, option => option.ImageId == "legacy-image");
+
+        factory.Policy.Images["image"].AllowedRegions = ["other-region"];
+        var empty = (await client.GetFromJsonAsync<WorkspaceSelections>(discovery))!;
+        Assert.True(empty.Available);
+        Assert.Empty(empty.Options);
+        using var noCompatiblePlan = await client.PostAsJsonAsync(Root, Request() with { IdempotencyKey = "second" });
+        Assert.Equal(HttpStatusCode.BadRequest, noCompatiblePlan.StatusCode);
+        Assert.Equal("workspace_plan_invalid",
+            (await noCompatiblePlan.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+
+        await AssertNoCompute();
+        await using var verify = factory.Services.CreateAsyncScope();
+        var db = verify.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        Assert.Equal(workspace.Id, (await db.DevelopmentWorkspaces.SingleAsync()).Id);
+    }
+
+    [Fact]
     public async Task DiscoveryHidesForeignWorkspaceAndDistinguishesEmptyAndDisabledConfiguration()
     {
         using var owner = Client(token);
@@ -337,7 +377,8 @@ public sealed class DevelopmentWorkspaceApiTests : IAsyncLifetime
             Images = new()
             {
                 ["image"] = new() { Enabled = true, RuntimeQualified = true, QualifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
-                    ProviderAccountId = "account", AllowedRegions = ["nbg1"], ProviderImageId = "123", ManifestSha256 = new('a', 64) }
+                    ProviderAccountId = "account", AllowedRegions = ["nbg1"], ProviderImageId = "123", ManifestSha256 = new('a', 64),
+                    T3ConnectForNewWorkspaces = true }
             }
         };
         protected override void ConfigureWebHost(IWebHostBuilder builder)

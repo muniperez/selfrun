@@ -136,6 +136,44 @@ own CLI authorization; owner-only enrollment is not a shell isolation boundary.
   retained T3 identity concurrently. Stale gateway generations cannot use the
   management credential for a replacement VM.
 
+## Registering an image for new dev environments
+
+The Connect-capable image recipe on Minicloud main includes the Connect
+management unit and admission helper from #150 (merged at
+`e8cbb6232bad3d1881b519053b7336d4bdd2aa18`). Its image lock pins upstream
+T3 `v0.1.9` at `24e77473ecf41bc1f7142529c7911c1c1aae1d76` and cloudflared
+`2026.10.4`. These are source pins, not proof of the active hosted snapshot;
+the hosted snapshot ID, installed manifest digest and qualification are not
+verified here.
+
+Before enabling creation, verify the intended provider snapshot against its
+qualification evidence: the installed `/opt/minicloud-workspace/image-manifest.json`
+must record the expected Minicloud `provenance.sourceRevision`, contain the
+expected component pins, and hash to the configured `ManifestSha256`. Use the
+[prepared image qualification procedure](../templates/development-workspaces/README.md)
+to verify Connect runtime admission on a disposable primary VM; a label or a T3
+version alone does not qualify a snapshot.
+
+In the protected API and worker `DevelopmentWorkspaces` catalog, register that
+revision under a distinct, stable `Images` key. Set `DisplayName` to
+**Muni T3 with Connect**, record its `ProviderImageId`, `ProviderAccountId`,
+`AllowedRegions`, `Architecture` (`linux/amd64`), `ManifestSha256`, `Enabled`,
+`RuntimeQualified` and `QualifiedAt`, and set `T3ConnectForNewWorkspaces: true`
+only on the qualified revision intended for new environments in that account.
+Approve matching profiles and organization-owned plans. Restart both services
+after updating the protected file and verify that unscoped discovery returns
+only the intended revision, or no choices when it has no eligible plan.
+Omitting the flag defaults to false. Creating a stopped environment or starting
+compute still does not link a T3 account.
+
+Retain the catalog entries and provider snapshots referenced by existing VMs or
+needed for rollback. To withdraw a revision from creation, clear its
+`T3ConnectForNewWorkspaces` flag rather than disabling or deleting it. A restart
+without an explicit image change still requires the recorded snapshot and
+manifest to match qualified configuration; do not repoint an existing image key.
+Use a distinct key for each revision and explicitly select it for next start
+when upgrading or rolling back an existing VM.
+
 ## Qualification status
 
 Source is pinned to T3 `v0.1.9`,
