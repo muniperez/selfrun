@@ -58,6 +58,21 @@ public sealed class MigrationConsistencyTests
     }
 
     [Fact]
+    public void WorkspaceDeletionMigrationReleasesNameAndKeyAndRollsBackSafely()
+    {
+        const string previous = "20261119155230_DevelopmentWorkspaceKeepRunning";
+        const string current = "20261119160815_DevelopmentWorkspaceDeletion";
+        using var postgres = CreateContext();
+        var migrator = postgres.GetService<IMigrator>();
+        var up = migrator.GenerateScript(previous, current);
+        Assert.Contains("CREATE UNIQUE INDEX \"IX_development_workspaces_organization_id_idempotency_key\" ON development_workspaces (organization_id, idempotency_key) WHERE volume_status <> 'deleted';", up);
+        Assert.Contains("CREATE UNIQUE INDEX \"IX_development_workspaces_organization_id_name\" ON development_workspaces (organization_id, name) WHERE volume_status <> 'deleted';", up);
+        var down = migrator.GenerateScript(current, previous);
+        var rename = down.IndexOf("SET name = id, idempotency_key = id WHERE volume_status = 'deleted'", StringComparison.Ordinal);
+        Assert.InRange(rename, 0, down.IndexOf("CREATE UNIQUE INDEX", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DomainMigrationCreatesColumnOnceAndReconciliationPreservesIt()
     {
         using var db = CreateContext();
