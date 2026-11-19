@@ -174,6 +174,66 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Contains("retry stop", output);
     }
 
+    [Fact]
+    public async Task CreateWithoutKeyDerivesStableNameKeySoRepeatsResumeAndConflictsAreActionable()
+    {
+        string[] options = ["create", "--organization", "org", "--name", " Coding ", "--image", "image",
+            "--profile", "Standard", "--plan", "plan", "--volume-gb", "20"];
+        Assert.Equal(CliExitCodes.Success, await Run(options));
+        Assert.Equal(CliExitCodes.Success, await Run(options));
+        var keys = _handler.Requests.Where(x => x.Path == "/api/development-workspaces")
+            .Select(x => x.Body.GetProperty("idempotencyKey").GetString()).ToArray();
+        Assert.Equal(2, keys.Length);
+        Assert.Equal(keys[0], keys[1]);
+        Assert.Equal(CliApplication.DefaultWorkspaceCreateKey("org", "Coding"), keys[0]);
+        Assert.NotEqual(keys[0], CliApplication.DefaultWorkspaceCreateKey("other", "Coding"));
+        Assert.Equal("Coding", _handler.Requests.Last().Body.GetProperty("name").GetString());
+
+        _handler.CreateConflict = true;
+        Assert.Equal(CliExitCodes.ValidationError, await Run([.. options[..^1], "40"]));
+        Assert.Contains("already exists with a different", string.Join('\n', _console.Messages));
+    }
+
+    [Fact]
+    public async Task OpenMintsGatewayLinkForReadyPrimaryGenerationWithoutStartingCompute()
+    {
+        Assert.Equal(CliExitCodes.Success, await Run("open", "workspace", "--organization", "org", "--no-browser"));
+        var request = _handler.Requests.Last();
+        Assert.Equal("POST", request.Method);
+        Assert.Equal("/api/development-workspaces/workspace/vms/primary/launch?organizationId=org", request.Path);
+        Assert.Equal(3, request.Body.GetProperty("generation").GetInt64());
+        Assert.Equal("t3", request.Body.GetProperty("service").GetString());
+        Assert.Contains(Handler.LaunchUrl, _console.Messages);
+        Assert.DoesNotContain(_handler.Requests, x => x.Path.Contains("/start"));
+    }
+
+    [Fact]
+    public async Task OpenRejectsNotReadyVmsAndUnsafeGatewayUrls()
+    {
+        Assert.Equal(CliExitCodes.ValidationError, await Run("open", "workspace", "--organization", "org", "--vm", "ephemeral", "--no-browser"));
+        Assert.Contains("open requires a ready running VM", string.Join('\n', _console.Messages));
+        Assert.Equal(CliExitCodes.ValidationError, await Run("open", "workspace", "--organization", "org", "--vm", "missing", "--no-browser"));
+        Assert.DoesNotContain(_handler.Requests, x => x.Path.Contains("/launch"));
+
+        _handler.UnsafeLaunch = true;
+        Assert.Equal(CliExitCodes.NetworkOrApiUnavailable, await Run("open", "workspace", "--organization", "org", "--no-browser"));
+        Assert.DoesNotContain(_console.Messages, x => x.Contains("http://"));
+    }
+
+    [Fact]
+    public async Task SelectionsPrintCreateReadyFlagsAndJsonKeepsStdoutParseable()
+    {
+        Assert.Equal(CliExitCodes.Success, await Run("selections", "--organization", "org", "--workspace", "workspace"));
+        Assert.Equal("/api/development-workspaces/selections?organizationId=org&workspaceId=workspace", _handler.Requests.Last().Path);
+        Assert.Contains("--image image --profile Standard --plan plan", string.Join('\n', _console.Messages));
+
+        _console.Messages.Clear();
+        Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org", "--json"));
+        var document = JsonDocument.Parse(Assert.Single(_console.Messages));
+        Assert.Equal("workspace", document.RootElement.GetProperty("id").GetString());
+        Assert.Equal("primary", document.RootElement.GetProperty("vms")[0].GetProperty("id").GetString());
+    }
+
     public void Dispose() => _directory.Delete(true);
 
     private sealed record Captured(string Method, string Path, JsonElement Body);
@@ -181,6 +241,9 @@ public sealed class CliWorkspaceTests : IDisposable
     {
         public List<Captured> Requests = [];
         public string? RecoveryCommit { get; set; }
+        public bool CreateConflict { get; set; }
+        public bool UnsafeLaunch { get; set; }
+        public const string LaunchUrl = "https://vm-primary-g3.gateway.example/__minicloud/launch?code=synthetic";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.PathAndQuery;
@@ -191,7 +254,14 @@ public sealed class CliWorkspaceTests : IDisposable
                     phase = "provisioning", repository = "https://git.example/repo.git",
                     baseRef = "refs/heads/main", baseCommit = RecoveryCommit, workBranch = "minicloud/ephemeral/g4" } }
                 : Vms;
+            if (CreateConflict && path == "/api/development-workspaces")
+                return new(HttpStatusCode.Conflict) { Content = JsonContent.Create(new { error = new {
+                    code = "workspace_idempotency_conflict", message = "Idempotency key already has a different request.", details = Array.Empty<object>() } }) };
             object body = path == "/api/me" ? CliApiFixtures.Me("org", "other")
+                : path.EndsWith("/launch?organizationId=org") ? new { url = UnsafeLaunch ? "http://insecure.example/launch" : LaunchUrl, expiresAt = DateTimeOffset.UtcNow.AddMinutes(1) }
+                : path.StartsWith("/api/development-workspaces/selections") ? new { available = true, options = new[] { new {
+                    imageId = "image", imageName = "Image", profile = "Standard", planId = "plan", planName = "Plan",
+                    providerAccountName = "Hetzner", region = "nbg1", sku = "cx22" } } }
                 : path.Contains("/tasks/") ? new { vmId = "ephemeral", taskId = "build", generation = 3, status = "active", expiresAt = DateTimeOffset.UtcNow.AddMinutes(5) }
                 : path.EndsWith("/vms?organizationId=org") ? Vms
                 : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms };

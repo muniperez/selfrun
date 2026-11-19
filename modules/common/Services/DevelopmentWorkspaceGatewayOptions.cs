@@ -99,8 +99,6 @@ public sealed class DevelopmentWorkspaceGatewayOptions
     public static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 }
 
-public sealed record DevelopmentWorkspaceGatewayLaunchRequest(long Generation, string Service = "t3");
-public sealed record DevelopmentWorkspaceGatewayLaunchResponse(string Url, DateTimeOffset ExpiresAt);
 public sealed record DevelopmentWorkspaceGatewayReceiptRequest(string Host, string Receipt);
 public sealed record DevelopmentWorkspaceGatewayRedemption(string Session, DateTimeOffset ExpiresAt);
 public sealed record DevelopmentWorkspaceGatewayTarget(int LoopbackPort, string? Bearer);

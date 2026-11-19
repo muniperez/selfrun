@@ -296,7 +296,9 @@ public sealed partial class CliApplication
 
             case "workspaces":
             case "workspaces list":
+            case "workspaces selections":
             case "workspaces create":
+            case "workspaces open":
             case "workspaces status":
             case "workspaces start":
             case "workspaces stop":
@@ -315,8 +317,10 @@ public sealed partial class CliApplication
             case "workspaces task-complete":
                 _console.WriteLine("Manage opt-in ephemeral development workspaces");
                 _console.WriteLine("  minicloud workspaces list [--organization <id>]");
-                _console.WriteLine("  minicloud workspaces create --name <name> --image <registered-image> --profile Standard|Heavy --plan <plan-id> --volume-gb <10-10000> [--organization <id>]");
+                _console.WriteLine("  minicloud workspaces selections [--workspace <id>] [--organization <id>]");
+                _console.WriteLine("  minicloud workspaces create --name <name> --image <registered-image> --profile Standard|Heavy --plan <plan-id> --volume-gb <10-10000> [--idempotency-key <key>] [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces status <workspace-id> --organization <id>");
+                _console.WriteLine("  minicloud workspaces open <workspace-id> [--vm <id>] [--no-browser]");
                 _console.WriteLine("  minicloud workspaces <start|stop|cancel-idle-stop> <workspace-id> --organization <id>");
                 _console.WriteLine("  minicloud workspaces <vms|stop-all> <workspace-id> [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces launch <workspace-id> --image <id> --profile Standard|Heavy --plan <id> --repository <url> --base-ref <ref> --base-commit <resolved-sha> --push-authorized --acknowledge-ignored-data-loss [--idempotency-key <key>] [--repository-credential-ref <ref>]");
@@ -325,7 +329,10 @@ public sealed partial class CliApplication
                 _console.WriteLine("  minicloud workspaces <resize-next-start|vm-resize-next-start> <workspace-id> [--vm <id>] --generation <n> --image <id> --profile Standard|Heavy --plan <id>");
                 _console.WriteLine("  minicloud workspaces vm-discard <workspace-id> --vm <id> --generation <n> --discard-local-data --acknowledge-ignored-data-loss");
                 _console.WriteLine("  minicloud workspaces <task-renew|task-complete> <workspace-id> --vm <id> --generation <n> --task <id> [--cancelled]");
-                _console.WriteLine("All commands accept --organization <id>; required with multiple organizations. Ephemeral roots are Git-only; ignored/untracked data is not retained. Stop-all enumerates VMs and retains independent Git-save guards.");
+                _console.WriteLine("All commands accept --organization <id> (required with multiple organizations) and --json for machine-readable output.");
+                _console.WriteLine("Create without --idempotency-key derives a key from organization and name: repeating the same create resumes it; different options fail with an actionable conflict.");
+                _console.WriteLine("Open mints a short-lived single-use T3 gateway link for a ready running VM (primary by default) and never starts compute.");
+                _console.WriteLine("Ephemeral roots are Git-only; ignored/untracked data is not retained. Stop-all enumerates VMs and retains independent Git-save guards.");
                 _console.WriteLine("vm-start recreates a normally saved Git-only VM at its verified saved commit/ref on a new generation branch; invalid saved evidence or a changed remote blocks recovery. Explicitly discarded generations reuse their selected base. No commit/push is automatic.");
                 _console.WriteLine("Provisioning requires operator-enabled image/profile/rate policy. Stopped compute does not stop retained-volume charges.");
                 return CliExitCodes.Success;
