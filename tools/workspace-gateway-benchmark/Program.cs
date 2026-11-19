@@ -495,7 +495,8 @@ static class GatewayChildProcess
                 values.Add(value * 1000);
             }
         });
-        listener.Start();
+        // GATEWAY_BENCH_METRICS=0 isolates footprint from the in-process listener; metric-derived fields stay empty.
+        if (Environment.GetEnvironmentVariable("GATEWAY_BENCH_METRICS") != "0") listener.Start();
         var commands = new Thread(() =>
         {
             string? line;
@@ -523,8 +524,19 @@ static class GatewayChildProcess
     private static void Add(Dictionary<string, long> values, string key, long value) =>
         values[key] = values.GetValueOrDefault(key) + value;
 
+    // Allocation-free for known fixed tag values so the listener does not skew per-message allocation.
     private static string Key(ReadOnlySpan<KeyValuePair<string, object?>> tags)
     {
+        if (tags.Length == 1 && tags[0].Value is string single) return single;
+        if (tags.Length == 2 && tags[0].Value is string operation && tags[1].Value is string direction)
+            return (operation, direction) switch
+            {
+                ("websocket", "upstream") => "websocket.upstream",
+                ("websocket", "downstream") => "websocket.downstream",
+                ("http", "upstream") => "http.upstream",
+                ("http", "downstream") => "http.downstream",
+                _ => operation + "." + direction,
+            };
         var parts = new List<string>();
         foreach (var tag in tags) parts.Add($"{tag.Value}");
         return string.Join('.', parts);
