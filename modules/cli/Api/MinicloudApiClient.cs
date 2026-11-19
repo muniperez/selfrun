@@ -104,6 +104,10 @@ public sealed class MinicloudApiClient
             $"/api/development-workspaces/{Uri.EscapeDataString(id)}/vms/{Uri.EscapeDataString(vmId)}/launch?organizationId={Uri.EscapeDataString(organizationId)}",
             new DevelopmentWorkspaceGatewayLaunchRequest(generation), ct);
 
+    public Task<DevelopmentWorkspaceResponse> DeleteDevelopmentWorkspaceAsync(string id, string organizationId, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Delete,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}?organizationId={Uri.EscapeDataString(organizationId)}&confirmPermanentDeletion=true", null, ct);
+
     public Task<DevelopmentWorkspaceResponse> CreateDevelopmentWorkspaceAsync(CreateDevelopmentWorkspaceRequest request, CancellationToken ct) =>
         SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post, "/api/development-workspaces", request, ct);
 

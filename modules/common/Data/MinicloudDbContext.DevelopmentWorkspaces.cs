@@ -19,8 +19,8 @@ public sealed partial class MinicloudDbContext
             entity.ToTable("development_workspaces");
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.OrganizationId, x.Id });
-            entity.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique();
-            entity.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique().HasFilter("volume_status <> 'deleted'");
+            entity.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique().HasFilter("volume_status <> 'deleted'");
             entity.HasIndex(x => new { x.ProviderAccountId, x.ProviderVolumeId }).IsUnique();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.Property(x => x.Name).HasMaxLength(128);

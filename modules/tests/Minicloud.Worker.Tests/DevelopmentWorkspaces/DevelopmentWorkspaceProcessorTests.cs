@@ -19,6 +19,7 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Providers.Models;
 using Minicloud.Common.Services;
 using Minicloud.Worker.DevelopmentWorkspaces;
@@ -665,7 +666,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ConfirmedPrimaryReceiptDetachesAndDeletesOnlyOwnedComputeThenReleasesReservation()
+    public async Task PrimaryStopDeletesOnlyOwnedComputeAndRestartReusesRetainedVolume()
     {
         var (workspace, vm, operation) = await SeedStop("quiesce");
         runtime.Phase = "Frozen";
@@ -701,8 +702,146 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.True(cloud.Servers.ContainsKey("ordinary-app"));
         Assert.NotNull(cloud.Volume);
         Assert.Null(cloud.Volume!.ServerId);
-        Assert.Equal(0, cloud.VolumeCreates);
         Assert.Contains((vm.Id, 1L), tunnels.Removed);
+
+        await lifecycle.StartAsync(workspace.Id, "org", default);
+        Assert.Equal(2, (await CurrentVm(vm.Id)).Generation);
+        await Hop();
+        await Hop();
+        await Hop();
+        await Hop();
+        var restarted = await CurrentVm(vm.Id);
+        Assert.Equal("firewall", (await CurrentOperation(restarted.OperationId!)).Step);
+        var reused = await CurrentWorkspace(workspace.Id);
+        Assert.Equal(retained.ProviderVolumeId, reused.ProviderVolumeId);
+        Assert.Equal(retained.VolumeFilesystemUuid, reused.VolumeFilesystemUuid);
+        Assert.Equal(0, cloud.VolumeCreates);
+        Assert.Empty(cloud.DeletedVolumes);
+    }
+
+    [Theory]
+    [InlineData(true, "workspace_delete_volume_mismatch")]
+    [InlineData(false, "workspace_delete_volume_attached")]
+    public async Task PermanentDeleteDoesNotReleaseStorageWhenProviderVolumeIsUnsafe(bool wrongOwner, string errorCode)
+    {
+        var workspace = await SeedRetainedVolume();
+        var original = cloud.Volume!;
+        cloud.Volume = wrongOwner
+            ? original with { Labels = new Dictionary<string, string>(original.Labels) { ["workspace"] = "unrelated" } }
+            : original with { ServerId = "unexpected-writer" };
+
+        await lifecycle.DeleteAsync(workspace.Id, "org", true, "actor", default);
+        await Hop();
+        var vm = await CurrentVm(workspace.PrimaryVmId);
+        Assert.Equal("delete_failed", vm.Phase);
+        Assert.Equal(errorCode, vm.ErrorCode);
+
+        var failed = await CurrentWorkspace(workspace.Id);
+        Assert.Equal(workspace.ProviderVolumeId, failed.ProviderVolumeId);
+        Assert.Equal(workspace.VolumeFilesystemUuid, failed.VolumeFilesystemUuid);
+        Assert.Equal(workspace.StorageMonthlyRate, failed.StorageMonthlyRate);
+        Assert.NotNull(cloud.Volume);
+        Assert.Empty(cloud.DetachedVolumes);
+        Assert.Empty(cloud.DeletedVolumes);
+        Assert.Empty(cloud.DeletedServers);
+    }
+
+    [Fact]
+    public async Task PermanentDeleteReconcilesLostResponseWithoutTouchingSiblingResources()
+    {
+        var workspace = await SeedRetainedVolume();
+        var sibling = await lifecycle.CreateAsync(
+            new("org", "Sibling fixture", "image", "standard", "plan", 20, "sibling"), "actor", default);
+        var siblingVolume = cloud.Volume! with { Id = "volume-sibling", Labels = VolumeLabels(sibling) };
+        sibling.ProviderVolumeId = siblingVolume.Id;
+        sibling.VolumeStatus = "retained";
+        sibling.LastBackupAt = clock.GetUtcNow();
+        sibling.BackupStatus = "completed";
+        await db.SaveChangesAsync();
+        cloud.SiblingVolumes.Add(siblingVolume.Id, siblingVolume);
+        var siblingServer = cloud.Server(VolumeLabels(sibling)) with { Id = "server-sibling" };
+        cloud.Servers.Add(siblingServer.Id, siblingServer);
+        var imageId = sibling.Vms.Single().ProviderImage;
+        cloud.LoseDeleteVolumeResponse = true;
+
+        await lifecycle.DeleteAsync(workspace.Id, "org", true, "actor", default);
+        await Hop("delete-verified-volume");
+        Assert.Empty(cloud.DeletedVolumes);
+        await Hop();
+        Assert.Equal("deleting", (await CurrentVm(workspace.PrimaryVmId)).Phase);
+        Assert.Equal("volume-retained", Assert.Single(cloud.DeletedVolumes));
+        Assert.Null(cloud.Volume);
+        var unconfirmed = await CurrentWorkspace(workspace.Id);
+        Assert.Equal("volume-retained", unconfirmed.ProviderVolumeId);
+        Assert.Equal(workspace.StorageMonthlyRate, unconfirmed.StorageMonthlyRate);
+
+        Assert.False(await Processor().ProcessNextAsync(default));
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await Hop();
+
+        var deleted = await CurrentWorkspace(workspace.Id);
+        Assert.Equal("deleted", (await CurrentVm(workspace.PrimaryVmId)).Phase);
+        Assert.Null(deleted.ProviderVolumeId);
+        Assert.Null(deleted.VolumeFilesystemUuid);
+        Assert.Equal(0m, deleted.StorageMonthlyRate);
+        Assert.Single(cloud.DeletedVolumes);
+        Assert.Equal(siblingVolume, Assert.Single(cloud.SiblingVolumes).Value);
+        Assert.Equal(siblingServer, Assert.Single(cloud.Servers).Value);
+        var survivingWorkspace = await CurrentWorkspace(sibling.Id);
+        Assert.Equal(siblingVolume.Id, survivingWorkspace.ProviderVolumeId);
+        Assert.Equal(sibling.LastBackupAt, survivingWorkspace.LastBackupAt);
+        Assert.Equal(sibling.BackupStatus, survivingWorkspace.BackupStatus);
+        Assert.Equal("available", (await cloud.GetWorkspaceImageAsync(imageId, default))?.Status);
+        Assert.Empty(cloud.DetachedVolumes);
+        Assert.Empty(cloud.DeletedServers);
+        Assert.Empty(cloud.DeletedIps);
+        Assert.Empty(cloud.DeletedFirewalls);
+    }
+
+    [Fact]
+    public async Task PermanentDeleteOfNeverStartedWorkspaceDoesNotSendProviderDelete()
+    {
+        var workspace = await lifecycle.CreateAsync(
+            new("org", "Never started", "image", "standard", "plan", 20, "never-started"), "actor", default);
+        await lifecycle.DeleteAsync(workspace.Id, "org", true, "actor", default);
+
+        await Hop();
+
+        Assert.Equal("deleted", (await CurrentVm(workspace.PrimaryVmId)).Phase);
+        Assert.Equal(0m, (await CurrentWorkspace(workspace.Id)).StorageMonthlyRate);
+        Assert.Empty(cloud.DeletedVolumes);
+    }
+
+    [Fact]
+    public async Task PermanentDeleteReleasesNameAndCreateIdempotencyKey()
+    {
+        // The CLI's default create key for organization "org" and name "Reused" (pinned in CliWorkspaceTests).
+        CreateDevelopmentWorkspaceRequest request = new("org", "Reused", "image", "standard", "plan", 20, "cli-c8da2dba717feac74db7f3315846c5d05c0ed396");
+        var deleted = await lifecycle.CreateAsync(request, "actor", default);
+        await lifecycle.DeleteAsync(deleted.Id, "org", true, "actor", default);
+        await Hop();
+        Assert.Equal("deleted", (await CurrentWorkspace(deleted.Id)).VolumeStatus);
+
+        var recreated = await lifecycle.CreateAsync(request, "actor", default);
+        Assert.NotEqual(deleted.Id, recreated.Id);
+        Assert.Equal("Reused", recreated.Name);
+        Assert.Equal(recreated.Id, (await lifecycle.CreateAsync(request, "actor", default)).Id);
+        var conflict = await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() =>
+            lifecycle.CreateAsync(request with { VolumeSizeGb = 30 }, "actor", default));
+        Assert.Equal("workspace_idempotency_conflict", conflict.Code);
+    }
+
+    private async Task<DevelopmentWorkspace> SeedRetainedVolume()
+    {
+        var workspace = await lifecycle.CreateAsync(
+            new("org", "Delete fixture", "image", "standard", "plan", 20, "delete"), "actor", default);
+        workspace.ProviderVolumeId = "volume-retained";
+        workspace.VolumeFilesystemUuid = "filesystem-retained";
+        workspace.VolumeStatus = "retained";
+        cloud.Volume = new("volume-retained", "retained", 20, "nbg1", null, "ext4", "/dev/disk/by-id/owned",
+            VolumeLabels(workspace));
+        await db.SaveChangesAsync();
+        return workspace;
     }
 
     [Theory]
@@ -1204,6 +1343,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
 
     private Task<DevelopmentWorkspaceVm> CurrentVm(string id) =>
         db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == id);
+    private Task<DevelopmentWorkspace> CurrentWorkspace(string id) =>
+        db.DevelopmentWorkspaces.AsNoTracking().SingleAsync(x => x.Id == id);
     private Task<DevelopmentWorkspaceOperation> CurrentOperation(string id) =>
         db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync(x => x.Id == id);
     private static Dictionary<string, string> VolumeLabels(DevelopmentWorkspace workspace) => new()
@@ -1448,10 +1589,12 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public CloudProvider Provider => CloudProvider.Hetzner;
         public Dictionary<string, WorkspaceCloudServer> Servers { get; } = [];
         public WorkspaceCloudVolume? Volume { get; set; }
+        public Dictionary<string, WorkspaceCloudVolume> SiblingVolumes { get; } = [];
         public Dictionary<string, string> NextLabels { get; set; } = [];
         public List<Dictionary<string, string>> DiscoveryLabels { get; } = [];
         public List<string> DeletedServers { get; } = [];
         public List<string> DetachedVolumes { get; } = [];
+        public List<string> DeletedVolumes { get; } = [];
         public List<string> DeletedIps { get; } = [];
         public List<string> DeletedFirewalls { get; } = [];
         public int Creates { get; private set; }
@@ -1460,6 +1603,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public int VolumeCreates { get; private set; }
         public int Attaches { get; private set; }
         public bool LoseCreateResponse { get; set; }
+        public bool LoseDeleteVolumeResponse { get; set; }
         public Func<Task>? BeforeCreate { get; set; }
         public WorkspaceCloudServer Server(IReadOnlyDictionary<string, string> labels) =>
             new("server-owned", "owned", "running", "nbg1", "standard-test", "image-qualified",
@@ -1494,8 +1638,26 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public Task<WorkspaceCloudAction> GetWorkspaceActionAsync(string resource, string id, CancellationToken ct) =>
             Task.FromResult(new WorkspaceCloudAction(resource, id, "success"));
         public Task<IReadOnlyList<WorkspaceCloudVolume>> FindWorkspaceVolumesAsync(IReadOnlyDictionary<string, string> labels, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<WorkspaceCloudVolume>>(Volume is null ? [] : [Volume]);
-        public Task<WorkspaceCloudVolume?> GetWorkspaceVolumeAsync(string id, CancellationToken ct) => Task.FromResult(Volume?.Id == id ? Volume : null);
+            Task.FromResult<IReadOnlyList<WorkspaceCloudVolume>>(
+                (Volume is { } volume ? SiblingVolumes.Values.Append(volume) : SiblingVolumes.Values)
+                .Where(x => labels.All(label => x.Labels.TryGetValue(label.Key, out var value) && value == label.Value)).ToArray());
+        public Task<WorkspaceCloudVolume?> GetWorkspaceVolumeAsync(string id, CancellationToken ct) =>
+            Task.FromResult(Volume?.Id == id ? Volume : SiblingVolumes.GetValueOrDefault(id));
+        public async Task DeleteWorkspaceVolumeAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
+        {
+            var volume = await GetWorkspaceVolumeAsync(id, ct);
+            if (volume is null) return;
+            HetznerClient.RequireWorkspaceOwnership(volume.Labels, labels);
+            if (volume.ServerId is not null) throw new InvalidOperationException("Volume still has a writer.");
+            DeletedVolumes.Add(id);
+            if (Volume?.Id == id) Volume = null;
+            else SiblingVolumes.Remove(id);
+            if (LoseDeleteVolumeResponse)
+            {
+                LoseDeleteVolumeResponse = false;
+                throw new HttpRequestException("Synthetic response lost AFTER volume deletion.");
+            }
+        }
         public Task<WorkspaceCloudVolumeAllocation> CreateWorkspaceVolumeAsync(string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
         { VolumeCreates++; throw new InvalidOperationException("Retained volume must not be replaced."); }
         public Task<WorkspaceCloudAction?> AttachWorkspaceVolumeAsync(string id, string serverId, IReadOnlyDictionary<string, string> labels, CancellationToken ct)

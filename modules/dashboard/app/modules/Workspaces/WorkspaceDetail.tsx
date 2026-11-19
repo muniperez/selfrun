@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ChevronDown, ChevronRight, GitBranch, LoaderCircle, Plus } from "lucide-react";
-import { launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
+import { Link } from "react-router-dom";
+import { deleteWorkspace, launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import { WorkspaceIdleTimeoutSettings } from "./WorkspaceIdleTimeoutSettings";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceVmCard } from "./WorkspaceVmCard";
 import { vmStartup } from "./WorkspaceVmStartup";
+import { permanentDeletion } from "./workspaceCollection";
 
 type Props = {
   item: DevelopmentWorkspace;
@@ -46,8 +48,11 @@ export function WorkspaceDetail(props: Props) {
   return <ScopedWorkspaceDetail key={`${props.organizationId}:${props.item.id}`} {...props} />;
 }
 
-function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Props) {
+function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canManageRole }: Props) {
   const { profile, selectedOrganization } = useAuth();
+  const deletion = permanentDeletion(item);
+  // Once permanent deletion is requested, only retrying deletion remains available.
+  const canManage = canManageRole && !deletion;
   const canManageConnect = canManage && Boolean(profile?.id) && item.organizationId === organizationId &&
     selectedOrganization?.id === organizationId &&
     (selectedOrganization.role.toLowerCase() === "owner" || item.createdBy === profile?.id);
@@ -86,7 +91,13 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
   return <div className="min-w-0 space-y-6">
     {item.errorCode && !(primary && vmStartup(primary).failed) && <p role="alert" className="text-sm text-destructive">{item.errorCode}: {item.errorMessage}</p>}
     {refreshError && <p role="alert" className="text-sm text-destructive">{refreshError}</p>}
-    {!canManage && <p className="text-sm text-muted-foreground">You can view this dev environment but can't change it.</p>}
+    {deletion === "deleting" && <p role="status" className="rounded-md border border-warning bg-warning-surface p-3 text-sm text-warning">
+      Deleting this dev environment and its saved files. Refresh to check progress.</p>}
+    {deletion === "failed" && <p className="rounded-md border border-destructive p-3 text-sm text-destructive">
+      Deleting this dev environment failed. Fix the reported problem, then retry from Delete environment below.</p>}
+    {deletion === "deleted" && <p role="status" className="rounded-md border p-3 text-sm">
+      This dev environment and its saved files were permanently deleted. <Link className="font-medium text-primary underline" to="/workspaces">Back to dev environments</Link></p>}
+    {!canManageRole && <p className="text-sm text-muted-foreground">You can view this dev environment but can't change it.</p>}
     <Tabs defaultValue="overview" className="min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
         <TabsList aria-label="Dev environment details" className="h-auto gap-6 rounded-none bg-transparent p-0">
@@ -144,6 +155,8 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
           <EphemeralTable vms={ephemeral} workspaceId={item.id} organizationId={organizationId}
             currency={item.currency} refresh={refresh} canManage={canManage} actorId={profile?.id} />
         </section>
+        {canManageRole && deletion !== "deleted" && <DeleteEnvironment item={item} organizationId={organizationId}
+          vms={vms} failed={deletion === "failed"} deleting={deletion === "deleting"} refresh={refresh} />}
       </TabsContent>
       <TabsContent value="storage" className="space-y-6 pt-4">
         <Card>
@@ -188,6 +201,68 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage }: Pro
       </TabsContent>
     </Tabs>
   </div>;
+}
+
+function DeleteEnvironment({ item, organizationId, vms, failed, deleting, refresh }: {
+  item: DevelopmentWorkspace; organizationId: string; vms: DevelopmentWorkspaceVm[];
+  failed: boolean; deleting: boolean; refresh: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typedName, setTypedName] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  const nameId = useId();
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const allStopped = vms.every(vm => vm.phase === "stopped" && vm.desiredState === "stopped" && !vm.computeReserved);
+  const available = failed || (!deleting && allStopped);
+  const confirmed = typedName.trim() === item.name;
+  const remove = async () => {
+    if (!available || !confirmed || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await deleteWorkspace(item.id, organizationId);
+      if (!mounted.current) return;
+      setOpen(false);
+      try { await refresh(); } catch { /* The page keeps its last state; the user can refresh manually. */ }
+    } catch (reason) { if (mounted.current) setError(message(reason)); }
+    finally { if (mounted.current) setPending(false); }
+  };
+  return <section aria-labelledby="delete-environment-heading" className="space-y-3 rounded-lg border border-destructive/50 p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 max-w-prose space-y-1">
+        <h2 id="delete-environment-heading" className="text-lg font-semibold">Delete environment</h2>
+        <p className="text-sm text-muted-foreground">Permanently delete this dev environment and the files saved on its primary volume. Stopping VMs keeps your files; deleting the environment does not.</p>
+        {!available && !deleting && <p className="text-sm text-muted-foreground">Stop all VMs and wait until they finish stopping before deleting.</p>}
+      </div>
+      <Dialog open={open} onOpenChange={next => {
+        if (pending) return;
+        setOpen(next && available); setTypedName(""); setError(null);
+      }}>
+        <DialogTrigger asChild>
+          <Button variant="destructive" disabled={!available || pending}>{failed ? "Retry delete environment" : "Delete environment"}</Button>
+        </DialogTrigger>
+        <DialogContent onEscapeKeyDown={event => { if (pending) event.preventDefault(); }}
+          onInteractOutside={event => { if (pending) event.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>Delete {item.name} permanently?</DialogTitle>
+            <DialogDescription>This deletes the dev environment and its primary volume. Files that are not pushed to Git are lost for good. This cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <label htmlFor={nameId} className="block">Type <strong className="break-all">{item.name}</strong> to confirm</label>
+            <Input id={nameId} autoComplete="off" value={typedName} disabled={pending} onChange={event => setTypedName(event.target.value)} />
+          </div>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="destructive" disabled={!confirmed || pending} onClick={() => void remove()}>
+              {pending ? "Deleting…" : "Delete permanently"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  </section>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

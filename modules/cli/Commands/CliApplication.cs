@@ -300,6 +300,7 @@ public sealed partial class CliApplication
             case "workspaces create":
             case "workspaces open":
             case "workspaces status":
+            case "workspaces delete":
             case "workspaces start":
             case "workspaces stop":
             case "workspaces cancel-idle-stop":
@@ -322,6 +323,7 @@ public sealed partial class CliApplication
                 _console.WriteLine("  minicloud workspaces create --name <name> --image <registered-image> --profile Standard|Heavy --plan <plan-id> --volume-gb <10-10000> [--idle-timeout <1-10080> | --keep-running] [--idempotency-key <key>] [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces status <workspace-id> --organization <id>");
                 _console.WriteLine("  minicloud workspaces open <workspace-id> [--vm <id>] [--no-browser]");
+                _console.WriteLine("  minicloud workspaces delete <workspace-id> --confirm-permanent-deletion [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces <start|stop|cancel-idle-stop> <workspace-id> --organization <id>");
                 _console.WriteLine("  minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|--keep-running");
                 _console.WriteLine("  minicloud workspaces <vms|stop-all> <workspace-id> [--organization <id>]");
@@ -338,6 +340,7 @@ public sealed partial class CliApplication
                 _console.WriteLine("vm-start recreates a normally saved Git-only VM at its verified saved commit/ref on a new generation branch; invalid saved evidence or a changed remote blocks recovery. Explicitly discarded generations reuse their selected base. No commit/push is automatic.");
                 _console.WriteLine("Idle timeout is the inactivity before automatic stop (default: server setting). --keep-running turns automatic idle stop off; running compute is billed until you stop it.");
                 _console.WriteLine("Provisioning requires operator-enabled image/profile/rate policy. Stopped compute does not stop retained-volume charges.");
+                _console.WriteLine("Permanent deletion irreversibly removes the retained volume and any remaining local VM data. Use status to track deletion; retry failed deletion with the same explicit confirmation.");
                 return CliExitCodes.Success;
             case "plans":
                 _console.WriteLine("minicloud plans list [--organization <id>] [--config path]");
