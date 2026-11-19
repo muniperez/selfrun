@@ -311,17 +311,20 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
     {
         var startedAt = _timeProvider.GetUtcNow();
         var stopwatch = Stopwatch.StartNew();
+        using var activity = Diagnostics.WorkerQueueDiagnostics.StartStep(step.Name);
         _logger?.LogInformation("Pipeline step {Step} starting for deployment {DeploymentId}", step.Name, context.DeploymentId);
         try
         {
             await step.ExecuteAsync(context, cancellationToken);
             stopwatch.Stop();
+            Diagnostics.WorkerQueueDiagnostics.StepCompleted(activity, step.Name, stopwatch.Elapsed, "succeeded");
             await RecordPhaseTimingAsync(context.DeploymentId, context.OwnershipToken, step.Name, startedAt, stopwatch.Elapsed, "succeeded", CancellationToken.None);
             _logger?.LogInformation("Pipeline step {Step} completed for deployment {DeploymentId}", step.Name, context.DeploymentId);
         }
         catch (OperationCanceledException)
         {
             stopwatch.Stop();
+            Diagnostics.WorkerQueueDiagnostics.StepCompleted(activity, step.Name, stopwatch.Elapsed, "canceled");
             await RecordPhaseTimingAsync(context.DeploymentId, context.OwnershipToken, step.Name, startedAt, stopwatch.Elapsed, "canceled", CancellationToken.None);
             throw;
         }
@@ -329,6 +332,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         {
             _logger?.LogError(ex, "Pipeline step {Step} failed for deployment {DeploymentId}", step.Name, context.DeploymentId);
             stopwatch.Stop();
+            Diagnostics.WorkerQueueDiagnostics.StepCompleted(activity, step.Name, stopwatch.Elapsed, "failed");
             await RecordPhaseTimingAsync(context.DeploymentId, context.OwnershipToken, step.Name, startedAt, stopwatch.Elapsed, "failed", CancellationToken.None);
             throw;
         }
@@ -480,6 +484,28 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
             return;
         }
 
+        using var activity = Diagnostics.WorkerQueueDiagnostics.StartStep("rollback");
+        var rollbackStarted = Stopwatch.GetTimestamp();
+        var rollbackOutcome = "failed";
+        try
+        {
+            rollbackOutcome = await RunRollbackCommandAsync(context, failureCode, privateKey, cancellationToken)
+                ? "succeeded" : "failed";
+        }
+        catch (OperationCanceledException)
+        {
+            rollbackOutcome = "canceled";
+            throw;
+        }
+        finally
+        {
+            Diagnostics.WorkerQueueDiagnostics.StepCompleted(activity, "rollback", Stopwatch.GetElapsedTime(rollbackStarted), rollbackOutcome);
+        }
+    }
+
+    private async Task<bool> RunRollbackCommandAsync(
+        PipelineStepContext context, string failureCode, string privateKey, CancellationToken cancellationToken)
+    {
         // Best-effort: restore the previous Caddy config if the deploy staged one,
         // then re-list containers. Never fails the pipeline.
         var appSlug = string.IsNullOrWhiteSpace(context.AppSlug) ? "*" : context.AppSlug;
@@ -507,11 +533,13 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
                 EventLevel.Warning,
                 $"Rollback command attempted after {failureCode} (exit {exitCode}); previous release health was not verified.",
                 cancellationToken);
+            return exitCode == 0;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await RecordEventAsync(context.DeploymentId, EventLevel.Warning,
                 $"Rollback attempt after {failureCode} failed: {ex.Message}", cancellationToken);
+            return false;
         }
     }
 

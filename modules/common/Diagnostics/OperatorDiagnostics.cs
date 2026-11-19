@@ -35,6 +35,12 @@ public static class OperatorDiagnostics
                     .AddRuntimeInstrumentation()
                     .AddView(instrument => (instrument.Meter.Name, instrument.Name) switch
                     {
+                        (Name, "minicloud.worker.claims") =>
+                            new MetricStreamConfiguration { TagKeys = ["outcome"] },
+                        (Name, "minicloud.worker.queue.wait") =>
+                            new MetricStreamConfiguration { TagKeys = [] },
+                        (Name, "minicloud.worker.step.duration") =>
+                            new MetricStreamConfiguration { TagKeys = ["operation", "outcome"] },
                         (Name, "minicloud.db.commands" or "minicloud.db.command.duration") =>
                             new MetricStreamConfiguration { TagKeys = ["operation", "outcome"] },
                         (Name, "minicloud.gateway.connections.active") =>

@@ -46,6 +46,7 @@ public sealed class PostgresDeploymentQueueConsumerTests : IClassFixture<WorkerS
         await using (var db = _harness.CreateDbContext()) { db.Add(deployment); await db.SaveChangesAsync(); }
         var executor = new CancelablePipeline(remoteUnknown);
         var consumer = CreateConsumer("worker-cancel", executor: executor);
+        using var telemetry = new WorkerTelemetryCapture();
         var claimed = (await consumer.TryClaimNextDeploymentAsync(default))!;
         var processing = consumer.ProcessDeploymentAsync(claimed, default);
         await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -72,6 +73,8 @@ public sealed class PostgresDeploymentQueueConsumerTests : IClassFixture<WorkerS
         Assert.NotNull(final.CompletedAt);
         if (remoteUnknown) { Assert.NotNull(final.OwnershipToken); Assert.Equal("remote_quiescence_unconfirmed", final.FailureCode); }
         else { Assert.Null(final.OwnershipToken); Assert.Null(final.FailureCode); }
+        var root = Assert.Single(telemetry.Spans, span => span.OperationName == "worker.deployment");
+        Assert.Equal(remoteUnknown ? "failed" : "canceled", root.GetTagItem("outcome"));
     }
 
     private sealed class CancelablePipeline(bool remoteUnknown) : IDeploymentPipelineExecutor
@@ -501,6 +504,33 @@ public sealed class PostgresDeploymentQueueConsumerTests : IClassFixture<WorkerS
         Assert.Null(failed.WorkerId);
         Assert.Null(failed.OwnershipToken);
         Assert.Null(failed.OwnershipAcquiredAt);
+    }
+
+    [Fact]
+    public async Task ClaimRecordsQueueWaitAndProcessingTraceStartsAtDurableClaimTime()
+    {
+        var (org, app) = await _harness.SeedOrgAndAppAsync("claim-telemetry");
+        var consumer = CreateConsumer("worker-telemetry");
+        using var telemetry = new WorkerTelemetryCapture();
+        Assert.Null(await consumer.TryClaimNextDeploymentAsync(default));
+
+        var queuedAt = DateTimeOffset.UtcNow.AddSeconds(-30);
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.Deployments.Add(CreateDeployment("dep-claim-telemetry", org.Id, app.Id, DeploymentStatus.Queued, queuedAt));
+            await db.SaveChangesAsync();
+        }
+        var claimed = (await consumer.TryClaimNextDeploymentAsync(default))!;
+        await consumer.ProcessDeploymentAsync(claimed, default);
+
+        var claims = telemetry.Measurements.Where(m => m.Name == "minicloud.worker.claims").Select(m => m.Tags).ToList();
+        Assert.Equal(["outcome=empty", "outcome=claimed"], claims);
+        var wait = Assert.Single(telemetry.Measurements, m => m.Name == "minicloud.worker.queue.wait");
+        Assert.InRange(wait.Value, 29, 120);
+        Assert.Equal("", wait.Tags);
+        var root = Assert.Single(telemetry.Spans, span => span.OperationName == "worker.deployment");
+        Assert.Equal(claimed.OwnershipAcquiredAt!.Value.UtcDateTime, root.StartTimeUtc);
+        Assert.Equal("succeeded", root.GetTagItem("outcome"));
     }
 
     private PostgresDeploymentQueueConsumer CreateConsumer(

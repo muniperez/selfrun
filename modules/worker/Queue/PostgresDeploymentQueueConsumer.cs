@@ -64,6 +64,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
             if (!await _maintenance.CanClaimAsync(dbContext, cancellationToken))
             {
                 await transaction.RollbackAsync(cancellationToken);
+                WorkerQueueDiagnostics.Claim("refused");
                 return null;
             }
 
@@ -123,6 +124,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
             if (deployment is null)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                WorkerQueueDiagnostics.Claim("empty");
                 return null;
             }
 
@@ -155,6 +157,8 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
 
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            WorkerQueueDiagnostics.Claim("claimed");
+            WorkerQueueDiagnostics.QueueWaited(now - queuedAt);
 
             _logger.LogInformation(
                 "Worker '{WorkerId}' claimed deployment {DeploymentId} for app {AppId}",
@@ -175,6 +179,26 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
             throw new InvalidOperationException($"Deployment {deployment.Id} is not owned by worker '{_options.WorkerId}'.");
         }
 
+        using var deploymentActivity = WorkerQueueDiagnostics.StartDeployment(
+            deployment.OwnershipAcquiredAt ?? _timeProvider.GetUtcNow());
+        var deploymentOutcome = "failed";
+        try
+        {
+            deploymentOutcome = await ProcessOwnedDeploymentAsync(deployment, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            deploymentOutcome = "canceled";
+            throw;
+        }
+        finally
+        {
+            WorkerQueueDiagnostics.Complete(deploymentActivity, deploymentOutcome);
+        }
+    }
+
+    private async Task<string> ProcessOwnedDeploymentAsync(Deployment deployment, CancellationToken cancellationToken)
+    {
         await using (var ownershipScope = _scopeFactory.CreateAsyncScope())
         {
             var ownershipDb = ownershipScope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
@@ -277,6 +301,8 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
                 }
             }
         }
+
+        return outcome;
     }
 
     private async Task<bool> IsCancellationRequestedAsync(string id, string owner)

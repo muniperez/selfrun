@@ -267,7 +267,21 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 TimeProvider.System,
                 NullLogger<DeploymentPipelineExecutor>.Instance);
 
-            await executor.ExecuteAsync(deployment, CancellationToken.None);
+            using (var telemetry = new WorkerTelemetryCapture())
+            {
+                await executor.ExecuteAsync(deployment, CancellationToken.None);
+
+                var steps = telemetry.Spans.Where(span => span.OperationName == "worker.step")
+                    .ToDictionary(span => (string)span.GetTagItem("operation")!);
+                Assert.Equal(["dns-setup", "health-finalize", "resolve-provision", "ssh-deploy"], steps.Keys.Order());
+                Assert.All(steps.Values, span => Assert.Equal("succeeded", span.GetTagItem("outcome")));
+                Assert.Equal(steps["dns-setup"].ParentSpanId, steps["ssh-deploy"].ParentSpanId);
+                Assert.NotEqual(steps["dns-setup"].SpanId, steps["ssh-deploy"].SpanId);
+                Assert.True(steps["health-finalize"].StartTimeUtc >= steps["ssh-deploy"].StartTimeUtc + steps["ssh-deploy"].Duration);
+                Assert.True(steps["health-finalize"].StartTimeUtc >= steps["dns-setup"].StartTimeUtc + steps["dns-setup"].Duration);
+                Assert.Contains(telemetry.Measurements, m => m.Name == "minicloud.worker.step.duration"
+                    && m.Tags == "operation=ssh-deploy;outcome=succeeded");
+            }
 
             await using (var db = _harness.CreateDbContext())
             {
