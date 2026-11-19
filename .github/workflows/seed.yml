@@ -1,0 +1,608 @@
+# SPDX-License-Identifier: MPL-2.0
+# Reusable wrapper around the stateless `minicloud seed` CLI. See docs/github-actions.md.
+name: Minicloud Control-Plane Seed
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        description: "check (read-only), plan (read-only) or apply."
+        required: true
+        type: string
+      environment:
+        description: "GitHub Environment holding the seed secrets and protection rules."
+        required: true
+        type: string
+      minicloud_version:
+        description: "Exact signed CLI tag (vX.Y.Z[-prerelease]) or full canonical-main commit SHA for an explicit source build."
+        required: true
+        type: string
+      approve:
+        description: "Approval digest from a reviewed plan. Required for apply only."
+        required: false
+        type: string
+        default: ""
+      new_seed:
+        description: "Explicitly allow planning/applying creation of a new VPS. Use the same value for plan and apply."
+        required: false
+        type: boolean
+        default: false
+      report_artifact_name:
+        description: "Name of the uploaded non-secret report artifact."
+        required: false
+        type: string
+        default: minicloud-seed-report
+    secrets:
+      MINICLOUD_SEED_CONFIG:
+        description: "Versioned seed configuration JSON (schemaVersion 1)."
+        required: true
+      MINICLOUD_SEED_SSH_KEY:
+        description: "Unencrypted OpenSSH private key for the seed host. Required for plan and apply."
+        required: false
+      MINICLOUD_SEED_PROVIDER_CREDENTIAL:
+        description: "Provider API credential when it is not part of the seed configuration."
+        required: false
+    outputs:
+      result:
+        description: "success, handoff_pending, upgrade_required, reconciliation_required or error."
+        value: ${{ jobs.seed.outputs.result }}
+      classification:
+        description: "Seed classification from the report, when available."
+        value: ${{ jobs.seed.outputs.classification }}
+      approval_digest:
+        description: "Approval digest from plan, when available."
+        value: ${{ jobs.seed.outputs.approval_digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    name: seed ${{ inputs.operation }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: ${{ inputs.environment }}
+    # Different Environments can address the same target. Lock all applies in this calling repository.
+    concurrency:
+      group: minicloud-seed-${{ inputs.operation == 'apply' && 'apply' || format('{0}-{1}', github.run_id, inputs.environment) }}
+      cancel-in-progress: false
+    outputs:
+      result: ${{ steps.report.outputs.result }}
+      classification: ${{ steps.report.outputs.classification }}
+      approval_digest: ${{ steps.report.outputs.approval_digest }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate inputs
+        id: validate
+        env:
+          OPERATION: ${{ inputs.operation }}
+          ENVIRONMENT_NAME: ${{ inputs.environment }}
+          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          APPROVE: ${{ inputs.approve }}
+          NEW_SEED: ${{ inputs.new_seed }}
+          REPORT_ARTIFACT_NAME: ${{ inputs.report_artifact_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          case "$OPERATION" in
+            check|plan|apply) ;;
+            *) fail "operation must be check, plan or apply." ;;
+          esac
+          [[ -n "$ENVIRONMENT_NAME" ]] || fail "environment is required; bind the seed secrets to a GitHub Environment."
+
+          case "$EVENT_NAME:$OPERATION" in
+            workflow_dispatch:*|schedule:check) ;;
+            *) fail "Seed $OPERATION is not allowed from '$EVENT_NAME' events. Use workflow_dispatch (schedule is allowed for check only); apply never runs on push or pull requests." ;;
+          esac
+
+          if [[ "$MINICLOUD_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
+            install_mode=source
+          elif [[ "$MINICLOUD_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            install_mode=binary
+          else
+            fail "minicloud_version must be an exact signed CLI tag (for example v3.1.0) or a full lowercase canonical-main commit SHA; branches, latest and server-v tags are rejected."
+          fi
+
+          if [[ "$OPERATION" == apply ]]; then
+            [[ "$APPROVE" =~ ^[0-9a-f]{64}$ ]] || fail "apply requires approve: the 64-character lowercase approval digest printed by a reviewed plan."
+          elif [[ -n "$APPROVE" ]]; then
+            fail "approve is only accepted with operation apply."
+          fi
+          if [[ "$OPERATION" == check && "$NEW_SEED" == true ]]; then
+            fail "new_seed is only accepted with plan or apply."
+          fi
+          [[ "$REPORT_ARTIFACT_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]] || fail "report_artifact_name must use letters, digits, '.', '_' or '-'."
+
+          # The CLI rejects protected inputs under links or group/world-writable ancestors.
+          safe_base=""
+          for candidate in "${RUNNER_TEMP:-}" "${HOME:-}"; do
+            [[ -n "$candidate" && -d "$candidate" ]] || continue
+            if python3 - "$candidate" <<'PY'
+          import os, stat, sys
+          path = os.path.abspath(sys.argv[1])
+          while True:
+              info = os.lstat(path)
+              if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022 or info.st_uid not in (0, os.geteuid()):
+                  sys.exit(1)
+              parent = os.path.dirname(path)
+              if parent == path:
+                  break
+              path = parent
+          PY
+            then
+              safe_base="$candidate"
+              break
+            fi
+          done
+          [[ -n "$safe_base" ]] || fail "No runner directory without links or group/world-writable ancestors is available for protected seed inputs."
+
+          {
+            echo "install_mode=$install_mode"
+            echo "safe_base=$safe_base"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up .NET for an explicit source build
+        if: steps.validate.outputs.install_mode == 'source'
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install the pinned Minicloud CLI and Cosign
+        id: install
+        env:
+          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          INSTALL_MODE: ${{ steps.validate.outputs.install_mode }}
+          SAFE_BASE: ${{ steps.validate.outputs.safe_base }}
+        run: |
+          set -euo pipefail
+          umask 077
+          url="https://github.com/muniventures/minicloud.git"
+          # GitHub-verified merge of #82; pin the installer bytes independently of the payload.
+          installer_revision=1f40173fbd04d734e0283721cdb2b287350dcaba
+          installer_sha256=78075cfe3cedec9bea41408489eb5aa6c1c558b68fdfe2250c34b74984181ccb
+          stateless_floor=7a4b16130215ea8b2c74221cb02c5e45344d4427 # merged stateless CLI (#102)
+          peeled() {
+            awk -v ref="$1" '$2 == ref { tag=$1 } $2 == ref "^{}" { peeled=$1 } END { if (peeled != "") print peeled; else print tag }'
+          }
+
+          work="$(mktemp -d "$SAFE_BASE/minicloud-cli.XXXXXXXX")"
+          echo "dir=$work" >> "$GITHUB_OUTPUT"
+          source_dir="$work/source"
+
+          if [[ "$INSTALL_MODE" == source ]]; then
+            expected_sha="$MINICLOUD_VERSION"
+          else
+            tag_ref="refs/tags/$MINICLOUD_VERSION"
+            expected_sha="$(git ls-remote "$url" "$tag_ref" "$tag_ref^{}" | peeled "$tag_ref")"
+            if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::CLI tag $MINICLOUD_VERSION was not found in the canonical repository."
+              exit 1
+            fi
+          fi
+
+          git clone --quiet --filter=blob:none --no-checkout --no-tags --single-branch --branch main "$url" "$source_dir"
+          if [[ "$INSTALL_MODE" == binary ]]; then
+            git -C "$source_dir" fetch --quiet --no-tags origin "$tag_ref:$tag_ref"
+            fetched_sha="$(git -C "$source_dir" rev-parse "$tag_ref^{commit}")"
+            remote_after_sha="$(git ls-remote "$url" "$tag_ref" "$tag_ref^{}" | peeled "$tag_ref")"
+            if [[ "$fetched_sha" != "$expected_sha" || "$remote_after_sha" != "$expected_sha" ]]; then
+              echo "::error::CLI tag $MINICLOUD_VERSION changed while it was being resolved; retry with a reviewed exact version."
+              exit 1
+            fi
+          fi
+          if ! git -C "$source_dir" merge-base --is-ancestor "$expected_sha" refs/remotes/origin/main; then
+            echo "::error::Selected CLI revision $expected_sha is not in canonical main."
+            exit 1
+          fi
+          if ! git -C "$source_dir" merge-base --is-ancestor "$stateless_floor" "$expected_sha"; then
+            echo "::error::Selected CLI revision predates supported stateless seed. Select an exact revision containing the canonical stateless seed merge."
+            exit 1
+          fi
+          git -C "$source_dir" show "$installer_revision:install.sh" > "$work/install.sh"
+          if ! echo "$installer_sha256  $work/install.sh" | sha256sum --check --quiet -; then
+            echo "::error::Reviewed Minicloud installer checksum failed."
+            exit 1
+          fi
+
+          # Binary mode verifies the signed release inventory; source mode builds the exact commit.
+          MINICLOUD_INSTALL_MODE="$INSTALL_MODE" MINICLOUD_VERSION="$MINICLOUD_VERSION" MINICLOUD_INSTALL_DIR="$work/bin" \
+            sh "$work/install.sh"
+
+          version="$("$work/bin/minicloud" --version)"
+          if ! grep -Fxq "source $expected_sha" <<< "$version"; then
+            echo "::error::Installed CLI source does not match the reviewed payload revision."
+            exit 1
+          fi
+          if [[ "$INSTALL_MODE" == binary ]]; then
+            remote_after_sha="$(git ls-remote "$url" "$tag_ref" "$tag_ref^{}" | peeled "$tag_ref")"
+            if [[ "$remote_after_sha" != "$expected_sha" ]]; then
+              echo "::error::CLI tag $MINICLOUD_VERSION changed during installation; select a reviewed exact version."
+              exit 1
+            fi
+          fi
+          printf '%s\n' "$version"
+
+          case "$(uname -m)" in
+            x86_64) cosign_name=cosign-linux-amd64; cosign_sha=c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644 ;;
+            aarch64) cosign_name=cosign-linux-arm64; cosign_sha=426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7 ;;
+            *) echo "::error::Unsupported runner architecture $(uname -m)."; exit 1 ;;
+          esac
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$work/cosign.download" \
+            "https://github.com/sigstore/cosign/releases/download/v2.6.5/$cosign_name"
+          echo "$cosign_sha  $work/cosign.download" | sha256sum --check --quiet -
+          chmod 700 "$work/cosign.download"
+          mv "$work/cosign.download" "$work/bin/cosign"
+
+          cosign_version="$("$work/bin/cosign" version --json)"
+          [[ "$cosign_version" == *'"v2.6.5"'* ]] || { echo "::error::Cosign 2.6.5 verification failed."; exit 1; }
+          echo "$work/bin" >> "$GITHUB_PATH"
+
+      - name: Write protected seed inputs
+        id: prepare
+        env:
+          OPERATION: ${{ inputs.operation }}
+          SAFE_BASE: ${{ steps.validate.outputs.safe_base }}
+          SEED_CONFIG: ${{ secrets.MINICLOUD_SEED_CONFIG }}
+          SSH_PRIVATE_KEY: ${{ secrets.MINICLOUD_SEED_SSH_KEY }}
+          PROVIDER_CREDENTIAL: ${{ secrets.MINICLOUD_SEED_PROVIDER_CREDENTIAL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$(mktemp -d "$SAFE_BASE/minicloud-seed.XXXXXXXX")"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          python3 - "$dir" <<'PY'
+          import json, os, subprocess, sys
+
+          directory = sys.argv[1]
+          operation = os.environ["OPERATION"]
+          config_text = os.environ.get("SEED_CONFIG", "")
+          key_text = os.environ.get("SSH_PRIVATE_KEY", "")
+          credential = os.environ.get("PROVIDER_CREDENTIAL", "")
+
+          def fail(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+          def mask(value):
+              # Workflow commands are line-based: register every sensitive line separately.
+              for line in value.splitlines():
+                  line = line.strip()
+                  if len(line) >= 4 and not line.startswith("-----"):
+                      print("::add-mask::" + line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
+
+          def write(name, data):
+              path = os.path.join(directory, name)
+              descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+              with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as output:
+                  output.write(data)
+              return path
+
+          missing = []
+          if not config_text.strip():
+              missing.append("MINICLOUD_SEED_CONFIG")
+          if operation in ("plan", "apply") and not key_text.strip():
+              missing.append("MINICLOUD_SEED_SSH_KEY")
+          if missing:
+              fail("Required secret(s) are empty or were not passed: " + ", ".join(missing)
+                   + ". Define them in the selected Environment and keep the same names in the caller.")
+
+          mask(credential)
+          try:
+              config = json.loads(config_text)
+          except ValueError:
+              fail("MINICLOUD_SEED_CONFIG is not valid JSON. Its contents are not shown.")
+          if not isinstance(config, dict) or type(config.get("schemaVersion")) is not int or config["schemaVersion"] != 1:
+              fail("MINICLOUD_SEED_CONFIG must be a JSON object with schemaVersion 1.")
+          for name, value in config.items():
+              if name.lower() == "providercredential" and isinstance(value, str):
+                  mask(value)
+          write("seed-config.json", config_text)
+
+          if credential.strip():
+              write("provider-credential", credential.rstrip("\r\n"))
+
+          if key_text.strip():
+              mask(key_text)
+              key = key_text.replace("\r\n", "\n").strip() + "\n"
+              key_path = write("ssh-key", key)
+              check = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", key_path],
+                                     stdin=subprocess.DEVNULL, capture_output=True)
+              if check.returncode != 0:
+                  fail("MINICLOUD_SEED_SSH_KEY must be an unencrypted OpenSSH private key. Unattended CI does not use passphrases or an SSH agent.")
+          PY
+
+      - name: Run minicloud seed
+        id: run
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVE: ${{ inputs.approve }}
+          NEW_SEED: ${{ inputs.new_seed }}
+          SEED_DIR: ${{ steps.prepare.outputs.dir }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -m 700 "$SEED_DIR/report"
+          args=(seed "$OPERATION" --config "$SEED_DIR/seed-config.json" --report "$SEED_DIR/report/seed-report.json")
+          if [[ -f "$SEED_DIR/ssh-key" ]]; then
+            args+=(--ssh-key "$SEED_DIR/ssh-key")
+          fi
+          if [[ -f "$SEED_DIR/provider-credential" ]]; then
+            args+=(--credential-file "$SEED_DIR/provider-credential")
+          fi
+          if [[ "$NEW_SEED" == true ]]; then
+            args+=(--new-seed)
+          fi
+          if [[ "$OPERATION" == apply ]]; then
+            args+=(--approve "$APPROVE")
+          fi
+
+          # Only the validated report is public; raw CLI output may contain untrusted or secret text.
+          status=0
+          minicloud "${args[@]}" < /dev/null > /dev/null 2>&1 || status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize and stage the non-secret report
+        id: report
+        if: always()
+        env:
+          OPERATION: ${{ inputs.operation }}
+          ENVIRONMENT_NAME: ${{ inputs.environment }}
+          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          NEW_SEED: ${{ inputs.new_seed }}
+          REPORT_ARTIFACT_NAME: ${{ inputs.report_artifact_name }}
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          SEED_DIR: ${{ steps.prepare.outputs.dir }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import html, json, math, os, re, stat, tempfile
+
+          directory = os.environ["SEED_DIR"]
+          operation = os.environ["OPERATION"]
+          exit_code = os.environ.get("EXIT_CODE", "")
+          outputs, summary = [], []
+
+          def read_input(name):
+              try:
+                  with open(os.path.join(directory, name), encoding="utf-8") as source:
+                      return source.read()
+              except FileNotFoundError:
+                  return ""
+
+          def unique(pairs):
+              result = {}
+              for name, value in pairs:
+                  if name in result:
+                      raise ValueError("Duplicate JSON field.")
+                  result[name] = value
+              return result
+
+          def parse(text):
+              def reject_constant(_):
+                  raise ValueError("Non-JSON numeric constant.")
+              return json.loads(text, object_pairs_hook=unique, parse_constant=reject_constant)
+
+          def validate(value, schema):
+              if isinstance(schema, dict):
+                  if type(value) is not dict:
+                      return False
+                  required = {name for name in schema if not name.endswith("?")}
+                  allowed = {name.removesuffix("?"): rule for name, rule in schema.items()}
+                  return required <= value.keys() <= allowed.keys() and all(
+                      validate(item, allowed[name]) for name, item in value.items())
+              if isinstance(schema, list):
+                  return type(value) is list and all(validate(item, schema[0]) for item in value)
+              if isinstance(schema, tuple):
+                  return any(validate(value, option) for option in schema)
+              if isinstance(schema, re.Pattern):
+                  return type(value) is str and schema.fullmatch(value) is not None
+              if schema is float:
+                  return type(value) is int or (type(value) is float and math.isfinite(value))
+              return type(value) is schema
+
+          # SeedPortableReport and its nested records use SeedJournal.Json (camelCase, explicit nulls).
+          # The optional keys were added to the v1 records after the minimum supported CLI revision.
+          nullable_text = (str, type(None))
+          digest = re.compile(r"[0-9a-f]{64}")
+          fingerprint = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
+          selection = dict.fromkeys(("provider", "region", "size", "domain", "appDomain", "serverVersion"), str)
+          cost = dict.fromkeys(("resource", "currency", "billing", "exclusions", "source"), str)
+          cost.update(monthly=float, hourly=(float, type(None)))
+          quote = dict.fromkeys(("account", "credentialScope", "image", "architecture", "sshUser",
+                                 "retrievedAt", "restrictions"), str)
+          quote.update(cpus=int, memoryMiB=int, diskGiB=int, costs=[cost], networkId=nullable_text)
+          plan = {"selection": selection, "quote": quote, "releaseDigest": digest, "releaseSource": str,
+                  "operatorPublicKeys": [str], "artifactTrust?": str, "previousLocalSourceDigest?": nullable_text,
+                  "previousLocalSourceRevision?": nullable_text}
+          target = dict.fromkeys(("id", "operation", "region", "size", "image"), str)
+          target.update(address=nullable_text, primaryIpId=nullable_text)
+          observation = dict.fromkeys(("state", "progress", "health", "openBao", "browser"), str)
+          observation.update(installationId=nullable_text, operationId=nullable_text, release=nullable_text,
+                             source=nullable_text, prepared=bool)
+          observation.update({"artifactTrust?": nullable_text, "sourceArchiveSha256?": nullable_text})
+          schema = dict.fromkeys(("kind", "observedAt", "provider", "providerAccount", "region", "size",
+                                  "architecture", "sshUser", "independentRecoveryCustody", "domain",
+                                  "appDomain", "requestedRelease"), str)
+          schema.update(schemaVersion=int, seedId=re.compile(r"[0-9a-f]{32}"),
+                        classification=re.compile("new_seed|continue_partial|upgrade_required|current|reconciliation_required"),
+                        result=re.compile("unknown|unavailable|failed|ready|pending"),
+                        approval=(digest, type(None)), plan=(plan, type(None)), target=(target, type(None)),
+                        observation=observation, providerSshKeyId=nullable_text,
+                        verifiedHostFingerprint=(fingerprint, type(None)), rootKeyFingerprint=(fingerprint, type(None)),
+                        dns=[str], reasons=[str], nextActions=[str], retainedBillableResources=[str])
+
+          def contains_secret(report, raw):
+              config_text = read_input("seed-config.json")
+              config = parse(config_text)
+              if type(config) is not dict:
+                  raise ValueError("Invalid protected configuration.")
+              supplied = [config_text, read_input("provider-credential")]
+              supplied.extend(value for name, value in config.items()
+                              if name.lower() == "providercredential" and type(value) is str)
+              key = read_input("ssh-key")
+              supplied.extend([key, *key.splitlines()])
+              secrets = {value.strip() for value in supplied if value.strip()}
+
+              def strings(value):
+                  if type(value) is str:
+                      yield value
+                  elif type(value) is list:
+                      for item in value:
+                          yield from strings(item)
+                  elif type(value) is dict:
+                      for name, item in value.items():
+                          yield name
+                          yield from strings(item)
+
+              # Check decoded strings as well as the artifact bytes (including escaped or short secrets).
+              return any(secret in text for text in (raw, *strings(report)) for secret in secrets)
+
+          report, report_error = None, None
+          if not directory or not exit_code:
+              report_error = "The CLI did not run to completion. Inspect the earlier workflow steps."
+          else:
+              report_path = os.path.join(directory, "report", "seed-report.json")
+              try:
+                  info = os.lstat(report_path)
+                  if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+                      report_error = "The report is not a bounded regular file."
+                  else:
+                      with open(report_path, encoding="utf-8") as source:
+                          raw = source.read()
+                      candidate = parse(raw)
+                      if type(candidate) is not dict:
+                          report_error = "The report is not a JSON object."
+                      elif type(candidate.get("schemaVersion")) is not int or candidate["schemaVersion"] != 1 \
+                              or candidate.get("kind") != "minicloud-seed-report":
+                          report_error = "The report is not a supported minicloud-seed-report (schemaVersion 1)."
+                      elif not validate(candidate, schema):
+                          report_error = "The report does not match the v1 CLI report structure."
+                      elif contains_secret(candidate, raw):
+                          report_error = "The report contained supplied secret material and was not uploaded."
+                      elif operation == "plan" and exit_code == "0" and not (candidate["plan"] and candidate["approval"]):
+                          report_error = "The successful plan report has no plan or approval digest."
+                      else:
+                          report = candidate
+              except FileNotFoundError:
+                  report_error = "The CLI did not write a report."
+              except (ValueError, RecursionError):
+                  report_error = "The report or protected input is not valid JSON or text."
+              except OSError:
+                  report_error = "The report or protected input could not be read safely."
+
+          results = {"0": "success", "10": "handoff_pending", "11": "upgrade_required", "12": "reconciliation_required"}
+          result = "error" if report_error else results.get(exit_code, "error")
+          classification = report["classification"] if report else ""
+          approval = (report["approval"] or "") if report and operation == "plan" and result == "success" else ""
+
+          def code(value):
+              text = html.escape(re.sub(r"\s+", " ", value).strip()).replace("|", "&#124;")
+              return f"<code>{text}</code>"
+
+          def details(title, text):
+              summary.extend([f"### {title}", "", "```text", text.replace("`", r"\u0060"), "```", ""])
+
+          meaning = {
+              "success": "Completed.",
+              "handoff_pending": "Complete the indicated handoff before continuing. Never repeat initial creation to continue on an existing VPS.",
+              "upgrade_required": "The installed release differs from serverVersion. Use the existing coordinated server maintenance upgrade; this workflow never upgrades.",
+              "reconciliation_required": "Live provider/host state is ambiguous or conflicting. Reconcile manually; do not retry or create another VPS.",
+              "error": "The operation failed or its report could not be validated. No automatic retry was attempted. Reconcile any uncertain apply before retrying.",
+          }[result]
+          summary += [
+              "## Minicloud seed " + operation, "",
+              "| Field | Value |", "| --- | --- |",
+              f"| Environment | {code(os.environ['ENVIRONMENT_NAME'][:100])} |",
+              f"| CLI version | {code(os.environ['MINICLOUD_VERSION'][:100])} |",
+              f"| New seed allowed | `{os.environ['NEW_SEED']}` |",
+              f"| Exit code | `{exit_code or 'not run'}` |",
+              f"| Result | `{result}` |",
+              f"| Classification | `{classification or 'unavailable'}` |",
+          ]
+          if report and report["rootKeyFingerprint"]:
+              summary.append(f"| SSH key | `{report['rootKeyFingerprint']}` |")
+          if approval:
+              summary.append(f"| Approval digest | `{approval}` |")
+          if report and report["target"]:
+              for label, name in (("Server ID", "id"), ("IPv4", "address"), ("Image", "image"),
+                                  ("Primary IP ID", "primaryIpId")):
+                  if report["target"][name]:
+                      summary.append(f"| {label} | {code(report['target'][name])} |")
+          summary += ["", meaning, ""]
+          if approval:
+              summary += ["Review the plan below. To approve exactly this plan, dispatch `apply` with this digest "
+                          "and the same `new_seed` value. Changed configuration, prices or targets invalidate it.", ""]
+              details("Plan", json.dumps(report["plan"], indent=2))
+          if report:
+              for title, name in (("Reasons", "reasons"), ("Next actions", "nextActions")):
+                  if report[name]:
+                      details(title, "\n".join(report[name][:10]))
+          if report is not None:
+              summary.append(f"Non-secret report staged for upload: `{os.environ['REPORT_ARTIFACT_NAME']}`.")
+          else:
+              summary.append(f"No report artifact: {report_error}")
+
+          if report is not None:
+              staging = tempfile.mkdtemp(prefix="minicloud-seed-report.", dir=directory)
+              with open(os.path.join(staging, "seed-report.json"), "x", encoding="utf-8") as output:
+                  output.write(raw)
+              outputs.append("path=" + staging)
+          outputs += [f"result={result}", f"classification={classification}", f"approval_digest={approval}"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("\n".join(outputs) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+              output.write("\n".join(summary) + "\n")
+          if report_error:
+              print(f"::error::{report_error}")
+              raise SystemExit(1)
+          PY
+
+      - name: Upload non-secret report
+        id: upload
+        if: always() && steps.report.outputs.path != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.report_artifact_name }}
+          path: ${{ steps.report.outputs.path }}/seed-report.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Warn if report upload failed
+        if: always() && steps.upload.outcome == 'failure'
+        run: |
+          echo "::warning::Non-secret report upload failed. Artifact transport does not change the seed outcome; inspect the job summary before deciding whether any further action is needed. Do not retry apply just to recover the artifact."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Warning: non-secret report upload failed; the artifact may be unavailable. The seed outcome is unchanged. Do not retry apply just to recover the artifact." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove protected inputs
+        if: always()
+        env:
+          SEED_DIR: ${{ steps.prepare.outputs.dir }}
+          CLI_DIR: ${{ steps.install.outputs.dir }}
+        run: |
+          set -euo pipefail
+          for path in "$SEED_DIR" "$CLI_DIR"; do
+            if [[ -n "$path" ]]; then
+              rm -rf -- "$path"
+              [[ ! -e "$path" ]] || { echo "::error::Could not remove $path."; exit 1; }
+            fi
+          done
+
+      - name: Report seed outcome
+        if: always() && steps.run.outcome == 'success'
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          case "$EXIT_CODE" in
+            0) echo "Seed operation completed." ;;
+            10) echo "::warning::Seed is waiting for a user handoff; see the job summary before continuing." ;;
+            11) echo "::error::Upgrade required. Use the existing coordinated server maintenance path; this workflow never upgrades."; exit 1 ;;
+            12) echo "::error::Reconciliation required. Inspect the provider console and host; do not retry blindly."; exit 1 ;;
+            *) echo "::error::minicloud seed failed with exit code $EXIT_CODE."; exit 1 ;;
+          esac
