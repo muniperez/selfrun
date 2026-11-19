@@ -429,6 +429,28 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreateStartsPrimaryOnlyWhenExplicitlyRequestedAndRetryDoesNotQueueAnotherStart()
+    {
+        using var client = Client(token);
+        var stopped = await Create(client);
+        Assert.Equal("stopped", stopped.Vms!.Single().DesiredState);
+        var body = Request() with { Name = "Started", IdempotencyKey = "create-started", StartPrimaryVm = true };
+        var responses = new List<DevelopmentWorkspaceResponse>();
+        for (var i = 0; i < 2; i++)
+        {
+            using var result = await client.PostAsJsonAsync(Root, body);
+            Assert.Equal(HttpStatusCode.Created, result.StatusCode);
+            responses.Add((await result.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!);
+        }
+        Assert.Equal(responses[0].Id, responses[1].Id);
+        Assert.All(responses, x => Assert.Equal(("running", 1L), (x.Vms!.Single().DesiredState, x.Vms!.Single().Generation)));
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var operation = Assert.Single(await db.DevelopmentWorkspaceOperations.ToListAsync());
+        Assert.Equal(("start", responses[0].Id), (operation.Kind, operation.WorkspaceId));
+    }
+
+    [Fact]
     public async Task RepeatedGetAndVmListingNeverAllocateAndResponsesRedactRuntimeCredentials()
     {
         using var client = Client(token);

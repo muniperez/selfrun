@@ -107,6 +107,11 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
   };
   const action = (operation: "start" | "stop" | "cancel-idle-stop", label: string) =>
     run(label, () => mutateWorkspaceVm(workspaceId, vm.id, organizationId, operation, { generation: vm.generation }));
+  // Stopping keeps the generation, so the follow-up start is queued to run once the failed attempt is cleaned up.
+  const retryStart = () => run(startingLabel, async () => {
+    await mutateWorkspaceVm(workspaceId, vm.id, organizationId, "stop", { generation: vm.generation });
+    return mutateWorkspaceVm(workspaceId, vm.id, organizationId, "start", { generation: vm.generation });
+  });
   const task = (complete: boolean, cancelled = false) => {
     if (!taskId.trim() || (!complete && !ready)) return;
     void run(cancelled ? "Cancelling task…" : complete ? "Completing task…" : "Renewing lease…", async () => {
@@ -152,7 +157,9 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
   };
 
   const startControl = vm.desiredState === "stopped" && <Button disabled={blocked || Boolean(vm.startAfterStop)}
-    onClick={() => void action("start", stopping ? "Queueing start…" : startingLabel)}>{stopping ? "Start VM after it stops" : "Start VM"}</Button>;
+    onClick={() => void action("start", stopping ? "Queueing start…" : startingLabel)}>{stopping ? "Start VM after it stops" : vm.errorCode ? "Retry start" : "Start VM"}</Button>;
+  const retryControl = failed && vm.kind === "primary" && canManage && <Button disabled={blocked}
+    onClick={() => void retryStart()}>Retry start</Button>;
   const stopControl = (vm.desiredState !== "stopped" || awaitingGit || vm.startAfterStop) && <Button variant="outline" disabled={blocked}
     onClick={() => void action("stop", awaitingGit ? "Retrying stop…" : "Stopping VM…")}>{awaitingGit ? "Retry stop" : "Stop VM"}</Button>;
   const discardControl = vm.kind === "ephemeral" && <Button variant="ghost" className="text-destructive hover:text-destructive" disabled={blocked || vm.phase === "stopped"}
@@ -202,7 +209,7 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
         <Button variant="outline" disabled={blocked} aria-expanded={previewOpen} onClick={() => {
           ++request.current; setLaunch(null); setPreviewOpen(previous => !previous);
         }}>Open preview</Button>
-      </section> : !stopping ? startControl : <span className="text-xs text-muted-foreground">{awaitingGit ? "Waiting for Git save" : "Stopping…"}</span>}
+      </section> : !stopping ? startControl || retryControl : <span className="text-xs text-muted-foreground">{awaitingGit ? "Waiting for Git save" : "Stopping…"}</span>}
       <p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="size-3.5" aria-hidden="true" />
         {vm.lastActivityAt ? `Last activity: ${vm.lastActivityAt}` : "Waiting for first activity"}</p>
     </div>}

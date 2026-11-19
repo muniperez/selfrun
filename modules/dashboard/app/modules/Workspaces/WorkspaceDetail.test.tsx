@@ -415,3 +415,13 @@ it("treats ordinary compute deletion as stopping and shows a permanently deleted
 });
 
 import { useEffect } from "react";
+
+it("leaves a primary VM's start failure to its card instead of repeating it above the tabs", () => {
+  const failure = { errorCode: "workspace_admission_limit", errorMessage: "Organization VM concurrency limit reached." };
+  const view = render(<MemoryRouter>{detail(workspace({ ...failure, vms: [vm("primary", {
+    kind: "primary", desiredState: "stopped", phase: "stopped", computeReserved: false, ...failure })] }))}</MemoryRouter>);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  view.rerender(<MemoryRouter>{detail(workspace({ errorCode: "workspace_other", errorMessage: "Other." }))}</MemoryRouter>);
+  expect(screen.getByRole("alert")).toHaveTextContent("workspace_other: Other.");
+  expect(workspaceOperation).not.toHaveBeenCalled();
+});

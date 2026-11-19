@@ -36,11 +36,11 @@ describe("CreateWorkspaceDialog", () => {
     expect(getWorkspaceSelections).not.toHaveBeenCalled();
   });
 
-  it("creates a stopped environment from a name and one submit with the only option and 20 GB, showing prices first", async () => {
+  it("creates and starts an environment from a name and one submit with the only option and 20 GB, disclosing the hourly price first", async () => {
     render(<CreateWorkspaceDialog {...props} />);
     await open();
     expect(getWorkspaceSelections).toHaveBeenCalledWith("org-one", undefined, expect.any(AbortSignal));
-    expect(screen.getByText("Your VM stays stopped until you start it.")).toBeInTheDocument();
+    expect(screen.getByText("Its primary VM starts automatically after you create it.")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Refresh/ })).not.toBeInTheDocument();
     const summary = screen.getByRole("region", { name: "Summary" });
@@ -52,13 +52,17 @@ describe("CreateWorkspaceDialog", () => {
     expect(estimate).toHaveTextContent("Storage$1.00/month, even while the VM is stopped");
     expect(estimate).toHaveTextContent("Projected monthly total$37.00 if the VM runs 720 hours this month");
     expect(estimate).toHaveTextContent("never blocks creating or starting a VM");
-    expect(summary).toHaveTextContent("doesn't start the VM or link a T3 account");
+    expect(within(summary).getByRole("note", { name: "Automatic start" }))
+      .toHaveTextContent("Creating starts the primary VM automatically. It's charged $0.05/hour while it runs, until you stop it.");
+    expect(summary).toHaveTextContent("doesn't link a T3 account");
+    expect(createDevelopmentWorkspace).not.toHaveBeenCalled();
     expect(submitButton()).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
     fireEvent.click(submitButton());
     await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith(workspace));
     expect(createDevelopmentWorkspace).toHaveBeenCalledWith({ organizationId: "org-one", name: "API sandbox", imageId: "connect-one",
-      profile: "standard", planId: "plan-one", volumeSizeGb: 20, idempotencyKey: expect.any(String) });
+      profile: "standard", planId: "plan-one", volumeSizeGb: 20, startPrimaryVm: true, idempotencyKey: expect.any(String) });
+    expect(createDevelopmentWorkspace).toHaveBeenCalledTimes(1);
     expect(mutateDevelopmentWorkspace).not.toHaveBeenCalled();
     expect(workspaceOperation).not.toHaveBeenCalled();
   });

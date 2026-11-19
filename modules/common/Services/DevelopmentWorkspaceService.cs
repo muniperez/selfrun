@@ -59,8 +59,21 @@ public sealed partial class DevelopmentWorkspaceService(
             workspace.PrimaryVmId = primary.Id;
             workspace.Vms.Add(primary);
             db.DevelopmentWorkspaces.Add(workspace);
+            if (request.StartPrimaryVm) await StartCreatedPrimaryAsync(workspace, primary, ct);
             return workspace;
         }, ct);
+
+    // Admission failures are recorded on the stopped VM so the created workspace survives and Start can be retried.
+    private async Task StartCreatedPrimaryAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm primary, CancellationToken ct)
+    {
+        await db.SaveChangesAsync(ct);
+        try { await StartCoreAsync(workspace, primary, ct); }
+        catch (DevelopmentWorkspaceException error)
+        {
+            primary.ErrorCode = error.Code; primary.ErrorMessage = error.Message;
+            Touch(primary);
+        }
+    }
 
     public Task<DevelopmentWorkspace> StartAsync(string workspaceId, string organizationId, CancellationToken ct) =>
         MutateAsync(workspaceId, organizationId, null, null, StartCoreAsync, ct);

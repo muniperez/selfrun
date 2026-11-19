@@ -91,6 +91,7 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
   const canSubmit = !busy && validName && validVolume && !!selected;
   const storageMonthly = validVolume && typeof ready?.volumeMonthlyRatePerGb === "number"
     ? ready.volumeMonthlyRatePerGb * volumeSizeGb : null;
+  const vmHourly = formatPrice(selected?.computeHourlyRate, currency);
 
   const reset = () => {
     setName(""); setChoice(""); setVolumeSize(defaultStorageGb); setCustomizing(false); setNotice(null); setError(null);
@@ -108,7 +109,8 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
       setError("Enter a name of 1–128 characters, choose an available option, and use 10–10,000 GB of storage.");
       return;
     }
-    const request = { organizationId, name: name.trim(), imageId: selected.imageId, profile: selected.profile, planId: selected.planId, volumeSizeGb };
+    const request = { organizationId, name: name.trim(), imageId: selected.imageId, profile: selected.profile, planId: selected.planId,
+      volumeSizeGb, startPrimaryVm: true };
     const payload = JSON.stringify(request);
     if (previous.current?.payload !== payload) previous.current = { payload, key: crypto.randomUUID() };
     submission.current = true;
@@ -151,7 +153,7 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
     <DialogContent className="gap-0 overflow-y-auto p-0 sm:max-w-xl">
       <DialogHeader className="px-6 pb-5 pt-6 text-left">
         <DialogTitle>Create dev environment</DialogTitle>
-        <DialogDescription>Your VM stays stopped until you start it.</DialogDescription>
+        <DialogDescription>Its primary VM starts automatically after you create it.</DialogDescription>
       </DialogHeader>
       <form aria-label="Create dev environment" onSubmit={event => void submit(event)}>
         <div className="space-y-5 px-6 pb-6">
@@ -185,7 +187,8 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
             </dl>
             <WorkspaceCostEstimate computeHourlyRate={selected.computeHourlyRate} monthlyStorage={storageMonthly} currency={currency}
               className="space-y-2 border-t pt-2" />
-            <p className="text-xs text-muted-foreground">Creating doesn't start the VM or link a T3 account. Storage keeps your files between starts and is charged until you delete the environment, but isn't a backup.</p>
+            <p role="note" aria-label="Automatic start">Creating starts the primary VM automatically. It's charged {vmHourly ? `${vmHourly}/hour` : "by the hour"} while it runs, until you stop it.</p>
+            <p className="text-xs text-muted-foreground">Creating doesn't link a T3 account. Storage keeps your files between starts and is charged until you delete the environment, but isn't a backup.</p>
           </section>}
           {ready?.available && options.length > 0 && <div className="space-y-4">
             <Button type="button" variant="ghost" size="sm" className="-ml-2" aria-expanded={customizing}

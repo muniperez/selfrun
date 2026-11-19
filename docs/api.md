@@ -202,7 +202,7 @@ T3 account. See [image registration](t3-connect.md#registering-an-image-for-new-
 
 Discovery is advisory, not a capacity or credential-availability guarantee.
 Writes revalidate current selection and placement policy. Creation leaves the
-workspace stopped. Starting or launching compute checks VM concurrency; provider
+workspace stopped (unless `startPrimaryVm` is set; see below). Starting or launching compute checks VM concurrency; provider
 quotas still apply. Projected cost is informational at every amount: creation,
 manual or queued starts and temporary VM launches never reject a request
 because of estimated spend, and responses keep returning `computeHourlyRate`,
@@ -212,6 +212,26 @@ longer emitted. Neither operation limits the number of workspace records or the
 number of distinct active workspaces. Resize records a next-start selection
 without reserving compute; start revalidates it again. Existing idempotency,
 generation and repository-approval requirements are unchanged.
+
+### Create and start the primary VM
+
+`POST /api/development-workspaces` accepts optional `"startPrimaryVm": true`.
+Omitted or `false` keeps the default: the workspace is created stopped, and
+existing callers (including the CLI) and their idempotent retries are
+unchanged. When `true`, the create also queues one start of the primary VM in
+the same transaction, applying the normal start admission. The field is part
+of the idempotent request, so a retry with the same `idempotencyKey` returns
+the same workspace and the same start operation without queueing another;
+reusing the key with a different `startPrimaryVm` returns
+`409 workspace_idempotency_conflict`.
+
+If the start isn't admitted (for example `workspace_admission_limit`), the
+workspace is still created with its primary VM stopped, and the response
+returns `201` with the reason in the primary VM's `errorCode` and
+`errorMessage`. Retry with the normal VM start route; a successful start clears
+the reason. The dashboard uses this when creating a dev environment, then
+opens the new environment's detail page to follow startup. Viewing or
+refreshing that page never starts a VM.
 
 ## Development workspace idle timeout
 

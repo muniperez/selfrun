@@ -12,7 +12,8 @@ vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
 vi.mock("@/api/environmentsApi", () => ({ listDevelopmentWorkspaces: vi.fn() }));
 vi.mock("@/api/workspacesApi", () => ({ getWorkspace: vi.fn() }));
 vi.mock("./CreateWorkspaceDialog", () => ({
-  CreateWorkspaceDialog: ({ canManage }: { canManage: boolean }) => canManage ? <button>Create workspace</button> : null,
+  CreateWorkspaceDialog: ({ canManage, onCreated }: { canManage: boolean; onCreated: (created: DevelopmentWorkspace) => void }) =>
+    canManage ? <button onClick={() => onCreated({ id: "created/one", name: "Created" } as DevelopmentWorkspace)}>Create workspace</button> : null,
 }));
 vi.mock("./WorkspaceDetail", () => ({
   WorkspaceDetail: ({ item, refresh }: { item: DevelopmentWorkspace; refresh: (observed?: DevelopmentWorkspace) => Promise<void> }) =>
@@ -61,6 +62,23 @@ function loadDetail() {
     <Route path="/workspaces" element={<WorkspacesModule />} />
   </Routes></MemoryRouter>);
 }
+
+it("opens the created environment's detail page and follows its queued startup without listing again", async () => {
+  vi.useFakeTimers();
+  const starting = workspace({ id: "created/one", name: "Created", vms: [vm("primary", { desiredState: "running", phase: "provisioning", generation: 1 })] });
+  vi.mocked(getWorkspace).mockResolvedValueOnce(starting)
+    .mockResolvedValueOnce(workspace({ ...starting, revision: 2, vms: [vm("primary", { desiredState: "running", phase: "ready", generation: 1 })] }));
+  load();
+  await act(async () => {});
+  expect(listDevelopmentWorkspaces).toHaveBeenCalledTimes(1);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Create workspace" })));
+  expect(getWorkspace).toHaveBeenCalledWith("created/one", "org-a", expect.any(AbortSignal));
+  expect(screen.getByRole("article", { name: "Workspace Created" })).toHaveTextContent("primary: provisioning");
+  expect(screen.queryByRole("button", { name: "Create workspace" })).not.toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  expect(screen.getByText("primary: ready")).toBeInTheDocument();
+  expect(listDevelopmentWorkspaces).toHaveBeenCalledTimes(1);
+});
 
 it("keeps an accepted start and costs visible after a failed read; checks status until ready", async () => {
   vi.useFakeTimers();
