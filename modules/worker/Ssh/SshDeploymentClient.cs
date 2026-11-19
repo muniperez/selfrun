@@ -427,8 +427,9 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                 command.CommandTimeout = commandTimeout;
 
                 cancellationToken.ThrowIfCancellationRequested();
-                var asyncResult = command.BeginExecute();
-                var executeTask = Task.Factory.FromAsync(asyncResult, _ => command.EndExecute(asyncResult));
+                // EndExecute reads command.Result, which drains OutputStream and can
+                // steal trailing lines (including the completion marker) from the pump.
+                var executeTask = command.ExecuteAsync(CancellationToken.None);
 
                 var stdoutTask = PumpLinesAsync(
                     new StreamReader(command.OutputStream, Encoding.UTF8),
