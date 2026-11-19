@@ -401,6 +401,7 @@ export type DevelopmentWorkspace = {
   createdBy?: string | null;
   idleTimeoutMinutes?: number | null;
   effectiveIdleTimeoutMinutes?: number | null;
+  keepRunning?: boolean;
   name: string;
   imageId: string;
   profile: string;

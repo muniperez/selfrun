@@ -48,7 +48,7 @@ public sealed partial class DevelopmentWorkspaceService(
             {
                 Id = ids.NewId("workspace"), OrganizationId = request.OrganizationId, CreatedBy = actorId,
                 Name = request.Name.Trim(), ProviderAccountId = selection.Plan.ProviderAccountId, Region = selection.Plan.Region,
-                IdleTimeoutMinutes = request.IdleTimeoutMinutes,
+                IdleTimeoutMinutes = request.IdleTimeoutMinutes, KeepRunning = request.KeepRunning,
                 VolumeSizeGb = request.VolumeSizeGb, StorageMonthlyRate = Policy.VolumeMonthlyRatePerGb * request.VolumeSizeGb,
                 Currency = Policy.Currency, PricingUpdatedAt = Policy.PricingUpdatedAt,
                 IdempotencyKey = request.IdempotencyKey, RequestDigest = digest, CreatedAt = Now, UpdatedAt = Now
@@ -255,7 +255,9 @@ public sealed partial class DevelopmentWorkspaceService(
         {
             if (!(await maintenance.CheckAsync(db, requireOpen: true, token)).IsAdmitted)
                 throw Conflict("workspace_maintenance_fenced", "Maintenance authority is not open for automatic idle-stop admission.");
-            if (deadline < Now || !await IsIdleAsync(vm, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes), token))
+            if (workspace.KeepRunning)
+                throw Conflict("workspace_keep_running", "This dev environment is set to keep running; automatic idle stop is off.");
+            if (deadline < Now || !await IsIdleAsync(vm, EffectiveIdleTimeout(workspace), token))
                 throw Conflict("workspace_active", "Activity, missing heartbeat or unresolved tasks prevent idle shutdown.");
             await StopCoreAsync(workspace, vm, "idle", deadline, token);
         }, ct);
@@ -313,7 +315,7 @@ public sealed partial class DevelopmentWorkspaceService(
             workspace.Vms.Where(x => x.ComputeReserved).Sum(x => x.ComputeHourlyRate * 720m), workspace.StorageMonthlyRate,
             workspace.Currency, workspace.PricingUpdatedAt, workspace.Revision, workspace.CreatedAt, workspace.UpdatedAt,
             workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus,
-            workspace.CreatedBy, workspace.IdleTimeoutMinutes, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes));
+            workspace.CreatedBy, workspace.IdleTimeoutMinutes, EffectiveIdleTimeout(workspace), workspace.KeepRunning);
     }
 
     public DevelopmentWorkspaceVmResponse ToVmResponse(DevelopmentWorkspaceVm vm) =>

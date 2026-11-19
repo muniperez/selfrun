@@ -31,7 +31,7 @@ public sealed partial class DevelopmentWorkspaceService
                         continue;
                     var workspace = await db.DevelopmentWorkspaces.SingleAsync(
                         x => x.Id == vm.WorkspaceId && x.OrganizationId == vm.OrganizationId, ct);
-                    if (!HasIdleElapsed(vm, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes), now))
+                    if (!HasIdleElapsed(vm, EffectiveIdleTimeout(workspace), now))
                     {
                         CancelUnclaimedIdleStop(vm, operation);
                         Touch(workspace);

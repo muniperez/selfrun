@@ -167,6 +167,25 @@ are separate. Shutdown deletes compute while retaining primary storage; compute
 charges continue until deletion is confirmed, and a longer timeout may increase
 cost. Dashboard users manage the value in **Workspaces → workspace → Settings**.
 
+### Keep running
+
+Workspace responses include `keepRunning`. When it is `true`, automatic idle
+stop is off for every machine in the dev environment and
+`effectiveIdleTimeoutMinutes` is `null`; `idleTimeoutMinutes` keeps the saved
+override, if any. Set it with
+`{"idleTimeoutMinutes":90,"keepRunning":true}` on the same `PUT …/idle-timeout`
+route, or with `"keepRunning": true` on create. Omitting `keepRunning` or
+sending `false` turns automatic idle stop back on with the supplied timeout, so
+existing callers and idempotent create retries are unchanged. Turning Keep
+running on cancels unclaimed idle countdowns and does not undo a claimed
+shutdown. Automatic idle-stop admission returns `409 workspace_keep_running`.
+
+Keep running does not start a stopped machine or bypass safeguards. Manual
+stop and stop-all, task leases, Git-save guards, generation fencing, quotas
+and organization spend limits (which already reserve a full month of compute
+per started machine) apply unchanged. Compute is billed for every running
+machine until it is stopped and deletion is confirmed.
+
 ## Browser accounts
 
 The dashboard uses credentialed requests only to its configured API origin.

@@ -10,13 +10,17 @@ public sealed partial class DevelopmentWorkspaceService
 
     public Task<DevelopmentWorkspace> UpdateIdleTimeoutAsync(string workspaceId, string organizationId,
         int? idleTimeoutMinutes, CancellationToken ct) =>
+        UpdateIdleTimeoutAsync(workspaceId, organizationId, idleTimeoutMinutes, keepRunning: false, ct);
+
+    public Task<DevelopmentWorkspace> UpdateIdleTimeoutAsync(string workspaceId, string organizationId,
+        int? idleTimeoutMinutes, bool keepRunning, CancellationToken ct) =>
         AtomicAsync(async () =>
         {
             ValidateIdleTimeout(idleTimeoutMinutes);
             var workspace = await FindAsync(workspaceId, organizationId, ct);
             var now = Now;
-            var timeoutMinutes = EffectiveIdleTimeout(idleTimeoutMinutes);
-            var changed = workspace.IdleTimeoutMinutes != idleTimeoutMinutes;
+            var timeoutMinutes = EffectiveIdleTimeout(idleTimeoutMinutes, keepRunning);
+            var changed = workspace.IdleTimeoutMinutes != idleTimeoutMinutes || workspace.KeepRunning != keepRunning;
             foreach (var vm in workspace.Vms)
             {
                 if (!CanCancelIdleStop(vm) || vm.ShutdownDeadline is null || HasIdleElapsed(vm, timeoutMinutes, now))
@@ -32,6 +36,7 @@ public sealed partial class DevelopmentWorkspaceService
             if (changed)
             {
                 workspace.IdleTimeoutMinutes = idleTimeoutMinutes;
+                workspace.KeepRunning = keepRunning;
                 Touch(workspace);
             }
             return workspace;
@@ -39,23 +44,28 @@ public sealed partial class DevelopmentWorkspaceService
 
     public async Task<bool> IsIdleAsync(DevelopmentWorkspaceVm vm, CancellationToken ct)
     {
-        var idleTimeout = await db.DevelopmentWorkspaces.AsNoTracking()
+        var policy = await db.DevelopmentWorkspaces.AsNoTracking()
             .Where(x => x.Id == vm.WorkspaceId && x.OrganizationId == vm.OrganizationId)
-            .Select(x => x.IdleTimeoutMinutes).SingleAsync(ct);
-        return await IsIdleAsync(vm, EffectiveIdleTimeout(idleTimeout), ct);
+            .Select(x => new { x.IdleTimeoutMinutes, x.KeepRunning }).SingleAsync(ct);
+        return await IsIdleAsync(vm, EffectiveIdleTimeout(policy.IdleTimeoutMinutes, policy.KeepRunning), ct);
     }
 
-    private async Task<bool> IsIdleAsync(DevelopmentWorkspaceVm vm, int timeoutMinutes, CancellationToken ct)
+    private async Task<bool> IsIdleAsync(DevelopmentWorkspaceVm vm, int? timeoutMinutes, CancellationToken ct)
     {
         var now = Now;
         return vm.DesiredState == "running" && vm.Phase == "ready" && HasIdleElapsed(vm, timeoutMinutes, now)
             && HasFreshHeartbeat(vm, now) && !await HasUnresolvedTasksAsync(vm, ct);
     }
 
-    private int EffectiveIdleTimeout(int? idleTimeoutMinutes) => idleTimeoutMinutes ?? Policy.IdleGraceMinutes;
+    // Null means Keep running: no inactivity timeout applies, so automatic idle stop never starts.
+    private int? EffectiveIdleTimeout(DevelopmentWorkspace workspace) =>
+        EffectiveIdleTimeout(workspace.IdleTimeoutMinutes, workspace.KeepRunning);
 
-    private static bool HasIdleElapsed(DevelopmentWorkspaceVm vm, int timeoutMinutes, DateTimeOffset now) =>
-        vm.LastActivityAt is { } activity && now - activity >= TimeSpan.FromMinutes(timeoutMinutes);
+    private int? EffectiveIdleTimeout(int? idleTimeoutMinutes, bool keepRunning) =>
+        keepRunning ? null : idleTimeoutMinutes ?? Policy.IdleGraceMinutes;
+
+    private static bool HasIdleElapsed(DevelopmentWorkspaceVm vm, int? timeoutMinutes, DateTimeOffset now) =>
+        timeoutMinutes is { } timeout && vm.LastActivityAt is { } activity && now - activity >= TimeSpan.FromMinutes(timeout);
 
     private bool HasFreshHeartbeat(DevelopmentWorkspaceVm vm, DateTimeOffset now) =>
         vm.LastHeartbeatAt >= now.AddSeconds(-Policy.HeartbeatTimeoutSeconds);
