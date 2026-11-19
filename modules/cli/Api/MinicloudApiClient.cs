@@ -107,6 +107,11 @@ public sealed class MinicloudApiClient
     public Task<DevelopmentWorkspaceResponse> CreateDevelopmentWorkspaceAsync(CreateDevelopmentWorkspaceRequest request, CancellationToken ct) =>
         SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post, "/api/development-workspaces", request, ct);
 
+    public Task<DevelopmentWorkspaceResponse> UpdateDevelopmentWorkspaceIdleTimeoutAsync(string id, string organizationId,
+        UpdateDevelopmentWorkspaceIdleTimeoutRequest request, CancellationToken ct) =>
+        SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Put,
+            $"/api/development-workspaces/{Uri.EscapeDataString(id)}/idle-timeout?organizationId={Uri.EscapeDataString(organizationId)}", request, ct);
+
     public Task<DevelopmentWorkspaceResponse> MutateDevelopmentWorkspaceAsync(string id, string organizationId, string action, CancellationToken ct) =>
         SendAsync<DevelopmentWorkspaceResponse>(HttpMethod.Post,
             $"/api/development-workspaces/{Uri.EscapeDataString(id)}/{Uri.EscapeDataString(action)}?organizationId={Uri.EscapeDataString(organizationId)}", null, ct);

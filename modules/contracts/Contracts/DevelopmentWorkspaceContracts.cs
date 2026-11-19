@@ -20,10 +20,13 @@ public sealed record CreateDevelopmentWorkspaceRequest(
     int VolumeSizeGb,
     string IdempotencyKey,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonNumberHandling(JsonNumberHandling.Strict)]
-    int? IdleTimeoutMinutes = null);
+    int? IdleTimeoutMinutes = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    bool KeepRunning = false);
 
 public sealed record UpdateDevelopmentWorkspaceIdleTimeoutRequest(
-    [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes);
+    [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes,
+    bool KeepRunning = false);
 
 public sealed record DevelopmentWorkspaceResponse(
     string Id,
@@ -58,7 +61,8 @@ public sealed record DevelopmentWorkspaceResponse(
     string? VolumeStatus = null,
     string? CreatedBy = null,
     int? IdleTimeoutMinutes = null,
-    int? EffectiveIdleTimeoutMinutes = null);
+    int? EffectiveIdleTimeoutMinutes = null,
+    bool KeepRunning = false);
 
 public sealed record DevelopmentWorkspaceTaskLeaseRequest(string TaskId, long Generation);
 public sealed record DevelopmentWorkspaceGenerationRequest(long Generation);

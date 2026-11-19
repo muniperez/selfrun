@@ -303,6 +303,7 @@ public sealed partial class CliApplication
             case "workspaces start":
             case "workspaces stop":
             case "workspaces cancel-idle-stop":
+            case "workspaces idle-timeout":
             case "workspaces resize-next-start":
             case "workspaces vms":
             case "workspaces launch":
@@ -318,10 +319,11 @@ public sealed partial class CliApplication
                 _console.WriteLine("Manage opt-in ephemeral development workspaces");
                 _console.WriteLine("  minicloud workspaces list [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces selections [--workspace <id>] [--organization <id>]");
-                _console.WriteLine("  minicloud workspaces create --name <name> --image <registered-image> --profile Standard|Heavy --plan <plan-id> --volume-gb <10-10000> [--idempotency-key <key>] [--organization <id>]");
+                _console.WriteLine("  minicloud workspaces create --name <name> --image <registered-image> --profile Standard|Heavy --plan <plan-id> --volume-gb <10-10000> [--idle-timeout <1-10080> | --keep-running] [--idempotency-key <key>] [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces status <workspace-id> --organization <id>");
                 _console.WriteLine("  minicloud workspaces open <workspace-id> [--vm <id>] [--no-browser]");
                 _console.WriteLine("  minicloud workspaces <start|stop|cancel-idle-stop> <workspace-id> --organization <id>");
+                _console.WriteLine("  minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|--keep-running");
                 _console.WriteLine("  minicloud workspaces <vms|stop-all> <workspace-id> [--organization <id>]");
                 _console.WriteLine("  minicloud workspaces launch <workspace-id> --image <id> --profile Standard|Heavy --plan <id> --repository <url> --base-ref <ref> --base-commit <resolved-sha> --push-authorized --acknowledge-ignored-data-loss [--idempotency-key <key>] [--repository-credential-ref <ref>]");
                 _console.WriteLine("  minicloud workspaces vm-status <workspace-id> --vm <id>");
@@ -334,6 +336,7 @@ public sealed partial class CliApplication
                 _console.WriteLine("Open mints a short-lived single-use T3 gateway link for a ready running VM (primary by default) and never starts compute.");
                 _console.WriteLine("Ephemeral roots are Git-only; ignored/untracked data is not retained. Stop-all enumerates VMs and retains independent Git-save guards.");
                 _console.WriteLine("vm-start recreates a normally saved Git-only VM at its verified saved commit/ref on a new generation branch; invalid saved evidence or a changed remote blocks recovery. Explicitly discarded generations reuse their selected base. No commit/push is automatic.");
+                _console.WriteLine("Idle timeout is the inactivity before automatic stop (default: server setting). --keep-running turns automatic idle stop off; running compute is billed until you stop it.");
                 _console.WriteLine("Provisioning requires operator-enabled image/profile/rate policy. Stopped compute does not stop retained-volume charges.");
                 return CliExitCodes.Success;
             case "plans":

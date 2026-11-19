@@ -12,11 +12,11 @@ public sealed partial class CliApplication
     private async Task<int> RunWorkspacesAsync(string[] args, CancellationToken ct)
     {
         var action = args.FirstOrDefault();
-        if (action is not ("list" or "selections" or "create" or "open" or "status" or "start" or "stop" or "cancel-idle-stop"
+        if (action is not ("list" or "selections" or "create" or "open" or "status" or "start" or "stop" or "cancel-idle-stop" or "idle-timeout"
             or "resize-next-start" or "vms" or "launch" or "vm-status" or "vm-start" or "vm-stop"
             or "vm-cancel-idle-stop" or "vm-discard" or "vm-resize-next-start" or "stop-all"
             or "task-renew" or "task-complete"))
-            throw WorkspaceUsage("Expected list, selections, create, open, status, start, stop, cancel-idle-stop, resize-next-start, vms, launch, vm-status, vm-start, vm-stop, vm-cancel-idle-stop, vm-discard, vm-resize-next-start, stop-all, task-renew or task-complete. See workspaces --help.");
+            throw WorkspaceUsage("Expected list, selections, create, open, status, start, stop, cancel-idle-stop, idle-timeout, resize-next-start, vms, launch, vm-status, vm-start, vm-stop, vm-cancel-idle-stop, vm-discard, vm-resize-next-start, stop-all, task-renew or task-complete. See workspaces --help.");
 
         string Required(string option) => GetOption(args, option) is { Length: > 0 } value
             ? value : throw WorkspaceUsage($"Required: {option} <value>.");
@@ -38,6 +38,9 @@ public sealed partial class CliApplication
             else human(value);
             return CliExitCodes.Success;
         }
+        int? IdleTimeoutOption(string option) => GetOption(args, option) is not { } raw ? null
+            : int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes) && minutes is >= 1 and <= 10_080
+                ? minutes : throw WorkspaceUsage($"{option} must be a whole number of minutes from 1 to 10080 (7 days).");
         DevelopmentWorkspaceResizeRequest Resize() => new(Generation(), Required("--image"), Required("--profile"), Required("--plan"));
 
         var me = await _apiClient.GetMeAsync(ct);
@@ -70,20 +73,23 @@ public sealed partial class CliApplication
             Note(explicitKey is null
                 ? $"Create idempotency key: {key} (derived from organization and name). Re-running the same create resumes this workspace."
                 : $"Create idempotency key: {key}. Reuse this key when retrying the same request.");
+            var keepRunning = args.Contains("--keep-running", StringComparer.Ordinal);
             DevelopmentWorkspaceResponse created;
             try
             {
                 created = await _apiClient.CreateDevelopmentWorkspaceAsync(new CreateDevelopmentWorkspaceRequest(
-                    organizationId, name, Required("--image"), Required("--profile"), Required("--plan"), size, key), ct);
+                    organizationId, name, Required("--image"), Required("--profile"), Required("--plan"), size, key,
+                    IdleTimeoutOption("--idle-timeout"), keepRunning), ct);
             }
             catch (ApiException error) when (error.Code == "workspace_idempotency_conflict")
             {
                 throw WorkspaceUsage(explicitKey is null
-                    ? $"Workspace '{name}' already exists with a different image, profile, plan or volume size. Inspect it with 'minicloud workspaces list', change it with resize-next-start, or choose another --name."
+                    ? $"Workspace '{name}' already exists with a different image, profile, plan, volume size or idle setting. Inspect it with 'minicloud workspaces list', change it with resize-next-start or idle-timeout, or choose another --name."
                     : "This --idempotency-key was already used with a different request. Repeat the original options or use a new key.");
             }
             Output(created, WriteWorkspace);
             Note("Workspace created stopped; start is explicit.");
+            if (created.KeepRunning) Note(KeepRunningCostNote(created));
             return CliExitCodes.Success;
         }
 
@@ -178,6 +184,23 @@ public sealed partial class CliApplication
             return Output(await _apiClient.WorkspaceOperationAsync(id, organizationId,
                 $"vms/{Uri.EscapeDataString(vm)}/{(operation == "resize-next-start" ? "resize" : operation)}", body, ct), WriteWorkspace);
         }
+        if (action == "idle-timeout")
+        {
+            var minutes = IdleTimeoutOption("--minutes");
+            var useDefault = args.Contains("--default", StringComparer.Ordinal);
+            var keepRunning = args.Contains("--keep-running", StringComparer.Ordinal);
+            if ((minutes is not null ? 1 : 0) + (useDefault ? 1 : 0) + (keepRunning ? 1 : 0) != 1)
+                throw WorkspaceUsage("Choose exactly one of --minutes <1-10080>, --default or --keep-running.");
+            // Keep running retains the saved timeout so a later switch back restores the same value.
+            var request = keepRunning
+                ? new UpdateDevelopmentWorkspaceIdleTimeoutRequest(
+                    (await _apiClient.GetDevelopmentWorkspaceAsync(id, organizationId, ct)).IdleTimeoutMinutes, true)
+                : new UpdateDevelopmentWorkspaceIdleTimeoutRequest(minutes);
+            var updated = await _apiClient.UpdateDevelopmentWorkspaceIdleTimeoutAsync(id, organizationId, request, ct);
+            Output(updated, WriteWorkspace);
+            if (updated.KeepRunning) Note(KeepRunningCostNote(updated));
+            return CliExitCodes.Success;
+        }
         if (action == "stop-all")
         {
             var current = await _apiClient.GetDevelopmentWorkspaceAsync(id, organizationId, ct);
@@ -211,9 +234,23 @@ public sealed partial class CliApplication
         if (selections.Options.Count == 0) _console.WriteLine("No eligible image, profile and plan combinations.");
     }
 
+    internal static string KeepRunningCostNote(DevelopmentWorkspaceResponse workspace)
+    {
+        var primary = (workspace.Vms ?? []).FirstOrDefault(x => x.Kind == "primary");
+        var estimate = primary is null ? "" : $" The primary machine at its current size is estimated at {primary.ComputeHourlyRate * 720m:F2} {workspace.Currency}/month.";
+        return "Keep running is on: machines in this dev environment are never stopped for inactivity. "
+            + "Compute is billed for every running machine until you stop it with 'minicloud workspaces stop' or 'stop-all'." + estimate
+            + " Organization spend limits still apply when machines start.";
+    }
+
     private void WriteWorkspace(DevelopmentWorkspaceResponse workspace)
     {
         _console.WriteLine($"Workspace: {workspace.Name} ({workspace.Id})");
+        _console.WriteLine(workspace.KeepRunning
+            ? "Idle stop: off (Keep running); running machines are billed until you stop them."
+            : workspace.EffectiveIdleTimeoutMinutes is { } timeout
+                ? $"Idle stop: after {timeout} minutes without activity ({(workspace.IdleTimeoutMinutes is null ? "server default" : "dev environment setting")})."
+                : "Idle stop: timeout unavailable.");
         _console.WriteLine($"Primary retained storage: {workspace.VolumeSizeGb} GB; {workspace.VolumeStatus ?? "status unavailable"}; storage charges continue while stopped.");
         _console.WriteLine($"Estimated storage: {workspace.EstimatedMonthlyStorage:F2} {workspace.Currency}/month; rates {(workspace.PricingUpdatedAt?.ToString("O") ?? "timestamp unavailable")}");
         foreach (var vm in workspace.Vms ?? []) WriteWorkspaceVm(vm);

@@ -646,6 +646,7 @@ minicloud workspaces start <workspace-id>
 minicloud workspaces status <workspace-id>
 minicloud workspaces open <workspace-id> [--vm <vm-id>] [--no-browser]
 minicloud workspaces stop <workspace-id>
+minicloud workspaces idle-timeout <workspace-id> --minutes <1-10080>|--default|--keep-running
 ```
 
 - `selections` lists the eligible `--image`, `--profile` and `--plan`
@@ -660,6 +661,16 @@ minicloud workspaces stop <workspace-id>
   primary by default, and opens it in your browser. It never starts compute.
   Use `--no-browser` on terminal-only clients. Run it again after the link
   expires. Do not share the link.
+- `idle-timeout` sets how long a dev environment's machines may be inactive
+  before they stop automatically: `--minutes` saves a value, `--default` uses
+  the server default (6 hours unless your operator changed it), and
+  `--keep-running` turns automatic idle stop off so T3 and agents stay
+  available while no client is connected. `create` accepts the same
+  `--idle-timeout <minutes>` or `--keep-running`. With Keep running, compute is
+  billed for every running machine until you run `stop` or `stop-all`; the
+  command prints the estimated monthly compute for the primary machine.
+  Organization spend limits still apply when machines start. Keep running
+  keeps the saved minutes so `--minutes` or the dashboard can turn it off again.
 - Sign in to coding providers inside T3. Repository access uses the organization's
   [GitHub App](github-app.md). For optional T3 account linking, see
   [T3 Connect](t3-connect.md).

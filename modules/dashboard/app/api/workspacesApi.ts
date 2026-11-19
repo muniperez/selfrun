@@ -24,9 +24,10 @@ export function workspaceOperation(id: string, organizationId: string, operation
   });
 }
 
-export function updateWorkspaceIdleTimeout(id: string, organizationId: string, idleTimeoutMinutes: number | null) {
+export function updateWorkspaceIdleTimeout(id: string, organizationId: string, idleTimeoutMinutes: number | null,
+  keepRunning = false) {
   return apiRequest<DevelopmentWorkspace>(workspacePath(id, organizationId, "idle-timeout"), {
-    method: "PUT", body: { idleTimeoutMinutes },
+    method: "PUT", body: { idleTimeoutMinutes, keepRunning },
   });
 }
 

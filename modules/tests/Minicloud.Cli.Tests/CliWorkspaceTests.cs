@@ -44,6 +44,8 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal("/api/development-workspaces", request.Path);
         Assert.Equal("org", request.Body.GetProperty("organizationId").GetString());
         Assert.Equal("create-once", request.Body.GetProperty("idempotencyKey").GetString());
+        Assert.False(request.Body.TryGetProperty("keepRunning", out _));
+        Assert.False(request.Body.TryGetProperty("idleTimeoutMinutes", out _));
         Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org"));
         Assert.Equal(CliExitCodes.Success, await Run("vms", "workspace", "--organization", "org"));
         Assert.DoesNotContain(_handler.Requests, x => x.Path.Contains("/start"));
@@ -234,6 +236,40 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal("primary", document.RootElement.GetProperty("vms")[0].GetProperty("id").GetString());
     }
 
+    [Fact]
+    public async Task IdleTimeoutSetsOneChoiceAndKeepRunningDisclosesContinuousCompute()
+    {
+        Assert.Equal(CliExitCodes.ValidationError, await Run("idle-timeout", "workspace", "--organization", "org"));
+        Assert.Equal(CliExitCodes.ValidationError, await Run("idle-timeout", "workspace", "--organization", "org", "--minutes", "30", "--keep-running"));
+        Assert.Equal(CliExitCodes.ValidationError, await Run("idle-timeout", "workspace", "--organization", "org", "--minutes", "0"));
+        Assert.DoesNotContain(_handler.Requests, x => x.Method == "PUT");
+
+        Assert.Equal(CliExitCodes.Success, await Run("idle-timeout", "workspace", "--organization", "org", "--minutes", "90"));
+        var request = _handler.Requests.Last();
+        Assert.Equal(("PUT", "/api/development-workspaces/workspace/idle-timeout?organizationId=org"), (request.Method, request.Path));
+        Assert.Equal(90, request.Body.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.False(request.Body.GetProperty("keepRunning").GetBoolean());
+
+        Assert.Equal(CliExitCodes.Success, await Run("idle-timeout", "workspace", "--organization", "org", "--default"));
+        Assert.Equal(JsonValueKind.Null, _handler.Requests.Last().Body.GetProperty("idleTimeoutMinutes").ValueKind);
+
+        _console.Messages.Clear();
+        Assert.Equal(CliExitCodes.Success, await Run("idle-timeout", "workspace", "--organization", "org", "--keep-running"));
+        request = _handler.Requests.Last();
+        Assert.True(request.Body.GetProperty("keepRunning").GetBoolean());
+        Assert.Equal(45, request.Body.GetProperty("idleTimeoutMinutes").GetInt32());
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("Idle stop: off (Keep running)", output);
+        Assert.Contains("billed for every running machine until you stop it", output);
+        Assert.Contains("36.00 EUR/month", output);
+
+        Assert.Equal(CliExitCodes.Success, await Run("create", "--organization", "org", "--name", "Always", "--image", "image",
+            "--profile", "Standard", "--plan", "plan", "--volume-gb", "20", "--keep-running", "--idle-timeout", "120"));
+        request = _handler.Requests.Last();
+        Assert.True(request.Body.GetProperty("keepRunning").GetBoolean());
+        Assert.Equal(120, request.Body.GetProperty("idleTimeoutMinutes").GetInt32());
+    }
+
     public void Dispose() => _directory.Delete(true);
 
     private sealed record Captured(string Method, string Path, JsonElement Body);
@@ -264,11 +300,14 @@ public sealed class CliWorkspaceTests : IDisposable
                     providerAccountName = "Hetzner", region = "nbg1", sku = "cx22" } } }
                 : path.Contains("/tasks/") ? new { vmId = "ephemeral", taskId = "build", generation = 3, status = "active", expiresAt = DateTimeOffset.UtcNow.AddMinutes(5) }
                 : path.EndsWith("/vms?organizationId=org") ? Vms
-                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms };
+                : path.Contains("/idle-timeout?") ? new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
+                    keepRunning = JsonDocument.Parse(json).RootElement.TryGetProperty("keepRunning", out var keep) && keep.GetBoolean() }
+                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
+                    idleTimeoutMinutes = 45, effectiveIdleTimeoutMinutes = 45 };
             return new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
         }
         private static readonly object[] Vms = [
-            new { id = "primary", kind = "primary", generation = 3, desiredState = "running", phase = "ready", profile = "Standard", sku = "sku", region = "region" },
+            new { id = "primary", kind = "primary", generation = 3, desiredState = "running", phase = "ready", profile = "Standard", sku = "sku", region = "region", computeHourlyRate = 0.05m },
             new { id = "ephemeral", kind = "ephemeral", generation = 3, desiredState = "stopped", phase = "awaiting_git_save",
                 profile = "Heavy", sku = "sku", region = "region", errorCode = "remote_unavailable", errorMessage = "Restore remote access", gitStatus = "blocked" },
         ];

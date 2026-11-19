@@ -478,6 +478,29 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MonitorNeverSchedulesIdleStopWhileKeepRunning(bool ephemeral)
+    {
+        var (workspace, vm, start) = await Seed("ready", ephemeral);
+        vm.Phase = "ready"; vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        vm.LastActivityAt = clock.GetUtcNow().AddDays(-6);
+        start.Status = "completed";
+        await db.SaveChangesAsync();
+        await lifecycle.UpdateIdleTimeoutAsync(workspace.Id, "org", 1, keepRunning: true, default);
+
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+        var current = await CurrentVm(vm.Id);
+        Assert.Equal(clock.GetUtcNow(), current.LastHeartbeatAt);
+        Assert.Null(current.ShutdownDeadline);
+        Assert.Equal("running", current.DesiredState);
+
+        await lifecycle.UpdateIdleTimeoutAsync(workspace.Id, "org", 1, default);
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+        Assert.NotNull((await CurrentVm(vm.Id)).ShutdownDeadline);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(true, true)]

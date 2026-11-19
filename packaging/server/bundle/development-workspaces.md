@@ -59,8 +59,10 @@ dedicated service credential and transport configuration.
 For workspaces without a saved idle timeout, `DevelopmentWorkspaces.IdleGraceMinutes`
 is the operator default in the protected JSON. Keep a deliberately configured
 value; when omitted it defaults to 360 minutes (6 hours). A saved workspace
-setting takes precedence for both VM kinds. Apply the database migration and
-update the API and worker together before reopening workspace operations.
+setting takes precedence for both VM kinds. A dev environment set to **Keep
+running** never stops for inactivity; spend limits and manual stop still apply.
+Apply the database migration and update the API and worker together before
+reopening workspace operations.
 
 ## Opt-in startup
 

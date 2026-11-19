@@ -67,6 +67,35 @@ public sealed partial class DevelopmentWorkspaceApiTests
         await AssertNoCompute();
     }
 
+    [Fact]
+    public async Task KeepRunningIsSetOnCreateOrUpdateAndClearedBySavingATimeout()
+    {
+        using var owner = Client(token);
+        var created = await owner.PostAsJsonAsync(Root, Request() with { KeepRunning = true, IdleTimeoutMinutes = 120 });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var workspace = (await created.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!;
+        Assert.True(workspace.KeepRunning);
+        Assert.Equal(120, workspace.IdleTimeoutMinutes);
+        Assert.Null(workspace.EffectiveIdleTimeoutMinutes);
+        Assert.Equal(HttpStatusCode.Conflict, (await owner.PostAsJsonAsync(Root, Request() with { IdleTimeoutMinutes = 120 })).StatusCode);
+
+        var settings = $"{Root}/{workspace.Id}/idle-timeout?organizationId=org";
+        var stopWhenIdle = await owner.PutAsJsonAsync(settings, new UpdateDevelopmentWorkspaceIdleTimeoutRequest(120));
+        var updated = (await stopWhenIdle.Content.ReadFromJsonAsync<DevelopmentWorkspaceResponse>())!;
+        Assert.False(updated.KeepRunning);
+        Assert.Equal(120, updated.EffectiveIdleTimeoutMinutes);
+
+        var keep = await owner.PutAsJsonAsync(settings, new JsonObject { ["idleTimeoutMinutes"] = null, ["keepRunning"] = true });
+        Assert.Equal(HttpStatusCode.OK, keep.StatusCode);
+        var listed = Assert.Single((await owner.GetFromJsonAsync<DevelopmentWorkspaceResponse[]>($"{Root}?organizationId=org"))!);
+        Assert.True(listed.KeepRunning);
+        Assert.Null(listed.IdleTimeoutMinutes);
+        Assert.Null(listed.EffectiveIdleTimeoutMinutes);
+        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PutAsJsonAsync(settings,
+            new JsonObject { ["idleTimeoutMinutes"] = null, ["keepRunning"] = "yes" })).StatusCode);
+        await AssertNoCompute();
+    }
+
     [Theory]
     [InlineData("0")]
     [InlineData("-1")]

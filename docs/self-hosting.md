@@ -125,6 +125,11 @@ primary and ephemeral VMs. Resetting the setting restores inheritance. See the
 [API contract](api.md#development-workspace-idle-timeout) for countdown and cost
 behavior.
 
+Users can also choose **Keep running** per dev environment, which turns
+automatic idle stop off; manual stop, quotas and the configured monthly spend
+limits still apply. The additive `keep_running` column defaults existing rows to
+idle stop. Roll it out with the API and worker together like the idle timeout.
+
 ### Optional packaged Google OIDC
 
 Password-only installation remains the default. Omitting `googleOidc`, or
