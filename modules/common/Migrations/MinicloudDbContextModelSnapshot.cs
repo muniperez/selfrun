@@ -1599,6 +1599,134 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("development_workspaces", (string)null);
                 });
 
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceFilesystemJob", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("actor_id");
+
+                    b.Property<bool>("CancelRequested")
+                        .HasColumnType("boolean")
+                        .HasColumnName("cancel_requested");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("confirmed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasColumnType("text")
+                        .HasColumnName("error_code");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("PathJson")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("path_json");
+
+                    b.Property<string>("RequestDigest")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("request_digest");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("text")
+                        .HasColumnName("result_json");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("SourceJobId")
+                        .HasColumnType("text")
+                        .HasColumnName("source_job_id");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("state");
+
+                    b.Property<long?>("TargetDevice")
+                        .HasColumnType("bigint")
+                        .HasColumnName("target_device");
+
+                    b.Property<long?>("TargetInode")
+                        .HasColumnType("bigint")
+                        .HasColumnName("target_inode");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VmId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("vm_id");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("State", "CreatedAt");
+
+                    b.HasIndex("VmId", "State");
+
+                    b.HasIndex("WorkspaceId", "VmId");
+
+                    b.HasIndex("VmId", "Kind", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("development_workspace_filesystem_jobs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_development_filesystem_job_kind", "kind IN ('disk_usage', 'directory_deletion')");
+                        });
+                });
+
             modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceGatewayRoute", b =>
                 {
                     b.Property<string>("Id")
@@ -2127,22 +2255,6 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("profile");
 
-                    b.Property<string>("ProviderFirewallId")
-                        .HasColumnType("text")
-                        .HasColumnName("provider_firewall_id");
-
-                    b.Property<string>("SshBootstrapSecretRef")
-                        .HasColumnType("text")
-                        .HasColumnName("ssh_bootstrap_secret_ref");
-
-                    b.Property<string>("RuntimeCredentialRef")
-                        .HasColumnType("text")
-                        .HasColumnName("runtime_credential_ref");
-
-                    b.Property<long?>("SshHostKeyGeneration")
-                        .HasColumnType("bigint")
-                        .HasColumnName("ssh_host_key_generation");
-
                     b.Property<string>("ProviderAccountId")
                         .IsRequired()
                         .HasColumnType("text")
@@ -2151,6 +2263,10 @@ namespace Minicloud.Common.Migrations
                     b.Property<string>("ProviderActionId")
                         .HasColumnType("text")
                         .HasColumnName("provider_action_id");
+
+                    b.Property<string>("ProviderFirewallId")
+                        .HasColumnType("text")
+                        .HasColumnName("provider_firewall_id");
 
                     b.Property<string>("ProviderImage")
                         .IsRequired()
@@ -2203,10 +2319,30 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("request_digest");
 
+                    b.Property<long?>("ResourceSampleGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("resource_sample_generation");
+
+                    b.Property<string>("ResourceSampleJson")
+                        .HasColumnType("text")
+                        .HasColumnName("resource_sample_json");
+
+                    b.Property<DateTimeOffset?>("ResourceSampleReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resource_sample_received_at");
+
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("revision");
+
+                    b.Property<string>("RuntimeCapabilities")
+                        .HasColumnType("text")
+                        .HasColumnName("runtime_capabilities");
+
+                    b.Property<string>("RuntimeCredentialRef")
+                        .HasColumnType("text")
+                        .HasColumnName("runtime_credential_ref");
 
                     b.Property<DateTimeOffset?>("RuntimeTokenExpiresAt")
                         .HasColumnType("timestamp with time zone")
@@ -2229,6 +2365,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("sku");
 
+                    b.Property<string>("SshBootstrapSecretRef")
+                        .HasColumnType("text")
+                        .HasColumnName("ssh_bootstrap_secret_ref");
+
                     b.Property<string>("SshHostKey")
                         .HasColumnType("text")
                         .HasColumnName("ssh_host_key");
@@ -2236,6 +2376,10 @@ namespace Minicloud.Common.Migrations
                     b.Property<string>("SshHostKeyFingerprint")
                         .HasColumnType("text")
                         .HasColumnName("ssh_host_key_fingerprint");
+
+                    b.Property<long?>("SshHostKeyGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ssh_host_key_generation");
 
                     b.Property<bool>("StartAfterStop")
                         .HasColumnType("boolean")
@@ -5037,6 +5181,16 @@ namespace Minicloud.Common.Migrations
                         .HasForeignKey("OrganizationId", "ProviderAccountId")
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.DevelopmentWorkspaceFilesystemJob", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.DevelopmentWorkspaceVm", null)
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId", "VmId")
+                        .HasPrincipalKey("WorkspaceId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

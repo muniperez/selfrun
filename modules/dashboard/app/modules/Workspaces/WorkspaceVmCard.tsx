@@ -10,6 +10,8 @@ import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/cont
 import { WorkspaceLaunchLink } from "./WorkspaceLaunchLink";
 import { WorkspaceSelectionFields, type WorkspaceSelection } from "./WorkspaceSelectionFields";
 import { WorkspaceT3Connect } from "./WorkspaceT3Connect";
+import { WorkspaceDiskUsage } from "./WorkspaceDiskUsage";
+import { WorkspaceVmResources } from "./WorkspaceVmResources";
 import { vmStartup, WorkspaceVmStartup } from "./WorkspaceVmStartup";
 
 type Props = {
@@ -218,6 +220,9 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
       <WorkspaceT3Connect workspaceId={workspaceId} vmId={vm.id} organizationId={organizationId}
         generation={vm.generation} revision={vm.revision} ready={ready && !busy} />
     </div>}
+    <WorkspaceVmResources vm={vm} />
+    {canManage && vm.resources && vm.resources.state !== "unsupported" && <WorkspaceDiskUsage workspaceId={workspaceId}
+      organizationId={organizationId} vm={vm} ready={ready && !busy} refresh={() => refresh()} />}
     <details className="min-w-0 border-t px-5 py-2 text-sm">
       <summary className="w-fit cursor-pointer text-xs text-muted-foreground hover:text-foreground">Advanced VM controls</summary>
       <div className="space-y-5 py-4">

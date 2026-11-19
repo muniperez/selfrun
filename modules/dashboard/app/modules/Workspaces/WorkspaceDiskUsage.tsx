@@ -1,0 +1,264 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, FolderOpen, HardDrive, Trash2 } from "lucide-react";
+import {
+  cancelFilesystemJob, getFilesystemJob, startDirectoryDeletion, startDiskUsageScan,
+  type DiskUsageEntry, type FilesystemJob,
+} from "@/api/workspaceFilesystemApi";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ApiError, type DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import { formatBytes, formatTime } from "./WorkspaceVmResources";
+
+type Props = {
+  workspaceId: string;
+  workspaceName?: string;
+  organizationId: string;
+  vm: DevelopmentWorkspaceVm;
+  ready: boolean;
+  refresh: () => Promise<void>;
+};
+
+/** A folder in the drill-down path and the selection token that opened it (null for /workspace). */
+type Level = { path: string; token: string | null };
+type Deleting = { entry: DiskUsageEntry; scannedAt: string | null | undefined; key: string; text: string; acknowledged: boolean };
+
+const root: Level = { path: "/workspace", token: null };
+const active = (job: FilesystemJob) => job.state === "queued" || job.state === "running";
+const maxPollDelay = 8000;
+
+const protectedReasons: Record<string, string> = {
+  protected_path: "Protected: only folders inside /workspace/repos, /workspace/home or /workspace/artifacts can be deleted here.",
+  not_owned_by_coding_user: "Protected: not owned by the dev environment user.",
+  separate_mount: "Separate disk, not measured or deletable here.",
+  name_not_supported: "Name not supported here.",
+  unreadable: "Could not be read.",
+};
+
+const outcomes: Record<string, string> = {
+  succeeded: "Folder deleted.",
+  partially_deleted: "Folder partly deleted. Some files could not be removed.",
+  failed: "Folder was not deleted.",
+  cancelled: "Deletion cancelled. Some files may already have been removed.",
+  outcome_unknown: "The result is unknown. Some or all files may have been removed. Fetch disk usage to check.",
+};
+
+function message(reason: unknown) {
+  if (reason instanceof ApiError && reason.status === 403) return "You no longer have permission to manage this dev environment.";
+  if (reason instanceof ApiError && reason.code === "workspace_folder_selection_expired")
+    return "These results have expired. Fetch disk usage again.";
+  return reason instanceof Error ? reason.message : "The folder request failed. Try again.";
+}
+
+function entryState(entry: DiskUsageEntry) {
+  if (entry.state === "partial") return <Badge variant="outline">Partial: at least this size</Badge>;
+  if (entry.state === "unreadable") return <Badge variant="outline">Unreadable</Badge>;
+  if (entry.state === "excluded") return <Badge variant="outline">Excluded</Badge>;
+  return null;
+}
+
+/** Results and selections belong to one VM generation; a new generation starts with a clean panel. */
+export function WorkspaceDiskUsage(props: Props) {
+  return <DiskUsagePanel key={`${props.organizationId}:${props.workspaceId}:${props.vm.id}:${props.vm.generation}`} {...props} />;
+}
+
+function DiskUsagePanel({ workspaceId, workspaceName, organizationId, vm, ready, refresh }: Props) {
+  const supported = !!vm.resources?.diskUsageSupported;
+  const deletionSupported = !!vm.resources?.directoryDeletionSupported;
+  const [open, setOpen] = useState(false);
+  const [stack, setStack] = useState<Level[]>([root]);
+  const [scan, setScan] = useState<FilesystemJob | null>(null);
+  const [deletion, setDeletion] = useState<FilesystemJob | null>(null);
+  const [deleting, setDeleting] = useState<Deleting | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const session = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; ++session.current; }, []);
+
+  const current = (id: number) => mounted.current && id === session.current;
+
+  const follow = useCallback(async (job: FilesystemJob, id: number, apply: (job: FilesystemJob) => void) => {
+    let delay = 500;
+    apply(job);
+    while (active(job)) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      if (!current(id)) return null;
+      delay = Math.min(delay * 2, maxPollDelay);
+      job = await getFilesystemJob(workspaceId, vm.id, organizationId, job.id);
+      if (!current(id)) return null;
+      apply(job);
+    }
+    return job;
+  }, [workspaceId, vm.id, organizationId]);
+
+  const fail = useCallback((reason: unknown, id: number) => {
+    if (!current(id)) return;
+    setError(message(reason));
+    if (reason instanceof ApiError && reason.status === 403) { setScan(null); setDeleting(null); setOpen(false); }
+  }, []);
+
+  const runScan = useCallback(async (levels: Level[]) => {
+    const id = ++session.current;
+    setError(null); setDeletion(null); setScan(null); setStack(levels); setOpen(true);
+    const target = levels[levels.length - 1];
+    try {
+      let job: FilesystemJob;
+      try {
+        job = await startDiskUsageScan(workspaceId, vm.id, organizationId,
+          { generation: vm.generation, idempotencyKey: crypto.randomUUID(), targetToken: target.token });
+      } catch (reason) {
+        // A folder selected from an older result can no longer be opened; start again from /workspace.
+        if (!(reason instanceof ApiError && reason.code === "workspace_folder_selection_expired") || !target.token) throw reason;
+        if (!current(id)) return;
+        setStack([root]);
+        job = await startDiskUsageScan(workspaceId, vm.id, organizationId,
+          { generation: vm.generation, idempotencyKey: crypto.randomUUID(), targetToken: null });
+      }
+      await follow(job, id, setScan);
+    } catch (reason) { fail(reason, id); }
+  }, [workspaceId, vm.id, vm.generation, organizationId, follow, fail]);
+
+  const cancel = async (job: FilesystemJob) => {
+    try {
+      const updated = await cancelFilesystemJob(workspaceId, vm.id, organizationId, job.id);
+      if (!mounted.current) return;
+      (job.kind === "directory_deletion" ? setDeletion : setScan)(prev => prev?.id === updated.id ? updated : prev);
+    } catch (reason) { fail(reason, session.current); }
+  };
+
+  const confirmDeletion = async () => {
+    if (!deleting || !deleting.entry.targetToken || deleting.text !== deleting.entry.path || !deleting.acknowledged) return;
+    const id = ++session.current;
+    setSubmitting(true); setError(null);
+    try {
+      const job = await startDirectoryDeletion(workspaceId, vm.id, organizationId, {
+        generation: vm.generation, targetToken: deleting.entry.targetToken, confirmationPath: deleting.text,
+        acknowledgePermanentLoss: true, idempotencyKey: deleting.key,
+      });
+      if (!current(id)) return;
+      setDeleting(null); setScan(null);
+      const done = await follow(job, id, setDeletion);
+      if (done) await refresh();
+    } catch (reason) { fail(reason, id); }
+    finally { if (mounted.current) setSubmitting(false); }
+  };
+
+  const usage = scan?.diskUsage;
+  const expiresAt = usage?.targetsExpireAt ? Date.parse(usage.targetsExpireAt) : null;
+  const expired = !!scan && !active(scan) && (expiresAt === null || expiresAt <= now);
+  useEffect(() => {
+    if (expiresAt === null || expiresAt <= Date.now()) return;
+    const timer = setTimeout(() => setNow(Date.now()), expiresAt - Date.now() + 50);
+    return () => clearTimeout(timer);
+  }, [expiresAt]);
+
+  const busy = !!(scan && active(scan)) || !!(deletion && active(deletion)) || submitting;
+  const level = stack[stack.length - 1];
+  const filesystem = vm.resources?.filesystems.find(fs => fs.paths.includes("/workspace"));
+
+  if (!supported) return <section aria-label={`Disk usage for dev environment ${vm.id}`} className="border-t px-5 py-3 text-sm">
+    <p className="text-muted-foreground">Folder sizes are not supported by this dev environment image.</p>
+  </section>;
+
+  return <section aria-label={`Disk usage for dev environment ${vm.id}`} className="space-y-3 border-t px-5 py-3 text-sm">
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" disabled={!ready || busy} onClick={() => void runScan(open ? stack : [root])}>
+        <HardDrive />{open && scan ? "Scan again" : "Fetch disk usage"}
+      </Button>
+      {!ready && <span className="text-muted-foreground">Start the dev environment to fetch folder sizes.</span>}
+      {open && <Button variant="ghost" disabled={busy} onClick={() => { ++session.current; setOpen(false); setScan(null); setDeletion(null); setError(null); }}>Close</Button>}
+    </div>
+    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {deletion && <div role="status" className="space-y-1">
+      {active(deletion) ? <p>Deleting {deletion.path}…</p>
+        : <p>{outcomes[deletion.deletion?.outcome ?? deletion.state] ?? "Folder deletion finished."}
+          {deletion.deletion && ` Removed ${formatBytes(deletion.deletion.removedBytes)} in ${deletion.deletion.removedEntries.toLocaleString()} items.`}</p>}
+      {active(deletion) && <Button variant="outline" disabled={deletion.cancelRequested} onClick={() => void cancel(deletion)}>
+        {deletion.cancelRequested ? "Cancelling…" : "Cancel deletion"}</Button>}
+    </div>}
+    {open && <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {stack.length > 1 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => void runScan(stack.slice(0, -1))}>
+          <ArrowLeft />Back</Button>}
+        <code className="break-all">{level.path}</code>
+      </div>
+      {scan && active(scan) && <div role="status" className="flex flex-wrap items-center gap-2">
+        <span>{scan.cancelRequested ? "Cancelling…" : `Measuring ${scan.path}…`}</span>
+        {!scan.cancelRequested && <Button variant="outline" size="sm" onClick={() => void cancel(scan)}>Cancel scan</Button>}
+      </div>}
+      {scan && !active(scan) && !usage && <p role="status">
+        {scan.state === "cancelled" ? "Scan cancelled." : `Scan failed${scan.errorMessage ? `: ${scan.errorMessage}` : "."}`}</p>}
+      {usage && <>
+        <p>Total {usage.complete ? "" : "at least "}{formatBytes(usage.totalBytes)} · scanned {formatTime(scan?.completedAt)}
+          {!usage.complete && " · incomplete"}{usage.limitReached && ` (stopped at the ${usage.limitReached} limit)`}</p>
+        {expired && <p role="status" className="text-muted-foreground">These results have expired. Scan again to open or delete folders.</p>}
+        <ul aria-label={`Folders in ${level.path}`} className="divide-y rounded-md border">
+          {usage.entries.map(entry => <li key={entry.path} className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="min-w-0 flex-1 break-all font-medium">{entry.name}</span>
+            <span>{entry.bytes == null ? "Unknown size" : formatBytes(entry.bytes)}</span>
+            {entryState(entry)}
+            {entry.canOpen && !expired && <Button variant="ghost" size="sm" disabled={busy} aria-label={`Open ${entry.path}`}
+              onClick={() => void runScan([...stack, { path: entry.path, token: entry.targetToken ?? null }])}><FolderOpen />Open</Button>}
+            {entry.canDelete && deletionSupported && !expired
+              ? <Button variant="outline" size="sm" disabled={busy} aria-label={`Delete ${entry.path}…`}
+                onClick={() => setDeleting({ entry, scannedAt: scan?.completedAt, key: crypto.randomUUID(), text: "", acknowledged: false })}>
+                <Trash2 />Delete folder…</Button>
+              : !entry.canDelete && entry.protectedReason && <span className="w-full text-xs text-muted-foreground">
+                {protectedReasons[entry.protectedReason] ?? "Protected."}</span>}
+          </li>)}
+          <li className="flex flex-wrap items-center gap-2 px-3 py-2 text-muted-foreground">
+            <span className="flex-1">Files directly in this folder</span><span>{formatBytes(usage.filesHereBytes)}</span>
+          </li>
+          {usage.omittedEntries > 0 && <li className="px-3 py-2 text-muted-foreground">
+            {usage.omittedEntries.toLocaleString()} smaller folders not listed ({formatBytes(usage.omittedBytes)})</li>}
+        </ul>
+        <p className="text-xs text-muted-foreground">
+          {filesystem && `Disk: ${formatBytes(filesystem.availableBytes)} available of ${formatBytes(filesystem.totalBytes)}. `}
+          Folder totals are estimates and won't match disk usage exactly: hard links{usage.hardLinksApproximate ? " (counted approximately here)" : ""},
+          {" "}files that are deleted but still open, reserved space and files changing during the scan all make them differ.
+        </p>
+      </>}
+    </div>}
+    <Dialog open={!!deleting} onOpenChange={value => { if (!value && !submitting) setDeleting(null); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete folder</DialogTitle>
+          <DialogDescription>Permanently delete this folder and everything in it.</DialogDescription>
+        </DialogHeader>
+        {deleting && <form aria-label={`Delete ${deleting.entry.path}`} className="space-y-3 text-sm" onSubmit={event => { event.preventDefault(); void confirmDeletion(); }}>
+          <dl className="grid gap-1">
+            <div><dt className="inline text-muted-foreground">Workspace: </dt><dd className="inline">{workspaceName ?? workspaceId}</dd></div>
+            <div><dt className="inline text-muted-foreground">Dev environment: </dt><dd className="inline">{vm.kind} {vm.id}, generation {vm.generation}</dd></div>
+            <div><dt className="inline text-muted-foreground">Folder: </dt><dd className="inline"><code className="break-all">{deleting.entry.path}</code></dd></div>
+            <div><dt className="inline text-muted-foreground">Last measured size: </dt><dd className="inline">
+              {deleting.entry.bytes == null ? "Unknown" : `About ${formatBytes(deleting.entry.bytes)}`} at {formatTime(deleting.scannedAt)} (estimate)</dd></div>
+          </dl>
+          <div role="note" className="space-y-1 rounded-md border border-destructive/40 p-3">
+            <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-4" />This cannot be undone.</p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>Ignored, untracked and unpushed files, agent settings and credentials in this folder are lost permanently.</li>
+              <li>Running agents and terminals are not stopped and may recreate files here.</li>
+              <li>Backups are not an undo. Don't rely on them to bring these files back.</li>
+            </ul>
+          </div>
+          <label className="block space-y-1">Type the full folder path to confirm
+            <Input autoComplete="off" spellCheck={false} disabled={submitting} value={deleting.text}
+              onChange={event => setDeleting({ ...deleting, text: event.target.value })} />
+          </label>
+          <label className="flex items-start gap-2"><input type="checkbox" disabled={submitting} checked={deleting.acknowledged}
+            onChange={event => setDeleting({ ...deleting, acknowledged: event.target.checked })} />
+            I understand these files will be permanently deleted.</label>
+          {error && <p role="alert" className="text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={submitting} onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={submitting || deleting.text !== deleting.entry.path || !deleting.acknowledged}>
+              Delete folder permanently</Button>
+          </DialogFooter>
+        </form>}
+      </DialogContent>
+    </Dialog>
+  </section>;
+}
