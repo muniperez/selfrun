@@ -53,7 +53,7 @@ public sealed class MigrationConsistencyTests
     {
         using var postgres = CreateContext();
         var script = postgres.GetService<IMigrator>().GenerateScript(
-            "20261119145527_DevelopmentWorkspaceIdleTimeout", "20261119153411_DevelopmentWorkspaceKeepRunning");
+            "20261119152838_DevelopmentWorkspaceResourceTelemetry", "20261119155230_DevelopmentWorkspaceKeepRunning");
         Assert.Contains("ALTER TABLE development_workspaces ADD keep_running boolean NOT NULL DEFAULT FALSE;", script);
     }
 
