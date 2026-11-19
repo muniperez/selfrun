@@ -6,6 +6,7 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.21.0" />
     <ProjectReference Include="../common/Minicloud.Common.csproj" />
   </ItemGroup>
 </Project>

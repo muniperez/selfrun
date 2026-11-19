@@ -25,7 +25,7 @@ using Minicloud.Worker.Diagnostics;
 using WorkerDiagnostics = Minicloud.Worker.Diagnostics.OperatorDiagnostics;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-worker", webHost: false);
+builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-worker");
 builder.Configuration.AddDevelopmentWorkspaceConfiguration();
 builder.Services.Configure<DevelopmentWorkspaceOptions>(
     builder.Configuration.GetSection(DevelopmentWorkspaceOptions.SectionName));

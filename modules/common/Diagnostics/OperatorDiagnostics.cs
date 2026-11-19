@@ -19,7 +19,8 @@ public static class OperatorDiagnostics
     private static readonly Counter<long> Commands = Meter.CreateCounter<long>("minicloud.db.commands", "{command}");
     private static readonly Histogram<double> CommandDuration = Meter.CreateHistogram<double>("minicloud.db.command.duration", "s");
     public static IServiceCollection AddOperatorDiagnostics(
-        this IServiceCollection services, IConfiguration configuration, string serviceName, bool webHost)
+        this IServiceCollection services, IConfiguration configuration, string serviceName,
+        Action<TracerProviderBuilder>? configureTracing = null)
     {
         if (!configuration.GetValue<bool>("OperatorDiagnostics:Enabled"))
             return services;
@@ -56,15 +57,18 @@ public static class OperatorDiagnostics
                         !IsInfrastructure(request.RequestUri, configuration))
                     .AddProcessor(new SafeActivityProcessor())
                     .AddOtlpExporter();
-                if (webHost)
-                    tracing.AddAspNetCoreInstrumentation(options => options.Filter = context =>
-                        !context.Request.Path.StartsWithSegments("/health")
-                        && !context.Request.Path.StartsWithSegments("/v1/logs")
-                        && !context.Request.Path.StartsWithSegments("/v1/traces")
-                        && !context.Request.Path.StartsWithSegments("/v1/metrics"));
+                configureTracing?.Invoke(tracing);
             });
         return services;
     }
+
+    private static readonly string[] UntracedServerPaths = ["/health", "/v1/logs", "/v1/traces", "/v1/metrics"];
+
+    // Kept free of ASP.NET Core types so non-web hosts such as the worker stay on the plain .NET runtime image.
+    public static bool IsTracedServerPath(string? path) =>
+        !UntracedServerPaths.Any(segment => path is not null
+            && path.StartsWith(segment, StringComparison.OrdinalIgnoreCase)
+            && (path.Length == segment.Length || path[segment.Length] == '/'));
 
     private static bool IsInfrastructure(Uri? uri, IConfiguration configuration)
     {

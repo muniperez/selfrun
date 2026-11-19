@@ -22,7 +22,7 @@ COPY . .
 WORKDIR "/src/modules/worker"
 RUN dotnet publish "Minicloud.Worker.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
+FROM mcr.microsoft.com/dotnet/runtime:10.0-alpine AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 COPY LICENSE /usr/share/minicloud/LICENSE

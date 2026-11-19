@@ -45,7 +45,9 @@ public sealed class OperatorDiagnosticsTests
             ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://127.0.0.1:1"
         });
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddOperatorDiagnostics(builder.Configuration, "test", true);
+        builder.Services.AddOperatorDiagnostics(builder.Configuration, "test", tracing =>
+            tracing.AddAspNetCoreInstrumentation(options => options.Filter = context =>
+                OperatorDiagnostics.IsTracedServerPath(context.Request.Path.Value)));
         builder.Services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddProcessor(new CaptureProcessor(spans)));
         builder.Services.ConfigureOpenTelemetryMeterProvider(metrics =>
             metrics.AddReader(new PeriodicExportingMetricReader(new CaptureMetricExporter(exportedMetrics), 60000)));
@@ -96,6 +98,16 @@ public sealed class OperatorDiagnosticsTests
         Assert.DoesNotContain(spans, span => span.Tags.Contains("url", StringComparison.OrdinalIgnoreCase));
         Assert.All(spans, span => Assert.True(string.IsNullOrEmpty(span.TraceState)));
     }
+
+    [Theory]
+    [InlineData("/health", false)]
+    [InlineData("/HEALTH/ready", false)]
+    [InlineData("/v1/traces", false)]
+    [InlineData("/healthz", true)]
+    [InlineData("/v1/tracesx", true)]
+    [InlineData("/api/apps", true)]
+    public void ServerPathFilterExcludesInfrastructureSegments(string path, bool traced) =>
+        Assert.Equal(traced, OperatorDiagnostics.IsTracedServerPath(path));
 
     [Fact]
     public async Task RawCommandOutcomesAreBounded()
