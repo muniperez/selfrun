@@ -46,8 +46,13 @@ export function ephemeralSummary(workspace: DevelopmentWorkspace) {
   return { state: "stopped", label: `${siblings.length} stopped` };
 }
 
-export function lastActivity(workspace: DevelopmentWorkspace) {
+export type LastActivity = { at: number; source: "activity" | "created" };
+
+// Falls back to the creation time until the workspace or any VM records activity.
+export function lastActivity(workspace: DevelopmentWorkspace): LastActivity | null {
   const dates = [workspace.lastActivityAt, ...(workspace.vms ?? []).map(vm => vm.lastActivityAt)]
     .filter((value): value is string => Boolean(value)).map(Date.parse).filter(Number.isFinite);
-  return dates.length ? Math.max(...dates) : null;
+  if (dates.length) return { at: Math.max(...dates), source: "activity" };
+  const created = workspace.createdAt ? Date.parse(workspace.createdAt) : NaN;
+  return Number.isFinite(created) ? { at: created, source: "created" } : null;
 }
