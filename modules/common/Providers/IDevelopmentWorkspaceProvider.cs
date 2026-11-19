@@ -45,6 +45,13 @@ public interface IDevelopmentWorkspaceProvider
     Task<WorkspaceCloudFirewall> CreateWorkspaceFirewallAsync(string name, IReadOnlyList<string> managementAddresses, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
     Task DeleteWorkspaceFirewallAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct);
 
+    /// <summary>
+    /// Converges an owned firewall to exactly the management SSH rules. Providers that create rules
+    /// atomically with the firewall need nothing; others repair a partly created firewall on retry.
+    /// </summary>
+    Task EnsureWorkspaceFirewallRulesAsync(string id, IReadOnlyList<string> managementAddresses,
+        IReadOnlyDictionary<string, string> labels, CancellationToken ct) => Task.CompletedTask;
+
     /// <summary>Name of the attached volume under <c>/dev/disk/by-id</c> inside the guest.</summary>
     string GetWorkspaceVolumeDeviceId(WorkspaceCloudVolume volume) => "scsi-0HC_Volume_" + volume.Id;
 

@@ -325,4 +325,32 @@ public sealed class DevelopmentWorkspaceRegionalProviderTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => Vultr(inUse).DeleteWorkspaceFirewallAsync("fw-owned", ComputeLabels(), default));
         Assert.Single(inUse.RecordedRequests);
     }
+
+    [Fact]
+    public async Task VultrFirewallRetryAddsOnlyMissingManagementRules()
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse(FirewallGroup(rules: 1));
+        handler.QueueJsonResponse("""{"firewall_rules":[{"id":1,"ip_type":"v4","protocol":"tcp","subnet":"198.51.100.1","subnet_size":32,"port":"22"}],"meta":{"links":{"next":""}}}""");
+        handler.QueueJsonResponse("""{"firewall_rule":{"id":2}}""", HttpStatusCode.Created);
+
+        await Vultr(handler).EnsureWorkspaceFirewallRulesAsync("fw-owned", ["198.51.100.1/32", "2001:db8::1/128"], ComputeLabels(), default);
+
+        Assert.Equal(3, handler.RecordedRequests.Count);
+        using var added = JsonDocument.Parse(handler.RecordedRequests[2].Body!);
+        Assert.Equal(("v6", "2001:db8::1", 128), (added.RootElement.GetProperty("ip_type").GetString(),
+            added.RootElement.GetProperty("subnet").GetString(), added.RootElement.GetProperty("subnet_size").GetInt32()));
+    }
+
+    [Fact]
+    public async Task VultrFirewallRetryRefusesForeignRules()
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse(FirewallGroup(rules: 1));
+        handler.QueueJsonResponse("""{"firewall_rules":[{"id":1,"ip_type":"v4","protocol":"tcp","subnet":"0.0.0.0","subnet_size":0,"port":"22"}],"meta":{"links":{"next":""}}}""");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Vultr(handler).EnsureWorkspaceFirewallRulesAsync("fw-owned", ["198.51.100.1/32"], ComputeLabels(), default));
+        Assert.Equal(2, handler.RecordedRequests.Count);
+    }
 }

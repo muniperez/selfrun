@@ -200,16 +200,50 @@ public sealed partial class VultrClient : IDevelopmentWorkspaceProvider
         var group = ReadFirewallGroup(doc!.RootElement.GetProperty("firewall_group"));
         if (group.Description != description)
             throw new InvalidOperationException("Workspace provider ownership does not match the recorded resource identity.");
+        await AddFirewallRulesAsync(group.Id, managementAddresses, ct);
+        return new(group.Id, group.Description, group.Instances, labels);
+    }
+
+    // Rules are added one request at a time, so a retry must finish what an interrupted create started.
+    public async Task EnsureWorkspaceFirewallRulesAsync(string id, IReadOnlyList<string> managementAddresses,
+        IReadOnlyDictionary<string, string> labels, CancellationToken ct)
+    {
+        WorkspaceOwnership.RequireManagementAddresses(managementAddresses);
+        var group = await GetFirewallGroupAsync(id, ct) ?? throw new InvalidOperationException("Workspace firewall is missing.");
+        if (group.Description != FirewallDescription(labels))
+            throw new InvalidOperationException("Workspace provider ownership does not match the recorded resource identity.");
+        var expected = managementAddresses.Select(ManagementRule).ToHashSet();
+        var existing = (await VultrListAsync("firewall_rules", "firewalls/" + VultrResourceId(id) + "/rules", ct))
+            .Select(rule => (
+                IpType: rule.TryGetProperty("ip_type", out var t) ? t.GetString() : rule.TryGetProperty("type", out var u) ? u.GetString() : null,
+                Protocol: rule.TryGetProperty("protocol", out var p) ? p.GetString()?.ToLowerInvariant() : null,
+                Subnet: rule.TryGetProperty("subnet", out var s) && System.Net.IPAddress.TryParse(s.GetString(), out var ip) ? ip.ToString() : null,
+                Size: rule.TryGetProperty("subnet_size", out var z) && z.ValueKind == JsonValueKind.Number ? z.GetInt32() : -1,
+                Port: rule.TryGetProperty("port", out var o) ? o.GetString() : null)).ToArray();
+        if (existing.Any(rule => !expected.Contains(rule)))
+            throw new InvalidOperationException("Workspace firewall has rules Minicloud did not create; review it before retrying.");
+        await AddFirewallRulesAsync(id, managementAddresses.Where(address => !existing.Contains(ManagementRule(address))).ToArray(), ct);
+    }
+
+    private static (string? IpType, string? Protocol, string? Subnet, int Size, string? Port) ManagementRule(string address)
+    {
+        var parts = address.Split('/');
+        var ip = System.Net.IPAddress.Parse(parts[0]);
+        return (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? "v6" : "v4", "tcp", ip.ToString(),
+            int.Parse(parts[1], CultureInfo.InvariantCulture), "22");
+    }
+
+    private async Task AddFirewallRulesAsync(string id, IReadOnlyList<string> managementAddresses, CancellationToken ct)
+    {
         foreach (var address in managementAddresses)
         {
-            var parts = address.Split('/');
-            using var rule = await VultrRequestAsync(HttpMethod.Post, "firewalls/" + VultrResourceId(group.Id) + "/rules", new
+            var rule = ManagementRule(address);
+            using var created = await VultrRequestAsync(HttpMethod.Post, "firewalls/" + VultrResourceId(id) + "/rules", new
             {
-                ip_type = parts[0].Contains(':') ? "v6" : "v4", protocol = "tcp", subnet = parts[0],
-                subnet_size = int.Parse(parts[1], CultureInfo.InvariantCulture), port = "22", notes = "minicloud management"
+                ip_type = rule.IpType, protocol = rule.Protocol, subnet = rule.Subnet,
+                subnet_size = rule.Size, port = rule.Port, notes = "minicloud management"
             }, ct);
         }
-        return new(group.Id, group.Description, group.Instances, labels);
     }
 
     public async Task DeleteWorkspaceFirewallAsync(string id, IReadOnlyDictionary<string, string> labels, CancellationToken ct)

@@ -225,6 +225,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
                     firewall = await cloud.CreateWorkspaceFirewallAsync("mc-" + vm.Id.Replace('_', '-') + "-g" + vm.Generation,
                         options.Value.ManagementAddresses, ComputeLabels(workspace, vm), ct);
                 }
+                await cloud.EnsureWorkspaceFirewallRulesAsync(firewall.Id, options.Value.ManagementAddresses, ComputeLabels(workspace, vm), ct);
                 var firewallId = firewall.Id;
                 await SaveAsync(op, evidence, "allocate", (_, fresh, _) => fresh.ProviderFirewallId = firewallId, ct); break;
             case "allocate":
