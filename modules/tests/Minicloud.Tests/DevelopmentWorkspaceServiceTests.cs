@@ -446,7 +446,6 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     [InlineData("account")]
     [InlineData("region")]
     [InlineData("sku")]
-    [InlineData("provider")]
     [InlineData("disabled")]
     [InlineData("disabled-account")]
     [InlineData("disabled-image")]
@@ -468,7 +467,6 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
             case "account": policy.Images["qualified"].ProviderAccountId = "wrong"; break;
             case "region": policy.Images["qualified"].AllowedRegions = ["other"]; break;
             case "sku": policy.Profiles["standard"].AllowedSkus = ["other"]; break;
-            case "provider": (await db.ProviderAccounts.SingleAsync()).ProviderType = CloudProvider.DigitalOcean; break;
             case "disabled": (await db.ProviderPlans.SingleAsync(x => x.Id == "plan")).Enabled = false; break;
             case "disabled-account": (await db.ProviderAccounts.SingleAsync()).Enabled = false; break;
             case "disabled-image": policy.Images["qualified"].Enabled = false; break;
@@ -488,6 +486,35 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         Assert.DoesNotContain(choices.Options, x => x.Profile == "standard" && x.PlanId == "plan");
         await Assert.ThrowsAsync<DevelopmentWorkspaceException>(() => Workspace());
         Assert.Empty(await db.DevelopmentWorkspaces.ToListAsync());
+    }
+
+    [Fact]
+    public async Task InstalledAgentsFromTheImageManifestAreExposedOnSelectionsAndWorkspaces()
+    {
+        policy.Images["qualified"].Agents =
+        [
+            new() { Id = "claude", Name = "Claude Code", Version = "2.1.328" },
+            new() { Id = "muse", Name = "Muse Code", Version = "1.4.24-R9131.1" },
+            new() { Id = "bad", Name = "Bad\u0000", Version = "1" }
+        ];
+        var expected = new[] { new DevelopmentWorkspaceAgentResponse("claude", "Claude Code", "2.1.328"),
+            new DevelopmentWorkspaceAgentResponse("muse", "Muse Code", "1.4.24-R9131.1") };
+
+        var choice = (await Service().GetSelectionsAsync("org", null, default)).Options.First(x => x.ImageId == "qualified");
+        Assert.Equal(expected, choice.Agents);
+        Assert.Equal(expected, Service().ToResponse(await Workspace()).Agents);
+    }
+
+    [Theory]
+    [InlineData(CloudProvider.DigitalOcean)]
+    [InlineData(CloudProvider.Vultr)]
+    public async Task DigitalOceanAndVultrPlansAreSelectableForQualifiedImages(CloudProvider provider)
+    {
+        (await db.ProviderAccounts.SingleAsync()).ProviderType = provider;
+        await db.SaveChangesAsync();
+        var choices = await Service().GetSelectionsAsync("org", null, default);
+        Assert.Contains(choices.Options, x => x.Profile == "standard" && x.PlanId == "plan");
+        Assert.NotNull(await Workspace());
     }
 
     [Fact]

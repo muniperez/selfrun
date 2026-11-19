@@ -46,6 +46,15 @@ public sealed class DevelopmentWorkspaceImage
     public bool RuntimeQualified { get; set; }
     public DateTimeOffset? QualifiedAt { get; set; }
     public bool T3ConnectForNewWorkspaces { get; set; }
+    /// <summary>Coding agents the image build installed, copied from the image manifest's <c>agents</c> section.</summary>
+    public DevelopmentWorkspaceAgent[] Agents { get; set; } = [];
+}
+
+public sealed class DevelopmentWorkspaceAgent
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
 }
 
 public sealed class DevelopmentWorkspaceRepositoryPolicy

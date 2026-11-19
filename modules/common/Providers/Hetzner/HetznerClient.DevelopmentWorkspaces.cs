@@ -10,7 +10,6 @@ namespace Minicloud.Common.Providers.Hetzner;
 
 public sealed partial class HetznerClient : IDevelopmentWorkspaceProvider
 {
-    private static readonly Regex WorkspaceLabel = new("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$", RegexOptions.CultureInvariant);
     private static readonly Regex WorkspaceHostname = new("^[a-zA-Z0-9][a-zA-Z0-9.-]{0,61}[a-zA-Z0-9]$", RegexOptions.CultureInvariant);
 
     public async Task<IReadOnlyList<WorkspaceCloudServer>> FindWorkspaceServersAsync(IReadOnlyDictionary<string, string> labels, CancellationToken ct) =>
@@ -161,11 +160,7 @@ public sealed partial class HetznerClient : IDevelopmentWorkspaceProvider
         IReadOnlyDictionary<string, string> labels, CancellationToken ct)
     {
         ValidateWorkspaceLabels(labels);
-        if (managementAddresses.Count is < 1 or > 8 || managementAddresses.Any(address =>
-            !IPAddress.TryParse(address.Split('/')[0], out var ip) ||
-            address != ip + (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? "/32" : "/128") ||
-            IPAddress.IsLoopback(ip) || ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any)))
-            throw new ArgumentException("Workspace management rules require explicit control-plane host CIDRs.");
+        WorkspaceOwnership.RequireManagementAddresses(managementAddresses);
         var rules = new List<object>
         {
             new { direction = "in", protocol = "tcp", port = "22", source_ips = managementAddresses },
@@ -229,20 +224,10 @@ public sealed partial class HetznerClient : IDevelopmentWorkspaceProvider
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
     }
 
-    public static void RequireWorkspaceOwnership(IReadOnlyDictionary<string, string> actual, IReadOnlyDictionary<string, string> expected)
-    {
-        ValidateWorkspaceLabels(expected);
-        if (!expected.All(pair => actual.TryGetValue(pair.Key, out var value) && value == pair.Value))
-            throw new InvalidOperationException("Workspace provider ownership does not match the recorded resource identity.");
-    }
+    public static void RequireWorkspaceOwnership(IReadOnlyDictionary<string, string> actual, IReadOnlyDictionary<string, string> expected) =>
+        WorkspaceOwnership.Require(actual, expected);
 
-    private static void ValidateWorkspaceLabels(IReadOnlyDictionary<string, string> labels)
-    {
-        if (labels.Count < 4 || !labels.TryGetValue("managed-by", out var product) || product != "minicloud-workspaces" ||
-            !labels.ContainsKey("organization") || !labels.ContainsKey("workspace") ||
-            labels.Any(pair => !WorkspaceLabel.IsMatch(pair.Key) || !WorkspaceLabel.IsMatch(pair.Value)))
-            throw new ArgumentException("Explicit workspace ownership labels are required.");
-    }
+    private static void ValidateWorkspaceLabels(IReadOnlyDictionary<string, string> labels) => WorkspaceOwnership.Validate(labels);
 
     private static string NumericWorkspaceId(string id) =>
         long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value > 0

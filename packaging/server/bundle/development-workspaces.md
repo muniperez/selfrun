@@ -46,6 +46,14 @@ Leave the flag unset or `false` on older revisions; keep the qualified catalog
 entries and matching snapshots for existing VM restarts and rollback. Use a new
 image key for each new snapshot and manifest rather than replacing an old key.
 
+Hetzner, DigitalOcean and Vultr provider accounts are supported. Each image key
+names one provider account and its snapshot ID, so register one key per account
+from the same qualified manifest. Vultr firewall groups do not filter egress, so
+Vultr environments have weaker network isolation than Hetzner and DigitalOcean. See
+"Provider images" in `templates/development-workspaces/README.md` in the Minicloud source.
+Copy the image manifest's `agents` array into the image's `Agents` setting so users
+see the installed coding agents and versions.
+
 To make the portal's create flow a single name-and-create step when several
 size/location options are approved, list one plan ID in
 `DevelopmentWorkspaces:Profiles:<profile>:DefaultPlanIdsForNewWorkspaces`. With

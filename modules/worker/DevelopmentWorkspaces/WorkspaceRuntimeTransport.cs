@@ -17,7 +17,8 @@ public sealed record WorkspaceRuntimeTarget(string VmId, long Generation, string
 public interface IWorkspaceRuntimeTransport
 {
     Task<JsonElement> CallAsync(WorkspaceRuntimeTarget target, string operationId, string action, object? arguments, CancellationToken ct);
-    Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct);
+    Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string deviceId, CancellationToken ct);
+    Task<JsonElement> VolumeFormatAsync(WorkspaceRuntimeTarget target, string deviceId, CancellationToken ct);
     Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct);
     Task<string> IssueT3SessionAsync(WorkspaceRuntimeTarget target, string operationId, int ttlSeconds, CancellationToken ct);
     Task<string> ReadConnectCredentialAsync(WorkspaceRuntimeTarget target, CancellationToken ct);
@@ -77,11 +78,17 @@ public sealed class WorkspaceRuntimeTransport(IOptions<SshDeploymentOptions> opt
         return $"printf '%s' '{encoded}' | base64 -d | python3 -B /opt/minicloud-workspace/runtime.py call";
     }
 
-    public async Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string volumeId, CancellationToken ct)
+    public async Task<JsonElement> VolumeProbeAsync(WorkspaceRuntimeTarget target, string deviceId, CancellationToken ct) =>
+        Parse(await ExecuteAsync(target, VolumeCommand("volume-probe", deviceId), ct));
+
+    public async Task<JsonElement> VolumeFormatAsync(WorkspaceRuntimeTarget target, string deviceId, CancellationToken ct) =>
+        Parse(await ExecuteAsync(target, VolumeCommand("volume-format", deviceId), ct));
+
+    internal static string VolumeCommand(string action, string deviceId)
     {
-        if (!long.TryParse(volumeId, out var id) || id <= 0) throw new InvalidOperationException("Invalid volume identity.");
-        return Parse(await ExecuteAsync(target,
-            $"python3 -B /opt/minicloud-workspace/bootstrap.py volume-probe --device /dev/disk/by-id/scsi-0HC_Volume_{id} --provider-device-id scsi-0HC_Volume_{id}", ct));
+        if (!System.Text.RegularExpressions.Regex.IsMatch(deviceId, "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"))
+            throw new InvalidOperationException("Invalid volume device identity.");
+        return $"python3 -B /opt/minicloud-workspace/bootstrap.py {action} --device /dev/disk/by-id/{deviceId} --provider-device-id {deviceId}";
     }
 
     public async Task<JsonElement> BootstrapAsync(WorkspaceRuntimeTarget target, object config, object enrollment, CancellationToken ct)

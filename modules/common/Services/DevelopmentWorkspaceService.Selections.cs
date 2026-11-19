@@ -49,7 +49,8 @@ public sealed partial class DevelopmentWorkspaceService
                     selections.Add(new(imageId, string.IsNullOrWhiteSpace(image.DisplayName) ? imageId : image.DisplayName.Trim(),
                         profileId, plan.Id, plan.Name, plan.ProviderAccountName, plan.Region, plan.Sku,
                         profile.CpuCount, profile.MemoryGiB, profile.ComputeHourlyRate,
-                        workspace is null && profile.DefaultPlanIdsForNewWorkspaces.Contains(plan.Id, StringComparer.Ordinal)));
+                        workspace is null && profile.DefaultPlanIdsForNewWorkspaces.Contains(plan.Id, StringComparer.Ordinal),
+                        ImageAgents(image)));
                 }
             }
         }
@@ -61,6 +62,13 @@ public sealed partial class DevelopmentWorkspaceService
         && Sha(image.ManifestSha256, 64) && !string.IsNullOrWhiteSpace(image.ProviderImageId)
         && image.Architecture == "linux/amd64" && (!forNewWorkspace || image.T3ConnectForNewWorkspaces);
 
+    private static DevelopmentWorkspaceAgentResponse[]? ImageAgents(DevelopmentWorkspaceImage? image)
+    {
+        var agents = (image?.Agents ?? []).Where(x => ValidText(x.Id, 64) && ValidText(x.Name, 128) && ValidText(x.Version, 128))
+            .Select(x => new DevelopmentWorkspaceAgentResponse(x.Id.Trim(), x.Name.Trim(), x.Version.Trim())).ToArray();
+        return agents.Length == 0 ? null : agents;
+    }
+
     private static bool EligibleProfile(DevelopmentWorkspaceProfile profile, string planId) =>
         profile.MemoryGiB is 8 or 16 && profile.CpuCount > 0 && profile.ComputeHourlyRate > 0
         && profile.AllowedPlanIds.Contains(planId, StringComparer.Ordinal);
@@ -68,7 +76,7 @@ public sealed partial class DevelopmentWorkspaceService
     private static bool EligiblePlan(string organizationId, DevelopmentWorkspaceImage image,
         DevelopmentWorkspaceProfile profile, SelectionPlan plan) =>
         plan.OrganizationId == organizationId && plan.Enabled && plan.AccountEnabled
-        && plan.ProviderType == CloudProvider.Hetzner && plan.AccountOrganizationId == organizationId
+        && plan.ProviderType is CloudProvider.Hetzner or CloudProvider.DigitalOcean or CloudProvider.Vultr && plan.AccountOrganizationId == organizationId
         && plan.BuildPlatform == "linux/amd64" && image.ProviderAccountId == plan.ProviderAccountId
         && image.AllowedRegions.Contains(plan.Region, StringComparer.Ordinal)
         && profile.AllowedSkus.Contains(plan.Sku, StringComparer.Ordinal)

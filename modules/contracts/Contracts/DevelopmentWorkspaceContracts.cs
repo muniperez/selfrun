@@ -5,7 +5,12 @@ namespace Minicloud.Common.Contracts;
 public sealed record WorkspaceSelectionOption(
     string ImageId, string ImageName, string Profile, string PlanId, string PlanName,
     string ProviderAccountName, string Region, string Sku, int CpuCount, int MemoryGiB,
-    decimal ComputeHourlyRate, bool IsDefault);
+    decimal ComputeHourlyRate, bool IsDefault,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<DevelopmentWorkspaceAgentResponse>? Agents = null);
+
+/// <summary>A coding agent installed in a dev environment image, available through T3.</summary>
+public sealed record DevelopmentWorkspaceAgentResponse(string Id, string Name, string Version);
 
 public sealed record WorkspaceSelections(
     bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options,
@@ -62,7 +67,9 @@ public sealed record DevelopmentWorkspaceResponse(
     string? CreatedBy = null,
     int? IdleTimeoutMinutes = null,
     int? EffectiveIdleTimeoutMinutes = null,
-    bool KeepRunning = false);
+    bool KeepRunning = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<DevelopmentWorkspaceAgentResponse>? Agents = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseRequest(string TaskId, long Generation);
 public sealed record DevelopmentWorkspaceGenerationRequest(long Generation);

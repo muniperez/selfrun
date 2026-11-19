@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import sys
 import unittest
+import zipfile
 from unittest.mock import patch
 
 
@@ -234,3 +235,93 @@ class SourceControlInstallTests(unittest.TestCase):
             with self.assertRaisesRegex(builder.Blocked, "checksum mismatch"):
                 builder.download(self.lock["gh"], self.root / "download")
         self.assertEqual(list(self.bin.iterdir()), [])
+
+
+class AgentInstallTests(unittest.TestCase):
+    def setUp(self):
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="agent-image-", dir=ARTIFACTS)
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.lock = json.loads((HERE / "image/manifest.lock.json").read_text())
+        chown = patch.object(builder.os, "chown")
+        chown.start()
+        self.addCleanup(chown.stop)
+
+    def test_agent_pins_are_consistent_across_lock_npm_lock_and_api_agent_list(self):
+        package = json.loads((HERE / "image/tools/package.json").read_text())
+        npm_lock = json.loads((HERE / "image/tools/package-lock.json").read_text())
+        claude = npm_lock["packages"]["node_modules/@anthropic-ai/claude-code-linux-x64"]
+        self.assertEqual(package["dependencies"]["@anthropic-ai/claude-code-linux-x64"], self.lock["claude"]["version"])
+        self.assertEqual((claude["version"], claude["integrity"]),
+                         (self.lock["claude"]["version"], self.lock["claude"]["integrity"]))
+        self.assertEqual({agent["id"]: agent["version"] for agent in self.lock["agents"]},
+                         {name: self.lock[name]["version"]
+                          for name in ("codex", "copilot", "claude", "antigravity", "muse")})
+        for name in ("antigravity", "muse"):
+            self.assertRegex(self.lock[name]["sha256"], "^[0-9a-f]{64}$")
+            self.assertTrue(self.lock[name]["url"].startswith("https://"))
+
+    def test_claude_wrapper_disables_self_update_and_requires_the_pinned_version(self):
+        binary = self.root / self.lock["claude"]["executable"]
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"binary")
+        wrapper = self.root / "claude"
+        with patch.object(builder, "run", return_value="2.1.328 (Claude Code)") as run:
+            builder.install_claude(self.lock, self.root, wrapper)
+        self.assertEqual(run.call_args.args[0], [str(wrapper), "--version"])
+        self.assertIn("DISABLE_AUTOUPDATER=1", wrapper.read_text())
+        self.assertIn("exec " + str(binary) + ' "$@"', wrapper.read_text())
+        with patch.object(builder, "run", return_value="2.1.3289 (Claude Code)"), \
+                self.assertRaisesRegex(builder.Blocked, "Wrong Claude Code version"):
+            builder.install_claude(self.lock, self.root, wrapper)
+        binary.unlink()
+        with self.assertRaisesRegex(builder.Blocked, "package layout"):
+            builder.install_claude(self.lock, self.root, wrapper)
+
+    def antigravity(self, members, size_matches=True):
+        lock = json.loads(json.dumps(self.lock))
+        lock["antigravity"]["members"] = {"agy_acp_server.par": 3, "localharness_external": 4}
+
+        def download(item, target):
+            with zipfile.ZipFile(target, "w") as archive:
+                for name, data in members.items():
+                    archive.writestr(name, data)
+            item["size"] = target.stat().st_size if size_matches else 1
+        destination = self.root / "antigravity"
+        with patch.object(builder, "download", side_effect=download):
+            builder.install_antigravity(lock, self.root, destination)
+        return destination
+
+    def test_antigravity_copies_only_pinned_members(self):
+        destination = self.antigravity({"agy_acp_server.par": b"par", "localharness_external": b"ext!",
+                                        "../outside": b"unsafe"})
+        self.assertEqual(sorted(path.name for path in destination.iterdir()),
+                         ["agy_acp_server.par", "localharness_external"])
+        self.assertEqual((destination / "agy_acp_server.par").read_bytes(), b"par")
+        self.assertFalse((self.root.parent / "outside").exists())
+        self.assertFalse((self.root / "antigravity.zip").exists())
+
+    def test_antigravity_rejects_missing_resized_members_or_archive_size(self):
+        for members, size_matches, message in (
+                ({"agy_acp_server.par": b"par"}, True, "archive layout"),
+                ({"agy_acp_server.par": b"parx", "localharness_external": b"ext!"}, True, "archive layout"),
+                ({"agy_acp_server.par": b"par", "localharness_external": b"ext!"}, False, "size mismatch")):
+            with self.subTest(message=message, members=sorted(members)):
+                shutil.rmtree(self.root / "antigravity", ignore_errors=True)
+                with self.assertRaisesRegex(builder.Blocked, message):
+                    self.antigravity(members, size_matches)
+
+    def test_muse_is_checksum_and_size_verified_and_wrapped_without_self_update(self):
+        lock = json.loads(json.dumps(self.lock))
+        lock["muse"].update(sha256=hashlib.sha256(b"muse").hexdigest(), size=4)
+        destination, wrapper = self.root / "muse", self.root / "muse-wrapper"
+        with patch.object(builder.urllib.request, "urlopen", return_value=io.BytesIO(b"muse")):
+            builder.install_muse(lock, self.root, destination, wrapper)
+        self.assertEqual((destination / "muse").read_bytes(), b"muse")
+        self.assertIn("MUSE_NO_AUTO_UPDATE=1", wrapper.read_text())
+        lock["muse"]["size"] = 5
+        shutil.rmtree(destination)
+        with patch.object(builder.urllib.request, "urlopen", return_value=io.BytesIO(b"muse")), \
+                self.assertRaisesRegex(builder.Blocked, "size mismatch"):
+            builder.install_muse(lock, self.root, destination, wrapper)

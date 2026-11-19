@@ -10,7 +10,6 @@ using Microsoft.Extensions.Options;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Services;
 using Minicloud.Worker.Pipeline;
 
@@ -30,6 +29,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
     {
         public bool VolumeAttempted { get; set; }
         public bool NewVolume { get; set; }
+        public string? VolumeDeviceId { get; set; }
         public bool FirewallAttempted { get; set; }
         public bool AllocationAttempted { get; set; }
         public List<WorkspaceCloudAction> Actions { get; set; } = [];
@@ -62,7 +62,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
             var vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == operation.VmId, ct);
             var workspace = await db.DevelopmentWorkspaces.AsNoTracking().SingleAsync(x => x.Id == operation.WorkspaceId, ct);
             var client = await providers.CreateAsync(vm.OrganizationId, operation.ProviderAccountId, ct, allowDisabled: operation.Kind != "start" || vm.ProviderServerId is not null);
-            if (client is not IDevelopmentWorkspaceProvider cloud) throw new InvalidOperationException("Workspace provider must be Hetzner.");
+            if (client is not IDevelopmentWorkspaceProvider cloud) throw new InvalidOperationException("Workspace provider does not support development environments.");
             var evidence = operationEvidence = JsonSerializer.Deserialize<Evidence>(operation.ProviderEvidenceJson ?? "{}", Json)!;
             if (operation.Kind == "start") await StartStepAsync(cloud, workspace, vm, operation, evidence, ct);
             else if (operation.Kind == "stop") await StopStepAsync(cloud, workspace, vm, operation, evidence, ct);
@@ -200,7 +200,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
                     if (allocation.Action is not null) evidence.Actions.Add(allocation.Action);
                     evidence.Actions.AddRange(allocation.NextActions);
                 }
-                HetznerClient.RequireWorkspaceOwnership(volume.Labels, VolumeLabels(workspace));
+                WorkspaceOwnership.Require(volume.Labels, VolumeLabels(workspace));
                 if (volume.Region != workspace.Region || volume.SizeGb != workspace.VolumeSizeGb || volume.ServerId is not null)
                     throw new InvalidOperationException("Retained volume placement or writer is unconfirmed.");
                 evidence.NewVolume = workspace.VolumeFilesystemUuid is null &&
@@ -248,7 +248,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
             case "server-ready":
                 if (!await WaitActionsAsync(cloud, evidence, ct)) { await SaveAsync(op, evidence, op.Step, null, ct); break; }
                 var running = await cloud.GetWorkspaceServerAsync(vm.ProviderServerId!, ct) ?? throw new InvalidOperationException("Allocated workspace VM disappeared.");
-                HetznerClient.RequireWorkspaceOwnership(running.Labels, ComputeLabels(workspace, vm));
+                WorkspaceOwnership.Require(running.Labels, ComputeLabels(workspace, vm));
                 if (running.Sku != op.Sku || running.Region != op.Region || running.ImageId != op.ProviderImage)
                     throw new InvalidOperationException("Provider placement differs from the immutable workspace reservation.");
                 if (running.Status != "running" || !running.FirewallsApplied || !running.FirewallIds!.Contains(vm.ProviderFirewallId!))
@@ -266,13 +266,21 @@ public sealed partial class DevelopmentWorkspaceProcessor(
             case "mount":
                 if (!await WaitActionsAsync(cloud, evidence, ct)) { await SaveAsync(op, evidence, op.Step, null, ct); break; }
                 var attached = await cloud.GetWorkspaceVolumeAsync(workspace.ProviderVolumeId!, ct) ?? throw new InvalidOperationException("Retained volume disappeared.");
-                HetznerClient.RequireWorkspaceOwnership(attached.Labels, VolumeLabels(workspace));
-                if (attached.ServerId != vm.ProviderServerId || attached.Filesystem != "ext4")
+                WorkspaceOwnership.Require(attached.Labels, VolumeLabels(workspace));
+                // Raw block storage carries no provider-side filesystem record; the guest probe verifies ext4 and its UUID.
+                var guestFilesystem = cloud.WorkspaceVolumesFormatInGuest && attached.Filesystem is null;
+                if (attached.ServerId != vm.ProviderServerId || attached.Filesystem != "ext4" && !guestFilesystem)
                     throw new InvalidOperationException("Retained volume attachment or filesystem is unconfirmed.");
-                var probe = Result(await runtime.VolumeProbeAsync(Target(vm), attached.Id, ct));
+                var deviceId = cloud.GetWorkspaceVolumeDeviceId(attached);
+                // Only a volume this operation created may be formatted, and the guest refuses any existing signature.
+                var guestFormat = guestFilesystem && evidence.NewVolume && workspace.VolumeFilesystemUuid is null;
+                var probe = Result(guestFormat
+                    ? await runtime.VolumeFormatAsync(Target(vm), deviceId, ct)
+                    : await runtime.VolumeProbeAsync(Target(vm), deviceId, ct));
                 var uuid = probe.GetProperty("filesystemUuid").GetString()!;
                 if (string.IsNullOrWhiteSpace(uuid) || workspace.VolumeFilesystemUuid is not null && workspace.VolumeFilesystemUuid != uuid)
                     throw new InvalidOperationException("Retained volume filesystem UUID differs from its recorded identity.");
+                evidence.VolumeDeviceId = deviceId;
                 await SaveAsync(op, evidence, "bootstrap", (_, fresh, parent) =>
                 { parent.VolumeFilesystemUuid = uuid; fresh.Phase = "bootstrapping"; }, ct); break;
             case "bootstrap":
@@ -331,10 +339,11 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         config["stopUnits"] = new[] { "minicloud-t3.service" }.Concat(units!).ToArray();
         if (vm.Kind == "primary")
         {
+            var deviceId = evidence.VolumeDeviceId ?? "scsi-0HC_Volume_" + workspace.ProviderVolumeId;
             config["volume"] = new
             {
-                device = "/dev/disk/by-id/scsi-0HC_Volume_" + workspace.ProviderVolumeId,
-                providerDeviceId = "scsi-0HC_Volume_" + workspace.ProviderVolumeId,
+                device = "/dev/disk/by-id/" + deviceId,
+                providerDeviceId = deviceId,
                 providerVolumeId = workspace.ProviderVolumeId, filesystemUuid = workspace.VolumeFilesystemUuid,
                 initializeOwner = evidence.NewVolume,
                 owner = new { organizationId = workspace.OrganizationId, workspaceId = workspace.Id,

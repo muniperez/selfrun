@@ -53,6 +53,7 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Contains("retained", output);
         Assert.Contains("Git-only", output);
         Assert.Contains("generation=3", output);
+        Assert.Contains("Agents: Claude Code 2.1.328", output);
         Assert.DoesNotContain("synthetic-token", output);
     }
 
@@ -228,6 +229,7 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal(CliExitCodes.Success, await Run("selections", "--organization", "org", "--workspace", "workspace"));
         Assert.Equal("/api/development-workspaces/selections?organizationId=org&workspaceId=workspace", _handler.Requests.Last().Path);
         Assert.Contains("--image image --profile Standard --plan plan", string.Join('\n', _console.Messages));
+        Assert.Contains("; agents: claude", string.Join('\n', _console.Messages));
 
         _console.Messages.Clear();
         Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org", "--json"));
@@ -297,13 +299,15 @@ public sealed class CliWorkspaceTests : IDisposable
                 : path.EndsWith("/launch?organizationId=org") ? new { url = UnsafeLaunch ? "http://insecure.example/launch" : LaunchUrl, expiresAt = DateTimeOffset.UtcNow.AddMinutes(1) }
                 : path.StartsWith("/api/development-workspaces/selections") ? new { available = true, options = new[] { new {
                     imageId = "image", imageName = "Image", profile = "Standard", planId = "plan", planName = "Plan",
-                    providerAccountName = "Hetzner", region = "nbg1", sku = "cx22" } } }
+                    providerAccountName = "Hetzner", region = "nbg1", sku = "cx22",
+                    agents = new[] { new { id = "claude", name = "Claude Code", version = "2.1.328" } } } } }
                 : path.Contains("/tasks/") ? new { vmId = "ephemeral", taskId = "build", generation = 3, status = "active", expiresAt = DateTimeOffset.UtcNow.AddMinutes(5) }
                 : path.EndsWith("/vms?organizationId=org") ? Vms
                 : path.Contains("/idle-timeout?") ? new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
                     keepRunning = JsonDocument.Parse(json).RootElement.TryGetProperty("keepRunning", out var keep) && keep.GetBoolean() }
                 : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
-                    idleTimeoutMinutes = 45, effectiveIdleTimeoutMinutes = 45 };
+                    idleTimeoutMinutes = 45, effectiveIdleTimeoutMinutes = 45,
+                    agents = new[] { new { id = "claude", name = "Claude Code", version = "2.1.328" } } };
             return new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
         }
         private static readonly object[] Vms = [

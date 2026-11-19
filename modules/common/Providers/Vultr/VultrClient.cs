@@ -13,7 +13,7 @@ using System.Globalization;
 
 namespace Minicloud.Common.Providers.Vultr;
 
-public sealed class VultrClient : IVpsProviderClient, IVpsProviderSshKeyClient
+public sealed partial class VultrClient : IVpsProviderClient, IVpsProviderSshKeyClient
 {
     private readonly HttpClient _httpClient;
     private readonly VultrOptions _options;

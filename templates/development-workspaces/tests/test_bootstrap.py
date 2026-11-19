@@ -355,5 +355,57 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual("fixture-sensitive-output\n", captured.getvalue())
 
 
+class VolumeFormatTests(unittest.TestCase):
+    device = "/dev/disk/by-id/virtio-ewr-0123456789ab"
+
+    def patched(self, signatures, mounts="/dev/vda1 / ext4 rw 0 0\n"):
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(bootstrap.Path, "stat",
+                                         return_value=SimpleNamespace(st_mode=0o060600)))
+        stack.enter_context(patch.object(bootstrap.Path, "resolve", return_value=Path("/dev/vdb")))
+        stack.enter_context(patch("builtins.open", unittest.mock.mock_open(read_data=mounts)))
+        stack.enter_context(patch.object(bootstrap, "block_signatures", side_effect=signatures))
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if argv[:2] == ["blkid", "-s"]:
+                return "ext4" if argv[2] == "TYPE" else "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+            return ""
+        stack.enter_context(patch.object(bootstrap, "run", side_effect=fake_run))
+        return stack, calls
+
+    def test_blank_volume_is_formatted_once_without_force(self):
+        stack, calls = self.patched([{}])
+        with stack:
+            result = bootstrap.format_volume(self.device, "virtio-ewr-0123456789ab")
+        self.assertTrue(result["formatted"])
+        self.assertEqual("1b4e28ba-2fa1-11d2-883f-0016d3cca427", result["filesystemUuid"])
+        mkfs = [argv for argv in calls if argv[0] == "mkfs.ext4"]
+        self.assertEqual(1, len(mkfs))
+        self.assertNotIn("-F", mkfs[0])
+
+    def test_retry_after_format_only_probes(self):
+        stack, calls = self.patched([{"TYPE": "ext4", "UUID": "x"}])
+        with stack:
+            result = bootstrap.format_volume(self.device, "virtio-ewr-0123456789ab")
+        self.assertFalse(result["formatted"])
+        self.assertFalse([argv for argv in calls if argv[0] == "mkfs.ext4"])
+
+    def test_foreign_signature_or_mounted_device_is_never_formatted(self):
+        for signatures, mounts in (([{"TYPE": "xfs"}], ""), ([{"PTTYPE": "gpt"}], ""),
+                                   ([{}], "/dev/vdb /workspace ext4 rw 0 0\n")):
+            stack, calls = self.patched(signatures, mounts)
+            with stack, self.assertRaises(runtime.Blocked):
+                bootstrap.format_volume(self.device, "virtio-ewr-0123456789ab")
+            self.assertFalse([argv for argv in calls if argv[0] == "mkfs.ext4"])
+
+    def test_device_must_match_provider_identity(self):
+        with self.assertRaises(runtime.Blocked):
+            bootstrap.format_volume("/dev/vdb", "vdb")
+        with self.assertRaises(runtime.Blocked):
+            bootstrap.format_volume(self.device, "virtio-other")
+
+
 if __name__ == "__main__":
     unittest.main()

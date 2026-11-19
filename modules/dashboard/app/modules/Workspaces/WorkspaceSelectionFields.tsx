@@ -76,6 +76,7 @@ export function WorkspaceSelectionFields({ organizationId, workspaceId, value, o
   const plans = [...new Map(options.filter(option => option.imageId === value.imageId && option.profile === value.profile)
     .map(option => [option.planId, option])).values()];
   const unavailable = !pending && !error && current && !current.available;
+  const selectedAgents = options.find(option => option.imageId === value.imageId && option.agents?.length)?.agents;
   return <div className="space-y-4">
     <div className="space-y-2">
       <Label htmlFor={`${id}-image`}>Image</Label>
@@ -84,6 +85,9 @@ export function WorkspaceSelectionFields({ organizationId, workspaceId, value, o
         <option value="">Select image</option>
         {images.map(option => <option key={option.imageId} value={option.imageId}>{option.imageName}</option>)}
       </select>
+      {!!selectedAgents?.length && <p className="text-xs text-muted-foreground">
+        {`Agents: ${selectedAgents.map(agent => `${agent.name} ${agent.version}`).join(", ")}`}
+      </p>}
     </div>
     <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
       <div className="space-y-2">

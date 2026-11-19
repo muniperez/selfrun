@@ -139,7 +139,11 @@ The uncached response is:
       "cpuCount": 4,
       "memoryGiB": 8,
       "computeHourlyRate": 0.1,
-      "isDefault": true
+      "isDefault": true,
+      "agents": [
+        { "id": "codex", "name": "Codex", "version": "0.169.0" },
+        { "id": "claude", "name": "Claude Code", "version": "2.1.328" }
+      ]
     }
   ],
   "currency": "EUR",
@@ -163,11 +167,18 @@ not labels or option indexes; labels may change. Configure the optional
 label. Omitted or blank labels display the image configuration key (`imageId`);
 supplied labels are trimmed.
 
+`agents` lists the coding agents installed in the image, from
+`DevelopmentWorkspaces:Images:{imageId}:Agents` (copied from the image build
+manifest). Workspace list and detail responses include the same `agents` for the
+primary VM's recorded image. The field is omitted when the operator has not
+configured agents for the image; it is informational and never affects
+eligibility. Agents still need a sign-in inside T3.
+
 Discovery shares selection eligibility with writes: explicitly enabled,
 runtime-qualified amd64 images with a valid manifest and qualification timestamp;
 approved 8/16 GiB profiles with positive CPU/pricing and explicit plan, SKU and
-region allowlists; and enabled organization-owned Hetzner accounts/plans with
-matching image account, architecture and regions. Cross-organization entries and
+region allowlists; and enabled organization-owned Hetzner, DigitalOcean or Vultr
+accounts/plans with matching image account, architecture and regions. Cross-organization entries and
 credential references are never returned. Discovery only reads control-plane
 metadata: it performs no credential resolution, provider requests, reservation,
 allocation or mutation.
