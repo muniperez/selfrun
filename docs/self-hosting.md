@@ -232,6 +232,10 @@ once. Database operations are fixed names (`ef.command`,
 `worker.lease.heartbeat`); outcomes are `success`, `error` or `cancelled`.
 The shared `Minicloud.Operator` meter and activity source are reserved for
 bounded operator signals. New operations must use fixed names, never user data.
+The telemetry service emits OTLP ingestion stage spans named `otlp.auth`,
+`otlp.read`, `otlp.gzip`, `otlp.decode`, `otlp.normalize`, `otlp.quota`,
+`otlp.encode` and `otlp.forward`. See
+[OTLP ingestion cost](performance/otlp-ingestion/README.md).
 Worker pipeline-step spans are separate work.
 
 Exported spans allow only `http.request.method`, `http.response.status_code`,
