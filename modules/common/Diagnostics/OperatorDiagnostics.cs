@@ -37,6 +37,12 @@ public static class OperatorDiagnostics
                     {
                         (Name, "minicloud.db.commands" or "minicloud.db.command.duration") =>
                             new MetricStreamConfiguration { TagKeys = ["operation", "outcome"] },
+                        (Name, "minicloud.gateway.connections.active") =>
+                            new MetricStreamConfiguration { TagKeys = ["operation"] },
+                        (Name, "minicloud.gateway.admission.wait" or "minicloud.gateway.websocket.closes") =>
+                            new MetricStreamConfiguration { TagKeys = ["outcome"] },
+                        (Name, "minicloud.gateway.relay.bytes") =>
+                            new MetricStreamConfiguration { TagKeys = ["operation", "direction"] },
                         ("Microsoft.AspNetCore.Hosting", "http.server.request.duration") =>
                             new MetricStreamConfiguration { TagKeys = ["http.request.method", "http.response.status_code", "http.route", "network.protocol.version"] },
                         ("System.Net.Http", "http.client.request.duration") =>

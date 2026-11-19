@@ -229,6 +229,10 @@ The exported metric contract is:
 | `dotnet.thread_pool.queue.length` | `{work_item}` | none |
 | `minicloud.db.commands` | `{command}` | `operation`, `outcome` |
 | `minicloud.db.command.duration` | `s` | `operation`, `outcome` |
+| `minicloud.gateway.connections.active` | `{connection}` | `operation` (`http`, `websocket`) |
+| `minicloud.gateway.admission.wait` | `s` | `outcome` (`admitted`, `rejected`, `timeout`, `cancelled`) |
+| `minicloud.gateway.relay.bytes` | `By` | `operation` (`http`, `websocket`), `direction` (`upstream`, `downstream`) |
+| `minicloud.gateway.websocket.closes` | `{connection}` | `outcome` (`client_closed`, `upstream_closed`, `message_limit`, `activity_rejected`, `revoked`, `lifetime`, `aborted`) |
 
 CPU, allocation and pause counters are cumulative; derive rates from their
 changes over time. HTTP metrics are the built-in .NET instruments, collected
