@@ -36,7 +36,7 @@ public sealed partial class DevelopmentWorkspaceService
         var selections = new List<WorkspaceSelectionOption>();
         foreach (var (imageId, image) in Policy.Images.OrderBy(x => x.Key, StringComparer.Ordinal))
         {
-            if (!ValidText(imageId, 128) || !EligibleImage(image)) continue;
+            if (!ValidText(imageId, 128) || !EligibleImage(image, forNewWorkspace: workspace is null)) continue;
             foreach (var (profileId, profile) in Policy.Profiles.OrderBy(x => x.Key, StringComparer.Ordinal))
             {
                 if (!ValidText(profileId, 32)) continue;
@@ -54,10 +54,10 @@ public sealed partial class DevelopmentWorkspaceService
         return new(true, null, selections);
     }
 
-    private bool EligibleImage(DevelopmentWorkspaceImage image) =>
+    private bool EligibleImage(DevelopmentWorkspaceImage image, bool forNewWorkspace) =>
         image.Enabled && image.RuntimeQualified && image.QualifiedAt is not null && image.QualifiedAt <= Now
         && Sha(image.ManifestSha256, 64) && !string.IsNullOrWhiteSpace(image.ProviderImageId)
-        && image.Architecture == "linux/amd64";
+        && image.Architecture == "linux/amd64" && (!forNewWorkspace || image.T3ConnectForNewWorkspaces);
 
     private static bool EligibleProfile(DevelopmentWorkspaceProfile profile, string planId) =>
         profile.MemoryGiB is 8 or 16 && profile.CpuCount > 0 && profile.ComputeHourlyRate > 0

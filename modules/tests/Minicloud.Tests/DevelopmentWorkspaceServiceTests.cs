@@ -34,7 +34,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         {
             ["qualified"] = new() { Enabled = true, RuntimeQualified = true, ProviderAccountId = "account",
                 AllowedRegions = ["nbg1"], ProviderImageId = "image-123", ManifestSha256 = new('a', 64),
-                QualifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1) }
+                QualifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1), T3ConnectForNewWorkspaces = true }
         }
     };
     private MinicloudDbContext db = default!;
@@ -141,7 +141,8 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         policy.Images["qualified"].AllowedRegions = ["nbg1", "hel1"];
         foreach (var account in new[] { "second-account", "foreign-account" })
             policy.Images[account] = new() { Enabled = true, RuntimeQualified = true, QualifiedAt = clock.GetUtcNow().AddMinutes(-1),
-                ProviderAccountId = account, ProviderImageId = "123", AllowedRegions = ["nbg1"], ManifestSha256 = new('a', 64) };
+                ProviderAccountId = account, ProviderImageId = "123", AllowedRegions = ["nbg1"], ManifestSha256 = new('a', 64),
+                T3ConnectForNewWorkspaces = true };
 
         var all = await Service().GetSelectionsAsync("org", null, default);
         Assert.Contains(all.Options, x => x.PlanId == "remote-region");
@@ -354,13 +355,16 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SelectionIsPinnedUntilNextGenerationAndStoppedResizeIsPersisted()
+    public async Task ExplicitImageResizeAndRollbackOnlyTakeEffectOnNextGeneration()
     {
         var workspace = await Workspace();
         workspace = await Service().StartAsync(workspace.Id, "org", default);
         var vm = Primary(workspace);
         var firstOperation = await db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync();
-        await Service().ResizeAsync(workspace.Id, "org", vm.Id, new(1, "qualified", "heavy", "heavy-plan"), default);
+        policy.Images["new-revision"] = new() { Enabled = true, RuntimeQualified = true, ProviderAccountId = "account",
+            AllowedRegions = ["nbg1"], ProviderImageId = "image-new", ManifestSha256 = new('b', 64),
+            QualifiedAt = clock.GetUtcNow().AddMinutes(-1), T3ConnectForNewWorkspaces = true };
+        await Service().ResizeAsync(workspace.Id, "org", vm.Id, new(1, "new-revision", "heavy", "heavy-plan"), default);
         var current = (await Service().GetAsync(workspace.Id, "org", default))!;
         Assert.Equal("standard", Primary(current).Profile);
         Assert.Equal("heavy", Primary(current).NextProfile);
@@ -368,11 +372,11 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         var saved = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id);
         saved.Phase = "stopped"; saved.DesiredState = "stopped"; saved.ComputeReserved = false;
         await db.SaveChangesAsync();
-        policy.Images["qualified"].ProviderImageId = "image-new";
         workspace = await Service().StartVmAsync(workspace.Id, "org", vm.Id, 1, default);
         vm = Primary(workspace);
         Assert.Equal(2, vm.Generation);
         Assert.Equal("heavy", vm.Profile);
+        Assert.Equal("new-revision", vm.ImageId);
         Assert.Equal("image-new", vm.ProviderImage);
         Assert.Null(vm.NextPlanId);
         var old = await db.DevelopmentWorkspaceOperations.AsNoTracking().SingleAsync(x => x.Id == firstOperation.Id);
@@ -381,6 +385,47 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         Assert.NotNull((await db.ProviderPlans.SingleAsync(x => x.Id == "plan")).ProvisioningLockedAt);
         await AssertCode("workspace_generation_stale", () => Service().ResizeAsync(workspace.Id, "org", vm.Id,
             new(1, "qualified", "standard", "plan"), default));
+
+        policy.Images["qualified"].T3ConnectForNewWorkspaces = false;
+        vm = Primary(await Service().ResizeAsync(workspace.Id, "org", vm.Id, new(2, "qualified", "standard", "plan"), default));
+        vm.Phase = "stopped"; vm.DesiredState = "stopped"; vm.ComputeReserved = false;
+        await db.SaveChangesAsync();
+        var rollback = Primary(await Service().StartVmAsync(workspace.Id, "org", vm.Id, 2, default));
+        Assert.Equal(3, rollback.Generation);
+        Assert.Equal(firstOperation.ProviderImage, rollback.ProviderImage);
+        Assert.Equal(firstOperation.ImageManifestSha256, rollback.ImageManifestSha256);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExistingVmRestartsOnlyWithItsRecordedSnapshotAndManifest(bool changeSnapshot)
+    {
+        var workspace = await Service().StartAsync((await Workspace()).Id, "org", default);
+        var vm = Primary(workspace);
+        vm.Phase = "stopped"; vm.DesiredState = "stopped"; vm.ComputeReserved = false;
+        await db.SaveChangesAsync();
+        var image = policy.Images[vm.ImageId];
+        image.T3ConnectForNewWorkspaces = false;
+        Assert.Empty((await Service().GetSelectionsAsync("org", null, default)).Options);
+        Assert.Equal(workspace.Id, (await Service().CreateAsync(Create(), "actor", default)).Id);
+        await AssertCode("workspace_image_invalid", () => Service().CreateAsync(Create("Second", "second"), "actor", default));
+
+        if (changeSnapshot) image.ProviderImageId = "repointed-snapshot";
+        else image.ManifestSha256 = new('b', 64);
+        await AssertCode("workspace_image_invalid", () => Service().ResizeAsync(workspace.Id, "org", vm.Id,
+            new(1, vm.ImageId, "heavy", "heavy-plan"), default));
+        await AssertCode("workspace_image_invalid", () => Service().StartAsync(workspace.Id, "org", default));
+        Assert.Equal(1, (await db.DevelopmentWorkspaceVms.SingleAsync()).Generation);
+        Assert.Single(await db.DevelopmentWorkspaceOperations.ToListAsync());
+
+        image.ProviderImageId = vm.ProviderImage;
+        image.ManifestSha256 = vm.ImageManifestSha256;
+        var replacement = Primary(await Service().StartAsync(workspace.Id, "org", default));
+        var operation = await db.DevelopmentWorkspaceOperations.SingleAsync(x => x.Generation == 2);
+        Assert.Equal(2, replacement.Generation);
+        Assert.Equal("image-123", operation.ProviderImage);
+        Assert.Equal(new string('a', 64), operation.ImageManifestSha256);
     }
 
     [Theory]
@@ -1033,6 +1078,7 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
         var vmId = Primary(workspace).Id;
         await Ready(vmId);
         await Service().StopAsync(workspace.Id, "org", default);
+        policy.Images["qualified"].T3ConnectForNewWorkspaces = false;
         workspace = await Service().StartVmAsync(workspace.Id, "org", vmId, 1, default);
         Assert.True(Primary(workspace).StartAfterStop);
         Assert.Equal("draining", Primary(workspace).Phase);

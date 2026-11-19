@@ -44,6 +44,7 @@ public sealed class DevelopmentWorkspaceImage
     public bool Enabled { get; set; }
     public bool RuntimeQualified { get; set; }
     public DateTimeOffset? QualifiedAt { get; set; }
+    public bool T3ConnectForNewWorkspaces { get; set; }
 }
 
 public sealed class DevelopmentWorkspaceRepositoryPolicy

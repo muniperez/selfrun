@@ -36,6 +36,16 @@ workspace image first.
    existing behavior; a missing/invalid explicit file fails startup. Restart
    both after protected configuration changes.
 
+Set `DevelopmentWorkspaces:Images:<image-key>:T3ConnectForNewWorkspaces` to
+`true` only for the qualified Connect-capable revision intended for new
+environments. Verify the provider snapshot and installed image-manifest digest
+against the qualification record before setting it. Set `DisplayName` to
+**Muni T3 with Connect**; the label does not control eligibility. If no approved
+revision matches an eligible plan, new environment creation is unavailable.
+Leave the flag unset or `false` on older revisions; keep the qualified catalog
+entries and matching snapshots for existing VM restarts and rollback. Use a new
+image key for each new snapshot and manifest rather than replacing an old key.
+
 Do not put provider tokens, SSH keys, OpenBao tokens/mounts, database credentials
 or the full workspace configuration in the gateway. It receives only its
 dedicated service credential and transport configuration.
