@@ -88,6 +88,8 @@ public static class MinicloudApiServiceCollectionExtensions
         services.AddSingleton<IDatabaseConnectionStringProvider, DatabaseConnectionStringProvider>();
         services.AddDbContext<MinicloudDbContext>((provider, options) =>
         {
+            if (provider.GetService<Minicloud.Common.Diagnostics.DbCommandDiagnosticsInterceptor>() is { } interceptor)
+                options.AddInterceptors(interceptor);
             var database = provider.GetRequiredService<IDatabaseConnectionStringProvider>();
             var databaseProvider = database.GetProviderName();
             var connectionString = database.GetConnectionString();

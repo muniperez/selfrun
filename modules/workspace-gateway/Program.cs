@@ -2,8 +2,13 @@ using Minicloud.Common.Services;
 using Minicloud.WorkspaceGateway;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Net;
+using Minicloud.Common.Diagnostics;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-workspace-gateway", tracing =>
+    tracing.AddAspNetCoreInstrumentation(options => options.Filter = context =>
+        OperatorDiagnostics.IsTracedServerPath(context.Request.Path.Value)));
 // Launch codes and websocket tickets are query parameters; never enable request URL logging.
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.None);
 builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.None);

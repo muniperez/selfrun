@@ -20,9 +20,12 @@ using Minicloud.Worker.Queue;
 using Minicloud.Worker.Ssh;
 using Minicloud.Worker.Storage;
 using Minicloud.Common.Registry;
+using Minicloud.Common.Diagnostics;
 using Minicloud.Worker.Diagnostics;
+using WorkerDiagnostics = Minicloud.Worker.Diagnostics.OperatorDiagnostics;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-worker");
 builder.Configuration.AddDevelopmentWorkspaceConfiguration();
 builder.Services.Configure<DevelopmentWorkspaceOptions>(
     builder.Configuration.GetSection(DevelopmentWorkspaceOptions.SectionName));
@@ -256,7 +259,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PostgresDeployment
 if (builder.Configuration.GetValue<bool>("OperatorProfiling:Enabled"))
 {
     builder.AddOperatorProfiling();
-    builder.Services.AddSingleton<OperatorDiagnostics>(_ => new OperatorDiagnostics());
+    builder.Services.AddSingleton<WorkerDiagnostics>(_ => new WorkerDiagnostics());
     builder.Services.AddHostedService<OperatorDiagnosticSummaryService>();
 }
 

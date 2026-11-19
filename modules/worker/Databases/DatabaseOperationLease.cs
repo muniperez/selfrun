@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Npgsql;
+using Minicloud.Common.Diagnostics;
 
 namespace Minicloud.Worker.Databases;
 
@@ -30,7 +31,7 @@ internal sealed class DatabaseOperationLease : IAsyncDisposable
             {
                 await using var command = new NpgsqlCommand("SELECT pg_try_advisory_lock(@key)", connection);
                 command.Parameters.AddWithValue("key", LockKey(resource));
-                if (!Equals(await command.ExecuteScalarAsync(ct), true))
+                if (!Equals(await OperatorDiagnostics.ExecuteCommandAsync("worker.lease.acquire", () => command.ExecuteScalarAsync(ct)), true))
                 {
                     await lease.DisposeAsync();
                     return null;
@@ -52,7 +53,7 @@ internal sealed class DatabaseOperationLease : IAsyncDisposable
                 await using var command = new NpgsqlCommand("UPDATE database_operations SET lease_expires_at = CURRENT_TIMESTAMP + interval '35 minutes' WHERE id = @id AND ownership_token = @token AND status = 'running'", connection);
                 command.Parameters.AddWithValue("id", id);
                 command.Parameters.AddWithValue("token", token);
-                if (await command.ExecuteNonQueryAsync(heartbeatStop.Token) != 1) { lost.Cancel(); return; }
+                if (await OperatorDiagnostics.ExecuteCommandAsync("worker.lease.heartbeat", () => command.ExecuteNonQueryAsync(heartbeatStop.Token)) != 1) { lost.Cancel(); return; }
             }
         }
         catch (OperationCanceledException) when (heartbeatStop.IsCancellationRequested) { }

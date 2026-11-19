@@ -111,7 +111,12 @@ public static class MinicloudDatabase
         var provider = options.Provider;
         var connectionString = ResolveConnectionString(options);
         services.AddDbContext<MinicloudDbContext>(
-            (_, builder) => ConfigureDbContext(builder, provider, connectionString));
+            (serviceProvider, builder) =>
+            {
+                if (serviceProvider.GetService<Minicloud.Common.Diagnostics.DbCommandDiagnosticsInterceptor>() is { } interceptor)
+                    builder.AddInterceptors(interceptor);
+                ConfigureDbContext(builder, provider, connectionString);
+            });
         return services;
     }
 }
