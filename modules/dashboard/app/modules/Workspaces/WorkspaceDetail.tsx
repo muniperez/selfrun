@@ -89,7 +89,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
     finally { stopPending.current = false; if (mounted.current) setStopping(false); }
   };
   return <div className="min-w-0 space-y-6">
-    {item.errorCode && !(primary && vmStartup(primary).failed) && <p role="alert" className="text-sm text-destructive">{item.errorCode}: {item.errorMessage}</p>}
+    {item.errorCode && !(primary && (vmStartup(primary).failed || primary.errorCode === item.errorCode)) && <p role="alert" className="text-sm text-destructive">{item.errorCode}: {item.errorMessage}</p>}
     {refreshError && <p role="alert" className="text-sm text-destructive">{refreshError}</p>}
     {deletion === "deleting" && <p role="status" className="rounded-md border border-warning bg-warning-surface p-3 text-sm text-warning">
       Deleting this dev environment and its saved files. Refresh to check progress.</p>}

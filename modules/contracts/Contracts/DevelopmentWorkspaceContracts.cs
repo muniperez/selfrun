@@ -27,7 +27,10 @@ public sealed record CreateDevelopmentWorkspaceRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonNumberHandling(JsonNumberHandling.Strict)]
     int? IdleTimeoutMinutes = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    bool KeepRunning = false);
+    bool KeepRunning = false,
+    // Omitted when false so existing create digests and idempotent retries stay unchanged.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    bool StartPrimaryVm = false);
 
 public sealed record UpdateDevelopmentWorkspaceIdleTimeoutRequest(
     [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes,

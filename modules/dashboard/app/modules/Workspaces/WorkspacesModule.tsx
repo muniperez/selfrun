@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ChevronRight, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -36,11 +36,11 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
   const [items, setItems] = useState<DevelopmentWorkspace[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [created, setCreated] = useState<DevelopmentWorkspace | null>(null);
   const [delayed, setDelayed] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pollCycle, setPollCycle] = useState(0);
   const [query, setQuery] = useCollectionQuery(`${organizationId}:workspaces`, "name", "asc");
+  const navigate = useNavigate();
   const active = useRef(true);
   const request = useRef<{ controller: AbortController; done: Promise<void> } | null>(null);
   const refresh = useCallback((observation?: DevelopmentWorkspace) => {
@@ -141,14 +141,10 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
               { value: "none", label: "None" }, { value: "unavailable", label: "Unavailable" },
             ] },
           ]} sorts={[{ value: "name", label: "Name" }, { value: "activity", label: "Last activity" }]} /></div>
-        <CreateWorkspaceDialog organizationId={organizationId} canManage={canManage} onCreated={workspace => {
-          setCreated(workspace); void refresh();
-        }} />
+        <CreateWorkspaceDialog organizationId={organizationId} canManage={canManage}
+          onCreated={workspace => navigate(`/workspaces/${encodeURIComponent(workspace.id)}`)} />
       </div>
       <p className="text-sm text-muted-foreground">{filtered.length} of {items.length} dev environments</p>
-      {created && <p role="status" className="text-sm">
-        Created <Link className="font-medium text-primary underline" to={`/workspaces/${encodeURIComponent(created.id)}`}>{created.name}</Link>. Its VM is stopped until you start it.
-      </p>}
     </>}
     {error && <div role="alert" className="space-y-2 text-sm text-destructive">
       <p>{workspaceId && item ? `Status refresh failed. Updates are delayed; showing the last reported status. ${error}` : error}</p>

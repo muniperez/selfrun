@@ -132,7 +132,7 @@ export function listDevelopmentWorkspaces(organizationId: string, signal?: Abort
 
 export function createDevelopmentWorkspace(request: {
   organizationId: string; name: string; imageId: string; profile: string; planId: string;
-  volumeSizeGb: number; idempotencyKey: string;
+  volumeSizeGb: number; idempotencyKey: string; startPrimaryVm?: boolean;
 }) {
   return apiRequest<import("../models/controlPlane").DevelopmentWorkspace>("/api/development-workspaces", {
     method: "POST", body: request

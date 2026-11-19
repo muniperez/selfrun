@@ -134,6 +134,52 @@ it("shows only reported startup stages, distinguishes failure, and waits for con
   expect(screen.getByRole("button", { name: "Connect to T3" })).toBeEnabled();
   expect(screen.getAllByText("Ready").some(label => label.getAttribute("role") === "status")).toBe(true);
 });
+it("never requests another start when a just-created VM's startup page re-renders or remounts", () => {
+  const starting = vm({ kind: "primary", generation: 1, phase: "provisioning" });
+  const view = render(card(starting));
+  view.rerender(card({ ...starting, revision: 2, startupStage: "preparing_vm" }));
+  view.unmount();
+  render(card(starting));
+  expect(screen.getByText("Starting VM…")).toHaveAttribute("role", "status");
+  expect(mutateWorkspaceVm).not.toHaveBeenCalled();
+});
+
+it("shows why a newly created VM wasn't started and retries Start once for its generation", async () => {
+  let accept!: () => void;
+  vi.mocked(mutateWorkspaceVm).mockImplementationOnce(() => new Promise(resolve => { accept = () => resolve(undefined as never); }));
+  render(card(vm({ kind: "primary", generation: 0, desiredState: "stopped", phase: "stopped", computeReserved: false,
+    errorCode: "workspace_admission_limit", errorMessage: "Organization VM concurrency limit reached." })));
+  expect(screen.getByRole("alert")).toHaveTextContent("workspace_admission_limit: Organization VM concurrency limit reached.");
+  const retry = screen.getByRole("button", { name: "Retry start" });
+  fireEvent.click(retry);
+  fireEvent.click(retry);
+  expect(mutateWorkspaceVm).toHaveBeenCalledExactlyOnceWith("workspace", "task-vm", "org", "start", { generation: 0 });
+  await act(async () => accept());
+  expect(refresh).toHaveBeenCalledTimes(1);
+});
+
+it("retries a failed startup on the same environment by stopping the attempt and queueing one start", async () => {
+  const observation = { id: "workspace" } as DevelopmentWorkspace;
+  vi.mocked(mutateWorkspaceVm).mockResolvedValueOnce({ id: "workspace" } as DevelopmentWorkspace).mockResolvedValueOnce(observation);
+  render(card(vm({ kind: "primary", generation: 1, phase: "blocked", startupStage: "setting_up",
+    errorCode: "workspace_reconciliation_required", errorMessage: "Provider state is unconfirmed." })));
+  expect(screen.getByText("VM startup failed")).toHaveAttribute("role", "status");
+  expect(screen.getByRole("alert")).toHaveTextContent("Provider state is unconfirmed.");
+  fireEvent.click(screen.getByRole("button", { name: "Retry start" }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledExactlyOnceWith(observation));
+  expect(vi.mocked(mutateWorkspaceVm).mock.calls).toEqual([
+    ["workspace", "task-vm", "org", "stop", { generation: 1 }], ["workspace", "task-vm", "org", "start", { generation: 1 }],
+  ]);
+});
+
+it("offers failed-startup retry only to managers of the primary VM", () => {
+  const failed = vm({ phase: "blocked", errorCode: "workspace_reconciliation_required" });
+  const view = render(card(failed));
+  expect(screen.queryByRole("button", { name: "Retry start" })).not.toBeInTheDocument();
+  view.rerender(card({ ...failed, kind: "primary" }, false));
+  expect(screen.queryByRole("button", { name: "Retry start" })).not.toBeInTheDocument();
+});
+
 it("scopes stop retries and shows the Git-save reason, reservation and recovery steps", async () => {
   render(card(vm({ phase: "awaiting_git_save", desiredState: "stopped", errorCode: "remote_unavailable", errorMessage: "Restore repository access." })));
   expect(screen.getByText(/server is still allocated/)).toBeInTheDocument();

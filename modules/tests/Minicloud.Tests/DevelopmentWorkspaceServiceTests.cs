@@ -239,6 +239,43 @@ public sealed class DevelopmentWorkspaceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreateCanQueueOnePrimaryStartAndIdempotentRetryReturnsTheSameStart()
+    {
+        Assert.DoesNotContain(nameof(CreateDevelopmentWorkspaceRequest.StartPrimaryVm), JsonSerializer.Serialize(Create()));
+        var request = Create() with { StartPrimaryVm = true };
+        var workspace = await Service().CreateAsync(request, "actor", default);
+        var again = await Service().CreateAsync(request, "actor", default);
+        Assert.Equal(workspace.Id, again.Id);
+        Assert.Equal(("running", "provisioning", 1L), (Primary(again).DesiredState, Primary(again).Phase, Primary(again).Generation));
+        Assert.True(Primary(again).ComputeReserved);
+        var operation = Assert.Single(await db.DevelopmentWorkspaceOperations.AsNoTracking().ToListAsync());
+        Assert.Equal(("start", Primary(again).Id), (operation.Kind, operation.VmId));
+        Assert.Equal(operation.Id, Primary(again).OperationId);
+        Assert.Single(await db.DevelopmentWorkspaces.AsNoTracking().ToListAsync());
+        await AssertCode("workspace_idempotency_conflict", () => Service().CreateAsync(Create(), "actor", default));
+    }
+
+    [Fact]
+    public async Task CreateKeepsWorkspaceWithReasonWhenRequestedPrimaryStartIsNotAdmittedAndStartCanBeRetried()
+    {
+        policy.MaxActiveVms = 1;
+        await Service().CreateAsync(Create("Running", "running") with { StartPrimaryVm = true }, "actor", default);
+        var request = Create() with { StartPrimaryVm = true };
+        var workspace = await Service().CreateAsync(request, "actor", default);
+        var vm = Primary(workspace);
+        Assert.Equal(("stopped", "stopped", 0L, false), (vm.DesiredState, vm.Phase, vm.Generation, vm.ComputeReserved));
+        Assert.Equal(("workspace_admission_limit", "Global VM concurrency limit reached."), (vm.ErrorCode, vm.ErrorMessage));
+        Assert.DoesNotContain(await db.DevelopmentWorkspaceOperations.ToListAsync(), x => x.VmId == vm.Id);
+
+        policy.MaxActiveVms = 5;
+        Assert.Equal(0, Primary(await Service().CreateAsync(request, "actor", default)).Generation);
+        Assert.DoesNotContain(await db.DevelopmentWorkspaceOperations.ToListAsync(), x => x.VmId == vm.Id);
+        var started = Primary(await Service().StartVmAsync(workspace.Id, "org", vm.Id, 0, default));
+        Assert.Equal(("provisioning", 1L, (string?)null), (started.Phase, started.Generation, started.ErrorCode));
+        Assert.Single(await db.DevelopmentWorkspaceOperations.ToListAsync(), x => x.VmId == vm.Id);
+    }
+
+    [Fact]
     public async Task CreatesStoppedWorkspacesBeyondPreviousCountCapUntilStorageSpendLimit()
     {
         policy.MaxEstimatedMonthlySpend = 12;
