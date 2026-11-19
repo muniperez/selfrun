@@ -47,11 +47,13 @@ public sealed partial class DevelopmentWorkspaceService
                         || workspace is not null && !MatchesPlacement(workspace, plan.ProviderAccountId, plan.Region))
                         continue;
                     selections.Add(new(imageId, string.IsNullOrWhiteSpace(image.DisplayName) ? imageId : image.DisplayName.Trim(),
-                        profileId, plan.Id, plan.Name, plan.ProviderAccountName, plan.Region, plan.Sku));
+                        profileId, plan.Id, plan.Name, plan.ProviderAccountName, plan.Region, plan.Sku,
+                        profile.CpuCount, profile.MemoryGiB, profile.ComputeHourlyRate,
+                        workspace is null && profile.DefaultPlanIdsForNewWorkspaces.Contains(plan.Id, StringComparer.Ordinal)));
                 }
             }
         }
-        return new(true, null, selections);
+        return new(true, null, selections, Policy.Currency, Policy.VolumeMonthlyRatePerGb);
     }
 
     private bool EligibleImage(DevelopmentWorkspaceImage image, bool forNewWorkspace) =>

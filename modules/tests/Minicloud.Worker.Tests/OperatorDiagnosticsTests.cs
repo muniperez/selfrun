@@ -119,15 +119,23 @@ public sealed class OperatorDiagnosticsTests
             if (instrument.Meter.Name == OperatorDiagnostics.Name && instrument.Name == "minicloud.db.commands")
                 meterListener.EnableMeasurementEvents(instrument);
         };
+        // The meter is process-wide and other tests record commands concurrently; count only this test's operation.
+        const string operation = "test.raw-command-outcomes";
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            string? recordedOperation = null, outcome = null;
             foreach (var tag in tags)
-                if (tag.Key == "outcome") outcomes.Add((string)tag.Value!);
+            {
+                if (tag.Key == "operation") recordedOperation = tag.Value as string;
+                else if (tag.Key == "outcome") outcome = tag.Value as string;
+            }
+            if (recordedOperation == operation && outcome is not null)
+                lock (outcomes) outcomes.Add(outcome);
         });
         listener.Start();
-        await OperatorDiagnostics.ExecuteCommandAsync("test", () => Task.FromResult(1));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => OperatorDiagnostics.ExecuteCommandAsync<int>("test", () => throw new InvalidOperationException()));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => OperatorDiagnostics.ExecuteCommandAsync<int>("test", () => throw new OperationCanceledException()));
+        await OperatorDiagnostics.ExecuteCommandAsync(operation, () => Task.FromResult(1));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => OperatorDiagnostics.ExecuteCommandAsync<int>(operation, () => throw new InvalidOperationException()));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => OperatorDiagnostics.ExecuteCommandAsync<int>(operation, () => throw new OperationCanceledException()));
         Assert.Equal(new[] { "success", "error", "cancelled" }, outcomes);
     }
 

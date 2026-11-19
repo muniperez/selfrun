@@ -10,6 +10,7 @@ public sealed partial class MinicloudDbContext
     public DbSet<DevelopmentWorkspaceVm> DevelopmentWorkspaceVms => Set<DevelopmentWorkspaceVm>();
     public DbSet<DevelopmentWorkspaceOperation> DevelopmentWorkspaceOperations => Set<DevelopmentWorkspaceOperation>();
     public DbSet<DevelopmentWorkspaceTaskLease> DevelopmentWorkspaceTaskLeases => Set<DevelopmentWorkspaceTaskLease>();
+    public DbSet<DevelopmentWorkspaceFilesystemJob> DevelopmentWorkspaceFilesystemJobs => Set<DevelopmentWorkspaceFilesystemJob>();
 
     private static void ConfigureDevelopmentWorkspaces(ModelBuilder modelBuilder)
     {
@@ -18,8 +19,8 @@ public sealed partial class MinicloudDbContext
             entity.ToTable("development_workspaces");
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.OrganizationId, x.Id });
-            entity.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique();
-            entity.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique().HasFilter("volume_status <> 'deleted'");
+            entity.HasIndex(x => new { x.OrganizationId, x.IdempotencyKey }).IsUnique().HasFilter("volume_status <> 'deleted'");
             entity.HasIndex(x => new { x.ProviderAccountId, x.ProviderVolumeId }).IsUnique();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.Property(x => x.Name).HasMaxLength(128);
@@ -76,6 +77,26 @@ public sealed partial class MinicloudDbContext
             entity.HasIndex(x => new { x.VmId, x.Generation, x.Status });
             entity.HasOne<DevelopmentWorkspaceVm>().WithMany(x => x.TaskLeases).HasForeignKey(x => new { x.WorkspaceId, x.VmId })
                 .HasPrincipalKey(x => new { x.WorkspaceId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<DevelopmentWorkspaceFilesystemJob>(entity =>
+        {
+            entity.ToTable("development_workspace_filesystem_jobs", table =>
+                table.HasCheckConstraint("ck_development_filesystem_job_kind", "kind IN ('disk_usage', 'directory_deletion')"));
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.VmId, x.Kind, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => new { x.State, x.CreatedAt });
+            entity.HasIndex(x => new { x.VmId, x.State });
+            entity.HasIndex(x => x.ExpiresAt);
+            entity.Property(x => x.Revision).IsConcurrencyToken();
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            foreach (var name in new[] { nameof(DevelopmentWorkspaceFilesystemJob.OrganizationId),
+                nameof(DevelopmentWorkspaceFilesystemJob.WorkspaceId), nameof(DevelopmentWorkspaceFilesystemJob.VmId),
+                nameof(DevelopmentWorkspaceFilesystemJob.Generation), nameof(DevelopmentWorkspaceFilesystemJob.Kind),
+                nameof(DevelopmentWorkspaceFilesystemJob.PathJson), nameof(DevelopmentWorkspaceFilesystemJob.TargetDevice),
+                nameof(DevelopmentWorkspaceFilesystemJob.TargetInode) })
+                entity.Property(name).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.HasOne<DevelopmentWorkspaceVm>().WithMany().HasForeignKey(x => new { x.WorkspaceId, x.VmId })
+                .HasPrincipalKey(x => new { x.WorkspaceId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

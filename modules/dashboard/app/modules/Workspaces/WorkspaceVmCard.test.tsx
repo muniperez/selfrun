@@ -15,8 +15,10 @@ vi.mock("./WorkspaceSelectionFields", () => ({
     onReadyChange: (ready: boolean) => void;
   }) => {
     useEffect(() => onReadyChange(true), [onReadyChange]);
-    return <label>Profile<select value={value.profile} disabled={disabled}
-      onChange={event => onChange({ ...value, profile: event.target.value })}><option>Standard</option><option>Heavy</option></select></label>;
+    return <><label>Profile<select value={value.profile} disabled={disabled}
+      onChange={event => onChange({ ...value, profile: event.target.value })}><option>Standard</option><option>Heavy</option></select></label>
+    <label>Image<select value={value.imageId} disabled={disabled}
+      onChange={event => onChange({ ...value, imageId: event.target.value })}><option>image</option><option>image-two</option></select></label></>;
   },
 }));
 
@@ -86,11 +88,11 @@ it("viewing a sleeping VM never starts compute or authorizes sessions; start use
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();
   expect(getWorkspaceLaunchUrl).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Connect to T3" })).not.toBeInTheDocument();
-  expect(screen.getByText(/not confirmation of provider deletion/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Start compute" }));
+  expect(screen.getByText(/doesn't confirm provider deletion/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Start VM" }));
   expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "start", { generation: 3 });
   expect(screen.getByText("Starting VM…")).toHaveAttribute("role", "status");
-  expect(screen.getByRole("button", { name: "Start compute" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Start VM" })).toBeDisabled();
   expect(screen.queryByRole("list", { name: "VM startup stages" })).not.toBeInTheDocument();
   const observation: DevelopmentWorkspace = {
     id: "workspace", organizationId: "org", name: "Synthetic workspace", imageId: "image", profile: "Standard",
@@ -110,23 +112,23 @@ it("shows only reported startup stages, distinguishes failure, and waits for con
   expect(screen.getByText(/T3 and previews become available/)).toBeInTheDocument();
   expect(screen.getAllByText(/Waiting for first activity/)).not.toHaveLength(0);
   expect(screen.queryByText(/Last activity: unavailable/i)).not.toBeInTheDocument();
-  expect(screen.getByText("0.1000 EUR / hour")).toBeInTheDocument();
+  expect(screen.getByText("0.1000 EUR / hour while running")).toBeInTheDocument();
 
   view.rerender(card(vm({ kind: "primary", phase: "attaching", startupStage: "preparing_storage" })));
   const progress = screen.getByRole("list", { name: "VM startup stages" });
   expect(within(progress).getByText("Completed:")).toBeInTheDocument();
-  expect(progress.querySelector("[aria-current=step]")).toHaveTextContent("Current: Preparing retained storage");
+  expect(progress.querySelector("[aria-current=step]")).toHaveTextContent("Current: Preparing storage");
   expect(within(progress).getAllByText("Upcoming:")).toHaveLength(3);
 
   view.rerender(card(vm({ kind: "primary", phase: "blocked", startupStage: "setting_up", errorCode: "workspace_reconciliation_required" })));
   expect(screen.getByText("VM startup failed")).toHaveAttribute("role", "status");
   expect(progress.querySelector("[aria-current=step]")).toHaveTextContent("Last reported: Setting up VM");
   expect(screen.getByText(/contact your operator/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Start compute" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Start VM" })).not.toBeInTheDocument();
 
   view.rerender(card(vm({ phase: "provisioning", startupStage: "checking_readiness" })));
   expect(screen.getByText("Checking readiness…")).toHaveAttribute("role", "status");
-  expect(screen.queryByText("Preparing retained storage")).not.toBeInTheDocument();
+  expect(screen.queryByText("Preparing storage")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Connect to T3" })).not.toBeInTheDocument();
   view.rerender(card(vm()));
   expect(screen.getByRole("button", { name: "Connect to T3" })).toBeEnabled();
@@ -134,7 +136,7 @@ it("shows only reported startup stages, distinguishes failure, and waits for con
 });
 it("scopes stop retries and shows the Git-save reason, reservation and recovery steps", async () => {
   render(card(vm({ phase: "awaiting_git_save", desiredState: "stopped", errorCode: "remote_unavailable", errorMessage: "Restore repository access." })));
-  expect(screen.getByText(/Compute remains reserved/)).toBeInTheDocument();
+  expect(screen.getByText(/server is still allocated/)).toBeInTheDocument();
   expect(screen.getByText(/Reported reason: Restore repository access/)).toBeInTheDocument();
   expect(screen.getByText(/Restore repository access and authentication/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Connect to T3" })).not.toBeInTheDocument();
@@ -145,12 +147,12 @@ it("scopes stop retries and shows the Git-save reason, reservation and recovery 
 it("queues an explicit next-generation start and allows stop to cancel that queued start", async () => {
   const machine = vm({ phase: "draining", desiredState: "stopped" });
   const view = render(card(machine));
-  fireEvent.click(screen.getByRole("button", { name: "Queue start after stop" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start VM after it stops" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "start", { generation: 3 }));
   view.rerender(card({ ...machine, startAfterStop: true, revision: 2 }));
-  expect(screen.getByRole("button", { name: "Queue start after stop" })).toBeDisabled();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Stop compute" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Stop compute" }));
+  expect(screen.getByRole("button", { name: "Start VM after it stops" })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop VM" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Stop VM" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenLastCalledWith("workspace", "task-vm", "org", "stop", { generation: 3 }));
 });
 
@@ -160,9 +162,9 @@ it("isolates pending requests to the selected VM and surfaces mutation errors", 
   render(<>{card()}<WorkspaceVmCard workspaceId="workspace" organizationId="org" vm={vm({ id: "sibling" })} currency="EUR" refresh={refresh} canManage /></>);
   const selected = screen.getByRole("article", { name: "VM task-vm" });
   const sibling = screen.getByRole("article", { name: "VM sibling" });
-  fireEvent.click(within(selected).getByRole("button", { name: "Stop compute" }));
-  expect(within(selected).getByRole("button", { name: "Stop compute" })).toBeDisabled();
-  expect(within(sibling).getByRole("button", { name: "Stop compute" })).toBeEnabled();
+  fireEvent.click(within(selected).getByRole("button", { name: "Stop VM" }));
+  expect(within(selected).getByRole("button", { name: "Stop VM" })).toBeDisabled();
+  expect(within(sibling).getByRole("button", { name: "Stop VM" })).toBeEnabled();
   await act(async () => reject(new Error("Shutdown was already claimed.")));
   expect(within(selected).getByRole("alert")).toHaveTextContent("Shutdown was already claimed.");
   expect(refresh).not.toHaveBeenCalled();
@@ -173,12 +175,15 @@ it("supports generation-scoped idle-stop cancellation, next-start resize and tas
   fireEvent.click(screen.getByRole("button", { name: "Cancel idle stop" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "cancel-idle-stop", { generation: 3 }));
   openAdvanced();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Set size on next start" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Use this size at next start" })).toBeEnabled());
   fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "Heavy" } });
   fireEvent.submit(screen.getByRole("form", { name: "Resize VM task-vm" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenLastCalledWith("workspace", "task-vm", "org", "resize", {
     generation: 3, imageId: "image", profile: "Heavy", planId: "plan",
   }));
+  fireEvent.change(screen.getByLabelText("Image"), { target: { value: "image-two" } });
+  expect(screen.getByRole("button", { name: "Use this size and image at next start" })).toBeInTheDocument();
+  expect(screen.getByText(/This also changes the VM's image/)).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Renew keep-awake lease" })).toBeDisabled());
   fireEvent.change(screen.getByLabelText("Task ID"), { target: { value: "build" } });
   for (const [label, complete, cancelled] of [
@@ -207,28 +212,28 @@ it("authorizes T3 only on click and preserves the valid link without an immediat
 
 it("uses the registered preview slug and invalidates authorization when the service changes", async () => {
   render(card());
-  expect(screen.queryByLabelText("Registered preview slug")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Preview name")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open preview" }));
   expect(getWorkspaceLaunchUrl).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("Registered preview slug"), { target: { value: "web" } });
-  fireEvent.click(screen.getByRole("button", { name: "Authorize preview" }));
+  fireEvent.change(screen.getByLabelText("Preview name"), { target: { value: "web" } });
+  fireEvent.click(screen.getByRole("button", { name: "Get preview link" }));
   expect(await screen.findByRole("link", { name: "Open preview" })).toBeInTheDocument();
   expect(getWorkspaceLaunchUrl).toHaveBeenCalledWith("workspace", "task-vm", "org", 3, "web");
-  fireEvent.change(screen.getByLabelText("Registered preview slug"), { target: { value: "api" } });
+  fireEvent.change(screen.getByLabelText("Preview name"), { target: { value: "api" } });
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
 it.each([
-  ["http://gateway.example/launch", "2099-01-01T00:00:00Z", /unsafe launch URL/],
-  ["not a url", "2099-01-01T00:00:00Z", /invalid launch URL/],
-  ["https://user:password@gateway.example/launch", "2099-01-01T00:00:00Z", /unsafe launch URL/],
+  ["http://gateway.example/launch", "2099-01-01T00:00:00Z", /link returned was unsafe/],
+  ["not a url", "2099-01-01T00:00:00Z", /link returned was invalid/],
+  ["https://user:password@gateway.example/launch", "2099-01-01T00:00:00Z", /link returned was unsafe/],
   ["https://gateway.example/launch", "invalid date", /invalid expiry/],
 ])("rejects unsafe or expired gateway authorization: %s %s", async (url, expiresAt, expected) => {
   vi.mocked(getWorkspaceLaunchUrl).mockResolvedValue({ url, expiresAt });
   render(card());
   fireEvent.click(screen.getByRole("button", { name: "Connect to T3" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(expected);
-  expect(screen.getByRole("alert")).toHaveTextContent("Compute was not started");
+  expect(screen.getByRole("alert")).toHaveTextContent("This didn't start the VM");
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
@@ -237,7 +242,7 @@ it("provides an actionable fallback for rejected gateway authorization without s
   render(card());
   fireEvent.click(screen.getByRole("button", { name: "Connect to T3" }));
   const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent(/Could not authorize.*Check gateway configuration/);
+  expect(alert).toHaveTextContent(/Couldn't get a secure link.*Check that the VM is running/);
   expect(alert).not.toHaveTextContent("synthetic-secret");
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
@@ -279,7 +284,7 @@ it("recomputes the countdown, expires without a click and explicitly replaces th
   vi.setSystemTime(now);
   fireEvent(window, new Event("pageshow"));
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Request new link" })));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Get a new link" })));
   expect(screen.getByRole("link", { name: "Open T3" })).toHaveAttribute("href", expect.stringContaining("synthetic-replacement"));
   expect(screen.queryByText("Link expired")).not.toBeInTheDocument();
 });
@@ -292,15 +297,15 @@ it("guards an expired preview before a delayed timer can run and clears expiry o
   });
   const view = render(card());
   fireEvent.click(screen.getByRole("button", { name: "Open preview" }));
-  fireEvent.change(screen.getByLabelText("Registered preview slug"), { target: { value: "web" } });
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Authorize preview" })));
+  fireEvent.change(screen.getByLabelText("Preview name"), { target: { value: "web" } });
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Get preview link" })));
   const link = screen.getByRole("link", { name: "Open preview" });
   vi.setSystemTime(deadline);
   expect(fireEvent.click(link)).toBe(false);
   expect(screen.getByText("Link expired")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Registered preview slug"), { target: { value: "other-service" } });
+  fireEvent.change(screen.getByLabelText("Preview name"), { target: { value: "other-service" } });
   expect(screen.queryByText("Link expired")).not.toBeInTheDocument();
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Authorize preview" })));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Get preview link" })));
   expect(screen.getByText("Link expired")).toBeInTheDocument();
   view.rerender(card(vm({ id: "another-vm" })));
   expect(screen.queryByText("Link expired")).not.toBeInTheDocument();
@@ -321,7 +326,7 @@ it("clears session authorization permanently on permission loss", async () => {
 it("gates mutations and sessions for read-only access including direct form submission", () => {
   render(card(vm(), false));
   openAdvanced();
-  expect(screen.getByRole("button", { name: "Stop compute" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Stop VM" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Connect to T3" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Open preview" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Discard local data…" })).toBeDisabled();
@@ -390,13 +395,13 @@ it("combines retained-storage observations with primary metrics and collapses se
   expect(screen.getAllByRole("heading", { name: "Primary VM" })).toHaveLength(1);
   const article = screen.getByRole("article", { name: "VM task-vm" });
   const metrics = article.querySelector(":scope > dl")!;
-  expect(metrics).toHaveTextContent("Retained volume25 GB");
-  expect(metrics).toHaveTextContent("Estimated storage1.52 EUR / month");
-  expect(metrics).toHaveTextContent("Reserved · charges may continue");
+  expect(metrics).toHaveTextContent("Storage25 GB");
+  expect(metrics).toHaveTextContent("Storage cost1.52 EUR / month");
+  expect(metrics).toHaveTextContent("Server allocated · charges may continue");
   const advanced = screen.getByText("Advanced VM controls").closest("details")!;
   expect(advanced).not.toHaveAttribute("open");
   expect(within(advanced).getByText(/Generation 3/)).toBeInTheDocument();
-  expect(within(advanced).getByRole("button", { name: "Stop compute" })).toBeInTheDocument();
+  expect(within(advanced).getByRole("button", { name: "Stop VM" })).toBeInTheDocument();
 });
 
 it("embeds compact Git recovery first without repeating VM headers or metrics", async () => {
@@ -412,7 +417,7 @@ it("embeds compact Git recovery first without repeating VM headers or metrics", 
   expect(article.firstElementChild).toBe(recovery);
   expect(recovery).toHaveClass("bg-warning-surface");
   expect(recovery).toHaveTextContent("Remote unavailable.");
-  expect(recovery).toHaveTextContent("Compute remains reserved");
+  expect(recovery).toHaveTextContent("server is still allocated");
   expect(within(recovery).getByRole("button", { name: "Discard local data…" })).toBeEnabled();
   const advanced = screen.getByText("Advanced VM controls").closest("details")!;
   expect(advanced).not.toHaveAttribute("open");

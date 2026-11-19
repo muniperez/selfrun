@@ -82,13 +82,24 @@ public sealed class WorkspaceGatewayRelay : IDisposable
         var sessionKey = DevelopmentWorkspaceGatewayOptions.Digest(session);
         using var admissionTimeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         admissionTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.HttpTimeoutSeconds, 1, 300)));
+        var admissionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             if (!await AdmitAsync(sessionKey, IsBootstrapRequest(context), admissionTimeout.Token))
-            { context.Response.StatusCode = 429; return; }
+            {
+                GatewayDiagnostics.Admission("rejected", System.Diagnostics.Stopwatch.GetElapsedTime(admissionStarted));
+                context.Response.StatusCode = 429; return;
+            }
         }
         catch (OperationCanceledException)
-        { context.Response.StatusCode = 504; return; }
+        {
+            GatewayDiagnostics.Admission(context.RequestAborted.IsCancellationRequested ? "cancelled" : "timeout",
+                System.Diagnostics.Stopwatch.GetElapsedTime(admissionStarted));
+            context.Response.StatusCode = 504; return;
+        }
+        GatewayDiagnostics.Admission("admitted", System.Diagnostics.Stopwatch.GetElapsedTime(admissionStarted));
+        var activeOperation = context.WebSockets.IsWebSocketRequest ? "websocket" : "http";
+        GatewayDiagnostics.Active(activeOperation, 1);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         lifetime.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.ConnectionLifetimeSeconds, 1, 3600)));
         try
@@ -119,7 +130,11 @@ public sealed class WorkspaceGatewayRelay : IDisposable
             if (!context.Response.HasStarted) context.Response.StatusCode = ex is OperationCanceledException ? 504 : 502;
             else context.Abort();
         }
-        finally { Release(sessionKey); }
+        finally
+        {
+            GatewayDiagnostics.Active(activeOperation, -1);
+            Release(sessionKey);
+        }
     }
 
     public async Task HandleCertificateAsync(HttpContext context)
@@ -249,7 +264,7 @@ public sealed class WorkspaceGatewayRelay : IDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.HttpTimeoutSeconds, 1, 300)));
         using var upstream = new HttpRequestMessage(new HttpMethod(request.Method), uri);
         if (request.ContentLength > 0 || request.Headers.ContainsKey("Transfer-Encoding"))
-            upstream.Content = new StreamContent(new BoundedReadStream(request.Body, maxBody));
+            upstream.Content = new StreamContent(new BoundedReadStream(request.Body, maxBody, "upstream"));
         var connectionHeaders = request.Headers.Connection.ToString().Split(',').Select(x => x.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var header in request.Headers)
             if ((RequestHeaders.Contains(header.Key) || target.Bearer is null &&
@@ -293,7 +308,7 @@ public sealed class WorkspaceGatewayRelay : IDisposable
                     !cookie.Contains("domain=", StringComparison.OrdinalIgnoreCase))
                     context.Response.Headers.Append("Set-Cookie", cookie);
         await using var body = await response.Content.ReadAsStreamAsync(timeout.Token);
-        await new BoundedReadStream(body, 32 * 1024 * 1024).CopyToAsync(context.Response.Body, 16384, timeout.Token);
+        await new BoundedReadStream(body, 32 * 1024 * 1024, "downstream").CopyToAsync(context.Response.Body, 16384, timeout.Token);
     }
 
     private async Task RelayWebSocketAsync(HttpContext context, DevelopmentWorkspaceGatewayTarget target,
@@ -320,17 +335,42 @@ public sealed class WorkspaceGatewayRelay : IDisposable
         connect.CancelAfter(TimeSpan.FromSeconds(10));
         await upstream.ConnectAsync(Upstream(context, target.LoopbackPort, "ws"), client, connect.Token);
         using var downstream = await context.WebSockets.AcceptWebSocketAsync(upstream.SubProtocol);
+        var revoked = false;
         var monitor = MonitorAsync();
         var lastActivityReport = 0L;
+        var outcome = "aborted";
         try
         {
-            await Task.WhenAny(
-                PumpAsync(downstream, upstream, lifetime.Token, target.Bearer is null ? null : ObserveInputAsync),
-                PumpAsync(upstream, downstream, lifetime.Token), monitor);
+            var fromClient = PumpAsync(downstream, upstream, lifetime.Token, "upstream",
+                target.Bearer is null ? null : ObserveInputAsync);
+            var fromUpstream = PumpAsync(upstream, downstream, lifetime.Token, "downstream");
+            var first = await Task.WhenAny(fromClient, fromUpstream, monitor);
+            outcome = first == fromClient && fromClient.IsCompletedSuccessfully && fromClient.Result != PumpEnd.Stopped
+                    ? ClientOutcome(fromClient.Result)
+                : first == fromUpstream && fromUpstream.IsCompletedSuccessfully && fromUpstream.Result != PumpEnd.Stopped
+                    ? UpstreamOutcome(fromUpstream.Result)
+                : revoked ? "revoked"
+                : context.RequestAborted.IsCancellationRequested ? "aborted"
+                : lifetime.IsCancellationRequested ? "lifetime" : "aborted";
             using var close = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             await Task.WhenAll(CloseAsync(upstream, close.Token), CloseAsync(downstream, close.Token));
         }
-        finally { lifetime.Cancel(); upstream.Abort(); downstream.Abort(); await monitor; }
+        finally
+        {
+            lifetime.Cancel(); upstream.Abort(); downstream.Abort(); await monitor;
+            GatewayDiagnostics.WebSocketClosed(outcome);
+        }
+
+        static string ClientOutcome(PumpEnd end) => end switch
+        {
+            PumpEnd.Closed => "client_closed", PumpEnd.MessageLimit => "message_limit",
+            PumpEnd.Rejected => "activity_rejected", _ => "aborted"
+        };
+
+        static string UpstreamOutcome(PumpEnd end) => end switch
+        {
+            PumpEnd.Closed => "upstream_closed", PumpEnd.MessageLimit => "message_limit", _ => "aborted"
+        };
 
         async Task<bool> ObserveInputAsync(ReadOnlyMemory<byte> message, CancellationToken ct)
         {
@@ -351,14 +391,17 @@ public sealed class WorkspaceGatewayRelay : IDisposable
                 {
                     await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(options.ReauthorizationSeconds, 1, 10)), lifetime.Token);
                     var refreshed = await control.ResolveAsync(host, session, lifetime.Token);
-                    if (!ValidTarget(refreshed) || refreshed != target) { lifetime.Cancel(); return; }
+                    if (!ValidTarget(refreshed) || refreshed != target) { revoked = true; lifetime.Cancel(); return; }
                 }
             }
-            catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException) { lifetime.Cancel(); }
+            catch (HttpRequestException) { revoked = true; lifetime.Cancel(); }
+            catch (OperationCanceledException) { lifetime.Cancel(); }
         }
     }
 
-    private async Task PumpAsync(WebSocket source, WebSocket destination, CancellationToken ct,
+    private enum PumpEnd { Stopped, Closed, MessageLimit, Rejected, Error }
+
+    private async Task<PumpEnd> PumpAsync(WebSocket source, WebSocket destination, CancellationToken ct, string direction,
         Func<ReadOnlyMemory<byte>, CancellationToken, Task<bool>>? observe = null)
     {
         var buffer = new byte[16384];
@@ -370,15 +413,16 @@ public sealed class WorkspaceGatewayRelay : IDisposable
             while (!ct.IsCancellationRequested)
             {
                 var result = await source.ReceiveAsync(buffer.AsMemory(), ct);
-                if (result.MessageType == WebSocketMessageType.Close) return;
+                if (result.MessageType == WebSocketMessageType.Close) return PumpEnd.Closed;
                 messageBytes = checked(messageBytes + result.Count);
-                if (messageBytes > Math.Clamp(options.MaxWebSocketMessageBytes, 1024, 4 * 1024 * 1024)) return;
+                if (messageBytes > Math.Clamp(options.MaxWebSocketMessageBytes, 1024, 4 * 1024 * 1024)) return PumpEnd.MessageLimit;
                 if (observeMessage && messageBytes <= T3UsefulInputObserver.MaximumMessageBytes)
                     message!.Write(buffer, 0, result.Count);
                 else observeMessage = false;
                 if (result.EndOfMessage && observeMessage &&
-                    !await observe!(message!.GetBuffer().AsMemory(0, (int)message.Length), ct)) return;
+                    !await observe!(message!.GetBuffer().AsMemory(0, (int)message.Length), ct)) return PumpEnd.Rejected;
                 await destination.SendAsync(buffer.AsMemory(0, result.Count), result.MessageType, result.EndOfMessage, ct);
+                GatewayDiagnostics.Relayed("websocket", direction, result.Count);
                 if (result.EndOfMessage)
                 {
                     messageBytes = 0;
@@ -387,7 +431,11 @@ public sealed class WorkspaceGatewayRelay : IDisposable
                 }
             }
         }
-        catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or IOException or HttpRequestException) { }
+        catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or IOException or HttpRequestException)
+        {
+            return ct.IsCancellationRequested ? PumpEnd.Stopped : PumpEnd.Error;
+        }
+        return PumpEnd.Stopped;
     }
 
     private static async Task CloseAsync(WebSocket socket, CancellationToken ct)
@@ -411,7 +459,7 @@ public sealed class WorkspaceGatewayRelay : IDisposable
             x.IndexOf('=') is var separator && separator > 0 &&
             !x[..separator].Trim().Equals(CookieName, StringComparison.OrdinalIgnoreCase)));
 
-    private sealed class BoundedReadStream(Stream inner, long maximum) : Stream
+    private sealed class BoundedReadStream(Stream inner, long maximum, string direction) : Stream
     {
         private long bytes;
         public override bool CanRead => true;
@@ -425,6 +473,7 @@ public sealed class WorkspaceGatewayRelay : IDisposable
             var count = await inner.ReadAsync(buffer[..(int)Math.Min(buffer.Length, maximum - bytes + 1)], cancellationToken);
             bytes += count;
             if (bytes > maximum) throw new IOException("Relay body limit exceeded.");
+            GatewayDiagnostics.Relayed("http", direction, count);
             return count;
         }
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

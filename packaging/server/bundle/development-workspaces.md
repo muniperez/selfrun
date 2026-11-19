@@ -46,6 +46,12 @@ Leave the flag unset or `false` on older revisions; keep the qualified catalog
 entries and matching snapshots for existing VM restarts and rollback. Use a new
 image key for each new snapshot and manifest rather than replacing an old key.
 
+To make the portal's create flow a single name-and-create step when several
+size/location options are approved, list one plan ID in
+`DevelopmentWorkspaces:Profiles:<profile>:DefaultPlanIdsForNewWorkspaces`. With
+exactly one eligible option, it is preselected without this setting. Otherwise
+the portal asks the user to choose a size and location.
+
 Do not put provider tokens, SSH keys, OpenBao tokens/mounts, database credentials
 or the full workspace configuration in the gateway. It receives only its
 dedicated service credential and transport configuration.
@@ -53,8 +59,10 @@ dedicated service credential and transport configuration.
 For workspaces without a saved idle timeout, `DevelopmentWorkspaces.IdleGraceMinutes`
 is the operator default in the protected JSON. Keep a deliberately configured
 value; when omitted it defaults to 360 minutes (6 hours). A saved workspace
-setting takes precedence for both VM kinds. Apply the database migration and
-update the API and worker together before reopening workspace operations.
+setting takes precedence for both VM kinds. A dev environment set to **Keep
+running** never stops for inactivity; spend limits and manual stop still apply.
+Apply the database migration and update the API and worker together before
+reopening workspace operations.
 
 ## Opt-in startup
 

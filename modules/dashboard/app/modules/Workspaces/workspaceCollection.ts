@@ -5,15 +5,29 @@ export function primaryVm(workspace: DevelopmentWorkspace) {
     ?? workspace.vms?.find(vm => vm.kind === "primary");
 }
 
+// Ordinary compute deletion also reports a "deleting" VM phase; only volume status marks permanent deletion.
+export function permanentDeletion(workspace: DevelopmentWorkspace) {
+  if (workspace.volumeStatus === "deleted") return "deleted";
+  if (workspace.volumeStatus !== "deleting") return null;
+  return primaryVm(workspace)?.phase === "delete_failed" || workspace.phase === "delete_failed" ? "failed" : "deleting";
+}
+
 export function workspacePhase(phase?: string | null) {
-  if (phase === "ready") return { value: "ready", label: "Ready" };
+  if (phase === "ready") return { value: "ready", label: "Running" };
   if (phase === "stopped") return { value: "stopped", label: "Stopped" };
   if (["provisioning", "attaching", "bootstrapping", "enrolling", "starting"].includes(phase ?? ""))
-    return { value: "starting", label: `Starting · ${phase}` };
-  if (["draining", "deleting", "stopping"].includes(phase ?? "")) return { value: "stopping", label: `Stopping · ${phase}` };
+    return { value: "starting", label: "Starting" };
+  if (["draining", "deleting", "stopping"].includes(phase ?? "")) return { value: "stopping", label: "Stopping" };
   if (["awaiting_git_save", "blocked", "failed", "recovering"].includes(phase ?? ""))
-    return { value: "attention", label: phase === "awaiting_git_save" ? "Git save blocked" : `Needs attention · ${phase}` };
+    return { value: "attention", label: phase === "awaiting_git_save" ? "Git save blocked" : "Needs attention" };
   return { value: "unavailable", label: "Unavailable" };
+}
+
+export function primaryState(workspace: DevelopmentWorkspace) {
+  const deletion = permanentDeletion(workspace);
+  if (deletion === "deleting") return { value: "stopping", label: "Deleting environment" };
+  if (deletion === "failed") return { value: "attention", label: "Deletion failed" };
+  return workspacePhase(primaryVm(workspace)?.phase);
 }
 
 export function ephemeralSummary(workspace: DevelopmentWorkspace) {

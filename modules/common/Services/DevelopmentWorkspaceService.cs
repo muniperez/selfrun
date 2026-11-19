@@ -34,7 +34,8 @@ public sealed partial class DevelopmentWorkspaceService(
             if (request.VolumeSizeGb is < 10 or > 10000) throw Invalid("workspace_volume_size_invalid", "Volume size must be 10–10,000 GB.");
             var digest = Digest(request with { Name = request.Name.Trim() });
             var existing = await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(
-                x => x.OrganizationId == request.OrganizationId && x.IdempotencyKey == request.IdempotencyKey, ct);
+                x => x.OrganizationId == request.OrganizationId && x.IdempotencyKey == request.IdempotencyKey
+                    && x.VolumeStatus != "deleted", ct);
             if (existing is not null)
             {
                 if (existing.RequestDigest != digest) throw Conflict("workspace_idempotency_conflict", "Idempotency key already has a different request.");
@@ -48,7 +49,7 @@ public sealed partial class DevelopmentWorkspaceService(
             {
                 Id = ids.NewId("workspace"), OrganizationId = request.OrganizationId, CreatedBy = actorId,
                 Name = request.Name.Trim(), ProviderAccountId = selection.Plan.ProviderAccountId, Region = selection.Plan.Region,
-                IdleTimeoutMinutes = request.IdleTimeoutMinutes,
+                IdleTimeoutMinutes = request.IdleTimeoutMinutes, KeepRunning = request.KeepRunning,
                 VolumeSizeGb = request.VolumeSizeGb, StorageMonthlyRate = Policy.VolumeMonthlyRatePerGb * request.VolumeSizeGb,
                 Currency = Policy.Currency, PricingUpdatedAt = Policy.PricingUpdatedAt,
                 IdempotencyKey = request.IdempotencyKey, RequestDigest = digest, CreatedAt = Now, UpdatedAt = Now
@@ -255,7 +256,9 @@ public sealed partial class DevelopmentWorkspaceService(
         {
             if (!(await maintenance.CheckAsync(db, requireOpen: true, token)).IsAdmitted)
                 throw Conflict("workspace_maintenance_fenced", "Maintenance authority is not open for automatic idle-stop admission.");
-            if (deadline < Now || !await IsIdleAsync(vm, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes), token))
+            if (workspace.KeepRunning)
+                throw Conflict("workspace_keep_running", "This dev environment is set to keep running; automatic idle stop is off.");
+            if (deadline < Now || !await IsIdleAsync(vm, EffectiveIdleTimeout(workspace), token))
                 throw Conflict("workspace_active", "Activity, missing heartbeat or unresolved tasks prevent idle shutdown.");
             await StopCoreAsync(workspace, vm, "idle", deadline, token);
         }, ct);
@@ -264,7 +267,8 @@ public sealed partial class DevelopmentWorkspaceService(
         await db.DevelopmentWorkspaceTaskLeases.AnyAsync(x => x.VmId == vm.Id && x.Generation == vm.Generation && x.Status == "active", ct);
 
     public async Task<IReadOnlyList<DevelopmentWorkspace>> ListAsync(string organizationId, CancellationToken ct) =>
-        await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases).Where(x => x.OrganizationId == organizationId).OrderBy(x => x.Name).ToListAsync(ct);
+        await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases)
+            .Where(x => x.OrganizationId == organizationId && x.VolumeStatus != "deleted").OrderBy(x => x.Name).ToListAsync(ct);
 
     public async Task<DevelopmentWorkspace?> GetAsync(string workspaceId, string organizationId, CancellationToken ct) =>
         await db.DevelopmentWorkspaces.AsNoTracking().Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(x => x.Id == workspaceId && x.OrganizationId == organizationId, ct);
@@ -313,7 +317,7 @@ public sealed partial class DevelopmentWorkspaceService(
             workspace.Vms.Where(x => x.ComputeReserved).Sum(x => x.ComputeHourlyRate * 720m), workspace.StorageMonthlyRate,
             workspace.Currency, workspace.PricingUpdatedAt, workspace.Revision, workspace.CreatedAt, workspace.UpdatedAt,
             workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus,
-            workspace.CreatedBy, workspace.IdleTimeoutMinutes, EffectiveIdleTimeout(workspace.IdleTimeoutMinutes));
+            workspace.CreatedBy, workspace.IdleTimeoutMinutes, EffectiveIdleTimeout(workspace), workspace.KeepRunning);
     }
 
     public DevelopmentWorkspaceVmResponse ToVmResponse(DevelopmentWorkspaceVm vm) =>
@@ -324,7 +328,8 @@ public sealed partial class DevelopmentWorkspaceService(
             vm.VerifiedRemoteCommit, vm.NextImageId, vm.NextProfile, vm.NextPlanId, vm.ComputeHourlyRate,
             vm.ComputeReserved ? vm.ComputeHourlyRate * 720m : 0, vm.ComputeReserved, vm.Revision,
             vm.TaskLeases.Where(x => x.Generation == vm.Generation).Select(x =>
-                new DevelopmentWorkspaceTaskLeaseResponse(x.VmId, x.TaskId, x.Generation, x.Status, x.ExpiresAt)).ToArray(), vm.StartAfterStop);
+                new DevelopmentWorkspaceTaskLeaseResponse(x.VmId, x.TaskId, x.Generation, x.Status, x.ExpiresAt)).ToArray(), vm.StartAfterStop,
+            Resources: Resources(vm));
 
     private async Task StartCoreAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, CancellationToken ct)
     {
@@ -413,7 +418,7 @@ public sealed partial class DevelopmentWorkspaceService(
         Touch(vm);
     }
 
-    private void AddOperation(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string kind,
+    private DevelopmentWorkspaceOperation AddOperation(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string kind,
         DevelopmentWorkspaceGitRecoverySource? gitRecovery = null)
     {
         var operation = new DevelopmentWorkspaceOperation
@@ -429,6 +434,7 @@ public sealed partial class DevelopmentWorkspaceService(
         };
         db.DevelopmentWorkspaceOperations.Add(operation); vm.OperationId = operation.Id;
         if (kind == "start") vm.AllocationOperationId = operation.Id;
+        return operation;
     }
 
     private async Task CheckAdmissionAsync(DevelopmentWorkspace workspace, decimal rate, CancellationToken ct)
@@ -514,9 +520,15 @@ public sealed partial class DevelopmentWorkspaceService(
             return workspace;
         }, ct);
 
-    private async Task<DevelopmentWorkspace> FindAsync(string id, string organizationId, CancellationToken ct) =>
-        await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases).SingleOrDefaultAsync(x => x.Id == id && x.OrganizationId == organizationId, ct)
-        ?? throw Invalid("workspace_not_found", "Workspace was not found.");
+    private async Task<DevelopmentWorkspace> FindAsync(string id, string organizationId, CancellationToken ct, bool allowDeletion = false)
+    {
+        var workspace = await db.DevelopmentWorkspaces.Include(x => x.Vms).ThenInclude(x => x.TaskLeases)
+            .SingleOrDefaultAsync(x => x.Id == id && x.OrganizationId == organizationId, ct)
+            ?? throw Invalid("workspace_not_found", "Workspace was not found.");
+        if (!allowDeletion && workspace.VolumeStatus is "deleting" or "deleted")
+            throw Conflict("workspace_permanent_deletion", "This workspace cannot be changed after permanent deletion has been requested.");
+        return workspace;
+    }
 
     private static DevelopmentWorkspaceVm Vm(DevelopmentWorkspace workspace, string vmId, long? generation)
     {

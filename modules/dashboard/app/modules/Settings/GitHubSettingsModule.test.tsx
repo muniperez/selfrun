@@ -24,7 +24,7 @@ it("offers private personal and organization registration only to administrators
   fireEvent.change(screen.getByLabelText("App owner type"), { target: { value: "Organization" } });
   expect(screen.getByLabelText("App owner type")).toHaveValue("Organization");
   expect(screen.getByText(/Creating an App does not install it/)).toBeInTheDocument();
-  expect(screen.getByText(/Workspace Git credentials/)).toBeInTheDocument();
+  expect(screen.getByText(/Dev environment Git credentials/)).toBeInTheDocument();
 });
 
 it("does not offer registration to a developer", async () => {

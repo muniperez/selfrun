@@ -12,7 +12,7 @@ import { getWorkspace } from "@/api/workspacesApi";
 import { ApiError, type DevelopmentWorkspace } from "@/models/controlPlane";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { WorkspaceDetail } from "./WorkspaceDetail";
-import { ephemeralSummary, lastActivity, primaryVm, workspacePhase } from "./workspaceCollection";
+import { ephemeralSummary, lastActivity, primaryState, primaryVm } from "./workspaceCollection";
 import { vmStartup } from "./WorkspaceVmStartup";
 
 const fastPollMs = 3_000;
@@ -24,7 +24,7 @@ const statusRequestTimeoutMs = 15_000;
 export function WorkspacesModule() {
   const { selectedOrganization } = useAuth();
   const { workspaceId } = useParams();
-  if (!selectedOrganization) return <PageScaffold title="Workspaces"><p>Select an organization.</p></PageScaffold>;
+  if (!selectedOrganization) return <PageScaffold title="Dev Environments"><p>Select an organization.</p></PageScaffold>;
   const canManage = ["owner", "admin", "developer"].includes(selectedOrganization.role?.toLowerCase() ?? "");
   return <OrganizationWorkspaces key={`${selectedOrganization.id}:${workspaceId ?? ""}`}
     organizationId={selectedOrganization.id} workspaceId={workspaceId} canManage={canManage} />;
@@ -65,7 +65,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       } catch (reason) {
         if (active.current && request.current?.controller === controller && !signal.aborted) {
           if (workspaceId && reason instanceof ApiError && [401, 403, 404].includes(reason.status)) setItems([]);
-          setError(reason instanceof Error ? reason.message : "Unable to load workspaces.");
+          setError(reason instanceof Error ? reason.message : "Couldn't load dev environments.");
         }
       } finally {
         window.clearTimeout(timeout);
@@ -118,24 +118,24 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
     void refresh();
   };
   const filtered = items.filter(workspace => workspace.name.toLocaleLowerCase().includes(query.search.trim().toLocaleLowerCase())
-    && (!query.filters.primary || workspacePhase(primaryVm(workspace)?.phase).value === query.filters.primary)
+    && (!query.filters.primary || primaryState(workspace).value === query.filters.primary)
     && (!query.filters.ephemeral || ephemeralSummary(workspace).state === query.filters.ephemeral))
     .sort((a, b) => compareRecords(query.sort === "activity" ? lastActivity(a) : a.name,
       query.sort === "activity" ? lastActivity(b) : b.name, query.direction, a.id, b.id));
-  return <PageScaffold title={workspaceId ? item?.name ?? "Workspace" : "Workspaces"}
-    breadcrumbs={workspaceId ? [{ label: "Workspaces", to: "/workspaces" }, { label: item?.name ?? "Workspace" }] : undefined}
-    actions={workspaceId ? <Button variant="outline" disabled={loading} onClick={checkStatus}>Refresh workspace status</Button> : undefined}>
+  return <PageScaffold title={workspaceId ? item?.name ?? "Dev environment" : "Dev Environments"}
+    breadcrumbs={workspaceId ? [{ label: "Dev Environments", to: "/workspaces" }, { label: item?.name ?? "Dev environment" }] : undefined}
+    actions={workspaceId ? <Button variant="outline" disabled={loading} onClick={checkStatus}>Refresh status</Button> : undefined}>
     {!workspaceId && <>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0 flex-1"><CollectionToolbar label="workspaces" query={query}
+        <div className="min-w-0 flex-1"><CollectionToolbar label="dev environments" query={query}
           onChange={next => setQuery({ ...next, view: "table" })} onRefresh={() => refresh()} loading={loading}
           count={filtered.length} filters={[
             { id: "primary", label: "Primary VM state", options: [
-              { value: "ready", label: "Ready" }, { value: "stopped", label: "Stopped" },
+              { value: "ready", label: "Running" }, { value: "stopped", label: "Stopped" },
               { value: "starting", label: "Starting" }, { value: "stopping", label: "Stopping" },
               { value: "attention", label: "Needs attention" }, { value: "unavailable", label: "Unavailable" },
             ] },
-            { id: "ephemeral", label: "Ephemeral VMs", options: [
+            { id: "ephemeral", label: "Temporary VMs", options: [
               { value: "attention", label: "Needs attention" }, { value: "running", label: "Running" },
               { value: "transitioning", label: "Starting or stopping" }, { value: "stopped", label: "Stopped" },
               { value: "none", label: "None" }, { value: "unavailable", label: "Unavailable" },
@@ -145,9 +145,9 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
           setCreated(workspace); void refresh();
         }} />
       </div>
-      <p className="text-sm text-muted-foreground">{filtered.length} of {items.length} workspaces</p>
+      <p className="text-sm text-muted-foreground">{filtered.length} of {items.length} dev environments</p>
       {created && <p role="status" className="text-sm">
-        Created stopped workspace <Link className="font-medium text-primary underline" to={`/workspaces/${encodeURIComponent(created.id)}`}>{created.name}</Link>. Compute has not been started.
+        Created <Link className="font-medium text-primary underline" to={`/workspaces/${encodeURIComponent(created.id)}`}>{created.name}</Link>. Its VM is stopped until you start it.
       </p>}
     </>}
     {error && <div role="alert" className="space-y-2 text-sm text-destructive">
@@ -155,22 +155,22 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       <Button variant="outline" onClick={checkStatus} disabled={loading}>{workspaceId && item ? "Retry status check" : "Retry"}</Button>
     </div>}
     {workspaceId && <p role="status" className="text-sm text-muted-foreground">
-      {startingGenerations && (paused ? "Automatic status checks paused. Refresh workspace status to check again."
+      {startingGenerations && (paused ? "Automatic status checks paused. Select Refresh status to check again."
         : delayed && !error ? "Still waiting for the VM to be ready. Startup is taking longer than usual." : "")}
     </p>}
-    {loading && !items.length && <p role="status">Loading {workspaceId ? "workspace" : "workspaces"}…</p>}
-    {!loading && !error && !items.length && <p>{workspaceId ? "Workspace not found." : "No workspaces yet."}
-      {!workspaceId && !canManage ? " Ask an organization administrator to create a workspace." : ""}</p>}
+    {loading && !items.length && <p role="status">Loading {workspaceId ? "dev environment" : "dev environments"}…</p>}
+    {!loading && !error && !items.length && <p>{workspaceId ? "Dev environment not found." : "No dev environments yet."}
+      {!workspaceId && !canManage ? " Ask an organization administrator to create one." : ""}</p>}
     {workspaceId && item && <WorkspaceDetail item={item} organizationId={organizationId} refresh={refresh} canManage={canManage} />}
     {!workspaceId && items.length > 0 && <>
-      {!filtered.length && <p className="text-sm text-muted-foreground">Adjust search or Filter &amp; sort to find a workspace.</p>}
+      {!filtered.length && <p className="text-sm text-muted-foreground">Adjust search or Filter &amp; sort to find a dev environment.</p>}
       {filtered.length > 0 && <div className="rounded-lg border">
-        <Table aria-label="Workspaces">
-          <TableHeader><TableRow><TableHead>Workspace</TableHead><TableHead>Primary VM</TableHead>
-            <TableHead>Ephemeral VMs</TableHead><TableHead>Storage</TableHead><TableHead>Last activity</TableHead></TableRow></TableHeader>
+        <Table aria-label="Dev environments">
+          <TableHeader><TableRow><TableHead>Dev environment</TableHead><TableHead>Primary VM</TableHead>
+            <TableHead>Temporary VMs</TableHead><TableHead>Storage</TableHead><TableHead>Last activity</TableHead></TableRow></TableHeader>
           <TableBody>{filtered.map(workspace => {
             const primary = primaryVm(workspace);
-            const phase = workspacePhase(primary?.phase);
+            const phase = primaryState(workspace);
             const ephemeral = ephemeralSummary(workspace);
             const activity = lastActivity(workspace);
             const phaseStyle = phase.value === "ready" ? "bg-success-surface text-success"
@@ -178,14 +178,14 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
                 : ["starting", "stopping"].includes(phase.value) ? "bg-info-surface text-info"
                   : "bg-muted text-muted-foreground";
             return <TableRow key={workspace.id}>
-              <TableCell data-label="Workspace"><div className="flex items-center gap-3">
+              <TableCell data-label="Dev environment"><div className="flex items-center gap-3">
                 <Terminal aria-hidden="true" className="hidden h-9 w-9 rounded-md border p-2 text-muted-foreground sm:block" />
                 <div className="min-w-0"><Link className="break-words font-medium text-primary hover:underline"
                   to={`/workspaces/${encodeURIComponent(workspace.id)}`}>{workspace.name}<ChevronRight aria-hidden="true" className="ml-1 inline h-4 w-4" /></Link>
-                  <p className="text-xs text-muted-foreground">{primary?.profile ?? "Profile unavailable"}</p></div>
+                  <p className="text-xs text-muted-foreground">{primary?.profile ?? "Size unavailable"}</p></div>
               </div></TableCell>
               <TableCell data-label="Primary VM"><span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${phaseStyle}`}>{phase.label}</span></TableCell>
-              <TableCell data-label="Ephemeral VMs"><span className={ephemeral.state === "attention" ? "text-warning" : ""}>{ephemeral.label}</span></TableCell>
+              <TableCell data-label="Temporary VMs"><span className={ephemeral.state === "attention" ? "text-warning" : ""}>{ephemeral.label}</span></TableCell>
               <TableCell data-label="Storage">{Number.isFinite(workspace.volumeSizeGb) ? `${workspace.volumeSizeGb} GB` : "Unavailable"}</TableCell>
               <TableCell data-label="Last activity">{activity === null ? "Unavailable" : <time dateTime={new Date(activity).toISOString()}>{new Date(activity).toLocaleString()}</time>}</TableCell>
             </TableRow>;

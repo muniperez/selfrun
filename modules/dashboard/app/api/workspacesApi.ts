@@ -18,15 +18,23 @@ export function getWorkspace(id: string, organizationId: string, signal?: AbortS
   );
 }
 
+export function deleteWorkspace(id: string, organizationId: string) {
+  return apiRequest<DevelopmentWorkspace>(
+    `/api/development-workspaces/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}&confirmPermanentDeletion=true`,
+    { method: "DELETE" },
+  );
+}
+
 export function workspaceOperation(id: string, organizationId: string, operation: string, body?: unknown) {
   return apiRequest<DevelopmentWorkspace>(workspacePath(id, organizationId, operation), {
     method: "POST", ...(body === undefined ? {} : { body }),
   });
 }
 
-export function updateWorkspaceIdleTimeout(id: string, organizationId: string, idleTimeoutMinutes: number | null) {
+export function updateWorkspaceIdleTimeout(id: string, organizationId: string, idleTimeoutMinutes: number | null,
+  keepRunning = false) {
   return apiRequest<DevelopmentWorkspace>(workspacePath(id, organizationId, "idle-timeout"), {
-    method: "PUT", body: { idleTimeoutMinutes },
+    method: "PUT", body: { idleTimeoutMinutes, keepRunning },
   });
 }
 
@@ -63,12 +71,18 @@ export type WorkspaceSelectionOption = {
   providerAccountName: string;
   region: string;
   sku: string;
+  cpuCount?: number;
+  memoryGiB?: number;
+  computeHourlyRate?: number;
+  isDefault?: boolean;
 };
 
 export type WorkspaceSelections = {
   available: boolean;
   unavailableReason?: string | null;
   options: WorkspaceSelectionOption[];
+  currency?: string | null;
+  volumeMonthlyRatePerGb?: number | null;
 };
 
 export function getWorkspaceSelections(organizationId: string, workspaceId?: string,

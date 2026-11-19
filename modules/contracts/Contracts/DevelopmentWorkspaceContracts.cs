@@ -4,10 +4,12 @@ namespace Minicloud.Common.Contracts;
 
 public sealed record WorkspaceSelectionOption(
     string ImageId, string ImageName, string Profile, string PlanId, string PlanName,
-    string ProviderAccountName, string Region, string Sku);
+    string ProviderAccountName, string Region, string Sku, int CpuCount, int MemoryGiB,
+    decimal ComputeHourlyRate, bool IsDefault);
 
 public sealed record WorkspaceSelections(
-    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options);
+    bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options,
+    string? Currency = null, decimal? VolumeMonthlyRatePerGb = null);
 
 public sealed record CreateDevelopmentWorkspaceRequest(
     string OrganizationId,
@@ -18,10 +20,13 @@ public sealed record CreateDevelopmentWorkspaceRequest(
     int VolumeSizeGb,
     string IdempotencyKey,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonNumberHandling(JsonNumberHandling.Strict)]
-    int? IdleTimeoutMinutes = null);
+    int? IdleTimeoutMinutes = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    bool KeepRunning = false);
 
 public sealed record UpdateDevelopmentWorkspaceIdleTimeoutRequest(
-    [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes);
+    [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes,
+    bool KeepRunning = false);
 
 public sealed record DevelopmentWorkspaceResponse(
     string Id,
@@ -56,7 +61,8 @@ public sealed record DevelopmentWorkspaceResponse(
     string? VolumeStatus = null,
     string? CreatedBy = null,
     int? IdleTimeoutMinutes = null,
-    int? EffectiveIdleTimeoutMinutes = null);
+    int? EffectiveIdleTimeoutMinutes = null,
+    bool KeepRunning = false);
 
 public sealed record DevelopmentWorkspaceTaskLeaseRequest(string TaskId, long Generation);
 public sealed record DevelopmentWorkspaceGenerationRequest(long Generation);
@@ -80,7 +86,8 @@ public sealed record DevelopmentWorkspaceVmResponse(
     decimal ComputeHourlyRate, decimal EstimatedMonthlyCompute, bool ComputeReserved, long Revision,
     IReadOnlyList<DevelopmentWorkspaceTaskLeaseResponse>? TaskLeases = null,
     bool StartAfterStop = false,
-    string? StartupStage = null);
+    string? StartupStage = null,
+    DevelopmentWorkspaceVmResources? Resources = null);
 
 public sealed record DevelopmentWorkspaceTaskLeaseResponse(
     string VmId, string TaskId, long Generation, string Status, DateTimeOffset ExpiresAt);

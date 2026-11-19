@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
+import { MemoryRouter } from "react-router-dom";
+import { deleteWorkspace, launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspaceDetail } from "./WorkspaceDetail";
 
@@ -11,7 +12,7 @@ const auth = vi.hoisted(() => ({
   selectedOrganization: { id: "org-a", role: "owner" },
 }));
 vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
-vi.mock("@/api/workspacesApi", () => ({ launchEphemeralVm: vi.fn(), workspaceOperation: vi.fn() }));
+vi.mock("@/api/workspacesApi", () => ({ deleteWorkspace: vi.fn(), launchEphemeralVm: vi.fn(), workspaceOperation: vi.fn() }));
 vi.mock("./WorkspaceVmCard", () => ({
   WorkspaceVmCard: (props: {
     workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm; currency: string; canManage: boolean;
@@ -65,8 +66,8 @@ function detail(item = workspace(), canManage = true, organizationId = "org-a") 
   return <WorkspaceDetail item={item} organizationId={organizationId} refresh={refresh} canManage={canManage} />;
 }
 function openLaunch() {
-  fireEvent.click(screen.getByRole("button", { name: "Launch ephemeral VM" }));
-  return screen.getByRole("form", { name: "Launch ephemeral VM in Coding" });
+  fireEvent.click(screen.getByRole("button", { name: "Launch temporary VM" }));
+  return screen.getByRole("form", { name: "Launch temporary VM in Coding" });
 }
 function fillLaunch(form: HTMLElement) {
   fireEvent.click(within(form).getByRole("button", { name: "Use eligible selection" }));
@@ -76,7 +77,7 @@ function fillLaunch(form: HTMLElement) {
 }
 function acknowledge(form: HTMLElement) {
   fireEvent.click(within(form).getByLabelText(/I authorize task-scoped pushes/));
-  fireEvent.click(within(form).getByLabelText(/I acknowledge ignored\/untracked/));
+  fireEvent.click(within(form).getByLabelText(/I understand that untracked files/));
 }
 function openStopAll() {
   fireEvent.click(screen.getByRole("button", { name: "Stop all VMs" }));
@@ -145,7 +146,7 @@ it("resolves the primary by identity and passes observed state and retained stor
   expect(workspaceOperation).not.toHaveBeenCalled();
   view.rerender(detail(workspace({ vms: [vm("primary", { kind: "primary", desiredState: "stopped", phase: "stopped" })] })));
   expect(within(primary).getByRole("article")).toHaveTextContent("stopped");
-  expect(screen.getByText("No ephemeral VMs")).toBeInTheDocument();
+  expect(screen.getByText("No temporary VMs")).toBeInTheDocument();
 });
 
 it("falls back to explicit primary kind and never substitutes an ephemeral VM when primary metadata is missing", () => {
@@ -164,7 +165,7 @@ it("expands siblings independently and delegates complete Git, generation and ac
     vm("sibling-one", { verifiedRemoteRef: "refs/heads/work/one", verifiedRemoteCommit: "c".repeat(40), finalHead: "c".repeat(40) }),
     vm("sibling-two", { phase: "awaiting_git_save", gitStatus: "remote_unavailable" }),
   ] })));
-  const table = screen.getByRole("table", { name: "Ephemeral VMs" });
+  const table = screen.getByRole("table", { name: "Temporary VMs" });
   expect(within(table).getByText("work/sibling-one")).toBeInTheDocument();
   expect(within(table).getByText("https://git.example/sibling-two.git")).toBeInTheDocument();
   expect(within(table).getByText("Remote unavailable")).toBeInTheDocument();
@@ -200,22 +201,22 @@ it("shows retained storage and observed per-VM estimates in the costs tab, prima
   expect(screen.getByText("retained")).toBeInTheDocument();
   expect(screen.getByText("1.25 EUR")).toBeInTheDocument();
   expect(screen.getByText("2026-11-15T00:00:00Z")).toBeInTheDocument();
-  const costs = screen.getByRole("region", { name: "Per-VM compute estimates" });
+  const costs = screen.getByRole("region", { name: "VM costs" });
   const rows = within(costs).getAllByRole("row");
   expect(rows[1]).toHaveTextContent("primary");
   expect(rows[2]).toHaveTextContent("sibling-one");
-  expect(rows[3]).toHaveTextContent("Not reserved");
+  expect(rows[3]).toHaveTextContent("Not allocated");
   expect(within(costs).getAllByText("0.1250 EUR")).toHaveLength(3);
-  expect(screen.getByText(/retained storage continues to incur charges/i)).toBeInTheDocument();
+  expect(screen.getByText(/Storage is charged even when all VMs are stopped/)).toBeInTheDocument();
   expect(screen.getByText(/rounds up to whole hours/)).toBeInTheDocument();
-  expect(screen.getByText(/not provider invoices or a billing guarantee/)).toBeInTheDocument();
+  expect(screen.getByText(/not invoices or a billing guarantee/)).toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
 
 it("guards launch on eligible selections, resolved SHA and both acknowledgments, including programmatic submits", () => {
   render(detail());
   const form = openLaunch();
-  expect(screen.getByRole("dialog")).toHaveTextContent(/no access to the primary retained volume/);
+  expect(screen.getByRole("dialog")).toHaveTextContent(/can't see the primary VM's storage/);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
   fillLaunch(form);
   fireEvent.submit(form);
@@ -223,13 +224,13 @@ it("guards launch on eligible selections, resolved SHA and both acknowledgments,
   fireEvent.click(within(form).getByLabelText(/I authorize task-scoped pushes/));
   fireEvent.submit(form);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
-  fireEvent.click(within(form).getByLabelText(/I acknowledge ignored\/untracked/));
+  fireEvent.click(within(form).getByLabelText(/I understand that untracked files/));
   fireEvent.change(within(form).getByLabelText("Resolved base commit SHA"), { target: { value: "not-a-commit" } });
   fireEvent.submit(form);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
   fireEvent.change(within(form).getByLabelText("Resolved base commit SHA"), { target: { value: "b".repeat(40) } });
   fireEvent.click(within(form).getByRole("button", { name: "Catalog unavailable" }));
-  expect(within(form).getByRole("button", { name: "Launch ephemeral VM" })).toBeDisabled();
+  expect(within(form).getByRole("button", { name: "Launch temporary VM" })).toBeDisabled();
   fireEvent.submit(form);
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
@@ -259,7 +260,7 @@ it("retains idempotency on unchanged failed retries, changes it with payload, th
   const reopened = openLaunch();
   expect(within(reopened).getByLabelText("Repository URL")).toHaveValue("");
   expect(within(reopened).getByLabelText(/I authorize task-scoped pushes/)).not.toBeChecked();
-  expect(within(reopened).getByLabelText(/I acknowledge ignored\/untracked/)).not.toBeChecked();
+  expect(within(reopened).getByLabelText(/I understand that untracked files/)).not.toBeChecked();
 });
 
 it("enumerates all stop-all impacts, cancels without mutation and confirms only explicitly", async () => {
@@ -267,10 +268,10 @@ it("enumerates all stop-all impacts, cancels without mutation and confirms only 
   let dialog = openStopAll();
   const affected = within(dialog).getAllByRole("listitem");
   expect(affected).toHaveLength(3);
-  expect(affected[0]).toHaveTextContent("sibling-one · ephemeral · generation 3 · ready · Git save: pending");
-  expect(affected[1]).toHaveTextContent("primary · primary · generation 3");
-  expect(affected[2]).toHaveTextContent("sibling-two · ephemeral · generation 3 · stopped");
-  expect(dialog).toHaveTextContent(/blocked VMs remain allocated and may incur costs/);
+  expect(affected[0]).toHaveTextContent(/sibling-one · Running · Git save: pending.*sibling-one · generation 3/);
+  expect(affected[1]).toHaveTextContent(/Primary VM · Running .*primary · generation 3/);
+  expect(affected[2]).toHaveTextContent(/Stopped .*sibling-two · generation 3/);
+  expect(dialog).toHaveTextContent(/a VM that can't stop keeps its server and may keep charging/);
   expect(workspaceOperation).not.toHaveBeenCalled();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel stop all" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -294,14 +295,14 @@ it("closes a stop-all confirmation when a VM generation changes and when managem
   view.rerender(detail(changed, false));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Launch ephemeral VM" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
   expect(screen.getByRole("article", { name: "VM primary" })).toHaveTextContent("Read only");
   expect(workspaceOperation).not.toHaveBeenCalled();
 });
 
 it("keeps read-only metadata and costs available and discards launch state on organization changes", () => {
   const view = render(detail(workspace(), false));
-  expect(screen.queryByRole("button", { name: "Launch ephemeral VM" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
   showCosts();
   expect(screen.getByText("1.25 EUR")).toBeInTheDocument();
   view.rerender(detail(workspace(), true, "org-b"));
@@ -315,4 +316,84 @@ it("keeps read-only metadata and costs available and discards launch state on or
   expect(within(nextForm).getByLabelText("Selections for org-c/workspace")).toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
 });
+function stoppedWorkspace(overrides: Partial<DevelopmentWorkspace> = {}) {
+  const stopped = { desiredState: "stopped", phase: "stopped", computeReserved: false };
+  return workspace({ vms: [vm("primary", { kind: "primary", ...stopped }), vm("sibling-one", stopped)], ...overrides });
+}
+function deleteSection() {
+  return screen.getByRole("region", { name: "Delete environment" });
+}
+
+it("offers Delete environment only after every VM is stopped and never to read-only users", () => {
+  const view = render(detail());
+  const button = within(deleteSection()).getByRole("button", { name: "Delete environment" });
+  expect(button).toBeDisabled();
+  expect(deleteSection()).toHaveTextContent("Stop all VMs and wait until they finish stopping before deleting.");
+  view.rerender(detail(stoppedWorkspace()));
+  expect(within(deleteSection()).getByRole("button", { name: "Delete environment" })).toBeEnabled();
+  view.rerender(detail(stoppedWorkspace(), false));
+  expect(screen.queryByRole("region", { name: "Delete environment" })).not.toBeInTheDocument();
+  expect(deleteWorkspace).not.toHaveBeenCalled();
+});
+
+it("requires typing the environment name, then deletes and refreshes", async () => {
+  vi.mocked(deleteWorkspace).mockRejectedValueOnce(new Error("Stop all workspace VMs first."))
+    .mockResolvedValueOnce(stoppedWorkspace({ volumeStatus: "deleting" }));
+  render(detail(stoppedWorkspace()));
+  fireEvent.click(within(deleteSection()).getByRole("button", { name: "Delete environment" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete Coding permanently?" });
+  expect(dialog).toHaveTextContent(/Files that are not pushed to Git are lost for good. This cannot be undone./);
+  const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText(/Type Coding to confirm/), { target: { value: "Cod" } });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(deleteWorkspace).not.toHaveBeenCalled();
+
+  fireEvent.click(within(deleteSection()).getByRole("button", { name: "Delete environment" }));
+  const reopened = screen.getByRole("dialog", { name: "Delete Coding permanently?" });
+  fireEvent.change(within(reopened).getByLabelText(/Type Coding to confirm/), { target: { value: "Coding" } });
+  fireEvent.click(within(reopened).getByRole("button", { name: "Delete permanently" }));
+  expect(await within(reopened).findByRole("alert")).toHaveTextContent("Stop all workspace VMs first.");
+  expect(refresh).not.toHaveBeenCalled();
+  fireEvent.click(within(reopened).getByRole("button", { name: "Delete permanently" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(deleteWorkspace).toHaveBeenCalledTimes(2);
+  expect(deleteWorkspace).toHaveBeenLastCalledWith("workspace", "org-a");
+  expect(refresh).toHaveBeenCalledTimes(1);
+});
+
+it("locks other controls while deleting and offers only an explicit retry after failure", () => {
+  const deleting = stoppedWorkspace({ volumeStatus: "deleting", phase: "deleting" });
+  deleting.vms![0] = { ...deleting.vms![0], phase: "deleting" };
+  const view = render(detail(deleting));
+  expect(screen.getByText(/Deleting this dev environment and its saved files/)).toHaveAttribute("role", "status");
+  expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Read-only access/)).not.toBeInTheDocument();
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManage: false }));
+  expect(within(deleteSection()).getByRole("button", { name: "Delete environment" })).toBeDisabled();
+
+  const failed = stoppedWorkspace({ volumeStatus: "deleting", phase: "delete_failed",
+    errorCode: "workspace_delete_volume_attached", errorMessage: "Detach it before retrying." });
+  failed.vms![0] = { ...failed.vms![0], phase: "delete_failed" };
+  view.rerender(detail(failed));
+  expect(screen.getByRole("alert")).toHaveTextContent("workspace_delete_volume_attached: Detach it before retrying.");
+  expect(screen.getByText(/Deleting this dev environment failed/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
+  expect(within(deleteSection()).getByRole("button", { name: "Retry delete environment" })).toBeEnabled();
+});
+
+it("treats ordinary compute deletion as stopping and shows a permanently deleted environment as final", () => {
+  const computeDeletion = workspace({ phase: "deleting", vms: [vm("primary", { kind: "primary", phase: "deleting", desiredState: "stopped" })] });
+  const view = render(<MemoryRouter>{detail(computeDeletion)}</MemoryRouter>);
+  expect(screen.queryByText(/Deleting this dev environment/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Stop all VMs" })).toBeInTheDocument();
+  expect(within(deleteSection()).getByRole("button", { name: "Delete environment" })).toBeDisabled();
+  view.rerender(<MemoryRouter>{detail(stoppedWorkspace({ volumeStatus: "deleted", phase: "deleted" }))}</MemoryRouter>);
+  expect(screen.getByText(/were permanently deleted/)).toHaveAttribute("role", "status");
+  expect(screen.getByRole("link", { name: "Back to dev environments" })).toHaveAttribute("href", "/workspaces");
+  expect(screen.queryByRole("region", { name: "Delete environment" })).not.toBeInTheDocument();
+});
+
 import { useEffect } from "react";

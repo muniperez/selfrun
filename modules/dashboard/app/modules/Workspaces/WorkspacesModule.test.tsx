@@ -5,7 +5,7 @@ import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/cont
 import { WorkspacesModule } from "./WorkspacesModule";
 import { listDevelopmentWorkspaces } from "@/api/environmentsApi";
 import { getWorkspace } from "@/api/workspacesApi";
-import { ephemeralSummary, lastActivity, primaryVm, workspacePhase } from "./workspaceCollection";
+import { ephemeralSummary, lastActivity, permanentDeletion, primaryState, primaryVm, workspacePhase } from "./workspaceCollection";
 
 const auth = vi.hoisted(() => ({ selectedOrganization: { id: "org-a", role: "owner" } as { id: string; role: string } | null }));
 vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
@@ -95,7 +95,7 @@ it("shows slow startup for a temporary VM, bounds automatic reads, and lets a ma
   await act(async () => vi.advanceTimersByTimeAsync(180_000));
   expect(getWorkspace).toHaveBeenCalledTimes(reads);
   vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ vms: [vm(), vm("temporary", { phase: "blocked", desiredState: "running" })] }));
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh workspace status" })));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh status" })));
   expect(screen.getByText("temporary: blocked")).toBeInTheDocument();
   expect(screen.queryByText(/Automatic status checks paused/)).not.toBeInTheDocument();
   await act(async () => vi.advanceTimersByTimeAsync(180_000));
@@ -142,14 +142,14 @@ it("preserves search while following stable detail links and returning", async (
   vi.mocked(listDevelopmentWorkspaces).mockResolvedValue([workspace(), workspace({ id: "other", name: "Other" })]);
   load();
   await screen.findByRole("link", { name: "Coding" });
-  fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "Coding" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search dev environments" }), { target: { value: "Coding" } });
   expect(screen.queryByRole("link", { name: "Other" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("link", { name: "Coding" }));
   await screen.findByRole("article", { name: "Workspace Coding" });
   expect(getWorkspace).toHaveBeenCalledWith("workspace", "org-a", expect.any(AbortSignal));
   fireEvent.click(screen.getByRole("link", { name: "All workspaces" }));
   await screen.findByRole("link", { name: "Coding" });
-  expect(screen.getByRole("textbox", { name: "Search workspaces" })).toHaveValue("Coding");
+  expect(screen.getByRole("textbox", { name: "Search dev environments" })).toHaveValue("Coding");
   expect(screen.queryByRole("link", { name: "Other" })).not.toBeInTheDocument();
 });
 
@@ -164,7 +164,7 @@ it("filters primary and ephemeral independently and sorts missing activity last"
   load();
   await screen.findByRole("link", { name: "Recent" });
   expect(screen.queryByRole("link", { name: "Running" })).not.toBeInTheDocument();
-  const rows = within(screen.getByRole("table", { name: "Workspaces" })).getAllByRole("row");
+  const rows = within(screen.getByRole("table", { name: "Dev environments" })).getAllByRole("row");
   expect(rows[1]).toHaveTextContent("Recent");
   expect(rows[2]).toHaveTextContent("Coding");
 });
@@ -172,16 +172,16 @@ it("filters primary and ephemeral independently and sorts missing activity last"
 it("distinguishes empty organizations, no matches and refresh failure while retaining rows", async () => {
   load();
   await screen.findByRole("link", { name: "Coding" });
-  fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "missing" } });
-  expect(screen.getByText("No matching workspaces.")).toBeInTheDocument();
-  fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search dev environments" }), { target: { value: "missing" } });
+  expect(screen.getByText("No matching dev environments.")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Search dev environments" }), { target: { value: "" } });
   vi.mocked(listDevelopmentWorkspaces).mockRejectedValueOnce(new Error("Refresh unavailable"));
-  fireEvent.click(screen.getByRole("button", { name: "Refresh workspaces" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh dev environments" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Refresh unavailable");
   expect(screen.getByRole("link", { name: "Coding" })).toBeInTheDocument();
   vi.mocked(listDevelopmentWorkspaces).mockResolvedValueOnce([]);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByText("No workspaces yet.");
+  await screen.findByText("No dev environments yet.");
 });
 
 it("hides creation for a read-only role", async () => {
@@ -215,7 +215,7 @@ it("displays detail read errors without treating them as empty success", async (
     <Route path="/workspaces/:workspaceId" element={<WorkspacesModule />} />
   </Routes></MemoryRouter>);
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Workspace access forbidden"));
-  expect(screen.queryByText("Workspace not found.")).not.toBeInTheDocument();
+  expect(screen.queryByText("Dev environment not found.")).not.toBeInTheDocument();
   expect(listDevelopmentWorkspaces).not.toHaveBeenCalled();
 });
 
@@ -231,4 +231,15 @@ it("uses observed identity, phases and activity with defined ephemeral precedenc
   expect(ephemeralSummary(workspace({ vms: [vm("a")] })).label).toBe("1 stopped");
   expect(ephemeralSummary(workspace({ vms: [] })).label).toBe("None");
   expect(lastActivity(workspace({ lastActivityAt: "invalid" }))).toBeNull();
+});
+
+it("labels permanent deletion from volume status, not from ordinary compute deletion", () => {
+  const computeDeletion = workspace({ phase: "deleting", vms: [vm("primary", { phase: "deleting" })] });
+  expect(permanentDeletion(computeDeletion)).toBeNull();
+  expect(primaryState(computeDeletion).label).toBe("Stopping");
+  const deleting = workspace({ volumeStatus: "deleting", phase: "deleting", vms: [vm("primary", { phase: "deleting" })] });
+  expect(primaryState(deleting)).toEqual({ value: "stopping", label: "Deleting environment" });
+  const failed = workspace({ volumeStatus: "deleting", phase: "delete_failed", vms: [vm("primary", { phase: "delete_failed" })] });
+  expect(primaryState(failed)).toEqual({ value: "attention", label: "Deletion failed" });
+  expect(permanentDeletion(workspace({ volumeStatus: "deleted" }))).toBe("deleted");
 });

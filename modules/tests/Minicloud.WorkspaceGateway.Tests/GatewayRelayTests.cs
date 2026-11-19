@@ -105,6 +105,49 @@ public sealed class GatewayRelayTests
         Assert.Equal(WebSocketCloseStatus.PolicyViolation, close.CloseStatus);
     }
 
+    [Fact]
+    public async Task WebSocketRecordsLowCardinalityRelayMetricsAndRevocationOutcome()
+    {
+        var measurements = new System.Collections.Concurrent.ConcurrentQueue<(string Name, long Value, string Tags)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == "Minicloud.Operator" && instrument.Name.StartsWith("minicloud.gateway.", StringComparison.Ordinal))
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+        {
+            var text = string.Join(",", tags.ToArray().Select(tag => $"{tag.Key}={tag.Value}"));
+            measurements.Enqueue((instrument.Name, value, text));
+        });
+        listener.SetMeasurementEventCallback<double>((instrument, _, tags, _) =>
+            measurements.Enqueue((instrument.Name, 1, string.Join(",", tags.ToArray().Select(tag => $"{tag.Key}={tag.Value}")))));
+        listener.Start();
+
+        await using var fixture = await Fixture.StartAsync();
+        using var socket = await fixture.ConnectAsync("/ws?orchestrationProtocol=2");
+        await socket.SendAsync("metric-input"u8.ToArray(), WebSocketMessageType.Text, true, CancellationToken.None);
+        var bytes = new byte[128];
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await socket.ReceiveAsync(bytes, timeout.Token);
+        fixture.Control.Target = null;
+        Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(bytes, timeout.Token)).MessageType);
+        for (var i = 0; i < 100 && !measurements.Any(m => m.Name == "minicloud.gateway.websocket.closes"); i++)
+            await Task.Delay(20);
+
+        var recorded = measurements.ToArray();
+        Assert.Contains(recorded, m => m is { Name: "minicloud.gateway.websocket.closes", Tags: "outcome=revoked" });
+        Assert.Contains(recorded, m => m is { Name: "minicloud.gateway.admission.wait", Tags: "outcome=admitted" });
+        Assert.True(recorded.Where(m => m is { Name: "minicloud.gateway.relay.bytes", Tags: "operation=websocket,direction=upstream" })
+            .Sum(m => m.Value) >= "metric-input".Length);
+        Assert.True(recorded.Where(m => m is { Name: "minicloud.gateway.relay.bytes", Tags: "operation=websocket,direction=downstream" })
+            .Sum(m => m.Value) >= "metric-input".Length);
+        Assert.Equal(0, recorded.Where(m => m is { Name: "minicloud.gateway.connections.active", Tags: "operation=websocket" })
+            .Sum(m => m.Value));
+        Assert.DoesNotContain(recorded, m => m.Tags.Contains(fixture.Host, StringComparison.OrdinalIgnoreCase)
+            || m.Tags.Contains(Fixture.Session, StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("/other?orchestrationProtocol=2")]
     [InlineData("/ws")]

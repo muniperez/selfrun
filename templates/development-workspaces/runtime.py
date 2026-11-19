@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import uuid
 
@@ -627,6 +628,169 @@ def t3_idle_database(path, expected_sequence):
             connection.close()
 
 
+RESOURCE_SAMPLE_SECONDS = 30
+RESOURCE_PROBE_SECONDS = 2
+FS_HELPER = "/opt/minicloud-workspace/disk_usage.py"
+FS_JOB_PATTERN = r"[A-Za-z0-9_-]{8,128}"
+FS_JOB_RETENTION_SECONDS = 24 * 3600
+FS_OUTPUT_LIMIT = 320 * 1024
+FS_DELETE_ROOTS = ("repos", "home", "artifacts")
+
+
+def _unescape_mount(value):
+    return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+
+class ResourceSampler:
+    """Cached, read-only CPU/memory/filesystem sampling for status. Never sleeps or walks directories.
+
+    The cache lives in the long-running control service, so a status request reuses one sample for
+    up to RESOURCE_SAMPLE_SECONDS and CPU utilization comes from the delta between two samples.
+    """
+    def __init__(self, proc=Path("/proc"), monotonic=time.monotonic, wall=time.time, statvfs=os.statvfs,
+                 stat_path=os.stat, probe_seconds=RESOURCE_PROBE_SECONDS):
+        self.proc = Path(proc)
+        self.monotonic = monotonic
+        self.wall = wall
+        self.statvfs = statvfs
+        self.stat_path = stat_path
+        self.probe_seconds = probe_seconds
+        self.cached = None
+        self.cached_at = None
+        self.cpu_baseline = None
+        self.probe = None
+
+    def invalidate(self):
+        self.cached = None
+
+    def sample(self, config):
+        identity = (config["vmId"], config["generation"])
+        now = self.monotonic()
+        if self.cached and self.cached[0] == identity and now - self.cached_at < RESOURCE_SAMPLE_SECONDS:
+            return self.cached[1]
+        unavailable = {}
+        boot_id = self._read_boot_id()
+        if boot_id is None:
+            unavailable["bootId"] = "unreadable"
+        cpu = self._cpu(now, boot_id, unavailable)
+        memory = self._memory(unavailable)
+        filesystems = self._filesystems(config["workspace"], unavailable)
+        result = dict(schemaVersion=1, vmId=config["vmId"], generation=config["generation"],
+                      observedAt=self.wall(), bootId=boot_id, cpu=cpu, memory=memory,
+                      filesystems=filesystems, unavailable=unavailable)
+        self.cached, self.cached_at = (identity, result), now
+        return result
+
+    def _read_boot_id(self):
+        try:
+            value = (self.proc / "sys/kernel/random/boot_id").read_text().strip()
+            return value if re.fullmatch(r"[0-9a-f-]{36}", value) else None
+        except OSError:
+            return None
+
+    def _cpu(self, now, boot_id, unavailable):
+        try:
+            lines = (self.proc / "stat").read_text().splitlines()
+            fields = [int(value) for value in lines[0].split()[1:]]
+            count = sum(1 for line in lines if re.match(r"cpu\d+\s", line))
+            require(lines[0].startswith("cpu ") and len(fields) >= 4 and count > 0, "Unexpected /proc/stat")
+        except (OSError, ValueError, IndexError, Blocked):
+            unavailable["cpu"] = "unreadable"
+            self.cpu_baseline = None
+            return None
+        # guest and guest_nice are already included in user and nice.
+        busy_fields = fields[:8]
+        idle = busy_fields[3] + (busy_fields[4] if len(busy_fields) > 4 else 0)
+        total = sum(busy_fields)
+        previous, self.cpu_baseline = self.cpu_baseline, (boot_id, count, total, idle, now)
+        result = dict(logicalCount=count, utilizationPercent=None, windowSeconds=None)
+        if previous is None:
+            unavailable["cpu.utilizationPercent"] = "warming_up"
+        elif previous[0] != boot_id or previous[1] != count or total < previous[2] or idle < previous[3]:
+            unavailable["cpu.utilizationPercent"] = "counters_reset"
+        elif total == previous[2] or now <= previous[4]:
+            unavailable["cpu.utilizationPercent"] = "no_elapsed_time"
+        else:
+            busy = (total - previous[2]) - (idle - previous[3])
+            result["utilizationPercent"] = round(max(0.0, min(100.0, 100.0 * busy / (total - previous[2]))), 1)
+            result["windowSeconds"] = round(now - previous[4], 1)
+        return result
+
+    def _memory(self, unavailable):
+        try:
+            values = {}
+            for line in (self.proc / "meminfo").read_text().splitlines():
+                key, _, rest = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    number, unit = rest.split()
+                    require(unit == "kB", "Unexpected meminfo unit")
+                    values[key] = int(number) * 1024
+            require("MemTotal" in values and "MemAvailable" in values, "Incomplete meminfo")
+            return dict(totalBytes=values["MemTotal"], availableBytes=values["MemAvailable"])
+        except (OSError, ValueError, Blocked):
+            unavailable["memory"] = "unreadable"
+            return None
+
+    def _filesystems(self, workspace, unavailable):
+        if self.probe is not None and self.probe.is_alive():
+            # A hung statvfs stays isolated in its daemon thread; never start a second one.
+            unavailable["filesystems"] = "probe_pending"
+            return []
+        box = {}
+
+        def probe():
+            try:
+                box["value"] = self._probe_filesystems(workspace)
+            except Exception as error:  # Reported as a bounded reason, never as status failure.
+                box["error"] = error
+        self.probe = threading.Thread(target=probe, name="resource-probe", daemon=True)
+        self.probe.start()
+        self.probe.join(self.probe_seconds)
+        if self.probe.is_alive():
+            unavailable["filesystems"] = "probe_timeout"
+            return []
+        if "error" in box:
+            unavailable["filesystems"] = "unreadable"
+            return []
+        return box["value"]
+
+    def _mounts(self):
+        mounts = []
+        for line in (self.proc / "self/mountinfo").read_text().splitlines():
+            fields = line.split(" ")
+            if len(fields) > 4:
+                mounts.append(_unescape_mount(fields[4]))
+        return mounts
+
+    def _probe_filesystems(self, workspace):
+        workspace = os.path.normpath(workspace)
+        try:
+            mounts = self._mounts()
+        except OSError:
+            mounts = None
+        filesystems = {}
+        for path in ("/", workspace):
+            device = self.stat_path(path).st_dev
+            if device in filesystems:
+                filesystems[device]["paths"].append(path)
+                continue
+            info = self.statvfs(path)
+            size = info.f_frsize or info.f_bsize
+            filesystems[device] = dict(paths=[path], totalBytes=info.f_blocks * size,
+                                       freeBytes=info.f_bfree * size, availableBytes=info.f_bavail * size,
+                                       inodesTotal=info.f_files or None,
+                                       inodesAvailable=info.f_favail if info.f_files else None)
+        nested = None
+        if mounts is not None:
+            nested = sum(1 for mount in mounts if mount != workspace and mount.startswith(workspace.rstrip("/") + "/"))
+        for item in filesystems.values():
+            item["nestedMountsExcluded"] = nested if workspace in item["paths"] else 0
+        return list(filesystems.values())
+
+
+RESOURCES = ResourceSampler()
+
+
 class Linux:
     """Privileged adapter. Tests inject a fake; no default test can mount/kill anything."""
     def __init__(self, config, processes=None):
@@ -718,6 +882,38 @@ class Linux:
              "--property=PrivateTmp=yes", "--setenv=HOME=" + str(self.workspace / "home"),
              "--", *argv])
         return unit
+
+    def filesystem_jobs_supported(self):
+        return Path(FS_HELPER).is_file() and shutil.which("systemd-run") is not None
+
+    def filesystem_launch(self, unit, payload, output):
+        writable = []
+        if payload["mode"] == "delete":
+            # Only the user data roots become writable; every other path stays read-only.
+            writable = ["--property=ReadWritePaths=" + " ".join(
+                "-" + str(self.workspace / name) for name in FS_DELETE_ROOTS)]
+        run(["systemd-run", "--quiet", "--collect", "--unit=" + unit,
+             "--uid=" + str(self.config["uid"]), "--gid=" + str(self.config["gid"]),
+             "--slice=minicloudwork.slice", "--working-directory=/",
+             "--property=KillMode=control-group", "--property=TimeoutStopSec=5",
+             "--property=RuntimeMaxSec=" + ("90" if payload["mode"] == "delete" else "60"),
+             "--property=CPUQuota=10%", "--property=MemoryMax=128M", "--property=MemorySwapMax=0",
+             "--property=Nice=19", "--property=IOSchedulingClass=idle",
+             "--property=NoNewPrivileges=yes", "--property=ProtectSystem=strict",
+             "--property=PrivateTmp=yes", "--property=PrivateNetwork=yes",
+             "--property=InaccessiblePaths=-/run/minicloud-workspace -/var/lib/minicloud-workspace "
+             "-/etc/minicloud-workspace -/run/minicloud-git",
+             *writable,
+             # The service manager opens the root-only output file before dropping privileges.
+             "--property=StandardOutput=truncate:" + str(output), "--property=StandardError=null",
+             "--", "/usr/bin/python3", "-I", "-B", FS_HELPER, json.dumps(payload, sort_keys=True)])
+
+    def filesystem_running(self, unit):
+        return self.task_running(dict(unit=unit))
+
+    def filesystem_stop(self, unit):
+        subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=30)
+        require(not self.task_running(dict(unit=unit)), "Folder job did not stop")
 
     def task_running(self, task):
         unit = task.get("unit")
@@ -908,8 +1104,9 @@ class Linux:
 
 
 class Runtime:
-    def __init__(self, config, state_dir, adapter=None, git=None, clock=time.time):
+    def __init__(self, config, state_dir, adapter=None, git=None, clock=time.time, resources=None):
         self.c = config
+        self.resources = resources or RESOURCES
         self.root = Path(state_dir)
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.adapter = adapter or Linux(config)
@@ -969,6 +1166,115 @@ class Runtime:
         atomic_json(self.root / "receipts" / (result["receiptId"] + ".json"), result)
         return result
 
+    def capabilities(self):
+        values = ["resources-v1"]
+        supported = getattr(self.adapter, "filesystem_jobs_supported", None)
+        try:
+            if supported is not None and supported():
+                values += ["disk-usage-v1", "directory-delete-v1"]
+        except OSError:
+            pass
+        return values
+
+    def filesystem_dir(self):
+        directory = self.root / "fsjobs"
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return directory
+
+    @staticmethod
+    def filesystem_unit(job_id):
+        return "minicloud-fsjob-" + hashlib.sha256(job_id.encode()).hexdigest()[:24] + ".service"
+
+    def filesystem_records(self):
+        directory = self.root / "fsjobs"
+        if not directory.is_dir():
+            return []
+        records = []
+        for path in sorted(directory.glob("*.json")):
+            try:
+                records.append(json.loads(path.read_text()))
+            except (OSError, ValueError):
+                continue
+        return records
+
+    def stop_filesystem_jobs(self):
+        stop = getattr(self.adapter, "filesystem_stop", None)
+        for record in self.filesystem_records():
+            if stop is not None and self.adapter.filesystem_running(record["unit"]):
+                stop(record["unit"])
+
+    def filesystem_job(self, action, request):
+        require(callable(getattr(self.adapter, "filesystem_launch", None)) and
+                "disk-usage-v1" in self.capabilities(), "Folder jobs are not supported by this image")
+        job_id = request.get("jobId")
+        require(isinstance(job_id, str) and re.fullmatch(FS_JOB_PATTERN, job_id), "Folder job ID required")
+        directory = self.filesystem_dir()
+        record_path, output = directory / (job_id + ".json"), directory / (job_id + ".out")
+        record = json.loads(record_path.read_text()) if record_path.exists() else None
+        if action == "fs-job-start":
+            mode, path, expect = request.get("mode"), request.get("path"), request.get("expect")
+            require(mode in ("scan", "delete"), "Unknown folder job mode")
+            require(isinstance(path, list) and len(path) <= 64 and all(
+                isinstance(name, str) and name not in ("", ".", "..") and "/" not in name and "\0" not in name
+                and len(name.encode("utf-8", "surrogatepass")) <= 255 for name in path), "Invalid folder path")
+            require(expect is None or (isinstance(expect, dict) and set(expect) == {"dev", "ino"} and
+                    all(type(value) is int and value >= 0 for value in expect.values())),
+                    "Invalid folder identity")
+            if mode == "delete":
+                require(len(path) >= 2 and path[0] in FS_DELETE_ROOTS and expect is not None,
+                        "Only identified folders inside repos, home or artifacts can be deleted")
+            if record is not None:
+                # Idempotent replay: never launch a job ID twice, even after an ambiguous launch.
+                require((record["mode"], record["path"], record.get("expect")) == (mode, path, expect),
+                        "Folder job ID was reused with another request")
+                return self.filesystem_state(record, output)
+            require(self.s["phase"] == "Ready" and not self.s.get("fenceOperation") and
+                    not self.s.get("freezeCompleted") and not self.s.get("filesystemReadOnly"),
+                    "Folder jobs require a running dev environment that is not stopping")
+            self.prune_filesystem_jobs(directory)
+            require(not any(self.adapter.filesystem_running(other["unit"])
+                            for other in self.filesystem_records()), "Another folder job is running")
+            record = dict(jobId=job_id, mode=mode, path=path, expect=expect,
+                          unit=self.filesystem_unit(job_id), startedAt=self.clock())
+            atomic_json(record_path, record)
+            output.unlink(missing_ok=True)
+            payload = dict(mode=mode, workspace=self.c["workspace"], path=path, expect=expect)
+            try:
+                self.adapter.filesystem_launch(record["unit"], payload, output)
+            except Blocked:
+                record["launchAmbiguous"] = True
+                atomic_json(record_path, record)
+            return self.filesystem_state(record, output)
+        if record is None:
+            return dict(type="FilesystemJob", jobId=job_id, state="not_found")
+        if action == "fs-job-cancel" and self.adapter.filesystem_running(record["unit"]):
+            self.adapter.filesystem_stop(record["unit"])
+        return self.filesystem_state(record, output)
+
+    def filesystem_state(self, record, output):
+        result = dict(type="FilesystemJob", jobId=record["jobId"], mode=record["mode"])
+        if self.adapter.filesystem_running(record["unit"]):
+            return dict(result, state="running")
+        try:
+            with output.open("rb") as stream:
+                data = stream.read(FS_OUTPUT_LIMIT + 1)
+            require(len(data) <= FS_OUTPUT_LIMIT, "Folder job output is too large")
+            value = json.loads(data)
+            require(isinstance(value, dict), "Folder job output is not an object")
+            if record["mode"] == "delete":
+                # The next status reports freed space instead of a cached sample.
+                self.resources.invalidate()
+            return dict(result, state="completed", result=value)
+        except (OSError, ValueError, Blocked):
+            return dict(result, state="lost")
+
+    def prune_filesystem_jobs(self, directory):
+        for record in self.filesystem_records():
+            if self.clock() - record.get("startedAt", 0) > FS_JOB_RETENTION_SECONDS and \
+                    not self.adapter.filesystem_running(record["unit"]):
+                (directory / (record["jobId"] + ".out")).unlink(missing_ok=True)
+                (directory / (record["jobId"] + ".json")).unlink(missing_ok=True)
+
     def validate_request(self, request):
         require(request.get("vmId") == self.c["vmId"] and
                 request.get("generation") == self.c["generation"], "Stale VM/generation")
@@ -1003,7 +1309,16 @@ class Runtime:
                 except (OSError, ValueError, subprocess.SubprocessError):
                     result["workInventory"] = dict(state="BusyOrUnknown", authoritative=False,
                                                    reason="Cannot enumerate all live work")
+            result["capabilities"] = self.capabilities()
+            try:
+                result["resources"] = self.resources.sample(self.c)
+            except Exception:  # Telemetry never fails status or the heartbeat.
+                result["resources"] = dict(schemaVersion=1, vmId=self.c["vmId"],
+                                           generation=self.c["generation"], observedAt=self.clock(),
+                                           unavailable=dict(sample="sampling_failed"))
             return result
+        if action in ("fs-job-start", "fs-job-status", "fs-job-cancel"):
+            return self.filesystem_job(action, request)
         if action == "git-check":
             self.diagnostic_stage = "git-preflight"
             require(self.c["kind"] == "ephemeral" and self.s["phase"] == "Ready",
@@ -1113,6 +1428,8 @@ class Runtime:
                 require(action == "quiesce", "Primary requires retained-volume quiescence")
             if self.s.get("fenceOperation") not in (None, operation):
                 raise Blocked("Another operation owns the freeze; stale operation")
+            # Folder size and deletion jobs must have exited before any freeze evidence is taken.
+            self.stop_filesystem_jobs()
             existing = self.s["receipts"].get(operation)
             if existing and existing["type"] in ("GitSaved", "DiscardAuthorized", "PrimaryQuiesced"):
                 require(existing["type"] == {"git-save": "GitSaved", "discard": "DiscardAuthorized",

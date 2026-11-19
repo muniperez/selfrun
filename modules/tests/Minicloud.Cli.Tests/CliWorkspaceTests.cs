@@ -35,6 +35,61 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.All(_handler.Requests, request => Assert.Equal("/api/me", request.Path));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("--confirm-permanent-deletion=false")]
+    [InlineData("--confirm-permanent-deletion false")]
+    public async Task DeleteRequiresStandaloneConfirmation(string confirmation)
+    {
+        Assert.Equal(CliExitCodes.ValidationError, await Run(
+            ["delete", "workspace", "--organization", "org", .. confirmation.Split(' ', StringSplitOptions.RemoveEmptyEntries)]));
+        Assert.Empty(_handler.Requests);
+        Assert.Contains("--confirm-permanent-deletion", string.Join('\n', _console.Messages));
+    }
+
+    [Theory]
+    [InlineData("deleting", HttpStatusCode.Accepted, "Permanent deletion is in progress")]
+    [InlineData("deleted", HttpStatusCode.OK, "Workspace permanently deleted")]
+    public async Task DeleteSendsConfirmedDeleteAndShowsReturnedPhase(string phase, HttpStatusCode status, string message)
+    {
+        _handler.WorkspacePhase = phase;
+        _handler.VolumeStatus = phase;
+        _handler.DeleteStatus = status;
+        Assert.Equal(CliExitCodes.Success, await Run("delete", "work/space", "--confirm-permanent-deletion", "--organization", "org"));
+        var request = Assert.Single(_handler.Requests, x => x.Method == "DELETE");
+        Assert.Equal("/api/development-workspaces/work%2Fspace?organizationId=org&confirmPermanentDeletion=true", request.Path);
+        Assert.False(request.HasBody);
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("primary retained volume and any remaining local VM data will be permanently lost", output);
+        Assert.Contains($"Workspace phase: {phase}", output);
+        Assert.Contains(message, output);
+    }
+
+    [Fact]
+    public async Task StatusReportsTopLevelDeletionFailureAndHowToRetry()
+    {
+        _handler.WorkspacePhase = "delete_failed";
+        Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org"));
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("Workspace phase: delete_failed", output);
+        Assert.Contains("volume_delete_failed: Restore provider access", output);
+        Assert.Contains("retry workspaces delete with --confirm-permanent-deletion", output);
+        Assert.All(_handler.Requests, x => Assert.Equal("GET", x.Method));
+    }
+
+    [Fact]
+    public async Task StatusDoesNotMistakeComputeDeletionForPermanentWorkspaceDeletion()
+    {
+        _handler.WorkspacePhase = "deleting";
+        _handler.VolumeStatus = "retained";
+        Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org"));
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("Workspace phase: deleting", output);
+        Assert.Contains("Primary retained storage: 20 GB; retained", output);
+        Assert.DoesNotContain("Permanent deletion", output);
+        Assert.DoesNotContain("permanently deleted", output);
+    }
+
     [Fact]
     public async Task CreateAndReadRemainExplicitAndNeverStartCompute()
     {
@@ -44,6 +99,8 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal("/api/development-workspaces", request.Path);
         Assert.Equal("org", request.Body.GetProperty("organizationId").GetString());
         Assert.Equal("create-once", request.Body.GetProperty("idempotencyKey").GetString());
+        Assert.False(request.Body.TryGetProperty("keepRunning", out _));
+        Assert.False(request.Body.TryGetProperty("idleTimeoutMinutes", out _));
         Assert.Equal(CliExitCodes.Success, await Run("status", "workspace", "--organization", "org"));
         Assert.Equal(CliExitCodes.Success, await Run("vms", "workspace", "--organization", "org"));
         Assert.DoesNotContain(_handler.Requests, x => x.Path.Contains("/start"));
@@ -187,6 +244,8 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal(keys[0], keys[1]);
         Assert.Equal(CliApplication.DefaultWorkspaceCreateKey("org", "Coding"), keys[0]);
         Assert.NotEqual(keys[0], CliApplication.DefaultWorkspaceCreateKey("other", "Coding"));
+        // DevelopmentWorkspaceProcessorTests recreates a permanently deleted workspace with this exact key.
+        Assert.Equal("cli-c8da2dba717feac74db7f3315846c5d05c0ed396", CliApplication.DefaultWorkspaceCreateKey("org", "Reused"));
         Assert.Equal("Coding", _handler.Requests.Last().Body.GetProperty("name").GetString());
 
         _handler.CreateConflict = true;
@@ -234,9 +293,43 @@ public sealed class CliWorkspaceTests : IDisposable
         Assert.Equal("primary", document.RootElement.GetProperty("vms")[0].GetProperty("id").GetString());
     }
 
+    [Fact]
+    public async Task IdleTimeoutSetsOneChoiceAndKeepRunningDisclosesContinuousCompute()
+    {
+        Assert.Equal(CliExitCodes.ValidationError, await Run("idle-timeout", "workspace", "--organization", "org"));
+        Assert.Equal(CliExitCodes.ValidationError, await Run("idle-timeout", "workspace", "--organization", "org", "--minutes", "30", "--keep-running"));
+        Assert.Equal(CliExitCodes.ValidationError, await Run("idle-timeout", "workspace", "--organization", "org", "--minutes", "0"));
+        Assert.DoesNotContain(_handler.Requests, x => x.Method == "PUT");
+
+        Assert.Equal(CliExitCodes.Success, await Run("idle-timeout", "workspace", "--organization", "org", "--minutes", "90"));
+        var request = _handler.Requests.Last();
+        Assert.Equal(("PUT", "/api/development-workspaces/workspace/idle-timeout?organizationId=org"), (request.Method, request.Path));
+        Assert.Equal(90, request.Body.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.False(request.Body.GetProperty("keepRunning").GetBoolean());
+
+        Assert.Equal(CliExitCodes.Success, await Run("idle-timeout", "workspace", "--organization", "org", "--default"));
+        Assert.Equal(JsonValueKind.Null, _handler.Requests.Last().Body.GetProperty("idleTimeoutMinutes").ValueKind);
+
+        _console.Messages.Clear();
+        Assert.Equal(CliExitCodes.Success, await Run("idle-timeout", "workspace", "--organization", "org", "--keep-running"));
+        request = _handler.Requests.Last();
+        Assert.True(request.Body.GetProperty("keepRunning").GetBoolean());
+        Assert.Equal(45, request.Body.GetProperty("idleTimeoutMinutes").GetInt32());
+        var output = string.Join('\n', _console.Messages);
+        Assert.Contains("Idle stop: off (Keep running)", output);
+        Assert.Contains("billed for every running machine until you stop it", output);
+        Assert.Contains("36.00 EUR/month", output);
+
+        Assert.Equal(CliExitCodes.Success, await Run("create", "--organization", "org", "--name", "Always", "--image", "image",
+            "--profile", "Standard", "--plan", "plan", "--volume-gb", "20", "--keep-running", "--idle-timeout", "120"));
+        request = _handler.Requests.Last();
+        Assert.True(request.Body.GetProperty("keepRunning").GetBoolean());
+        Assert.Equal(120, request.Body.GetProperty("idleTimeoutMinutes").GetInt32());
+    }
+
     public void Dispose() => _directory.Delete(true);
 
-    private sealed record Captured(string Method, string Path, JsonElement Body);
+    private sealed record Captured(string Method, string Path, JsonElement Body, bool HasBody);
     private sealed class Handler : HttpMessageHandler
     {
         public List<Captured> Requests = [];
@@ -244,11 +337,14 @@ public sealed class CliWorkspaceTests : IDisposable
         public bool CreateConflict { get; set; }
         public bool UnsafeLaunch { get; set; }
         public const string LaunchUrl = "https://vm-primary-g3.gateway.example/__minicloud/launch?code=synthetic";
+        public string WorkspacePhase { get; set; } = "stopped";
+        public string VolumeStatus { get; set; } = "retained";
+        public HttpStatusCode DeleteStatus { get; set; } = HttpStatusCode.Accepted;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.PathAndQuery;
             var json = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(ct);
-            Requests.Add(new(request.Method.Method, path, JsonDocument.Parse(json).RootElement.Clone()));
+            Requests.Add(new(request.Method.Method, path, JsonDocument.Parse(json).RootElement.Clone(), request.Content is not null));
             var vms = RecoveryCommit is not null && path.Contains("/vms/ephemeral/start?")
                 ? new object[] { new { id = "ephemeral", kind = "ephemeral", generation = 4,
                     phase = "provisioning", repository = "https://git.example/repo.git",
@@ -264,11 +360,17 @@ public sealed class CliWorkspaceTests : IDisposable
                     providerAccountName = "Hetzner", region = "nbg1", sku = "cx22" } } }
                 : path.Contains("/tasks/") ? new { vmId = "ephemeral", taskId = "build", generation = 3, status = "active", expiresAt = DateTimeOffset.UtcNow.AddMinutes(5) }
                 : path.EndsWith("/vms?organizationId=org") ? Vms
-                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms };
-            return new(HttpStatusCode.OK) { Content = JsonContent.Create(body) };
+                : path.Contains("/idle-timeout?") ? new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
+                    keepRunning = JsonDocument.Parse(json).RootElement.TryGetProperty("keepRunning", out var keep) && keep.GetBoolean() }
+                : new { id = "workspace", name = "Coding", organizationId = "org", volumeSizeGb = 20, currency = "EUR", vms,
+                    idleTimeoutMinutes = 45, effectiveIdleTimeoutMinutes = 45, phase = WorkspacePhase,
+                    volumeStatus = VolumeStatus,
+                    errorCode = WorkspacePhase == "delete_failed" ? "volume_delete_failed" : null,
+                    errorMessage = WorkspacePhase == "delete_failed" ? "Restore provider access" : null };
+            return new(request.Method == HttpMethod.Delete ? DeleteStatus : HttpStatusCode.OK) { Content = JsonContent.Create(body) };
         }
         private static readonly object[] Vms = [
-            new { id = "primary", kind = "primary", generation = 3, desiredState = "running", phase = "ready", profile = "Standard", sku = "sku", region = "region" },
+            new { id = "primary", kind = "primary", generation = 3, desiredState = "running", phase = "ready", profile = "Standard", sku = "sku", region = "region", computeHourlyRate = 0.05m },
             new { id = "ephemeral", kind = "ephemeral", generation = 3, desiredState = "stopped", phase = "awaiting_git_save",
                 profile = "Heavy", sku = "sku", region = "region", errorCode = "remote_unavailable", errorMessage = "Restore remote access", gitStatus = "blocked" },
         ];

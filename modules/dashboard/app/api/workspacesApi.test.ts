@@ -1,8 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { setCsrfToken } from "./apiClient";
-import { getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceTask } from "./workspacesApi";
+import { deleteWorkspace, getWorkspaceLaunchUrl, launchEphemeralVm, mutateWorkspaceVm, workspaceTask } from "./workspacesApi";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it.each([[202, "deleting"], [200, "deleted"]])("parses HTTP %s permanent deletion response (%s)", async (status, phase) => {
+  setCsrfToken("synthetic-csrf");
+  const body = { id: "work/space", phase, volumeStatus: phase };
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", fetcher);
+
+  await expect(deleteWorkspace("work/space", "org a")).resolves.toEqual(body);
+  expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+    expect.stringContaining("/api/development-workspaces/work%2Fspace?organizationId=org%20a&confirmPermanentDeletion=true"),
+    expect.objectContaining({ method: "DELETE", body: undefined, credentials: "include",
+      headers: expect.objectContaining({ "X-Minicloud-CSRF": "synthetic-csrf" }) }),
+  );
+});
 
 it("uses organization-scoped routes, escaped identities, generation fencing and explicit data policies", async () => {
   setCsrfToken("synthetic-csrf");

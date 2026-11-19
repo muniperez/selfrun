@@ -540,9 +540,7 @@ public sealed class ProviderCatalogApiTests : IAsyncLifetime
             }));
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<DbContextOptions<MinicloudDbContext>>();
-                services.RemoveAll<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<MinicloudDbContext>>();
-                services.AddDbContext<MinicloudDbContext>(options => options.UseSqlite(connection));
+                services.UseSharedSqliteConnection(connection);
                 services.RemoveAll<ISecretStore>(); services.AddSingleton<ISecretStore>(Secrets);
                 services.RemoveAll<IKratosSessionValidator>(); services.AddSingleton<IKratosSessionValidator>(new FakeKratos());
                 services.AddHttpClient(ProviderAccountClientFactory.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => Cloud);
