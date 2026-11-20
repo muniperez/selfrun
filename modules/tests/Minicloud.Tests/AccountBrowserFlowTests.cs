@@ -613,6 +613,212 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         Assert.True(session.ExpiresAt > DateTimeOffset.UtcNow.AddDays(29));
     }
 
+    [Fact]
+    public async Task LogoutDuringAnInFlightRenewalWinsAndRevokesTheLateUpstreamExtension()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        var before = await StoredSession();
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        _factory.Kratos.DuringExtend = async () =>
+        {
+            using var logout = Logout(cookie, csrf);
+            Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(logout)).StatusCode);
+        };
+
+        using var renew = Renew(cookie, csrf);
+        var response = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(["revoke", "extend", "revoke"], _factory.Kratos.Writes);
+        var stored = await StoredSession();
+        Assert.NotNull(stored.RevokedAt);
+        Assert.Equal(before.IdleExpiresAt, stored.IdleExpiresAt);
+        Assert.Equal(before.RenewedAt, stored.RenewedAt);
+        using var again = Renew(cookie, csrf);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(again)).StatusCode);
+    }
+
+    [Fact]
+    public async Task RevocationDuringAnInFlightRenewalIsKeptEvenWhenTheExtensionResponseIsLost()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        _factory.Kratos.LoseExtendResponse = true;
+        _factory.Kratos.DuringExtend = async () =>
+        {
+            await using var scope = _factory.Services.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<BrowserSessionService>()
+                .RevokeUserSessionsAsync("user-1", CancellationToken.None);
+        };
+
+        using var renew = Renew(cookie, csrf);
+        var response = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("auth_unavailable", await response.Content.ReadAsStringAsync());
+        Assert.Equal(["extend", "revoke"], _factory.Kratos.Writes);
+        Assert.NotNull((await StoredSession()).RevokedAt);
+    }
+
+    [Fact]
+    public async Task TokenRotationDuringRenewalLeavesTheNewGenerationAndItsUpstreamSessionAlone()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        (string Cookie, string Csrf) rotated = default;
+        _factory.Kratos.DuringExtend = async () => rotated = await Login();
+
+        using var renew = Renew(cookie, csrf);
+        var response = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.False(response.Headers.Contains("Set-Cookie"));
+        Assert.Equal(["extend"], _factory.Kratos.Writes);
+        var stored = await StoredSession();
+        Assert.Null(stored.RevokedAt);
+        Assert.Equal(BrowserSessionService.HashSecret(rotated.Cookie.Split('=', 2)[1]), stored.TokenHash);
+        Assert.Equal(stored.CreatedAt, stored.RenewedAt);
+        using var current = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+        current.Headers.Add("Cookie", rotated.Cookie);
+        var session = await _client.SendAsync(current);
+        Assert.Equal(HttpStatusCode.OK, session.StatusCode);
+        Assert.Equal(rotated.Csrf, (await session.Content.ReadFromJsonAsync<AccountSessionResponse>())!.CsrfToken);
+    }
+
+    [Fact]
+    public async Task RotationThenLogoutDuringRenewalStillRevokesTheLateUpstreamExtension()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        _factory.Kratos.DuringExtend = async () =>
+        {
+            var (rotated, rotatedCsrf) = await Login();
+            using var logout = Logout(rotated, rotatedCsrf);
+            Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(logout)).StatusCode);
+        };
+
+        using var renew = Renew(cookie, csrf);
+        var response = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(["revoke", "extend", "revoke"], _factory.Kratos.Writes);
+        Assert.NotNull((await StoredSession()).RevokedAt);
+    }
+
+    [Fact]
+    public async Task ExpiryDuringAnInFlightRenewalEndsTheSessionAndItsUpstreamSession()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        _factory.Kratos.DuringExtend = () => AgeSession(TimeSpan.FromMinutes(45));
+
+        using var renew = Renew(cookie, csrf);
+        var response = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(["extend", "revoke"], _factory.Kratos.Writes);
+        var stored = await StoredSession();
+        Assert.NotNull(stored.RevokedAt);
+        Assert.True(stored.IdleExpiresAt < DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task OverlappingRenewalsCoalesceAndKeepTheCookieAndCsrfToken()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        HttpResponseMessage? first = null;
+        _factory.Kratos.DuringExtend = async () =>
+        {
+            using var competing = Renew(cookie, csrf);
+            first = await _client.SendAsync(competing);
+        };
+
+        using var renew = Renew(cookie, csrf);
+        var second = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.OK, first!.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var won = (await first.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+        var coalesced = (await second.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+        Assert.Equal(won.IdleExpiresAt, coalesced.IdleExpiresAt);
+        Assert.Equal(won.RenewAfter, coalesced.RenewAfter);
+        Assert.Equal(csrf, won.CsrfToken);
+        Assert.Equal(csrf, coalesced.CsrfToken);
+        Assert.False(first.Headers.Contains("Set-Cookie"));
+        Assert.False(second.Headers.Contains("Set-Cookie"));
+        var stored = await StoredSession();
+        Assert.Equal(won.IdleExpiresAt, stored.IdleExpiresAt);
+        Assert.True(stored.IdleExpiresAt > DateTimeOffset.UtcNow.AddMinutes(115));
+        Assert.Equal(BrowserSessionService.HashSecret(cookie.Split('=', 2)[1]), stored.TokenHash);
+        Assert.DoesNotContain("revoke", _factory.Kratos.Writes);
+
+        using var current = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+        current.Headers.Add("Cookie", cookie);
+        var session = await _client.SendAsync(current);
+        Assert.Equal(HttpStatusCode.OK, session.StatusCode);
+        Assert.Equal(csrf, (await session.Content.ReadFromJsonAsync<AccountSessionResponse>())!.CsrfToken);
+    }
+
+    [Fact]
+    public async Task PreferenceChangeDuringAnInFlightRenewalIsAppliedBeforeTheRenewalCommits()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        _factory.Kratos.DuringExtend = async () =>
+        {
+            using var preference = Preference(cookie, csrf, keepSignedIn: true);
+            Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(preference)).StatusCode);
+        };
+
+        using var renew = Renew(cookie, csrf);
+        var response = await _client.SendAsync(renew);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var session = (await response.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+        Assert.True(session.KeepSignedIn);
+        Assert.True(session.KeepSignedInPreference);
+        Assert.Equal(csrf, session.CsrfToken);
+        Assert.True(session.IdleExpiresAt > DateTimeOffset.UtcNow.AddDays(6));
+        var stored = await StoredSession();
+        Assert.True(stored.Persistent);
+        Assert.Equal(session.IdleExpiresAt, stored.IdleExpiresAt);
+        Assert.True(stored.User.KeepSignedIn);
+    }
+
+    private HttpRequestMessage Logout(string cookie, string csrf)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/account/logout");
+        request.Headers.Add("Cookie", cookie);
+        request.Headers.Add("Origin", Dashboard);
+        request.Headers.Add("X-Minicloud-CSRF", csrf);
+        return request;
+    }
+
+    private HttpRequestMessage Preference(string cookie, string csrf, bool keepSignedIn)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Put, "/api/account/session/preference")
+        { Content = JsonContent.Create(new { keepSignedIn }) };
+        request.Headers.Add("Cookie", cookie);
+        request.Headers.Add("Origin", Dashboard);
+        request.Headers.Add("X-Minicloud-CSRF", csrf);
+        return request;
+    }
+
+    private async Task<BrowserSession> StoredSession()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        return await db.BrowserSessions.AsNoTracking().Include(x => x.User).SingleAsync();
+    }
+
     private HttpRequestMessage Renew(string cookie, string? csrf)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/account/session/renew");
@@ -731,16 +937,37 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         public bool Unavailable { get; set; }
         public bool Active { get; set; } = true;
         public int Extensions { get; private set; }
+        /// <summary>Upstream writes in order, so a test can tell whether a revocation landed after an extension.</summary>
+        public List<string> Writes { get; } = [];
+        /// <summary>Runs once while the next extension is in flight, before it lands upstream.</summary>
+        public Func<Task>? DuringExtend { get; set; }
+        /// <summary>The next extension lands upstream but its response is lost (timeout or outage).</summary>
+        public bool LoseExtendResponse { get; set; }
         public Task<bool> IsSessionActiveAsync(string sessionId, string identityId, CancellationToken cancellationToken) => Task.FromResult(Active);
         public Task<KratosSessionState?> GetActiveSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken) =>
             Unavailable ? throw new KratosUnavailableException() : Task.FromResult(Active ? new KratosSessionState(ExpiresAt) : null);
-        public Task<KratosSessionState?> ExtendSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken)
+        public async Task<KratosSessionState?> ExtendSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken)
         {
+            if (DuringExtend is { } during)
+            {
+                DuringExtend = null;
+                await during();
+            }
             Extensions++;
+            Writes.Add("extend");
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(7);
-            return GetActiveSessionAsync(sessionId, identityId, cancellationToken);
+            if (LoseExtendResponse)
+            {
+                LoseExtendResponse = false;
+                throw new KratosUnavailableException();
+            }
+            return await GetActiveSessionAsync(sessionId, identityId, cancellationToken);
         }
-        public Task RevokeSessionAsync(string sessionId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RevokeSessionAsync(string sessionId, CancellationToken cancellationToken)
+        {
+            Writes.Add("revoke");
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class UpstreamHandler : HttpMessageHandler
