@@ -23,8 +23,9 @@ open a replacement automatically.
    this management route. Existing unqualified images do not expose this service:
    an operator must qualify the updated image/runtime before offering it. This
    feature never silently replaces or upgrades a running VM.
-   The redesigned primary VM card shows this control only to that workspace's
-   creator or an organization Owner; ephemeral cards never offer it. Organization,
+   The control is on the workspace's **Settings** tab, for the primary VM only,
+   and is shown only to that workspace's creator or an organization Owner;
+   temporary VMs never offer it. Organization,
    VM generation, readiness/revision and ownership changes discard pending launch
    responses instead of opening a stale account-management page. The API and
    gateway independently enforce ownership; hiding the control is not authorization.

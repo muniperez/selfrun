@@ -4,13 +4,13 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspacesModule } from "./WorkspacesModule";
 import { listDevelopmentWorkspaces } from "@/api/environmentsApi";
-import { getWorkspace } from "@/api/workspacesApi";
+import { getWorkspace, workspaceOperation } from "@/api/workspacesApi";
 import { ephemeralSummary, lastActivity, permanentDeletion, primaryState, primaryVm, workspacePhase } from "./workspaceCollection";
 
 const auth = vi.hoisted(() => ({ selectedOrganization: { id: "org-a", role: "owner" } as { id: string; role: string } | null }));
 vi.mock("@/core/auth/AuthProvider", () => ({ useAuth: () => auth }));
 vi.mock("@/api/environmentsApi", () => ({ listDevelopmentWorkspaces: vi.fn() }));
-vi.mock("@/api/workspacesApi", () => ({ getWorkspace: vi.fn() }));
+vi.mock("@/api/workspacesApi", () => ({ getWorkspace: vi.fn(), workspaceOperation: vi.fn() }));
 vi.mock("./CreateWorkspaceDialog", () => ({
   CreateWorkspaceDialog: ({ canManage, onCreated }: { canManage: boolean; onCreated: (created: DevelopmentWorkspace) => void }) =>
     canManage ? <button onClick={() => onCreated({ id: "created/one", name: "Created" } as DevelopmentWorkspace)}>Create workspace</button> : null,
@@ -63,6 +63,62 @@ function loadDetail() {
   </Routes></MemoryRouter>);
 }
 
+function openActions() {
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Environment actions" }), { button: 0, ctrlKey: false });
+  return screen.getByRole("menu");
+}
+function menuItems() {
+  const items = within(openActions()).getAllByRole("menuitem").map(item => item.textContent);
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  return items;
+}
+
+it("puts Refresh status and Stop all VMs under Environment actions without lifecycle calls on load", async () => {
+  loadDetail();
+  await screen.findByRole("article", { name: "Workspace Coding" });
+  expect(screen.queryByRole("button", { name: "Refresh status" })).not.toBeInTheDocument();
+  expect(menuItems()).toEqual(["Refresh status", "Stop all VMs"]);
+  expect(workspaceOperation).not.toHaveBeenCalled();
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ revision: 2, vms: [vm("primary", { phase: "ready" })] }));
+  const refreshItem = within(openActions()).getByRole("menuitem", { name: "Refresh status" });
+  await act(async () => fireEvent.click(refreshItem));
+  expect(getWorkspace).toHaveBeenCalledTimes(2);
+  expect(screen.getByText("primary: ready")).toBeInTheDocument();
+  fireEvent.click(within(openActions()).getByRole("menuitem", { name: "Stop all VMs" }));
+  const dialog = await screen.findByRole("dialog", { name: "Stop all VMs?" });
+  expect(within(dialog).getAllByRole("listitem")).toHaveLength(1);
+  expect(workspaceOperation).not.toHaveBeenCalled();
+});
+
+it("confirms stop all once from the page header and refreshes with the accepted observation", async () => {
+  vi.mocked(workspaceOperation).mockResolvedValue(workspace({ revision: 2 }));
+  loadDetail();
+  await screen.findByRole("article", { name: "Workspace Coding" });
+  vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ revision: 2 }));
+  fireEvent.click(within(openActions()).getByRole("menuitem", { name: "Stop all VMs" }));
+  expect(getWorkspace).toHaveBeenCalledTimes(1);
+  const confirm = await screen.findByRole("button", { name: "Confirm stop all" });
+  await act(async () => fireEvent.click(confirm));
+  expect(workspaceOperation).toHaveBeenCalledExactlyOnceWith("workspace", "org-a", "stop-all");
+  await waitFor(() => expect(getWorkspace).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("offers viewers and permanently deleting environments only Refresh status", async () => {
+  auth.selectedOrganization = { id: "org-a", role: "viewer" };
+  const view = loadDetail();
+  await screen.findByRole("article", { name: "Workspace Coding" });
+  expect(menuItems()).toEqual(["Refresh status"]);
+  view.unmount();
+  auth.selectedOrganization = { id: "org-a", role: "owner" };
+  vi.mocked(getWorkspace).mockResolvedValue(workspace({ volumeStatus: "deleting", phase: "deleting" }));
+  loadDetail();
+  await screen.findByRole("article", { name: "Workspace Coding" });
+  expect(menuItems()).toEqual(["Refresh status"]);
+  expect(workspaceOperation).not.toHaveBeenCalled();
+});
+
 it("opens the created environment's detail page and follows its queued startup without listing again", async () => {
   vi.useFakeTimers();
   const starting = workspace({ id: "created/one", name: "Created", vms: [vm("primary", { desiredState: "running", phase: "provisioning", generation: 1 })] });
@@ -113,7 +169,8 @@ it("shows slow startup for a temporary VM, bounds automatic reads, and lets a ma
   await act(async () => vi.advanceTimersByTimeAsync(180_000));
   expect(getWorkspace).toHaveBeenCalledTimes(reads);
   vi.mocked(getWorkspace).mockResolvedValueOnce(workspace({ vms: [vm(), vm("temporary", { phase: "blocked", desiredState: "running" })] }));
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh status" })));
+  const refreshItem = within(openActions()).getByRole("menuitem", { name: "Refresh status" });
+  await act(async () => fireEvent.click(refreshItem));
   expect(screen.getByText("temporary: blocked")).toBeInTheDocument();
   expect(screen.queryByText(/Automatic status checks paused/)).not.toBeInTheDocument();
   await act(async () => vi.advanceTimersByTimeAsync(180_000));
