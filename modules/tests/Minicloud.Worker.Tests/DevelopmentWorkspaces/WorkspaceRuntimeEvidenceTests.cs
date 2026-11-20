@@ -75,7 +75,7 @@ public sealed class WorkspaceRuntimeEvidenceTests
         key.ImportFromPem(bootstrap.HostPrivateKey);
         var blob = Convert.FromBase64String(bootstrap.HostPublicKey.Split(' ')[1]);
         Assert.Equal("SHA256:" + Convert.ToBase64String(SHA256.HashData(blob)).TrimEnd('='), bootstrap.HostFingerprint);
-        var config = WorkspaceBootstrap.CloudConfig(bootstrap, "ssh-ed25519 AAAAtest management");
+        var config = WorkspaceBootstrap.CloudConfig(bootstrap, "ssh-ed25519 AAAAtest management", "minicloud-dev");
         Assert.StartsWith("#cloud-config\n", config);
         using var payload = JsonDocument.Parse(config["#cloud-config\n".Length..]);
         Assert.Equal(bootstrap.HostPrivateKey, payload.RootElement.GetProperty("ssh_keys").GetProperty("rsa_private").GetString());
@@ -90,14 +90,14 @@ public sealed class WorkspaceRuntimeEvidenceTests
     [InlineData("invalid-key")]
     public void BootstrapRejectsUnregisteredOrMultilineManagementKeys(string key)
     {
-        Assert.Throws<InvalidOperationException>(() => WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), key));
+        Assert.Throws<InvalidOperationException>(() => WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), key, "minicloud-dev"));
     }
 
     [Fact]
     public void BootstrapOverridesVendorPasswordExpiryWithoutEnablingPasswordLogin()
     {
         const string authorizedKey = "ssh-ed25519 AAAAtest management";
-        var config = WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), authorizedKey);
+        var config = WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), authorizedKey, "minicloud-dev");
         using var document = JsonDocument.Parse(config["#cloud-config\n".Length..]);
         var payload = document.RootElement;
         Assert.False(payload.GetProperty("chpasswd").GetProperty("expire").GetBoolean());
@@ -106,11 +106,36 @@ public sealed class WorkspaceRuntimeEvidenceTests
         Assert.Equal("root", root.GetProperty("name").GetString());
         Assert.True(root.GetProperty("lock_passwd").GetBoolean());
         Assert.Equal(authorizedKey, Assert.Single(root.GetProperty("ssh_authorized_keys").EnumerateArray()).GetString());
-        var sshPolicy = Assert.Single(payload.GetProperty("write_files").EnumerateArray()).GetProperty("content").GetString()!;
+        var sshPolicy = Assert.Single(payload.GetProperty("write_files").EnumerateArray(), file =>
+            file.GetProperty("path").GetString() == "/etc/ssh/sshd_config.d/90-minicloud-workspace.conf").GetProperty("content").GetString()!;
         Assert.Contains("PasswordAuthentication no\n", sshPolicy);
         Assert.Contains("KbdInteractiveAuthentication no\n", sshPolicy);
         Assert.Contains("PermitRootLogin prohibit-password\n", sshPolicy);
         Assert.DoesNotContain("UsePAM no", sshPolicy);
+    }
+
+    [Theory]
+    [InlineData("minicloud-dev")]
+    [InlineData("Equipe São Paulo")]
+    [InlineData("Team \"Debug\"")]
+    public void BootstrapPublishesWorkspaceNameAsT3DisplayLabel(string name)
+    {
+        var config = WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), "ssh-ed25519 AAAAtest management", name);
+        using var document = JsonDocument.Parse(config["#cloud-config\n".Length..]);
+        var file = Assert.Single(document.RootElement.GetProperty("write_files").EnumerateArray(), file =>
+            file.GetProperty("path").GetString() == "/etc/machine-info");
+        Assert.Equal("root:root", file.GetProperty("owner").GetString());
+        Assert.Equal("0644", file.GetProperty("permissions").GetString());
+        Assert.Equal($"PRETTY_HOSTNAME=\"{name}\"\n", file.GetProperty("content").GetString());
+        Assert.False(document.RootElement.TryGetProperty("hostname", out _));
+    }
+
+    [Fact]
+    public void BootstrapRejectsMultilineWorkspaceNames()
+    {
+        var bootstrap = WorkspaceBootstrap.Generate();
+        Assert.Throws<InvalidOperationException>(() =>
+            WorkspaceBootstrap.CloudConfig(bootstrap, "ssh-ed25519 AAAAtest management", "Team\nOTHER=value"));
     }
 
     [Theory]

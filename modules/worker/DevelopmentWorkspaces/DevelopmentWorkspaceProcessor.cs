@@ -246,7 +246,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
                 {
                     if (evidence.AllocationAttempted) throw new InvalidOperationException("Compute allocation outcome is unknown; no new VM was created.");
                     var savedBootstrap = JsonSerializer.Deserialize<WorkspaceBootstrapSecret>(await SecretAsync(vm.SshBootstrapSecretRef!, ct), Json)!;
-                    var userData = WorkspaceBootstrap.CloudConfig(savedBootstrap, pipeline.Value.SshPublicKey);
+                    var userData = WorkspaceBootstrap.CloudConfig(savedBootstrap, pipeline.Value.SshPublicKey, workspace.Name);
                     evidence.AllocationAttempted = true;
                     await SaveAsync(op, evidence, op.Step, null, ct, release: false);
                     var allocated = await cloud.CreateWorkspaceServerAsync(new("mc-" + vm.Id.Replace('_', '-') + "-g" + vm.Generation,

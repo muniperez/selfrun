@@ -24,11 +24,13 @@ internal static class WorkspaceBootstrap
             Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)));
     }
 
-    public static string CloudConfig(WorkspaceBootstrapSecret secret, string authorizedKey)
+    public static string CloudConfig(WorkspaceBootstrapSecret secret, string authorizedKey, string workspaceName)
     {
         if (authorizedKey.Length > 8192 || authorizedKey.Contains('\n') || authorizedKey.Contains('\r') ||
             !(authorizedKey.StartsWith("ssh-ed25519 ", StringComparison.Ordinal) || authorizedKey.StartsWith("ssh-rsa ", StringComparison.Ordinal)))
             throw new InvalidOperationException("An explicit management SSH public key is required.");
+        if (string.IsNullOrWhiteSpace(workspaceName) || workspaceName.Length > 128 || workspaceName.Any(char.IsControl))
+            throw new InvalidOperationException("A valid single-line workspace name is required.");
         return "#cloud-config\n" + JsonSerializer.Serialize(new
         {
             disable_root = false, ssh_pwauth = false, ssh_deletekeys = true,
@@ -42,6 +44,12 @@ internal static class WorkspaceBootstrap
                 {
                     path = "/etc/ssh/sshd_config.d/90-minicloud-workspace.conf", owner = "root:root", permissions = "0600",
                     content = "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\nAllowUsers root\nAllowAgentForwarding no\nX11Forwarding no\nGatewayPorts no\nPermitOpen 127.0.0.1:*\n"
+                },
+                new
+                {
+                    // T3 reads the pretty hostname as display text, stripping only the outer quotes.
+                    path = "/etc/machine-info", owner = "root:root", permissions = "0644",
+                    content = $"PRETTY_HOSTNAME=\"{workspaceName}\"\n"
                 }
             },
             runcmd = new[] { new[] { "systemctl", "restart", "ssh" } }
