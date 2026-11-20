@@ -599,8 +599,10 @@ explicit starts: a fresh start followed by five SIGKILLs within the window ends 
 exhaustion without a lifecycle stop, run `systemctl reset-failed minicloud-t3.service`
 and start it again.
 
-`systemctl stop` cancels a pending restart. Freezing the work slice is not a restart
-barrier: the restart timer can create a start job and an `ExecStartPre` control process.
+`systemctl stop` cancels a pending restart. While a dependency keeps the stopped unit loaded,
+`inactive/dead` can retain the previous `Result=signal` even with no job or processes.
+Freezing the work slice is not a restart barrier: the restart timer can create a start job
+and an `ExecStartPre` control process.
 The runtime queues the stop before thawing, waits for managed T3's cgroup to drain, then
 refreezes. It checks for no job, no main or control process, and an empty cgroup before clearing any
 residual signal/OOM failure from the canceled restart and requiring `inactive`. An unrelated
