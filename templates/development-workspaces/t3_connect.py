@@ -16,13 +16,12 @@ import subprocess
 import threading
 import urllib.request
 
-from runtime import Git, Linux, Runtime, atomic_json, load_config, require, run
+from runtime import (Git, Linux, Runtime, T3_RELAY_CLIENT, atomic_json, installed_t3, load_config,
+                     require, run, t3_descriptor_matches)
 
 CONFIG = "/etc/minicloud-workspace/runtime.json"
 STATE = "/var/lib/minicloud-workspace"
 BASE = "/workspace/t3"
-CLOUDFLARED = "/usr/local/bin/cloudflared"
-CLOUDFLARED_SHA256 = "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42"
 MANAGEMENT_UNIT = "minicloud-t3-connect.service"
 MANAGEMENT_SCRIPT = "/opt/minicloud-workspace/t3_connect.py"
 
@@ -184,9 +183,9 @@ class Enrollment:
                 raw = response.read(65537)
             require(len(raw) <= 65536, "Oversized environment descriptor")
             descriptor = json.loads(raw)
+            require(t3_descriptor_matches(descriptor, installed_t3()), "Unqualified environment descriptor")
             environment_id = descriptor.get("environmentId")
-            require(descriptor.get("serverVersion") == "0.1.9" and
-                    isinstance(environment_id, str) and
+            require(isinstance(environment_id, str) and
                     re.fullmatch(r"[a-zA-Z0-9._:-]{1,128}", environment_id),
                     "Unqualified environment descriptor")
             return dict(operation=self.result, environmentId=environment_id, **identity,
@@ -196,11 +195,11 @@ class Enrollment:
     def start(self):
         with self.lock, self.guard():
             require(self.process is None, "A Connect operation is already pending")
-            relay = Path(CLOUDFLARED)
+            relay = Path(T3_RELAY_CLIENT)
             require(relay.is_file() and not relay.is_symlink() and relay.stat().st_uid == 0 and
                     not relay.stat().st_mode & 0o022, "Pinned root-owned relay client required")
             with relay.open("rb") as binary:
-                require(hashlib.file_digest(binary, "sha256").hexdigest() == CLOUDFLARED_SHA256,
+                require(hashlib.file_digest(binary, "sha256").hexdigest() == installed_t3()["relayClient"]["sha256"],
                         "Pinned relay client checksum mismatch")
             self.remote_removal_confirmed = None
             self.prompt, self.result = None, "awaiting_approval"

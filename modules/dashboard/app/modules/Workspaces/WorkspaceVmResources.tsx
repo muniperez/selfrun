@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import type { DevelopmentWorkspaceVmResources } from "@/api/workspaceFilesystemApi";
 import type { DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspaceVmResourceChart } from "./WorkspaceVmResourceChart";
 
@@ -19,6 +20,15 @@ const stateLabel = {
   current: "Current", stale: "Stale", historical: "Last known", unsupported: "Not supported",
 } as const;
 
+type Filesystem = DevelopmentWorkspaceVmResources["filesystems"][number];
+
+/** Older images report only paths; newer ones say which storage tier each filesystem holds. */
+function filesystemLabel(fs: Filesystem) {
+  if (fs.roles?.includes("workspace")) return `Retained volume ${fs.paths.join(", ")}`;
+  if (fs.roles?.includes("system")) return `System disk ${fs.paths.join(", ")}`;
+  return `Disk ${fs.paths.join(", ")}`;
+}
+
 export function WorkspaceVmResources({ workspaceId, organizationId, vm, active = true }: {
   workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm;
   /** Whether the VM's resources are on screen; history refreshes only while active. */
@@ -30,19 +40,19 @@ export function WorkspaceVmResources({ workspaceId, organizationId, vm, active =
   if (!resources) {
     if (vm.phase !== "ready" || vm.desiredState !== "running") return null;
     return <section aria-label={label} className="border-t px-5 py-3 text-sm">
-      <h3 className="font-medium">Resources</h3>
+      <h3 className="font-medium">Resource usage</h3>
       <p className="text-xs text-muted-foreground">Waiting for the first sample from this dev environment.</p>
       {chart}
     </section>;
   }
   if (resources.state === "unsupported")
     return <section aria-label={label} className="border-t px-5 py-3 text-sm">
-      <h3 className="font-medium">Resources <Badge variant="outline">Not supported</Badge></h3>
+      <h3 className="font-medium">Resource usage <Badge variant="outline">Not supported</Badge></h3>
       <p className="text-muted-foreground">This dev environment image does not report CPU, memory or disk usage. Rebuild with a newer image to see them.</p>
     </section>;
   const { cpu, memory } = resources;
   return <section aria-label={label} className="border-t px-5 py-3 text-sm">
-    <h3 className="flex flex-wrap items-center gap-2 font-medium">Resources
+    <h3 className="flex flex-wrap items-center gap-2 font-medium">Resource usage<span className="font-normal text-muted-foreground">· Latest reading</span>
       <Badge variant={resources.state === "current" ? "secondary" : "outline"}>{stateLabel[resources.state]}</Badge>
     </h3>
     <p className="text-xs text-muted-foreground">
@@ -61,12 +71,16 @@ export function WorkspaceVmResources({ workspaceId, organizationId, vm, active =
       </dd></div>
       {resources.filesystems.length === 0 && <div><dt className="text-muted-foreground">Disk</dt><dd>Unavailable</dd></div>}
       {resources.filesystems.map(fs => <div key={fs.paths.join(",")}>
-        <dt className="text-muted-foreground">Disk {fs.paths.join(", ")}</dt>
+        <dt className="text-muted-foreground">{filesystemLabel(fs)}</dt>
         <dd>{formatBytes(fs.availableBytes)} available of {formatBytes(fs.totalBytes)}
           {fs.inodesTotal != null && fs.inodesAvailable != null && <span className="block text-xs text-muted-foreground">
             {fs.inodesAvailable.toLocaleString()} of {fs.inodesTotal.toLocaleString()} file slots free</span>}
           {!!fs.nestedMountsExcluded && <span className="block text-xs text-muted-foreground">
             Excludes {fs.nestedMountsExcluded} separately mounted folder{fs.nestedMountsExcluded === 1 ? "" : "s"}</span>}
+          {!!fs.scratchBindMounts && <span className="block text-xs text-muted-foreground">
+            {fs.scratchBindMounts} build output folder{fs.scratchBindMounts === 1 ? " is" : "s are"} kept on scratch storage, not counted here</span>}
+          {fs.roles?.includes("scratch") && <span className="block text-xs text-muted-foreground">
+            Also holds scratch storage: caches and build outputs, regenerated automatically and not kept when the VM is replaced</span>}
         </dd>
       </div>)}
     </dl>

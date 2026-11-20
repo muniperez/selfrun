@@ -13,7 +13,8 @@ import time
 import urllib.error
 import urllib.request
 
-from runtime import Blocked, atomic_json, canonical_remote, load_config, require, run
+from runtime import (Blocked, atomic_json, canonical_remote, load_config, qualified_t3,
+                     read_image_manifest, require, run, t3_descriptor_matches)
 
 
 GIT_CREDENTIAL_HELPER = "/opt/minicloud-workspace/git-credential.py"
@@ -87,10 +88,8 @@ def bootstrap(config_path, enrollment_path, state_dir):
     state.mkdir(parents=True, mode=0o700, exist_ok=True)
     intent = state / "enrollment-intent.json"
     require(not intent.exists(), "Enrollment already attempted; reconcile ambiguous result, do not replay")
-    manifest_path = Path("/opt/minicloud-workspace/image-manifest.json")
-    manifest = json.loads(manifest_path.read_text())
-    require(manifest["architecture"] == "linux/amd64" and
-            manifest["provenance"]["toolArtifactsVerified"], "Unqualified prepared image")
+    manifest, manifest_bytes = read_image_manifest()
+    t3 = qualified_t3(manifest)
     request = dict(vmId=c["vmId"], generation=c["generation"],
                    operationId=enrollment["operationId"], action="bootstrap")
     run(["systemctl", "start", "minicloud-workspace.service"])
@@ -110,8 +109,7 @@ def bootstrap(config_path, enrollment_path, state_dir):
                 break
             except (OSError, ValueError):
                 time.sleep(1)
-        require(descriptor and descriptor.get("orchestrationProtocolVersion") == 2 and
-                descriptor.get("serverVersion") == "0.1.9", "Pinned protocol-2 T3 is not ready")
+        require(t3_descriptor_matches(descriptor, t3), "Qualified T3 version or protocol is not ready")
         if c["kind"] == "primary":
             try:
                 run(["systemctl", "start", "minicloud-t3-connect.service"], timeout=15)
@@ -121,7 +119,7 @@ def bootstrap(config_path, enrollment_path, state_dir):
     # Enrollment means runtime ready, not T3 gateway authenticated. Parent registers the gateway later.
     body = dict(schemaVersion=1, vmId=c["vmId"], generation=c["generation"], kind=c["kind"],
                 operationId=enrollment["operationId"],
-                imageManifestSha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                imageManifestSha256=hashlib.sha256(manifest_bytes).hexdigest(),
                 bootstrapReceipt=ready)
     atomic_json(intent, dict(vmId=c["vmId"], generation=c["generation"],
                              operationId=enrollment["operationId"], attemptedAt=time.time()))

@@ -14,6 +14,7 @@ import pwd
 import re
 import select
 import shutil
+import signal
 import socket
 import sqlite3
 import ssl
@@ -28,17 +29,27 @@ import uuid
 
 HERE = Path(__file__).resolve().parent
 RUNTIME = Path("/opt/minicloud-workspace/runtime.py")
+STORAGE_TIERS = Path("/opt/minicloud-workspace/storage_tiers.py")
 EXPECTED_RUNTIME_SHA256 = None
 ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
-UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
-         "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service")
+T3_UNIT = "minicloud-t3.service"
+WORK_CGROUP = Path("/sys/fs/cgroup/minicloudwork.slice")
+T3_CGROUP = WORK_CGROUP / T3_UNIT
+UNITS = (T3_UNIT, "minicloud-workspace.service",
+         "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service",
+         "minicloud-scratch-mounts.service", "minicloud-scratch-watch.service")
+SCRATCH_HELPER = Path("/opt/minicloud-workspace/scratch_mounts.py")
+SCRATCH_FIXTURE = Path("/workspace/repos/native-scratch")
+SCRATCH_OUTPUTS = ("node_modules", "bin", "obj", "dist")
 UNIT_HASHES = {
-    "minicloud-t3.service": "d9aaea0ce50d3364ee488bab796e3bca5c90142743c64ca0ab750775b612dded",
+    "minicloud-t3.service": "9eb2db6c2b591bc86017325b7d525f02e69fb6ca08592d0aff0d2ddd444bb533",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
     "minicloud-t3-connect.service": "788796e55235f9cac13bcbfaf1267840f5e729d30bf753cd04274aa0a5906c03",
     "minicloud-t3-connect-activate.service": "57992a035b9bcedf2e018b2bfa6bcfeee26e9a9a6d61ff24721b98300e84ced7",
+    "minicloud-scratch-mounts.service": "648a595bf5b2ac1de30fd33fa7501219163bc8cdfb1fdbd9fa32cc7db473872f",
+    "minicloud-scratch-watch.service": "80ea1b2f6b2915788f3d4221b3e6dddf0f4ed6edb3169b238c2c51f43996898b",
 }
 REQUIRED_PROBES = {
     "target-and-toolchain-guard", "pristine-tools-only-no-default-apps", "loop-ext4-root-bootstrap",
@@ -50,8 +61,12 @@ REQUIRED_PROBES = {
     "loop-readback-user-files", "encrypted-user-file-restore",
     "codex-empty-git-probes-save-and-reject-data",
     "connect-management-rejects-routine-t3-token",
+    "t3-oom-crash-restart-stop-race-and-retry-budget",
     "copilot-stdio-provider-setup",
     "source-control-cli-service-terminal-and-discovery",
+    "scratch-tier-environment-and-cache-migration",
+    "t3-terminal-scratch-environment",
+    "scratch-build-output-bind-mounts",
 }
 
 
@@ -299,7 +314,8 @@ class Report:
             "externalBlockers": ["REAL_MINICLOUD_GATEWAY_USEFUL_ACTIVITY_AND_ADMISSION_DRAIN_NOT_EXERCISED",
                                  "UNUSED_TERMINAL_ROOT_OPT_IN_FLOW_REQUIRES_REAL_GATEWAY_QUALIFICATION",
                                  "SOURCE_CONTROL_USER_SIGN_IN_AND_REPOSITORY_ACCESS_NOT_EXERCISED",
-                                 "PROVIDER_VOLUME_CYCLES_AND_ENCRYPTED_OFFHOST_RESTORE_SEPARATE_E2E"],
+                                 "PROVIDER_VOLUME_CYCLES_AND_ENCRYPTED_OFFHOST_RESTORE_SEPARATE_E2E",
+                                 "LINKED_T3_CONNECT_RELAY_AND_GATEWAY_RECOVERY_AFTER_T3_RESTART_HOSTED_CHECK"],
         }
 
     def save(self):
@@ -389,6 +405,8 @@ class Native:
         self.device = None
         self.alias = None
         self.client = None
+        self.environment_id = None
+        self.t3_project_id = str(uuid.uuid4())
         self.config = None
         self.owns_runtime = False
         self.shell_pid = None
@@ -397,6 +415,7 @@ class Native:
         self.frozen_by_harness = False
         self.git_fixture_cleanup = "not-started"
         self.restore_fixture_cleanup = "not-started"
+        self.scratch_mounted = None
         self.original_workspace_exists = Path("/workspace").exists()
         self.expires = dt.datetime.fromisoformat(authorization["expiresAt"].replace("Z", "+00:00"))
         self.rt = None
@@ -441,7 +460,11 @@ class Native:
         for port in (3773, 774):
             with socket.socket() as test:
                 check(test.connect_ex(("127.0.0.1", port)) != 0,                 "PREEXISTING_T3_LISTENER")
-        manifest = json.loads(Path("/opt/minicloud-workspace/image-manifest.json").read_text())
+        spec = importlib.util.spec_from_file_location("native_pinned_runtime", RUNTIME)
+        self.rt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.rt)
+        manifest, _ = self.rt.read_image_manifest()
+        t3 = self.rt.qualified_t3(manifest)
         check(manifest["os"]["cloudImageSerial"] == "20251001", "WRONG_MANIFEST_SERIAL")
         inputs = manifest.get("provenance", {}).get("installedImmutableInputs", {}).get("files")
         check(isinstance(inputs, dict) and bool(inputs), "EXPLICIT_IMMUTABLE_INPUTS_REQUIRED")
@@ -456,14 +479,11 @@ class Native:
         check(serials == ["20251001"], "WRONG_ACTUAL_CLOUD_IMAGE_SERIAL")
         for argv, expected in ((["node", "--version"], "v24.11.1"),
                                (["dotnet", "--version"], "10.0.100"),
-                               (["codex", "--version"], "0.169.0"), (["t3", "--version"], "0.1.9")):
+                               (["codex", "--version"], "0.169.0"), (["t3", "--version"], t3["version"])):
             output = command(argv)
             check(output == expected if argv[0] in ("node", "dotnet") else
                   re.search(r"(?:^|\s)v?" + re.escape(expected) + r"(?:$|\s)", output),
                   "PINNED_TOOL_VERSION_MISMATCH")
-        spec = importlib.util.spec_from_file_location("native_pinned_runtime", RUNTIME)
-        self.rt = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.rt)
         check(not any(2000 in process["uids"] for process in self.rt.Procfs().inventory().values()),
               "PREEXISTING_CODING_PROCESSES")
         self.report.value.update(clockSource="native-vm-utc",
@@ -810,6 +830,109 @@ class Native:
                 "providerSeededBeforeT3Start": True, "providerReapplyIdempotent": True,
                 "authenticatedPromptAndFollowupQualified": False}
 
+    def storage_tiers(self):
+        spec = importlib.util.spec_from_file_location("native_storage_tiers", STORAGE_TIERS)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def scratch_tier(self):
+        tiers = self.storage_tiers()
+        try:
+            expected = tiers.load_environment()
+        except (OSError, ValueError):
+            raise ProbeError("SCRATCH_ENVIRONMENT_FILE_INVALID") from None
+        check(not tiers.scratch_ready(tiers.SCRATCH), "SCRATCH_LAYOUT_NOT_PREPARED")
+        check(os.stat(tiers.SCRATCH).st_dev != os.stat("/workspace").st_dev, "SCRATCH_ON_RETAINED_VOLUME")
+        check(command(["systemctl", "show", "minicloud-t3.service", "-p", "EnvironmentFiles", "--value"])
+              .startswith(tiers.ENV_FILE), "T3_SCRATCH_ENVIRONMENT_FILE_NOT_LOADED")
+        main_pid = self.t3_unit()["MainPID"]
+        environment = dict(entry.split("=", 1) for entry in
+                           Path("/proc", str(main_pid), "environ").read_text().split("\0") if "=" in entry)
+        check(all(environment.get(name) == value for name, value in expected.items()),
+              "T3_SERVICE_SCRATCH_ENVIRONMENT_MISMATCH")
+        def login_environment(uid, home):
+            output = command(["setpriv", "--reuid=" + str(uid), "--regid=" + str(uid), "--clear-groups",
+                              "env", "-i", "HOME=" + home, "PATH=/usr/bin:/bin", "bash", "-l", "-c", "env"],
+                             cwd="/")
+            return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        coding = login_environment(2000, "/workspace/home")
+        check(all(coding.get(name) == value for name, value in expected.items()),
+              "CODING_LOGIN_SHELL_SCRATCH_ENVIRONMENT_MISMATCH")
+        check(not any(value.startswith(tiers.SCRATCH) for value in login_environment(0, "/root").values()),
+              "ROOT_LOGIN_SHELL_GOT_SCRATCH_ENVIRONMENT")
+        check(not any(shutil.which(name, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+                      for name in ("dockerd", "containerd", "podman")),
+              "CONTAINER_RUNTIME_DATA_ROOT_UNQUALIFIED")
+
+        # One-time migration on an existing workspace: synthetic caches move, credentials stay.
+        home = Path("/workspace/home")
+        caches = (".npm/_cacache/index", ".nuget/packages/demo/1.0.0", ".cargo/registry/cache/demo",
+                  ".cargo/git/db/demo", ".gradle/caches/modules-2", "go/pkg/mod/cache/download",
+                  ".cache/pip/http")
+        credentials = (".cargo/credentials.toml", ".cargo/config.toml", ".gradle/gradle.properties", ".npmrc",
+                       ".nuget/NuGet/NuGet.Config")
+        def owned(path, data=None):
+            for parent in reversed(path.relative_to(home).parents[:-1]):
+                directory = home / parent
+                directory.mkdir(mode=0o700, exist_ok=True)
+                os.chown(directory, 2000, 2000)
+            if data is None:
+                path.mkdir(mode=0o700, exist_ok=True)
+                path = path / "native-cache-entry"
+                data = "regenerable\n"
+            path.write_text(data)
+            os.chown(path, 2000, 2000)
+        for name in (".cache", ".cargo/registry", ".cargo/git", ".gradle/caches"):
+            if (home / name).is_symlink():
+                (home / name).unlink()
+        for name in caches:
+            owned(home / name)
+        for name in credentials:
+            owned(home / name, "native-credential-" + name + "\n")
+        Path(tiers.MARKER).unlink(missing_ok=True)
+        previous = self.t3_unit()["MainPID"]
+        adapter = self.rt.Linux(self.config)
+        try:
+            adapter.stop_services()
+        finally:
+            # stop_services leaves minicloudwork.slice frozen; T3 must not start inside it.
+            adapter.thaw()
+        adapter.start_services()
+        self.t3_recovered(previous)
+        marker = Path(tiers.MARKER)
+        check(tiers.read_marker(marker) is True and stat.S_IMODE(marker.stat().st_mode) == 0o600,
+              "CACHE_MIGRATION_MARKER_NOT_WRITTEN")
+        for name in caches:
+            check(not (home / name / "native-cache-entry").exists(), "RETAINED_CACHE_NOT_MIGRATED")
+        for name in credentials:
+            path = home / name
+            check(not path.is_symlink() and path.read_text() == "native-credential-" + name + "\n" and
+                  path.stat().st_uid == 2000, "CREDENTIAL_TOUCHED_BY_CACHE_MIGRATION")
+        links = {name: target for name, target in tiers.LINKS
+                 if name in (".cache", ".cargo/registry", ".cargo/git", ".gradle/caches")}
+        for name, target in links.items():
+            check((home / name).is_symlink() and os.readlink(home / name) ==
+                  os.path.join(tiers.SCRATCH, "cache", target).rstrip("/"), "CACHE_LINK_NOT_ON_SCRATCH")
+        check(not (home / tiers.TRASH).exists(), "CACHE_TRASH_NOT_PURGED")
+        return {"scratchLayoutVerified": True, "scratchSeparateFromRetainedVolume": True,
+                "t3ServiceEnvironmentMatched": sorted(expected), "codingLoginShellMatched": True,
+                "rootLoginShellUnchanged": True, "containerRuntimePresent": False,
+                "cacheMigrationMovedCaches": len(caches), "credentialsUntouched": len(credentials),
+                "migrationMarkerRootOnly": True}
+
+    def terminal_scratch(self):
+        expected = self.storage_tiers().load_environment()
+        output = Path("/workspace/artifacts/native-scratch-env")
+        result = self.client.call("scratch-env", names=sorted(expected))
+        self.wait(output.exists)
+        check(output.stat().st_uid == 2000, "TERMINAL_SCRATCH_PROBE_NOT_CODING_USER")
+        lines = output.read_text().splitlines()
+        check(lines[-1:] == ["scratch-writable"] and
+              dict(line.split("=", 1) for line in lines[:-1] if "=" in line) == expected,
+              "T3_TERMINAL_SCRATCH_ENVIRONMENT_MISMATCH")
+        return {**result, "terminalEnvironmentMatched": sorted(expected), "terminalWroteScratchCacheAndTmp": True}
+
     def start_services(self):
         check(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]) != "0",
               "FRESH_BOOTSTRAP_DID_NOT_START_T3")
@@ -836,7 +959,8 @@ class Native:
                 secret.write(token)
             tokens[name] = str(path)
         self.client = T3Client(self.directory)
-        result = self.client.call("init", tokenFiles=tokens, createProject=True)
+        result = self.client.call("init", tokenFiles=tokens, createProject=True, projectId=self.t3_project_id)
+        self.environment_id = result.pop("environmentId")
         self.snapshot = result["snapshotSequence"]
         return {**result, "tokenFilesRootOnly": True, "freshBootstrapStartedT3WithoutManualStart": True}
 
@@ -877,6 +1001,225 @@ class Native:
         return dict(anonymousRejected=True, routineGatewayTokenRejected=True,
                     primaryGenerationChecked=True, trustedListenerAdmission=True,
                     noT3AccountApprovalRequested=True)
+
+    def t3_unit(self):
+        properties = ["ActiveState", "SubState", "Result", "Job", "MainPID", "ControlPID", "NRestarts",
+                      "ExecMainCode", "ExecMainStatus"]
+        values = dict(line.split("=", 1) for line in command(
+            ["systemctl", "show", T3_UNIT, "-p", ",".join(properties)]).splitlines() if "=" in line)
+        check(values.keys() == set(properties), "T3_UNIT_PROPERTIES_MISSING")
+        for key in ("MainPID", "ControlPID", "NRestarts", "ExecMainCode", "ExecMainStatus"):
+            values[key] = int(values[key])
+        return values
+
+    def signal_t3_main(self, sig):
+        pid = self.t3_unit()["MainPID"]
+        self.check_t3_pid(pid)
+        os.kill(pid, sig)
+        return pid
+
+    @staticmethod
+    def check_t3_pid(pid):
+        check(pid > 0 and Path("/proc", str(pid), "cgroup").read_text().strip() ==
+              "0::/minicloudwork.slice/" + T3_UNIT, "T3_PID_NOT_IN_OWNED_CGROUP")
+
+    def wait_t3(self, predicate, seconds=30):
+        seen = {}
+        def probe():
+            seen.clear()
+            seen.update(self.t3_unit())
+            return predicate(seen)
+        self.wait(probe, seconds=seconds)
+        return dict(seen)
+
+    def t3_restart_delay(self, result):
+        state = self.wait_t3(lambda s: s["SubState"] == "auto-restart", seconds=10)
+        # On the image's systemd, RestartSec is a timer; the start job is installed later.
+        check(state["ActiveState"] == "activating" and state["Result"] == result and state["Job"] == ""
+              and state["MainPID"] == state["ControlPID"] == 0, "T3_RESTART_DELAY_NOT_OBSERVED")
+        return state
+
+    def check_t3_freezer(self, frozen):
+        expected = "1" if frozen else "0"
+        check((WORK_CGROUP / "cgroup.freeze").read_text().strip() == expected and
+              "frozen " + expected in (WORK_CGROUP / "cgroup.events").read_text().splitlines(),
+              "T3_UNEXPECTED_WORK_SLICE_FREEZER_STATE")
+
+    def t3_stays_stopped(self, *, frozen=False, failed=False, after_crash=False):
+        # Check immediately and through an entire RestartSec=5 window.
+        deadline = time.monotonic() + 6
+        expected = ("failed", "failed") if failed else ("inactive", "dead")
+        results = ("signal",) if failed else ("success",)
+        if after_crash and not failed:
+            # A dependent unit can keep the stopped service loaded with its previous crash result.
+            results += ("signal",)
+        while True:
+            state = self.t3_unit()
+            check((state["ActiveState"], state["SubState"]) == expected and state["Result"] in results and
+                  state["Job"] == "" and state["MainPID"] == state["ControlPID"] == 0 and
+                  self.rt.Linux.t3_cgroup_empty(), "T3_DID_NOT_REMAIN_STOPPED")
+            self.check_t3_freezer(frozen)
+            if time.monotonic() >= deadline:
+                return state
+            time.sleep(0.2)
+
+    def t3_ready(self, previous_pid=0):
+        def ready(state):
+            if state["SubState"] != "running" or state["Job"] != "" or state["MainPID"] in (0, previous_pid):
+                return False
+            client = http.client.HTTPConnection("127.0.0.1", 3773, timeout=5)
+            try:
+                client.request("GET", "/.well-known/t3/environment")
+                return client.getresponse().status == 200
+            finally:
+                client.close()
+        return self.wait_t3(ready, seconds=90)
+
+    def t3_recovered(self, previous_pid):
+        self.t3_ready(previous_pid)
+        self.wait(lambda: command(["systemctl", "is-active", "minicloud-t3-connect.service"]) == "active")
+        if self.client is not None:
+            self.client.close()
+        self.client = T3Client(self.directory)
+        result = self.client.call("init", projectId=self.t3_project_id,
+                                  tokenFiles={name: str(self.directory / (name + ".secret"))
+                                              for name in ("operate", "readonly")})
+        check(result.pop("environmentId") == self.environment_id, "T3_ENVIRONMENT_IDENTITY_CHANGED")
+        check(result["realTicketWebSocketOpened"] is True and
+              result["snapshotSequence"] >= self.snapshot, "T3_STATE_NOT_RETAINED_AFTER_RESTART")
+        check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"]) ==
+              self.config["volume"]["filesystemUuid"], "RETAINED_VOLUME_CHANGED_DURING_T3_RECOVERY")
+        status = self.control("status", includeWorkInventory=True)
+        check(status["vmId"] == self.run_id and status["generation"] == 1 and status["phase"] == "Ready",
+              "VM_GENERATION_CHANGED_DURING_T3_RECOVERY")
+        check(status["workInventory"]["state"] == "IdleCandidate", "T3_RESTART_LEFT_UNKNOWN_WORK")
+
+    def t3_frozen_stop(self, adapter, stop_at):
+        before = self.t3_ready()
+        try:
+            if stop_at != "before-freeze":
+                adapter.freeze()
+                self.check_t3_freezer(True)
+            if stop_at == "start-pre":
+                # In the disposable fixture, kill the monitor too. A remaining
+                # service cgroup lets systemd thaw its parent on a restart job.
+                self.check_t3_pid(before["MainPID"])
+                command(["systemctl", "kill", "--kill-whom=all", "--signal=SIGKILL", T3_UNIT])
+            else:
+                self.signal_t3_main(signal.SIGKILL)
+            during_delay = self.t3_restart_delay("signal")
+            if stop_at == "before-freeze":
+                self.check_t3_freezer(False)
+                adapter.freeze()
+            self.check_t3_freezer(True)
+            if stop_at == "start-pre":
+                before_stop = self.wait_t3(lambda s: s["SubState"] == "start-pre", seconds=10)
+                check(before_stop["ActiveState"] == "activating" and before_stop["MainPID"] == 0 and
+                      before_stop["Job"].isdecimal() and int(before_stop["Job"]) > 0 and
+                      before_stop["NRestarts"] == before["NRestarts"] + 1,
+                      "T3_FROZEN_PRESTART_JOB_NOT_OBSERVED")
+                self.check_t3_pid(before_stop["ControlPID"])
+            else:
+                before_stop = self.t3_restart_delay("signal")
+            self.check_t3_freezer(True)
+            adapter.stop_services()
+            after_stop = self.t3_stays_stopped(frozen=True, after_crash=True)
+        finally:
+            adapter.thaw()
+        self.check_t3_freezer(False)
+        return dict(restartDelay=during_delay, beforeRuntimeStop=before_stop,
+                    afterRuntimeStop=after_stop, stayedRefrozenPastRestartDelay=True)
+
+    def t3_recovery(self):
+        unit = T3_UNIT
+        for prop, expected in (("Restart", "on-failure"), ("RestartUSec", "5s"), ("OOMPolicy", "stop"),
+                               ("StartLimitBurst", "5"), ("StartLimitIntervalUSec", "5min"),
+                               ("KillMode", "process"), ("SendSIGKILL", "no")):
+            check(command(["systemctl", "show", unit, "-p", prop, "--value"]) == expected,
+                  "UNQUALIFIED_T3_RESTART_POLICY")
+        adapter = self.rt.Linux(self.config)
+        evidence = {}
+        command(["systemctl", "reset-failed", unit])
+        before = self.t3_ready()
+        pid = self.signal_t3_main(signal.SIGKILL)
+        evidence["sigkillRestartDelay"] = self.t3_restart_delay("signal")
+        self.check_t3_freezer(False)
+        self.t3_recovered(pid)
+        check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_CRASH_NOT_AUTOMATICALLY_RESTARTED")
+        evidence["sigkillAutomaticallyRestartedWithSameIdentityAndProject"] = True
+
+        # A real kernel cgroup OOM kill, as in the incident, rather than a synthetic signal.
+        before = self.t3_ready()
+        limit, swap = T3_CGROUP / "memory.max", T3_CGROUP / "memory.swap.max"
+        check(limit.read_text().strip() == "max", "T3_MEMORY_LIMIT_UNAVAILABLE")
+        limits = {path: path.read_text().strip() for path in (limit, swap) if path.is_file()}
+        try:
+            if swap in limits:
+                swap.write_text("0")
+            limit.write_text(str(1024**2))
+        finally:
+            for path, value in limits.items():
+                try:
+                    path.write_text(value)
+                except FileNotFoundError:
+                    pass  # The killed unit's cgroup was reaped.
+        evidence["oomRestartDelay"] = self.t3_restart_delay("oom-kill")
+        self.check_t3_freezer(False)
+        self.t3_recovered(before["MainPID"])
+        check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_OOM_NOT_AUTOMATICALLY_RESTARTED")
+        evidence["oomKillAutomaticallyRestarted"] = True
+
+        self.signal_t3_main(signal.SIGKILL)
+        self.t3_restart_delay("signal")
+        self.check_t3_freezer(False)
+        command(["systemctl", "stop", unit])
+        self.t3_stays_stopped(after_crash=True)
+        evidence["stopDuringPendingRestartStaysStopped"] = True
+
+        frozen = {}
+        for stop_at in ("before-freeze", "auto-restart", "start-pre"):
+            adapter.start_services()
+            frozen[stop_at] = self.t3_frozen_stop(adapter, stop_at)
+        evidence.update(frozenCrashThenRuntimeStopStaysStopped=True, frozenStopStages=frozen)
+
+        adapter.start_services()
+        self.t3_ready()
+        self.signal_t3_main(signal.SIGINT)
+        exited = self.wait_t3(lambda s: s["ActiveState"] == "inactive")
+        check(exited["ExecMainCode"] == 1 and exited["ExecMainStatus"] == 130,
+              "T3_INTENTIONAL_EXIT_130_NOT_OBSERVED")
+        self.t3_stays_stopped()
+        evidence["exit130StaysStopped"] = True
+
+        # Reset while loaded, then count a fresh explicit start as the first of five.
+        adapter.start_services()
+        command(["systemctl", "reset-failed", unit])
+        budget_started = time.monotonic()
+        command(["systemctl", "restart", unit])
+        for kills in range(1, 6):
+            self.t3_ready()
+            pid = self.signal_t3_main(signal.SIGKILL)
+            delayed = self.t3_restart_delay("signal")
+            check(delayed["NRestarts"] == kills - 1, "T3_RETRY_COUNTER_UNEXPECTED")
+            state = self.wait_t3(lambda s: s["ActiveState"] == "failed" or
+                                 s["MainPID"] not in (0, pid), seconds=20)
+            if kills < 5:
+                check(state["ActiveState"] == "active" and state["NRestarts"] == kills,
+                      "T3_RETRY_BUDGET_EXHAUSTED_EARLY")
+        budget_seconds = time.monotonic() - budget_started
+        check(budget_seconds < 300, "T3_RETRY_BUDGET_WINDOW_EXCEEDED")
+        exhausted = self.t3_stays_stopped(failed=True)
+        check(exhausted["NRestarts"] == 5, "T3_RETRY_COUNTER_UNEXPECTED")
+        command(["systemctl", "reset-failed", unit])
+        adapter.start_services()
+        self.t3_recovered(pid)
+        evidence.update(retryBudgetExhaustedResult=exhausted["Result"], crashesUntilBudgetExhausted=kills,
+                        retryBudgetExhaustedInSeconds=round(budget_seconds, 2),
+                        exhaustedFailureStayedVisible=True,
+                        sameVmGeneration=True, retainedVolumeUuid=True, environmentIdentityRetained=True,
+                        authenticatedHttpAndWebSocketRecovered=True, connectManagementRecovered=True,
+                        noLeftoverWorkAfterRestart=True, linkedT3ConnectRelayRecoveryQualified=False)
+        return evidence
 
     def root_hooks(self):
         before = self.control("status")["activityAt"]
@@ -939,6 +1282,95 @@ class Native:
               "SOURCE_CONTROL_TERMINAL_BINARIES_UNAVAILABLE")
         return {**versions, **result, "servicePathChecked": True, "terminalVersionsExecuted": True,
                 "providerCredentialsSupplied": False, "userSignInQualified": False}
+
+    @staticmethod
+    def mount_points(pid):
+        points = {}
+        for line in Path("/proc", str(pid), "mountinfo").read_text().splitlines():
+            fields = line.split()
+            points[fields[4]] = fields[2]
+        return points
+
+    def scratch_mounts(self):
+        spec = importlib.util.spec_from_file_location("native_scratch_mounts", SCRATCH_HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        after = command(["systemctl", "show", "minicloud-t3.service", "-p", "After", "--value"]).split()
+        check("minicloud-scratch-mounts.service" in after, "T3_NOT_ORDERED_AFTER_SCRATCH_MOUNTS")
+        check(command(["systemctl", "is-active", "minicloud-scratch-watch.service"]) == "active",
+              "SCRATCH_WATCHER_NOT_STARTED_WITH_T3")
+        main_pid = int(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]))
+        check(main_pid > 0 and isinstance(self.shell_pid, int), "SCRATCH_T3_TERMINAL_REQUIRED")
+
+        def coding(*argv):
+            return command(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups", "env", "-i",
+                            "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/workspace/home", "git",
+                            "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                            "-C", str(SCRATCH_FIXTURE), *argv], cwd="/workspace")
+
+        def write(relative, value):
+            path = SCRATCH_FIXTURE / relative
+            for directory in reversed([path.parent, *path.parent.parents]):
+                if directory == SCRATCH_FIXTURE or SCRATCH_FIXTURE in directory.parents:
+                    if not directory.exists():
+                        directory.mkdir(mode=0o755)
+                        os.chown(directory, 2000, 2000)
+            path.write_text(value)
+            os.chown(path, 2000, 2000)
+
+        check(not SCRATCH_FIXTURE.exists(), "SCRATCH_FIXTURE_ALREADY_EXISTS")
+        SCRATCH_FIXTURE.mkdir(mode=0o755)
+        os.chown(SCRATCH_FIXTURE, 2000, 2000)
+        coding("init", "--quiet", "--initial-branch=main")
+        # The ignore rules exist before any output or manifest, so no watcher pass sees them unignored.
+        write(".gitignore", "node_modules/\nbin/\nobj/\ndist/\n")
+        write("build/tracked.txt", "tracked build directory\n")
+        write("package.json", "{\"private\": true}\n")
+        write("native.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n")
+        coding("add", ".gitignore", "build/tracked.txt", "package.json", "native.csproj")
+        coding("-c", "user.name=Native fixture", "-c", "user.email=native@example.invalid",
+               "commit", "--quiet", "-m", "Native scratch fixture")
+        token = uuid.uuid4().hex + "\n"
+        write("dist.staging/app.js", token)
+        (SCRATCH_FIXTURE / "dist.staging/current.js").symlink_to("app.js")
+        os.chown(SCRATCH_FIXTURE / "dist.staging/current.js", 2000, 2000, follow_symlinks=False)
+        os.rename(SCRATCH_FIXTURE / "dist.staging", SCRATCH_FIXTURE / "dist")
+        workspace_device = os.stat("/workspace").st_dev
+        time.sleep(3)
+
+        def settled():
+            command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER), "apply",
+                     "--budget-seconds", "60", "--quiet-seconds", "2"], timeout=120)
+            views = (self.mount_points(self.shell_pid), self.mount_points(main_pid))
+            return all(str(SCRATCH_FIXTURE / name) in view for view in views for name in SCRATCH_OUTPUTS)
+        self.wait(settled, seconds=120)
+        repo = helper.Repo((SCRATCH_FIXTURE.name,), SCRATCH_FIXTURE.stat().st_ino)
+        leaf = Path(helper.SCRATCH) / "repos" / repo.id
+        for name in SCRATCH_OUTPUTS:
+            info = (SCRATCH_FIXTURE / name).lstat()
+            check(stat.S_ISDIR(info.st_mode) and info.st_uid == 2000 and info.st_dev != workspace_device and
+                  info.st_dev == (leaf / name).lstat().st_dev and
+                  info.st_ino == (leaf / name).lstat().st_ino, "OUTPUT_NOT_BOUND_FROM_SCRATCH")
+        for view in (self.mount_points(self.shell_pid), self.mount_points(main_pid)):
+            check(str(SCRATCH_FIXTURE / "build") not in view and str(SCRATCH_FIXTURE) not in view,
+                  "TRACKED_OR_REPOSITORY_DIRECTORY_MOUNTED")
+        check((SCRATCH_FIXTURE / "build").lstat().st_dev == workspace_device and
+              (SCRATCH_FIXTURE / "build/tracked.txt").read_text() == "tracked build directory\n",
+              "TRACKED_BUILD_DIRECTORY_CHANGED")
+        check((leaf / "dist/app.js").read_text() == token and
+              os.readlink(SCRATCH_FIXTURE / "dist/current.js") == "app.js" and
+              (SCRATCH_FIXTURE / "dist/app.js").stat().st_uid == 2000, "RELOCATED_OUTPUT_DATA_LOST")
+        check(not Path("/workspace", helper.TRASH).exists(), "RELOCATION_LEFT_VOLUME_COPY")
+        self.client.call("input", kind="scratch")
+        self.wait(lambda: (leaf / "node_modules/.native-terminal-write").read_text() == "terminal-scratch\n")
+        check((SCRATCH_FIXTURE / "node_modules/.native-terminal-write").stat().st_uid == 2000,
+              "TERMINAL_WRITE_NOT_CODING_OWNED")
+        status = json.loads(command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER), "status"]))
+        check(status.get("state") == "active", "SCRATCH_STATUS_NOT_ACTIVE")
+        self.scratch_mounted = len(SCRATCH_OUTPUTS)
+        return {"boundOutputs": list(SCRATCH_OUTPUTS), "visibleInT3AndTerminalMountNamespace": True,
+                "terminalWriteLandedOnScratch": True, "trackedBuildDirectoryUntouched": True,
+                "nonEmptyOutputRelocatedWithSymlink": True, "t3OrderedAfterScratchMounts": True}
 
     def shell_proof(self):
         check(Path("/workspace/artifacts/native-input-seen").is_file(), "GENUINE_INPUT_NOT_YET_OBSERVED")
@@ -1197,6 +1629,15 @@ class Native:
         result = self.control("quiesce", operation="native-quiesce", gatewayAdmissionsFenced=True,
                               unobservableToolsAbsent=True, t3SnapshotSequence=snapshot)
         check(result["type"] == "PrimaryQuiesced", "NO_REAL_QUIESCENCE_RECEIPT")
+        if self.scratch_mounted:
+            scratch = result.get("scratchMounts") or {}
+            check(scratch.get("unmounted", 0) >= self.scratch_mounted and scratch.get("lazy") == 0,
+                  "SCRATCH_MOUNTS_NOT_UNMOUNTED_BEFORE_QUIESCE")
+        check(not any(point.startswith("/workspace") for point in self.mount_points("self")),
+              "MOUNT_REMAINS_BELOW_WORKSPACE")
+        for unit in ("minicloud-scratch-watch.service", "minicloud-scratch-mounts.service"):
+            check(command(["systemctl", "show", unit, "-p", "ActiveState", "--value"]) in ("inactive", "failed"),
+                  "SCRATCH_HELPER_STILL_ACTIVE_AFTER_QUIESCE")
         check(not os.path.ismount("/workspace"), "WORKSPACE_NOT_UNMOUNTED")
         self.clean_workspace = True
         self.control("receipt-validate", operation="native-quiesce", receiptId=result["receiptId"])
@@ -1472,6 +1913,20 @@ class Native:
             check(not any(2000 in p["uids"] for p in self.rt.Procfs().inventory().values()),
                   "LEFTOVER_CODING_PROCESSES_KEEP_MOUNT_AND_LOOP_FOR_INSPECTION")
             command(["systemctl", "stop", UNITS[1]])
+            if os.path.ismount("/workspace") and SCRATCH_HELPER.is_file():
+                command(["systemctl", "stop", "minicloud-scratch-watch.service",
+                         "minicloud-scratch-mounts.service"], timeout=180)
+                report = json.loads(command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER),
+                                             "unmount-all"], timeout=180))
+                check(report.get("failed") == 0, "SCRATCH_MOUNTS_KEEP_WORKSPACE_FOR_INSPECTION")
+            # Scratch is regenerable; do not leave this run's caches on the builder image.
+            for name in ("cache", "tmp"):
+                directory = Path("/var/lib/minicloud-scratch", name)
+                for child in (directory.iterdir() if directory.is_dir() and not directory.is_symlink() else ()):
+                    if child.is_dir() and not child.is_symlink():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
             if os.path.ismount("/workspace"):
                 check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"]) ==
                       self.config["volume"]["filesystemUuid"], "CLEANUP_MOUNT_CHANGED")
@@ -1526,13 +1981,19 @@ class Native:
             if not self.report.probe("native-http-scopes-tickets-websocket", self.start_services):
                 return
             self.report.probe("connect-management-rejects-routine-t3-token", self.connect_management)
+            if not self.report.probe("t3-oom-crash-restart-stop-race-and-retry-budget", self.t3_recovery):
+                return
             if not self.report.probe("copilot-stdio-provider-setup", self.copilot_provider):
                 return
+            # Restarts T3, so it runs before the probe terminal is opened.
+            self.report.probe("scratch-tier-environment-and-cache-migration", self.scratch_tier)
             self.report.probe("authenticated-generation-task-and-activity-hooks", self.root_hooks)
             if not self.report.probe("real-terminal-input-and-passive-root-hook", self.terminals):
                 return
             if not self.report.probe("source-control-cli-service-terminal-and-discovery", self.source_control):
                 return
+            self.report.probe("t3-terminal-scratch-environment", self.terminal_scratch)
+            self.report.probe("scratch-build-output-bind-mounts", self.scratch_mounts)
             self.report.probe("actual-pinned-t3-sqlite-idle", self.sqlite)
             self.report.probe("actual-schema-copy-wal-and-fail-closed", self.sqlite_negatives)
             self.report.probe("actual-kernel-frozen-readonly-t3-sqlite", self.frozen_sqlite)

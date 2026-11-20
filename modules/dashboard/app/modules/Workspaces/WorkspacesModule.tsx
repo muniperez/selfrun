@@ -12,8 +12,10 @@ import { getWorkspace } from "@/api/workspacesApi";
 import { ApiError, type DevelopmentWorkspace } from "@/models/controlPlane";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { WorkspaceDetail } from "./WorkspaceDetail";
-import { ephemeralSummary, lastActivity, primaryState, primaryVm } from "./workspaceCollection";
+import { WorkspaceEnvironmentActions } from "./WorkspaceEnvironmentActions";
+import { ephemeralSummary, lastActivity, permanentDeletion, primaryState, primaryVm } from "./workspaceCollection";
 import { vmStartup } from "./WorkspaceVmStartup";
+import { message } from "./workspaceVmLabels";
 
 const fastPollMs = 3_000;
 const slowPollMs = 10_000;
@@ -39,6 +41,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
   const [delayed, setDelayed] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pollCycle, setPollCycle] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [query, setQuery] = useCollectionQuery(`${organizationId}:workspaces`, "name", "asc");
   const navigate = useNavigate();
   const active = useRef(true);
@@ -117,6 +120,11 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
     if (paused) setPollCycle(cycle => cycle + 1);
     void refresh();
   };
+  const refreshAfterMutation = async (observation?: DevelopmentWorkspace) => {
+    setActionError(null);
+    try { await refresh(observation); }
+    catch (reason) { if (active.current) setActionError(`Operation accepted. Refresh failed: ${message(reason)}`); }
+  };
   const filtered = items.filter(workspace => workspace.name.toLocaleLowerCase().includes(query.search.trim().toLocaleLowerCase())
     && (!query.filters.primary || primaryState(workspace).value === query.filters.primary)
     && (!query.filters.ephemeral || ephemeralSummary(workspace).state === query.filters.ephemeral))
@@ -124,7 +132,9 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       query.sort === "activity" ? lastActivity(b)?.at ?? null : b.name, query.direction, a.id, b.id));
   return <PageScaffold title={workspaceId ? item?.name ?? "Dev environment" : "Dev Environments"}
     breadcrumbs={workspaceId ? [{ label: "Dev Environments", to: "/workspaces" }, { label: item?.name ?? "Dev environment" }] : undefined}
-    actions={workspaceId ? <Button variant="outline" disabled={loading} onClick={checkStatus}>Refresh status</Button> : undefined}>
+    actions={workspaceId && item ? <WorkspaceEnvironmentActions key={item.id} item={item} organizationId={organizationId}
+      refreshAfterMutation={refreshAfterMutation} canManage={canManage && !permanentDeletion(item)}
+      onRefreshStatus={checkStatus} refreshing={loading} /> : undefined}>
     {!workspaceId && <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0 flex-1"><CollectionToolbar label="dev environments" query={query}
@@ -150,6 +160,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       <p>{workspaceId && item ? `Status refresh failed. Updates are delayed; showing the last reported status. ${error}` : error}</p>
       <Button variant="outline" onClick={checkStatus} disabled={loading}>{workspaceId && item ? "Retry status check" : "Retry"}</Button>
     </div>}
+    {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
     {workspaceId && <p role="status" className="text-sm text-muted-foreground">
       {startingGenerations && (paused ? "Automatic status checks paused. Select Refresh status to check again."
         : delayed && !error ? "Still waiting for the VM to be ready. Startup is taking longer than usual." : "")}

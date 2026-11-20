@@ -79,6 +79,10 @@ references (`MINICLOUD_*_IMAGE`) come from the generated, digest-pinned
 | `MANAGE_DNS_RECORDS` | Optional. Defaults to `false`. |
 | `MINICLOUD_SOURCE_URL` | Optional. The public source link shown in the dashboard. |
 | `MINICLOUD_GOOGLE_OIDC_ENABLED` | Defaults to `false`; the installer derives it only from explicit `googleOidc.enabled`. Shared API/Kratos switch, not a qualification assertion. |
+| `MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED` | Defaults to `true`. Offers the per-user **Keep me signed in** option; when `false`, existing remembered sessions follow the standard limits. |
+| `MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES`, `MINICLOUD_PORTAL_STANDARD_MAX_MINUTES` | Dashboard inactivity timeout and absolute lifetime for standard sessions. Default `120` (2 hours) and `720` (12 hours). |
+| `MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES`, `MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES` | Same limits for **Keep me signed in** sessions. Default `10080` (7 days) and `43200` (30 days). |
+| `MINICLOUD_KRATOS_SESSION_LIFESPAN` | Upstream Kratos session lifespan, default `10080m`. Keep it at least the longest enabled idle timeout; the installer derives it. |
 | `MINICLOUD_SECRETS_DIR` | Root-owned directory (`0700`) holding the files below. |
 | `MINICLOUD_INSTALLATION_ID` | Persistent non-secret installation identity from host metadata, shared by API and bootstrap inputs. Never regenerate it on restart. |
 | `MINICLOUD_HOST_ID` | Optional non-secret host-local maintenance identity from `<root>/host-id`, written by the packaged maintenance tooling and never backed up. Leave empty for manual Compose; `transfer` binds the maintenance authority to it. |
@@ -131,6 +135,43 @@ quotas still apply. Projected costs are informational: the former
 `MaxEstimatedMonthlySpend` and `MaxEstimatedMonthlySpendPerOrganization`
 settings are ignored if still present and can be removed. The additive `keep_running` column defaults existing rows to
 idle stop. Roll it out with the API and worker together like the idle timeout.
+
+### Dashboard sign-in sessions
+
+Dashboard sessions end after an inactivity timeout or an absolute lifetime,
+whichever comes first. While a user is active, the dashboard renews the session
+during the last half of its idle window; background polling alone never keeps a
+session alive, and neither does a network reconnect. Renewal never extends past
+the absolute lifetime. Logout, revocation and upstream Kratos session loss end
+the session immediately, including while a renewal is in flight; see
+[session renewal](api.md#session-renewal). Open tabs renew one at a time and
+re-check the session when another tab signs out. A Kratos outage during renewal
+is retried and is not treated as a logout.
+
+Users opt in per device with **Keep me signed in** at sign-in, or change it for
+the current device under account settings. Remembered sessions use a persistent
+cookie; standard sessions use a browser-session cookie that the browser may drop
+when it closes. API keys and CLI credentials are unaffected.
+
+Configure the policy with the optional installer object (all fields optional;
+values are whole minutes, idle 1–43200, maximum from idle to 129600, and
+remembered durations no shorter than standard):
+
+```json
+"portalSessions": {
+  "keepSignedInEnabled": true,
+  "standardIdleMinutes": 120,
+  "standardMaxMinutes": 720,
+  "rememberedIdleMinutes": 10080,
+  "rememberedMaxMinutes": 43200
+}
+```
+
+The API rejects invalid values at startup. Shortening a limit applies to
+existing sessions immediately, which may sign users out; lengthening it applies
+to the idle window at the next renewal but never extends a session's original
+absolute lifetime. Disabling `keepSignedInEnabled` makes existing remembered
+sessions follow the standard limits.
 
 ### Optional packaged Google OIDC
 

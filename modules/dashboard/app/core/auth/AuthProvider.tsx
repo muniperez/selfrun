@@ -1,14 +1,19 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
-import { getAccountCapabilities, getAccountSession, logoutAccount, type AccountCapabilities } from "../../api/accountApi";
+import {
+  getAccountCapabilities, getAccountSession, logoutAccount, renewAccountSession,
+  type AccountCapabilities, type AccountSession
+} from "../../api/accountApi";
 import { setCsrfToken, subscribeAuthFailures } from "../../api/apiClient";
 import { getMe } from "../../api/identityApi";
 import { ApiError, type MeResponse } from "../../models/controlPlane";
+import { broadcastSignedOut, startSessionRenewal } from "./sessionRenewal";
 
 export type AuthStatus = "initializing" | "authenticated" | "unauthenticated" | "unavailable" | "setup_required" | "setup_blocked";
 type AuthContextValue = {
   status: AuthStatus;
   profile: MeResponse | null;
   capabilities: AccountCapabilities | null;
+  session: AccountSession | null;
   selectedOrganization: MeResponse["organizations"][number] | null;
   selectOrganization: (organizationId: string) => boolean;
   profileError: string | null;
@@ -18,7 +23,7 @@ type AuthContextValue = {
 };
 
 export const AuthContext = createContext<AuthContextValue>({
-  status: "initializing", profile: null, capabilities: null, selectedOrganization: null, selectOrganization: () => false,
+  status: "initializing", profile: null, capabilities: null, session: null, selectedOrganization: null, selectOrganization: () => false,
   profileError: null, refreshSession: async () => {}, refreshProfile: async () => {}, logout: async () => {}
 });
 
@@ -26,12 +31,30 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>("initializing");
   const [profile, setProfile] = useState<MeResponse | null>(null);
   const [capabilities, setCapabilities] = useState<AccountCapabilities | null>(null);
+  const [session, setSession] = useState<AccountSession | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const generation = useRef(0);
+  const renewal = useRef<{ stop: () => void } | null>(null);
+  const authenticated = useRef(false);
+
+  const signedOut = useCallback((announce = false) => {
+    const wasAuthenticated = authenticated.current;
+    authenticated.current = false;
+    renewal.current?.stop();
+    renewal.current = null;
+    setCsrfToken(null);
+    setProfile(null);
+    setSession(null);
+    setStatus("unauthenticated");
+    // Other tabs re-read their session on this message instead of trusting it, so announcing is always safe.
+    if (announce || wasAuthenticated) broadcastSignedOut();
+  }, []);
 
   const refreshSession = useCallback(async () => {
     const current = ++generation.current;
+    renewal.current?.stop();
+    renewal.current = null;
     setProfileError(null);
     try {
       const nextCapabilities = await getAccountCapabilities();
@@ -40,65 +63,83 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (nextCapabilities.bootstrapState !== "ready") {
         setCsrfToken(null);
         setProfile(null);
+        setSession(null);
         setStatus(nextCapabilities.bootstrapState === "required" ? "setup_required" : "setup_blocked");
         return;
       }
-      const session = await getAccountSession();
+      const nextSession = await getAccountSession();
       if (current !== generation.current) return;
-      setCsrfToken(session.csrfToken);
+      setCsrfToken(nextSession.csrfToken);
       const nextProfile = await getMe();
       if (current !== generation.current) return;
       setProfile(nextProfile);
+      setSession(nextSession);
       setStatus("authenticated");
+      authenticated.current = true;
+      renewal.current = startSessionRenewal(nextSession, {
+        renew: renewAccountSession,
+        read: getAccountSession,
+        onSession: renewed => {
+          if (current !== generation.current) return;
+          setCsrfToken(renewed.csrfToken);
+          setSession(renewed);
+        },
+        onSignedOut: () => {
+          if (current !== generation.current) return;
+          ++generation.current;
+          signedOut();
+        }
+      });
     } catch (error) {
       if (current !== generation.current) return;
       if (error instanceof ApiError && error.status === 401) {
-        setCsrfToken(null);
-        setProfile(null);
-        setStatus("unauthenticated");
+        signedOut();
       } else {
         setStatus("unavailable");
         setProfileError("Unable to load your account. Retry when the service is available.");
       }
     }
-  }, []);
+  }, [signedOut]);
 
   useEffect(() => {
     const unsubscribe = subscribeAuthFailures(code => {
       ++generation.current;
+      renewal.current?.stop();
+      renewal.current = null;
       if (code === 401) {
-        setCsrfToken(null);
-        setProfile(null);
+        signedOut();
         setProfileError(null);
-        setStatus("unauthenticated");
       } else {
         setStatus("unavailable");
         setProfileError("Account service is temporarily unavailable.");
       }
     });
     void refreshSession();
-    return () => { ++generation.current; unsubscribe(); };
-  }, [refreshSession]);
+    return () => {
+      ++generation.current;
+      renewal.current?.stop();
+      renewal.current = null;
+      unsubscribe();
+    };
+  }, [refreshSession, signedOut]);
 
   const logout = useCallback(async () => {
     ++generation.current;
+    renewal.current?.stop();
+    renewal.current = null;
     try {
       await logoutAccount();
-      setCsrfToken(null);
-      setProfile(null);
-      setStatus("unauthenticated");
+      signedOut(true);
       setProfileError(null);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        setCsrfToken(null);
-        setProfile(null);
-        setStatus("unauthenticated");
+        signedOut(true);
       } else {
         setStatus("unavailable");
         setProfileError("Sign out could not be confirmed. Retry account access.");
       }
     }
-  }, []);
+  }, [signedOut]);
 
   // Only loaded memberships can be selected; an unknown or revoked selection falls back to the first membership.
   const organizations = profile?.organizations;
@@ -111,9 +152,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     ?? organizations?.[0] ?? null;
 
   const value = useMemo(() => ({
-    status, profile, capabilities, selectedOrganization, selectOrganization,
+    status, profile, capabilities, session, selectedOrganization, selectOrganization,
     profileError, refreshSession, refreshProfile: refreshSession, logout
-  }), [status, profile, capabilities, selectedOrganization, selectOrganization, profileError, refreshSession, logout]);
+  }), [status, profile, capabilities, session, selectedOrganization, selectOrganization, profileError, refreshSession, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

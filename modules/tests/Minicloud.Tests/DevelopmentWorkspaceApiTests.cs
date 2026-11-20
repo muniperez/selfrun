@@ -195,8 +195,11 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
                     schemaVersion = 1, mode = "scan", policyVersion = 1, path = Array.Empty<string>(),
                     target = new { dev = 64769, ino = 731_001, uid = 2000 }, complete = true, totalBytes = 5000, filesHereBytes = 0,
                     omittedEntries = 0, omittedBytes = 0, errors = new { },
-                    entries = new[] { new { name = "artifacts", bytes = 5000, state = "complete", errors = Array.Empty<string>(),
-                        selectable = true, deletable = false, uid = 2000, dev = 64769, ino = 731_002 } }
+                    entries = new[] { new { name = "artifacts", bytes = (long?)5000, state = "complete", errors = Array.Empty<string>(),
+                        selectable = true, deletable = false, uid = 2000, dev = 64769, ino = 731_002, storage = (string?)null },
+                        // A scratch bind mount is never selectable, even if a runtime claimed otherwise.
+                        new { name = "build", bytes = (long?)null, state = "excluded", errors = new[] { "separate_mount" },
+                        selectable = true, deletable = true, uid = 2000, dev = 64770, ino = 731_003, storage = (string?)"scratch" } }
                 }
             }), null, default);
         }
@@ -205,9 +208,13 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
         Assert.True(scanned.Headers.CacheControl?.NoStore);
         Assert.DoesNotContain("731002", raw);
         Assert.DoesNotContain("64769", raw);
-        var entry = Assert.Single(JsonSerializer.Deserialize<DevelopmentWorkspaceFilesystemJobResponse>(raw,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.DiskUsage!.Entries);
-        Assert.Equal(("/workspace/artifacts", false), (entry.Path, entry.CanDelete));
+        var entries = JsonSerializer.Deserialize<DevelopmentWorkspaceFilesystemJobResponse>(raw,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.DiskUsage!.Entries;
+        var entry = entries[0];
+        Assert.Equal(("/workspace/artifacts", false, null), (entry.Path, entry.CanDelete, entry.Storage));
+        var scratch = entries[1];
+        Assert.Equal(("/workspace/build", false, false, null, "scratch", "scratch"),
+            (scratch.Path, scratch.CanOpen, scratch.CanDelete, scratch.TargetToken, scratch.ProtectedReason, scratch.Storage));
 
         var deletion = new DevelopmentWorkspaceDirectoryDeletionRequest(generation, entry.TargetToken!, "/workspace/artifacts", true, "delete-key-01");
         Assert.Equal(HttpStatusCode.Forbidden, (await reader.PostAsJsonAsync($"{prefix}/directory-deletions?organizationId=org", deletion)).StatusCode);

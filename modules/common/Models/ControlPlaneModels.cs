@@ -9,6 +9,8 @@ public sealed class User
     public string? KratosIdentityId { get; set; }
     public string Email { get; set; } = default!;
     public string? DisplayName { get; set; }
+    /// <summary>Latest explicit "Keep me signed in" choice; the sign-in form's default for this user.</summary>
+    public bool KeepSignedIn { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public List<OrganizationMember> Memberships { get; set; } = [];
@@ -28,6 +30,10 @@ public sealed class BrowserSession
     public DateTimeOffset LastSeenAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset IdleExpiresAt { get; set; }
+    /// <summary>Start of the current idle window: sign-in or the latest accepted renewal.</summary>
+    public DateTimeOffset RenewedAt { get; set; }
+    /// <summary>Remembered ("Keep me signed in") session: persistent cookie and remembered policy durations.</summary>
+    public bool Persistent { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
 }
 

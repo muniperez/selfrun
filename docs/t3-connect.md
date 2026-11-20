@@ -23,8 +23,9 @@ open a replacement automatically.
    this management route. Existing unqualified images do not expose this service:
    an operator must qualify the updated image/runtime before offering it. This
    feature never silently replaces or upgrades a running VM.
-   The redesigned primary VM card shows this control only to that workspace's
-   creator or an organization Owner; ephemeral cards never offer it. Organization,
+   The control is on the workspace's **Settings** tab, for the primary VM only,
+   and is shown only to that workspace's creator or an organization Owner;
+   temporary VMs never offer it. Organization,
    VM generation, readiness/revision and ownership changes discard pending launch
    responses instead of opening a stale account-management page. The API and
    gateway independently enforce ownership; hiding the control is not authorization.
@@ -132,8 +133,12 @@ own CLI authorization; owner-only enrollment is not a shell isolation boundary.
   accordingly. Generalization removes workspace, runtime state and account
   credentials; **never capture an enrolled workspace as a reusable machine image**.
 - A controlled service restart retains environment identity, projects, threads
-  and provider sign-ins. Root-owned admission locking and a pending-operation
-  fence prevent CLI credential writes racing volume quiescence. Root service
+  and provider sign-ins. After a crash or OOM kill, systemd restarts T3 on the same VM
+  within a bounded retry budget. An explicit lifecycle stop cancels a pending restart
+  and verifies that T3 has no job or processes before treating it as stopped.
+  Connect management returns with T3. Restart does not resume an interrupted agent turn.
+  Root-owned admission locking and a pending-operation fence prevent CLI credential
+  writes racing volume quiescence. Root service
   `PartOf=minicloud-t3.service` stops enrollment workers with T3; a weak `Wants`
   dependency brings primary management back on T3 start/resume without making
   optional account-management failure a prerequisite for ordinary Open T3.

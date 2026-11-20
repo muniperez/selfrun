@@ -28,6 +28,18 @@
       "then": { "required": ["credentialsFile"] },
       "else": { "not": { "required": ["credentialsFile"] } }
     },
+    "portalSessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Dashboard sign-in session policy. Remembered durations must be at least the standard durations; each maximum must be at least its idle timeout.",
+      "properties": {
+        "keepSignedInEnabled": { "type": "boolean", "default": true, "description": "Offer the per-user Keep me signed in option." },
+        "standardIdleMinutes": { "type": "integer", "minimum": 1, "maximum": 43200, "default": 120 },
+        "standardMaxMinutes": { "type": "integer", "minimum": 1, "maximum": 129600, "default": 720 },
+        "rememberedIdleMinutes": { "type": "integer", "minimum": 1, "maximum": 43200, "default": 10080 },
+        "rememberedMaxMinutes": { "type": "integer", "minimum": 1, "maximum": 129600, "default": 43200 }
+      }
+    },
     "sourceUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/@\\s]+(?:/[^\\s]*)?$" },
     "recovery": {
       "type": "object",

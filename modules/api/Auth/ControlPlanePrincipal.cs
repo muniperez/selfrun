@@ -65,16 +65,28 @@ public sealed class ControlPlanePrincipalResolver(
         string cookie,
         CancellationToken cancellationToken)
     {
-        var session = await browserSessions.ValidateAsync(cookie, cancellationToken);
+        var validation = await browserSessions.ValidateAsync(cookie, cancellationToken);
+        var session = validation.Session;
         if (session is null)
         {
+            if (validation.EndedKratosSessionId is not null)
+            {
+                // The upstream lifespan covers the longest idle window; end it with the local session it served.
+                try
+                {
+                    await kratosSessions.RevokeSessionAsync(validation.EndedKratosSessionId, cancellationToken);
+                }
+                catch (KratosUnavailableException)
+                {
+                }
+            }
             return null;
         }
 
-        if (!await kratosSessions.IsSessionActiveAsync(
+        if (await kratosSessions.GetActiveSessionAsync(
                 session.KratosSessionId,
                 session.KratosIdentityId,
-                cancellationToken))
+                cancellationToken) is null)
         {
             await browserSessions.RevokeAsync(cookie, cancellationToken);
             return null;

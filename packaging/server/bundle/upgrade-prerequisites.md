@@ -26,6 +26,14 @@ The upgrade never downgrades images. If it fails after migrations start,
 writes stay fenced. Either re-run the same upgrade to resume, or restore the
 pre-upgrade backup with the previous release's installer.
 
+The portal session migration (`20261120154929_PortalSessionRenewal`) defaults
+existing users to `keep_signed_in = false` and browser sessions to
+`persistent = false`, and backfills `renewed_at` from `last_seen_at`. It does
+not rotate existing tokens or change their stored idle/maximum deadlines,
+API keys or CLI sessions. Rehearse the normal `api-migrate` path on a
+sanctioned copy of the existing instance database before activation; a
+disposable synthetic database rehearsal is not a substitute.
+
 Restore needs the exact release that created the backup, the original root
 path and the original configuration file. After a restore or transfer, an old
 host is revoked only when it next reaches this database. Shut down any old

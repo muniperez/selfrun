@@ -17,6 +17,11 @@ public sealed partial class DevelopmentWorkspaceProcessor
 
     private async Task RefreshRuntimeAsync(DevelopmentWorkspace workspace, DevelopmentWorkspaceVm vm, string operationId, CancellationToken ct, bool allowRevive = false, bool publishRoute = true)
     {
+        if (!policy.Value.Images.TryGetValue(vm.ImageId, out var image) || !image.RuntimeQualified ||
+            image.ProviderAccountId != vm.ProviderAccountId || image.ProviderImageId != vm.ProviderImage ||
+            !string.Equals(image.ManifestSha256, vm.ImageManifestSha256, StringComparison.OrdinalIgnoreCase) ||
+            !image.HasSupportedT3Protocol())
+            throw new InvalidOperationException("The reserved workspace image has no matching qualified T3 registration.");
         var status = Result(await runtime.CallAsync(Target(vm), operationId, "status", null, ct));
         if (status.GetProperty("vmId").GetString() != vm.Id || status.GetProperty("generation").GetInt64() != vm.Generation ||
             status.GetProperty("kind").GetString() != vm.Kind || status.GetProperty("phase").GetString() != "Ready")
@@ -36,8 +41,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
         else credential = await SecretAsync(credentialRef, ct);
         using var http = T3Client(port, credential);
         var descriptor = await GetJsonAsync(http, "/.well-known/t3/environment", ct);
-        if (descriptor.GetProperty("serverVersion").GetString() != "0.1.9" ||
-            descriptor.GetProperty("orchestrationProtocolVersion").GetInt32() != 2 ||
+        if (descriptor.GetProperty("serverVersion").GetString() != image.T3Version ||
+            descriptor.GetProperty("orchestrationProtocolVersion").GetInt32() != image.T3EnvironmentProtocol ||
             !descriptor.TryGetProperty("environmentId", out var environment) || string.IsNullOrEmpty(environment.GetString()))
             throw new InvalidOperationException("The actual T3 descriptor differs from the qualified image protocol.");
         var session = await GetJsonAsync(http, "/api/auth/session", ct);

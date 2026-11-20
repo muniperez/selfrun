@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { deleteWorkspace, launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
+import { launchEphemeralVm, workspaceOperation } from "@/api/workspacesApi";
 import type { DevelopmentWorkspace, DevelopmentWorkspaceVm } from "@/models/controlPlane";
 import { WorkspaceDetail } from "./WorkspaceDetail";
 
@@ -16,7 +16,6 @@ vi.mock("@/api/workspacesApi", () => ({ deleteWorkspace: vi.fn(), launchEphemera
 vi.mock("./WorkspaceVmCard", () => ({
   WorkspaceVmCard: (props: {
     workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm; currency: string; canManage: boolean;
-    variant?: "primary" | "embedded"; retainedStorage?: { sizeGb: number; status?: string | null; estimatedMonthlyStorage: number };
   }) => {
     useEffect(() => () => releasedCards(props.vm.id), [props.vm.id]);
     vmCards(props);
@@ -79,10 +78,6 @@ function acknowledge(form: HTMLElement) {
   fireEvent.click(within(form).getByLabelText(/I authorize task-scoped pushes/));
   fireEvent.click(within(form).getByLabelText(/I understand that untracked files/));
 }
-function openStopAll() {
-  fireEvent.click(screen.getByRole("button", { name: "Stop all VMs" }));
-  return screen.getByRole("dialog", { name: "Stop all VMs?" });
-}
 function showCosts() {
   const tab = screen.getByRole("tab", { name: "Storage & costs" });
   fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
@@ -98,28 +93,6 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
-it.each([
-  ["owner", "someone-else", true], ["developer", "creator", true],
-  ["admin", "someone-else", false], ["developer", "someone-else", false],
-])("offers primary-only account management to the creator or organization owner: %s", (role, createdBy, allowed) => {
-  auth.selectedOrganization.role = role as string;
-  render(detail(workspace({ createdBy: createdBy as string })));
-  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({
-    vm: expect.objectContaining({ kind: "primary" }), canManageConnect: allowed,
-  }));
-  expect(launchEphemeralVm).not.toHaveBeenCalled();
-  expect(workspaceOperation).not.toHaveBeenCalled();
-});
-
-it("fences Connect ownership against organization context and read-only management", () => {
-  auth.selectedOrganization.id = "different-org";
-  const view = render(detail(workspace({ createdBy: "creator" })));
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
-  auth.selectedOrganization.id = "org-a";
-  view.rerender(detail(workspace({ createdBy: "creator" }), false));
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
-});
-
 it("releases the previous primary management context when the signed-in actor changes, even between organization owners", () => {
   const item = workspace();
   const view = render(detail(item));
@@ -127,111 +100,40 @@ it("releases the previous primary management context when the signed-in actor ch
   auth.profile = { id: "another-owner" };
   view.rerender(detail(item));
   expect(releasedCards).toHaveBeenCalledWith("primary");
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: true }));
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ vm: expect.objectContaining({ id: "primary" }) }));
 });
 
-it("resolves the primary by identity and passes observed state and retained storage into one unified card without starting compute", () => {
+it("resolves the primary by identity, selects it by default and shows only the selected VM without starting compute", () => {
   const item = workspace();
   const view = render(detail(item));
-  const primary = screen.getByRole("region", { name: "Primary VM" });
-  expect(within(primary).getByRole("article", { name: "VM primary" })).toHaveTextContent("workspace / org-a / primary / generation 3 / EUR / Manage");
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({
-    vm: item.vms[1], variant: "primary",
-    retainedStorage: { sizeGb: 20, status: "retained", estimatedMonthlyStorage: 1.25 },
-  }));
-  expect(within(primary).getAllByRole("article")).toHaveLength(1);
-  expect(within(primary).queryByRole("article", { name: "VM sibling-one" })).not.toBeInTheDocument();
-  expect(screen.getAllByRole("table")).toHaveLength(1);
+  const list = screen.getByRole("region", { name: "Virtual machines" });
+  expect(within(list).getByRole("button", { pressed: true })).toBe(within(list).getByRole("button", { name: "Primary VM, Running" }));
+  expect(within(list).getByRole("button", { name: "work/sibling-one, https://git.example/sibling-one.git, Running", pressed: false })).toBeInTheDocument();
+  expect(within(list).getByRole("button", { name: "work/sibling-two, https://git.example/sibling-two.git, Stopped", pressed: false })).toBeInTheDocument();
+  const selected = screen.getByRole("region", { name: "Selected VM" });
+  expect(within(selected).getByRole("article", { name: "VM primary" })).toHaveTextContent("workspace / org-a / primary / generation 3 / EUR / Manage");
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ vm: item.vms![1] }));
+  expect(within(selected).getAllByRole("article")).toHaveLength(1);
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
   expect(workspaceOperation).not.toHaveBeenCalled();
   view.rerender(detail(workspace({ vms: [vm("primary", { kind: "primary", desiredState: "stopped", phase: "stopped" })] })));
-  expect(within(primary).getByRole("article")).toHaveTextContent("stopped");
-  expect(screen.getByText("No temporary VMs")).toBeInTheDocument();
-});
-
-it("shows the primary VM's hourly rate, storage and projected monthly total with the 720-hour assumption", () => {
-  render(detail(workspace({ currency: "USD" })));
-  const estimate = within(screen.getByRole("region", { name: "Projected cost" }))
-    .getByRole("group", { name: "Projected monthly cost" });
-  expect(estimate).toHaveTextContent("VM rate$0.125/hour while running");
-  expect(estimate).toHaveTextContent("Storage$1.25/month, even while the VM is stopped");
-  expect(estimate).toHaveTextContent("Projected monthly total$91.25 if the VM runs 720 hours this month");
-  expect(estimate).toHaveTextContent("never blocks creating or starting a VM");
-});
-
-it("lists installed coding agents with versions only when the image reports them", () => {
-  const view = render(detail(workspace({ agents: [{ id: "claude", name: "Claude Code", version: "2.1.328" }, { id: "muse", name: "Muse Code", version: "1.4.24-R9131.1" }] })));
-  const agents = screen.getByRole("region", { name: "Coding agents" });
-  expect(within(agents).getAllByRole("listitem").map(item => item.textContent)).toEqual(["Claude Code 2.1.328", "Muse Code 1.4.24-R9131.1"]);
-  view.rerender(detail(workspace()));
-  expect(screen.queryByRole("region", { name: "Coding agents" })).not.toBeInTheDocument();
+  expect(within(selected).getByRole("article")).toHaveTextContent("stopped");
+  expect(within(list).getAllByRole("button")).toHaveLength(2);
+  expect(within(list).getByRole("button", { name: "Launch temporary VM" })).toBeInTheDocument();
+  expect(within(list).getByRole("button", { name: "Primary VM, Stopped", pressed: true })).toBeInTheDocument();
 });
 
 it("falls back to explicit primary kind and never substitutes an ephemeral VM when primary metadata is missing", () => {
   const view = render(detail(workspace({ primaryVmId: null })));
-  expect(within(screen.getByRole("region", { name: "Primary VM" })).getByRole("article", { name: "VM primary" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Selected VM" })).getByRole("article", { name: "VM primary" })).toBeInTheDocument();
   view.rerender(detail(workspace({ vms: [vm("sibling-one")] })));
-  const primary = screen.getByRole("region", { name: "Primary VM" });
-  expect(within(primary).getByText("No primary VM reported.")).toBeInTheDocument();
-  expect(within(primary).queryByRole("article")).not.toBeInTheDocument();
-  expect(screen.getByText("work/sibling-one")).toBeInTheDocument();
-});
-
-it("expands siblings independently and delegates complete Git, generation and activity metadata to embedded VM controls", () => {
-  render(detail(workspace({ vms: [
-    vm("primary", { kind: "primary" }),
-    vm("sibling-one", { verifiedRemoteRef: "refs/heads/work/one", verifiedRemoteCommit: "c".repeat(40), finalHead: "c".repeat(40) }),
-    vm("sibling-two", { phase: "awaiting_git_save", gitStatus: "remote_unavailable" }),
-  ] })));
-  const table = screen.getByRole("table", { name: "Temporary VMs" });
-  expect(within(table).getByText("work/sibling-one")).toBeInTheDocument();
-  expect(within(table).getByText("https://git.example/sibling-two.git")).toBeInTheDocument();
-  expect(within(table).getByText("Remote unavailable")).toBeInTheDocument();
-  expect(within(table).getByText("Git save blocked")).toBeInTheDocument();
-  const one = screen.getByRole("button", { name: "Expand VM sibling-one" });
-  const two = screen.getByRole("button", { name: "Expand VM sibling-two" });
-  fireEvent.click(one);
-  fireEvent.click(two);
-  const firstDetails = screen.getByRole("region", { name: "Details for VM sibling-one" });
-  const secondDetails = screen.getByRole("region", { name: "Details for VM sibling-two" });
-  expect(one).toHaveAttribute("aria-expanded", "true");
-  expect(two).toHaveAttribute("aria-expanded", "true");
-  expect(one).toHaveAttribute("aria-controls", firstDetails.id);
-  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({
-    variant: "embedded",
-    vm: expect.objectContaining({
-      id: "sibling-one", generation: 3, baseRef: "refs/heads/main", baseCommit: "a".repeat(40),
-      verifiedRemoteRef: "refs/heads/work/one", verifiedRemoteCommit: "c".repeat(40), lastActivityAt: "2026-11-16T10:00:00Z",
-    }),
-  }));
-  expect(within(firstDetails).getByRole("article", { name: "VM sibling-one" })).toBeInTheDocument();
-  expect(within(secondDetails).getByRole("article", { name: "VM sibling-two" })).toBeInTheDocument();
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ vm: expect.objectContaining({ id: "sibling-two" }), active: true }));
-  vmCards.mockClear();
-  fireEvent.click(screen.getByRole("button", { name: "Collapse VM sibling-one" }));
-  expect(firstDetails).not.toBeVisible();
-  expect(secondDetails).toBeVisible();
-  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({ vm: expect.objectContaining({ id: "sibling-one" }), active: false }));
-});
-
-it("shows retained storage and observed per-VM estimates in the costs tab, primary first, without billing promises", () => {
-  render(detail());
-  showCosts();
-  expect(screen.getByRole("tab", { name: "Storage & costs" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByText("20 GB")).toBeInTheDocument();
-  expect(screen.getByText("retained")).toBeInTheDocument();
-  expect(screen.getByText("1.25 EUR")).toBeInTheDocument();
-  expect(screen.getByText("2026-11-15T00:00:00Z")).toBeInTheDocument();
-  const costs = screen.getByRole("region", { name: "VM costs" });
-  const rows = within(costs).getAllByRole("row");
-  expect(rows[1]).toHaveTextContent("primary");
-  expect(rows[2]).toHaveTextContent("sibling-one");
-  expect(rows[3]).toHaveTextContent("Not allocated");
-  expect(within(costs).getAllByText("0.1250 EUR")).toHaveLength(3);
-  expect(screen.getByText(/Storage is charged even when all VMs are stopped/)).toBeInTheDocument();
-  expect(screen.getByText(/may round up to whole hours/)).toBeInTheDocument();
-  expect(screen.getByText(/not invoices or a billing guarantee/)).toBeInTheDocument();
-  expect(launchEphemeralVm).not.toHaveBeenCalled();
+  const selected = screen.getByRole("region", { name: "Selected VM" });
+  expect(within(selected).getByText("No primary VM reported.")).toBeInTheDocument();
+  expect(within(selected).queryByRole("article")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Primary VM, Not reported", pressed: true })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^work\/sibling-one/ }));
+  expect(within(selected).getByRole("article", { name: "VM sibling-one" })).toBeInTheDocument();
 });
 
 it("guards launch on eligible selections, resolved SHA and both acknowledgments, including programmatic submits", () => {
@@ -284,43 +186,6 @@ it("retains idempotency on unchanged failed retries, changes it with payload, th
   expect(within(reopened).getByLabelText(/I understand that untracked files/)).not.toBeChecked();
 });
 
-it("enumerates all stop-all impacts, cancels without mutation and confirms only explicitly", async () => {
-  render(detail());
-  let dialog = openStopAll();
-  const affected = within(dialog).getAllByRole("listitem");
-  expect(affected).toHaveLength(3);
-  expect(affected[0]).toHaveTextContent(/sibling-one · Running · Git save: pending.*sibling-one · generation 3/);
-  expect(affected[1]).toHaveTextContent(/Primary VM · Running .*primary · generation 3/);
-  expect(affected[2]).toHaveTextContent(/Stopped .*sibling-two · generation 3/);
-  expect(dialog).toHaveTextContent(/a VM that can't stop keeps its server and may keep charging/);
-  expect(workspaceOperation).not.toHaveBeenCalled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel stop all" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(workspaceOperation).not.toHaveBeenCalled();
-  dialog = openStopAll();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm stop all" }));
-  await waitFor(() => expect(workspaceOperation).toHaveBeenCalledExactlyOnceWith("workspace", "org-a", "stop-all"));
-  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-});
-
-it("closes a stop-all confirmation when a VM generation changes and when management access is revoked", () => {
-  const view = render(detail());
-  openStopAll();
-  const changed = workspace({ vms: [vm("primary", { kind: "primary", generation: 4 })] });
-  view.rerender(detail(changed));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(workspaceOperation).not.toHaveBeenCalled();
-  const dialog = openStopAll();
-  expect(dialog).toHaveTextContent("generation 4");
-  view.rerender(detail(changed, false));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
-  expect(screen.getByRole("article", { name: "VM primary" })).toHaveTextContent("Read only");
-  expect(workspaceOperation).not.toHaveBeenCalled();
-});
-
 it("keeps read-only metadata and costs available and discards launch state on organization changes", () => {
   const view = render(detail(workspace(), false));
   expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
@@ -341,50 +206,6 @@ function stoppedWorkspace(overrides: Partial<DevelopmentWorkspace> = {}) {
   const stopped = { desiredState: "stopped", phase: "stopped", computeReserved: false };
   return workspace({ vms: [vm("primary", { kind: "primary", ...stopped }), vm("sibling-one", stopped)], ...overrides });
 }
-function deleteSection() {
-  return screen.getByRole("region", { name: "Delete environment" });
-}
-
-it("offers Delete environment only after every VM is stopped and never to read-only users", () => {
-  const view = render(detail());
-  const button = within(deleteSection()).getByRole("button", { name: "Delete environment" });
-  expect(button).toBeDisabled();
-  expect(deleteSection()).toHaveTextContent("Stop all VMs and wait until they finish stopping before deleting.");
-  view.rerender(detail(stoppedWorkspace()));
-  expect(within(deleteSection()).getByRole("button", { name: "Delete environment" })).toBeEnabled();
-  view.rerender(detail(stoppedWorkspace(), false));
-  expect(screen.queryByRole("region", { name: "Delete environment" })).not.toBeInTheDocument();
-  expect(deleteWorkspace).not.toHaveBeenCalled();
-});
-
-it("requires typing the environment name, then deletes and refreshes", async () => {
-  vi.mocked(deleteWorkspace).mockRejectedValueOnce(new Error("Stop all workspace VMs first."))
-    .mockResolvedValueOnce(stoppedWorkspace({ volumeStatus: "deleting" }));
-  render(detail(stoppedWorkspace()));
-  fireEvent.click(within(deleteSection()).getByRole("button", { name: "Delete environment" }));
-  const dialog = screen.getByRole("dialog", { name: "Delete Coding permanently?" });
-  expect(dialog).toHaveTextContent(/Files that are not pushed to Git are lost for good. This cannot be undone./);
-  const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
-  expect(confirm).toBeDisabled();
-  fireEvent.change(within(dialog).getByLabelText(/Type Coding to confirm/), { target: { value: "Cod" } });
-  expect(confirm).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(deleteWorkspace).not.toHaveBeenCalled();
-
-  fireEvent.click(within(deleteSection()).getByRole("button", { name: "Delete environment" }));
-  const reopened = screen.getByRole("dialog", { name: "Delete Coding permanently?" });
-  fireEvent.change(within(reopened).getByLabelText(/Type Coding to confirm/), { target: { value: "Coding" } });
-  fireEvent.click(within(reopened).getByRole("button", { name: "Delete permanently" }));
-  expect(await within(reopened).findByRole("alert")).toHaveTextContent("Stop all workspace VMs first.");
-  expect(refresh).not.toHaveBeenCalled();
-  fireEvent.click(within(reopened).getByRole("button", { name: "Delete permanently" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(deleteWorkspace).toHaveBeenCalledTimes(2);
-  expect(deleteWorkspace).toHaveBeenLastCalledWith("workspace", "org-a");
-  expect(refresh).toHaveBeenCalledTimes(1);
-});
-
 it("locks other controls while deleting and offers only an explicit retry after failure", () => {
   const deleting = stoppedWorkspace({ volumeStatus: "deleting", phase: "deleting" });
   deleting.vms![0] = { ...deleting.vms![0], phase: "deleting" };
@@ -393,7 +214,6 @@ it("locks other controls while deleting and offers only an explicit retry after 
   expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
   expect(screen.queryByText(/Read-only access/)).not.toBeInTheDocument();
   expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManage: false }));
-  expect(within(deleteSection()).getByRole("button", { name: "Delete environment" })).toBeDisabled();
 
   const failed = stoppedWorkspace({ volumeStatus: "deleting", phase: "delete_failed",
     errorCode: "workspace_delete_volume_attached", errorMessage: "Detach it before retrying." });
@@ -402,19 +222,15 @@ it("locks other controls while deleting and offers only an explicit retry after 
   expect(screen.getByRole("alert")).toHaveTextContent("workspace_delete_volume_attached: Detach it before retrying.");
   expect(screen.getByText(/Deleting this dev environment failed/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
-  expect(within(deleteSection()).getByRole("button", { name: "Retry delete environment" })).toBeEnabled();
 });
 
 it("treats ordinary compute deletion as stopping and shows a permanently deleted environment as final", () => {
   const computeDeletion = workspace({ phase: "deleting", vms: [vm("primary", { kind: "primary", phase: "deleting", desiredState: "stopped" })] });
   const view = render(<MemoryRouter>{detail(computeDeletion)}</MemoryRouter>);
   expect(screen.queryByText(/Deleting this dev environment/)).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Stop all VMs" })).toBeInTheDocument();
-  expect(within(deleteSection()).getByRole("button", { name: "Delete environment" })).toBeDisabled();
   view.rerender(<MemoryRouter>{detail(stoppedWorkspace({ volumeStatus: "deleted", phase: "deleted" }))}</MemoryRouter>);
   expect(screen.getByText(/were permanently deleted/)).toHaveAttribute("role", "status");
   expect(screen.getByRole("link", { name: "Back to dev environments" })).toHaveAttribute("href", "/workspaces");
-  expect(screen.queryByRole("region", { name: "Delete environment" })).not.toBeInTheDocument();
 });
 
 import { useEffect } from "react";

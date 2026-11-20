@@ -95,6 +95,41 @@ public sealed class KratosSessionValidatorTests
             .SendAsync("login", "start", null, "/apps", null, new Dictionary<string, string>(), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ExtensionChecksActivityFirstAndReturnsTheNewUpstreamExpiry()
+    {
+        var active = true;
+        var expiresAt = "2026-01-01T01:00:00Z";
+        var requests = new List<(HttpMethod Method, string Path)>();
+        var handler = new ResponseHandler(request =>
+        {
+            requests.Add((request.Method, request.RequestUri!.AbsolutePath));
+            if (request.Method == HttpMethod.Patch)
+            {
+                expiresAt = "2026-01-08T00:00:00Z";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($$$"""{"id":"session-1","active":{{{(active ? "true" : "false")}}},"expires_at":"{{{expiresAt}}}","identity":{"id":"identity-1"}}""")
+            };
+        });
+        using var client = new HttpClient(handler);
+        var validator = new KratosSessionValidator(client, Options.Create(new KratosOptions { AdminBaseUrl = "http://kratos:4434" }));
+
+        Assert.Equal(DateTimeOffset.Parse("2026-01-01T01:00:00Z"),
+            (await validator.GetActiveSessionAsync("session-1", "identity-1", CancellationToken.None))!.ExpiresAt);
+        var extended = await validator.ExtendSessionAsync("session-1", "identity-1", CancellationToken.None);
+        Assert.Equal(DateTimeOffset.Parse("2026-01-08T00:00:00Z"), extended!.ExpiresAt);
+        Assert.Contains((HttpMethod.Patch, "/admin/sessions/session-1/extend"), requests);
+
+        // An expired upstream session must never be revived by extension.
+        active = false;
+        requests.Clear();
+        Assert.Null(await validator.ExtendSessionAsync("session-1", "identity-1", CancellationToken.None));
+        Assert.DoesNotContain(requests, request => request.Method == HttpMethod.Patch);
+    }
+
     private sealed class ChunkedStream(byte[] bytes) : MemoryStream(bytes)
     {
         public override bool CanSeek => false;

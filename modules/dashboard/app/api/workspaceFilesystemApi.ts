@@ -9,6 +9,8 @@ export type DevelopmentWorkspaceVmResources = {
   filesystems: {
     paths: string[]; totalBytes: number; freeBytes: number; availableBytes: number;
     inodesTotal?: number | null; inodesAvailable?: number | null; nestedMountsExcluded?: number | null;
+    /** Storage tiers sharing this filesystem; absent on older images. */
+    roles?: ("system" | "workspace" | "scratch")[] | null; scratchBindMounts?: number | null;
   }[];
   unavailable: Record<string, string>;
   diskUsageSupported: boolean;
@@ -18,6 +20,8 @@ export type DevelopmentWorkspaceVmResources = {
 export type DiskUsageEntry = {
   name: string; path: string; bytes?: number | null; state: "complete" | "partial" | "unreadable" | "excluded";
   errors: string[]; canOpen: boolean; canDelete: boolean; targetToken?: string | null; protectedReason?: string | null;
+  /** "scratch" for build outputs kept on the VM's local scratch disk. */
+  storage?: "scratch" | null;
 };
 
 export type FilesystemJob = {

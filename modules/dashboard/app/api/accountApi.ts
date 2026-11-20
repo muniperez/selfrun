@@ -4,6 +4,8 @@ export type AccountCapabilities = {
   password: boolean;
   google: boolean;
   emailRecovery: boolean;
+  /** Whether the operator offers "Keep me signed in". */
+  keepSignedIn?: boolean;
   bootstrapState: "required" | "ready" | "blocked";
 };
 
@@ -12,6 +14,12 @@ export type AccountSession = {
   expiresAt: string;
   idleExpiresAt: string;
   csrfToken: string;
+  /** Whether this session is a remembered ("Keep me signed in") session. */
+  keepSignedIn?: boolean;
+  /** Earliest time an explicit renewal extends the idle expiry; null once renewal can no longer extend it. */
+  renewAfter?: string | null;
+  /** The user's stored sign-in default. */
+  keepSignedInPreference?: boolean;
 };
 
 export type FlowKind = "login" | "settings" | "recovery";
@@ -45,6 +53,40 @@ export const getAccountCapabilities = () =>
 export async function getAccountSession() {
   return apiRequest<AccountSession>("/api/account/session", { notifyAuth: false });
 }
+
+/** Explicit activity renewal; reading the session never extends it. */
+export const renewAccountSession = () =>
+  apiRequest<AccountSession>("/api/account/session/renew", { method: "POST", notifyAuth: false });
+
+export async function setKeepSignedIn(keepSignedIn: boolean) {
+  const session = await apiRequest<AccountSession>("/api/account/session/preference", {
+    method: "PUT", body: { keepSignedIn }, notifyAuth: false
+  });
+  rememberKeepSignedInHint(session.keepSignedInPreference === true);
+  return session;
+}
+
+const keepSignedInHintKey = "minicloud.keepSignedIn";
+
+/** Non-secret, per-browser default for the sign-in checkbox. */
+export function keepSignedInHint() {
+  try {
+    return window.localStorage.getItem(keepSignedInHintKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function rememberKeepSignedInHint(value: boolean) {
+  try {
+    window.localStorage.setItem(keepSignedInHintKey, value ? "1" : "0");
+  } catch {
+    // Storage may be unavailable; the checkbox then defaults to off.
+  }
+}
+
+const keepSignedInQuery = (keepSignedIn: boolean | undefined) =>
+  keepSignedIn === undefined ? "" : `&keepSignedIn=${keepSignedIn}`;
 
 export const logoutAccount = () =>
   apiRequest<void>("/api/account/logout", { method: "POST", notifyAuth: false });
@@ -107,12 +149,13 @@ export function validateProviderUrl(value: unknown) {
 
 export const browserNavigation = { assign: (url: string) => window.location.assign(url) };
 
-export async function startProviderRedirect(flow: BrowserFlow, provider: "google", returnTo: string) {
+export async function startProviderRedirect(flow: BrowserFlow, provider: "google", returnTo: string, keepSignedIn?: boolean) {
   validateFlow(flow, flow.kind);
   if (!flow.ui.providers?.some(item => item.id === provider)) throw new Error("Invalid account provider destination.");
   const csrf = flow.ui.nodes.find(node => node.name === "csrf_token" && node.type === "hidden")?.value;
   const result = await apiRequest<{ provider: string; redirectUrl: string }>(
-    `${flowPath(flow.kind)}/oidc?flow=${flowId(flow.id)}&returnTo=${encodeURIComponent(safeReturnPath(returnTo))}`, {
+    `${flowPath(flow.kind)}/oidc?flow=${flowId(flow.id)}&returnTo=${encodeURIComponent(safeReturnPath(returnTo))}` +
+      keepSignedInQuery(flow.kind === "login" ? keepSignedIn : undefined), {
       method: "POST",
       body: { csrf_token: csrf ?? "", provider },
       browserFlow: flow.kind !== "settings",
@@ -155,9 +198,10 @@ export function getAccountFlow(kind: FlowKind, id: string) {
   ), kind);
 }
 
-export function submitAccountFlow(flow: BrowserFlow, fields: Record<string, string>) {
+export function submitAccountFlow(flow: BrowserFlow, fields: Record<string, string>, keepSignedIn?: boolean) {
   validateFlow(flow, flow.kind);
-  return readEnvelope(apiRequest<FlowResponse>(`${flowPath(flow.kind)}?flow=${flowId(flow.id)}`, {
+  const query = keepSignedInQuery(flow.kind === "login" ? keepSignedIn : undefined);
+  return readEnvelope(apiRequest<FlowResponse>(`${flowPath(flow.kind)}?flow=${flowId(flow.id)}${query}`, {
     method: "POST",
     body: fields,
     browserFlow: flow.kind !== "settings",

@@ -75,7 +75,7 @@ async function ticket(token) {
   requireTrue(result.status === 200 && typeof result.body.ticket === "string");
   return result.body.ticket;
 }
-async function snapshot() {
+async function snapshot(projectId) {
   const result = await http("/api/orchestration/shell", bearer);
   requireTrue(result.status === 200 && Number.isSafeInteger(result.body.snapshotSequence)
     && result.body.snapshotSequence >= 0 && Array.isArray(result.body.threads)
@@ -86,6 +86,10 @@ async function snapshot() {
       && thread.pendingRuntimeRequest === null && inactive.has(thread.status)
       && thread.hasActionableProposedPlan === false && thread.blockedOnThreadWait !== true
       && Array.isArray(thread.pendingBackgroundTasks ?? []) && (thread.pendingBackgroundTasks ?? []).length === 0);
+  }
+  if (projectId !== undefined) {
+    requireTrue(Array.isArray(result.body.projects)
+      && result.body.projects.some((project) => project.id === projectId));
   }
   return { snapshotSequence: result.body.snapshotSequence };
 }
@@ -101,7 +105,8 @@ async function handle(request) {
     for (let attempt = 0; attempt < 50; attempt++) {
       try { descriptor = await http("/.well-known/t3/environment"); break; } catch { await timeout(200); }
     }
-    requireTrue(descriptor?.status === 200 && descriptor.body.orchestrationProtocolVersion === 2);
+    requireTrue(descriptor?.status === 200 && descriptor.body.orchestrationProtocolVersion === 2
+      && typeof descriptor.body.environmentId === "string" && descriptor.body.environmentId.length > 0);
     const session = await http("/api/auth/session", bearer);
     requireTrue(session.status === 200 && session.body.authenticated === true
       && session.body.sessionMethod === "bearer-access-token"
@@ -132,9 +137,10 @@ async function handle(request) {
     attach(socket);
     let afterProject = await snapshot();
     if (request.createProject === true) {
+      requireTrue(typeof request.projectId === "string" && request.projectId.length > 0);
       const beforeProject = afterProject;
       const created = await http("/api/projects/mutate", bearer, "POST", {
-        type: "project.create", commandId: crypto.randomUUID(), projectId: crypto.randomUUID(),
+        type: "project.create", commandId: crypto.randomUUID(), projectId: request.projectId,
         title: "Native qualification fixture", workspaceRoot: "/workspace",
       });
       requireTrue([200, 201].includes(created.status));
@@ -145,7 +151,9 @@ async function handle(request) {
       }
       requireTrue(afterProject.snapshotSequence > beforeProject.snapshotSequence);
     }
-    return { descriptorProtocol: 2, actualSessionScopesChecked: true, unauthorizedHttpDenied: true,
+    if (request.projectId !== undefined) afterProject = await snapshot(request.projectId);
+    return { descriptorProtocol: 2, environmentId: descriptor.body.environmentId,
+      actualSessionScopesChecked: true, unauthorizedHttpDenied: true,
       readonlyHttpMutationDenied: true, readonlyTerminalMutationDenied: true,
       protocolMissingWsDenied: true, realTicketWebSocketOpened: true,
       actualProjectMutationAdvancedApplicationCursor: request.createProject === true, ...afterProject };
@@ -159,6 +167,18 @@ async function handle(request) {
         + "printf 'source-control-clis-ok\\n' > /workspace/artifacts/native-source-control-clis; fi\n",
     });
     return evidence;
+  }
+  if (request.operation === "scratch-env") {
+    requireTrue(Array.isArray(request.names) && request.names.length > 0
+      && request.names.every((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)));
+    // Only the named variables leave the terminal; the T3 environment may hold other values.
+    await rpc(socket, "terminal.write", { ...terminal,
+      data: "{ for n in " + request.names.join(" ") + "; do printf '%s=%s\\n' \"$n\" \"$(printenv \"$n\")\"; done; "
+        + "touch \"$XDG_CACHE_HOME/native-terminal-probe\" \"$TMPDIR/native-terminal-probe\" && echo scratch-writable; } "
+        + "> /workspace/artifacts/native-scratch-env.partial && "
+        + "mv /workspace/artifacts/native-scratch-env.partial /workspace/artifacts/native-scratch-env\n",
+    });
+    return { terminalScratchProbeWritten: true };
   }
   if (request.operation === "open") {
     const result = await rpc(socket, "terminal.open", { ...terminal, cwd: "/workspace", cols: 100, rows: 32 });
@@ -182,6 +202,7 @@ async function handle(request) {
       marker: "printf 'native-input\\n' > /workspace/artifacts/native-input-seen\n",
       foreground: "/usr/bin/sleep 4\n",
       background: "/usr/bin/sleep 4 &\n",
+      scratch: "printf 'terminal-scratch\\n' > /workspace/repos/native-scratch/node_modules/.native-terminal-write\n",
     };
     requireTrue(Object.hasOwn(commands, request.kind));
     await rpc(socket, "terminal.write", { ...terminal, data: commands[request.kind] });
