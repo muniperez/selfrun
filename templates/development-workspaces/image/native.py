@@ -445,7 +445,11 @@ class Native:
         for port in (3773, 774):
             with socket.socket() as test:
                 check(test.connect_ex(("127.0.0.1", port)) != 0,                 "PREEXISTING_T3_LISTENER")
-        manifest = json.loads(Path("/opt/minicloud-workspace/image-manifest.json").read_text())
+        spec = importlib.util.spec_from_file_location("native_pinned_runtime", RUNTIME)
+        self.rt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.rt)
+        manifest, _ = self.rt.read_image_manifest()
+        t3 = self.rt.qualified_t3(manifest)
         check(manifest["os"]["cloudImageSerial"] == "20251001", "WRONG_MANIFEST_SERIAL")
         inputs = manifest.get("provenance", {}).get("installedImmutableInputs", {}).get("files")
         check(isinstance(inputs, dict) and bool(inputs), "EXPLICIT_IMMUTABLE_INPUTS_REQUIRED")
@@ -460,14 +464,11 @@ class Native:
         check(serials == ["20251001"], "WRONG_ACTUAL_CLOUD_IMAGE_SERIAL")
         for argv, expected in ((["node", "--version"], "v24.11.1"),
                                (["dotnet", "--version"], "10.0.100"),
-                               (["codex", "--version"], "0.169.0"), (["t3", "--version"], "0.1.9")):
+                               (["codex", "--version"], "0.169.0"), (["t3", "--version"], t3["version"])):
             output = command(argv)
             check(output == expected if argv[0] in ("node", "dotnet") else
                   re.search(r"(?:^|\s)v?" + re.escape(expected) + r"(?:$|\s)", output),
                   "PINNED_TOOL_VERSION_MISMATCH")
-        spec = importlib.util.spec_from_file_location("native_pinned_runtime", RUNTIME)
-        self.rt = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.rt)
         check(not any(2000 in process["uids"] for process in self.rt.Procfs().inventory().values()),
               "PREEXISTING_CODING_PROCESSES")
         self.report.value.update(clockSource="native-vm-utc",

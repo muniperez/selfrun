@@ -139,7 +139,8 @@ class IdleTerminalTests(unittest.TestCase):
     def telemetry_monitor(self):
         shutil.rmtree(self.root / "110")
         self.config["observedTerminalInputs"] = False
-        binary = self.root / "pinned-monitor"
+        binary = self.root / "fixture-release/resource-monitor/linux-x64/t3-resource-monitor"
+        binary.parent.mkdir(parents=True)
         binary.write_bytes(b"synthetic immutable telemetry binary")
         binary.chmod(0o755)
         self.write(120, ppid=100, tty=0, threads=2, argv=[str(binary)])
@@ -153,8 +154,9 @@ class IdleTerminalTests(unittest.TestCase):
 
     def test_only_exact_pinned_supervised_telemetry_helper_is_infrastructure_without_terminal_opt_in(self):
         binary = self.telemetry_monitor()
-        with patch.object(rt, "T3_RESOURCE_MONITOR", str(binary)), \
-                patch.object(rt, "T3_RESOURCE_MONITOR_SHA256", hashlib.sha256(binary.read_bytes()).hexdigest()), \
+        monitor = dict(path=str(binary.relative_to(self.root)), sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+        with patch.object(rt, "T3_ROOT", self.root), \
+                patch.object(rt, "installed_t3", return_value=dict(resourceMonitor=monitor)), \
                 patch.object(rt.Linux, "verify_unit_file"):
             self.inspect()
             self.reader.exe_by_pid[120]["path"] = "/usr/bin/bash"
@@ -184,7 +186,8 @@ class IdleTerminalTests(unittest.TestCase):
         self.write(120, argv=argv)
         (self.root / "120/environ").write_bytes(b"TUNNEL_TOKEN=synthetic-secret\0")
         with patch.object(rt, "T3_RELAY_CLIENT", str(binary)), \
-                patch.object(rt, "T3_RELAY_CLIENT_SHA256", hashlib.sha256(binary.read_bytes()).hexdigest()), \
+                patch.object(rt, "installed_t3",
+                             return_value=dict(relayClient=dict(sha256=hashlib.sha256(binary.read_bytes()).hexdigest()))), \
                 patch.object(rt.Linux, "verify_unit_file"):
             self.inspect()
             self.write(120, argv=argv[:-1] + ["--url", "http://other.invalid"])
@@ -202,8 +205,9 @@ class IdleTerminalTests(unittest.TestCase):
     def test_telemetry_helper_mutated_binary_owner_or_non_ipc_stdio_blocks(self):
         binary = self.telemetry_monitor()
         original = binary.read_bytes()
-        with patch.object(rt, "T3_RESOURCE_MONITOR", str(binary)), \
-                patch.object(rt, "T3_RESOURCE_MONITOR_SHA256", hashlib.sha256(original).hexdigest()), \
+        monitor = dict(path=str(binary.relative_to(self.root)), sha256=hashlib.sha256(original).hexdigest())
+        with patch.object(rt, "T3_ROOT", self.root), \
+                patch.object(rt, "installed_t3", return_value=dict(resourceMonitor=monitor)), \
                 patch.object(rt.Linux, "verify_unit_file"):
             binary.write_bytes(b"changed")
             with self.assertRaisesRegex(rt.Blocked, "digest mismatch"):

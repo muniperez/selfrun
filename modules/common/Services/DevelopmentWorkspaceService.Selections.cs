@@ -60,7 +60,8 @@ public sealed partial class DevelopmentWorkspaceService
     private bool EligibleImage(DevelopmentWorkspaceImage image, bool forNewWorkspace) =>
         image.Enabled && image.RuntimeQualified && image.QualifiedAt is not null && image.QualifiedAt <= Now
         && Sha(image.ManifestSha256, 64) && !string.IsNullOrWhiteSpace(image.ProviderImageId)
-        && image.Architecture == "linux/amd64" && (!forNewWorkspace || image.T3ConnectForNewWorkspaces);
+        && image.Architecture == "linux/amd64" && image.HasSupportedT3Protocol()
+        && (!forNewWorkspace || image.T3ConnectForNewWorkspaces);
 
     private static DevelopmentWorkspaceAgentResponse[]? ImageAgents(DevelopmentWorkspaceImage? image)
     {

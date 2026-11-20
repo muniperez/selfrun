@@ -25,8 +25,7 @@ upstream service installer or show device approval in T3 terminal history.
 Ubuntu apt snapshot, Node 24.11.1, .NET SDK 10.0.100, Codex 0.169.0 (npm integrity lock),
 the coding agents listed under [Coding agents](#coding-agents), GitHub CLI **2.83.1** and GitLab CLI **1.74.0** (official linux/amd64 release
 archives, SHA256-verified before copying only their executables to `/usr/local/bin`),
-T3 0.1.9 / commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`
-and Chromium shared libraries. The default supplies the coding environment, not an
+T3 with its exact release, upstream commit and artifact digests, and Chromium shared libraries. The default supplies the coding environment, not an
 application stack: it installs no application database server/client, creates no
 application database/roles, and ships no emulator or preview canary application.
 A browser executable or additional application SDK is intentionally not
@@ -296,10 +295,48 @@ native candidate. Source tests use synthetic archives/RPC fixtures, not a hosted
 run in a sanctioned hosted environment.** `sourceControlUserSignInQualified` remains
 false; source tests are not evidence of provider authentication or browser qualification.
 
+### Qualify the latest stable T3 release
+
+The [T3 release candidate workflow](../../.github/workflows/t3-release-candidate.yml)
+checks the upstream stable release daily and supports manual dispatch. A newer
+release yields a candidate lockfile and qualification checklist. The candidate
+pins the upstream commit, verifies the Linux x64 archive against GitHub's
+published SHA-256, and pins the resource monitor extracted by reading its archive
+entry. A draft PR is optional. Configure the repository secret
+`T3_RELEASE_PR_TOKEN` with a bot's fine-grained personal access token scoped
+to this repository with Contents and Pull requests write permissions. With no
+token, use the workflow artifact's lockfile in a manual candidate PR.
+
+To prepare the same candidate locally from the repository root with Python 3.11+
+and network access:
+
+```sh
+mkdir -p .local/artifacts/t3-release
+python3 -B templates/development-workspaces/image/t3-candidate.py \
+  --output .local/artifacts/t3-release/manifest.lock.json
+```
+
+Review the release notes and use the candidate lockfile in the exact source tree
+for the [disposable builder](#prepared-image). On it, run `image/native.py plan`
+with the runtime SHA-256, then `image/native.py run` with the same digest and the
+root-owned short-lived authorization from the operator. Hosted operators can use
+their guarded builder qualification and preflight helpers with the exact source
+revision and runtime SHA-256. Retain the installed manifest and native report before generalizing the builder. Use the exact installed
+version and protocol in the qualified image registration's `T3Version` and
+`T3EnvironmentProtocol`. Protocol 2 is currently supported.
+
+For hosted acceptance, start a disposable workspace on that exact registered
+image. Follow the [T3 Connect procedure](../../docs/t3-connect.md) to verify the
+authenticated gateway, WebSocket, owner enrollment, relay and desktop discovery.
+Use synthetic data and a verified backup to test clean stop, retained-volume
+reattachment and rollback before moving existing workspaces. Publish the
+qualified image as the default only after the native and hosted checks pass.
+
 ### Rolling out to existing workspaces
 
 Build, qualify, generalize, power off, capture/register a **new immutable image revision**;
-retain the previous image for rollback. Update the approved image selection for new
+retain the previous image and its exact policy registration until all running
+generations that use it are stopped. Keep it available for rollback. Update the approved image selection for new
 workspaces. Changing a catalog/default image alone does not update an existing VM.
 Do not install packages ad hoc on retained workspaces or change the manifest in place.
 
@@ -430,8 +467,8 @@ Optional `caFile` selects a private trust CA. Then invoke over **pinned manageme
 python3 -B /opt/minicloud-workspace/bootstrap.py bootstrap
 ```
 
-It mounts/initializes the declared layout, starts services, verifies the loopback T3
-descriptor (`serverVersion:0.1.9`, `orchestrationProtocolVersion:2`), and POSTs HTTPS JSON
+It mounts/initializes the declared layout, starts services, verifies that the loopback
+T3 descriptor matches the installed image's T3 version and protocol, and POSTs HTTPS JSON
 `{schemaVersion,vmId,generation,kind,operationId,imageManifestSha256,bootstrapReceipt}`
 with the one-time token as Bearer authorization. HTTP 200 is explicit acceptance; no redirects.
 Intent is persisted **before** enrollment I/O, and token input is deleted after an attempt.
