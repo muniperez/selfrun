@@ -1,0 +1,105 @@
+name: T3 release candidate
+
+on:
+  schedule:
+    - cron: '19 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/t3-release-candidate.yml'
+      - 'templates/development-workspaces/image/*t3-candidate.py'
+      - 'templates/development-workspaces/image/manifest.lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: python3 -B templates/development-workspaces/image/test-t3-candidate.py
+
+  discover:
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency: t3-release-candidate
+    env:
+      CANDIDATE_DIR: .local/artifacts/t3-release
+      MANIFEST_PATH: templates/development-workspaces/image/manifest.lock.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify upstream archive and write candidate
+        id: candidate
+        run: |
+          mkdir -p "$CANDIDATE_DIR"
+          version=$(python3 -B templates/development-workspaces/image/t3-candidate.py --output "$CANDIDATE_DIR/manifest.lock.json")
+          if [[ -z "$version" ]]; then
+            echo 'No newer stable T3 release.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          cat > "$CANDIDATE_DIR/qualification.md" <<EOF
+          T3 $version is a candidate for qualification. Its Linux x64 archive matched GitHub's published SHA-256.
+
+          - Review the pinned source and release notes, especially orchestration protocol, executable paths, and T3 data/schema compatibility.
+          - Build and run the native probes on a disposable workspace image builder. Keep the installed manifest and native report.
+          - Register the qualified snapshot for a disposable hosted workspace with its exact T3 version and protocol. Verify the authenticated gateway and WebSocket, desktop discovery, T3 Connect, retention, and clean stop. Exercise rollback with a verified backup if the candidate changes the T3 schema.
+          - Promote the qualified image for new workspaces and schedule the image change for existing workspaces on their next start.
+
+          [Builder and rollout instructions](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/templates/development-workspaces/README.md)
+          [Upstream release](https://github.com/pingdotgg/t3code/releases/tag/$version)
+          EOF
+          cat "$CANDIDATE_DIR/qualification.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - if: steps.candidate.outputs.version != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: t3-candidate-${{ steps.candidate.outputs.version }}
+          path: |
+            .local/artifacts/t3-release/manifest.lock.json
+            .local/artifacts/t3-release/qualification.md
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: Open a draft candidate pull request
+        if: steps.candidate.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.T3_RELEASE_PR_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          T3_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo 'A candidate artifact is available for manual review. Draft PR publication requires T3_RELEASE_PR_TOKEN.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="automation/t3-$T3_VERSION"
+          open_or_closed=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state all --json number --jq '.[0].number // empty')
+          if [[ -n "$open_or_closed" ]]; then
+            echo "Candidate PR #$open_or_closed already exists." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          gh auth setup-git --hostname github.com
+          existing=$(git ls-remote origin "refs/heads/$branch")
+          if [[ -z "$existing" ]]; then
+            cp "$CANDIDATE_DIR/manifest.lock.json" "$MANIFEST_PATH"
+            git add -- "$MANIFEST_PATH"
+            git -c user.name='minicloud-release-bot' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "Propose T3 $T3_VERSION for qualification"
+            git push origin "HEAD:refs/heads/$branch"
+          else
+            git fetch origin "refs/heads/$branch"
+            git show "FETCH_HEAD:$MANIFEST_PATH" | cmp "$CANDIDATE_DIR/manifest.lock.json" -
+          fi
+          gh pr create --repo "$GITHUB_REPOSITORY" --draft --base "$DEFAULT_BRANCH" --head "$branch" \
+            --title "Qualify T3 $T3_VERSION" --body-file "$CANDIDATE_DIR/qualification.md" >> "$GITHUB_STEP_SUMMARY"

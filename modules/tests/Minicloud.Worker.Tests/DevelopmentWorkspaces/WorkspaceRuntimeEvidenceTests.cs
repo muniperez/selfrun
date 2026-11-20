@@ -41,6 +41,17 @@ public sealed class WorkspaceRuntimeEvidenceTests
         Assert.Equal("Blocked", rejection.State);
     }
 
+    [Fact]
+    public void RejectionDiagnosticsRecognizeScratchMountUnmountStage()
+    {
+        using var document = JsonDocument.Parse("""
+            {"ok":false,"state":"Blocked","reason":"Scratch build-output mounts remain under the workspace","diagnostic":{"stage":"scratch-unmount","failureType":"blocked"}}
+            """);
+        var rejection = WorkspaceRuntimeRejection.Capture("quiesce", document.RootElement, DateTimeOffset.UtcNow);
+        Assert.Equal("scratch_mounts_remain", rejection.ReasonCode);
+        Assert.Equal("scratch-unmount", rejection.Stage);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("""{"activityAt":null}""")]

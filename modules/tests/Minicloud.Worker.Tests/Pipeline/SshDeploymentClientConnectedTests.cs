@@ -9,6 +9,12 @@ using Renci.SshNet.Common;
 
 namespace Minicloud.Worker.Tests.Pipeline;
 
+// SSH.NET blocks thread-pool threads; the concurrent deployment load starved loopback
+// HTTP fixtures in parallel classes past their timeouts, so this class runs alone.
+[CollectionDefinition(nameof(SshDeploymentLoadCollection), DisableParallelization = true)]
+public sealed class SshDeploymentLoadCollection;
+
+[Collection(nameof(SshDeploymentLoadCollection))]
 public sealed class SshDeploymentClientConnectedTests
 {
     [SourcePreflightTheory]

@@ -168,6 +168,18 @@ async function handle(request) {
     });
     return evidence;
   }
+  if (request.operation === "scratch-env") {
+    requireTrue(Array.isArray(request.names) && request.names.length > 0
+      && request.names.every((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)));
+    // Only the named variables leave the terminal; the T3 environment may hold other values.
+    await rpc(socket, "terminal.write", { ...terminal,
+      data: "{ for n in " + request.names.join(" ") + "; do printf '%s=%s\\n' \"$n\" \"$(printenv \"$n\")\"; done; "
+        + "touch \"$XDG_CACHE_HOME/native-terminal-probe\" \"$TMPDIR/native-terminal-probe\" && echo scratch-writable; } "
+        + "> /workspace/artifacts/native-scratch-env.partial && "
+        + "mv /workspace/artifacts/native-scratch-env.partial /workspace/artifacts/native-scratch-env\n",
+    });
+    return { terminalScratchProbeWritten: true };
+  }
   if (request.operation === "open") {
     const result = await rpc(socket, "terminal.open", { ...terminal, cwd: "/workspace", cols: 100, rows: 32 });
     requireTrue(result.status === "running" && Number.isInteger(result.pid));
@@ -190,6 +202,7 @@ async function handle(request) {
       marker: "printf 'native-input\\n' > /workspace/artifacts/native-input-seen\n",
       foreground: "/usr/bin/sleep 4\n",
       background: "/usr/bin/sleep 4 &\n",
+      scratch: "printf 'terminal-scratch\\n' > /workspace/repos/native-scratch/node_modules/.native-terminal-write\n",
     };
     requireTrue(Object.hasOwn(commands, request.kind));
     await rpc(socket, "terminal.write", { ...terminal, data: commands[request.kind] });

@@ -54,7 +54,9 @@ const rootScan = () => scanJob("/workspace", [
   entry("/workspace/cache", { bytes: null, state: "unreadable", canOpen: false, targetToken: null, protectedReason: "unreadable" }),
 ]);
 const reposScan = () => scanJob("/workspace/repos", [project,
-  entry("/workspace/repos/vendor", { bytes: 512, state: "partial", protectedReason: "not_owned_by_coding_user" })]);
+  entry("/workspace/repos/vendor", { bytes: 512, state: "partial", protectedReason: "not_owned_by_coding_user" }),
+  entry("/workspace/repos/target", { bytes: null, state: "excluded", canOpen: false, targetToken: null,
+    protectedReason: "scratch", storage: "scratch" })]);
 
 function panel(machine = vm(), ready = true) {
   return <WorkspaceDiskUsage workspaceId="ws-1" workspaceName="Payments" organizationId="org" vm={machine} ready={ready} refresh={refresh} />;
@@ -89,6 +91,8 @@ it("only scans when asked, then drills into a folder and back", async () => {
   const repos = await screen.findByRole("list", { name: "Folders in /workspace/repos" });
   expect(within(repos).getByText("Partial: at least this size")).toBeTruthy();
   expect(within(repos).getByText("Protected: not owned by the dev environment user.")).toBeTruthy();
+  expect(within(repos).getByText(/Build output on scratch storage/)).toBeTruthy();
+  expect(within(repos).queryByRole("button", { name: "Delete /workspace/repos/target…" })).toBeNull();
   expect(within(repos).queryByRole("button", { name: "Delete /workspace/repos/vendor…" })).toBeNull();
   expect(within(repos).getByRole("button", { name: "Delete /workspace/repos/project…" })).toBeTruthy();
 

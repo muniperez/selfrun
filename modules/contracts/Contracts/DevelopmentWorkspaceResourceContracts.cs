@@ -19,7 +19,8 @@ public sealed record DevelopmentWorkspaceCpuResources(int LogicalCount, double? 
 public sealed record DevelopmentWorkspaceMemoryResources(long TotalBytes, long AvailableBytes);
 public sealed record DevelopmentWorkspaceFilesystemResources(
     IReadOnlyList<string> Paths, long TotalBytes, long FreeBytes, long AvailableBytes,
-    long? InodesTotal, long? InodesAvailable, int? NestedMountsExcluded);
+    long? InodesTotal, long? InodesAvailable, int? NestedMountsExcluded,
+    IReadOnlyList<string>? Roles = null, int? ScratchBindMounts = null);
 
 public sealed record DevelopmentWorkspaceDiskUsageScanRequest(long Generation, string IdempotencyKey, string? TargetToken = null);
 public sealed record DevelopmentWorkspaceDirectoryDeletionRequest(
@@ -40,7 +41,7 @@ public sealed record DevelopmentWorkspaceDiskUsageResult(
 
 public sealed record DevelopmentWorkspaceDiskUsageEntry(
     string Name, string Path, long? Bytes, string State, IReadOnlyList<string> Errors,
-    bool CanOpen, bool CanDelete, string? TargetToken, string? ProtectedReason);
+    bool CanOpen, bool CanDelete, string? TargetToken, string? ProtectedReason, string? Storage = null);
 
 public sealed record DevelopmentWorkspaceDirectoryDeletionResult(
     string Outcome, long RemovedEntries, long RemovedBytes, string? LimitReached, IReadOnlyDictionary<string, int> Errors);

@@ -44,6 +44,13 @@ public sealed class DevelopmentWorkspaceImage
     public bool RuntimeQualified { get; set; }
     public DateTimeOffset? QualifiedAt { get; set; }
     public bool T3ConnectForNewWorkspaces { get; set; }
+    // Existing registrations predate explicit T3 metadata and all use this release.
+    public string T3Version { get; set; } = "0.1.9";
+    public int T3EnvironmentProtocol { get; set; } = 2;
+
+    public bool HasSupportedT3Protocol() =>
+        T3EnvironmentProtocol == 2 && Version.TryParse(T3Version, out var version)
+        && version.Build >= 0 && version.Revision == -1 && version.ToString(3) == T3Version;
     /// <summary>Coding agents the image build installed, copied from the image manifest's <c>agents</c> section.</summary>
     public DevelopmentWorkspaceAgent[] Agents { get; set; } = [];
 }
