@@ -455,6 +455,31 @@ The agent is outside the freezable coding slice. State/atomic fsynced receipts l
 `/var/lib/minicloud-workspace`; parent must durably persist returned lifecycle receipts
 **before deleting compute**. File presence on the disposable VM alone is not off-VM durability.
 
+### T3 service recovery
+
+`minicloud-t3.service` restarts on unexpected exit, signal, or OOM kill
+(`Restart=on-failure`, `RestartSec=5`). The default `OOMPolicy=stop` turns a kernel or
+cgroup OOM kill into a failed run that restarts on the same VM generation and retained
+volume, so environment identity, projects, threads, and sign-ins persist. Interrupted
+agent turns are not resumed. Exit 130, T3's graceful stop code, is a success and does not
+restart. `StartLimitIntervalSec=300` and `StartLimitBurst=5` bound the retries, including
+explicit starts. When the budget is exhausted, the unit stays `failed` until an operator
+runs `systemctl reset-failed minicloud-t3.service` and starts it again.
+
+Explicit stops always win. `systemctl stop` cancels a pending restart. While the work
+slice is frozen, systemd queues a restart but cannot start it, and the runtime's
+stop-under-freeze sequence cancels it. After unmount, `ConditionPathIsDirectory=/workspace/t3`
+also refuses a start. Upstream's `t3 service install` user unit is not used; it would add a
+second supervisor outside the workspace lifecycle.
+
+The native probe `t3-oom-crash-restart-stop-race-and-retry-budget` covers a cgroup OOM
+kill, a crash racing `systemctl stop`, a crash in a frozen slice followed by the runtime
+stop, and budget exhaustion. After each restart, it checks the same environment ID,
+filesystem UUID, and VM generation, authenticated HTTP and WebSocket access, and Connect
+management. Because these checks restart T3, the probe runs before terminal probes. Before
+rollout, a disposable hosted workspace must also show that a Minicloud gateway launch and a
+previously linked T3 Connect relay recover after a T3 crash.
+
 ### JSON control protocol
 
 Run `python3 -B /opt/minicloud-workspace/runtime.py call`, sending one newline-terminated
