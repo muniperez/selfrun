@@ -320,8 +320,8 @@ membership response for both browser users and authorized machine credentials.
 | --- | --- |
 | `GET /api/account/capabilities` | Password/optional-method availability, whether **Keep me signed in** is offered (`keepSignedIn`), and authoritative `required`, `ready` or `blocked` bootstrap state. |
 | `GET /api/account/session` | Browser user ID, absolute/idle expiry, `renewAfter`, `keepSignedIn` (this session) and `keepSignedInPreference` (sign-in default), and the session-bound CSRF token. Reading the session does not extend it. |
-| `POST /api/account/session/renew` | Explicit activity renewal. Inside the renewal window (`renewAfter`), extends the idle expiry (and the upstream Kratos session) up to the absolute expiry; earlier calls return the session unchanged. Never rotates the cookie or CSRF token and never restores a revoked session. |
-| `PUT /api/account/session/preference` | Body `{keepSignedIn}`. Stores the user's preference and applies it to the current session's limits and cookie persistence. `409 keep_signed_in_unavailable` when the operator disabled the option. |
+| `POST /api/account/session/renew` | Explicit activity renewal. Inside the renewal window (`renewAfter`), extends the idle expiry (and the upstream Kratos session) up to the absolute expiry; earlier calls return the session unchanged. Never rotates the cookie or CSRF token and never restores a revoked session. The extension commits only if the session is still the one this cookie authenticated; see [session renewal](#session-renewal). `401` if it ended meanwhile, `503 auth_unavailable` on a Kratos outage, `409 session_conflict` if it kept changing concurrently (retry). |
+| `PUT /api/account/session/preference` | Body `{keepSignedIn}`. Stores the user's preference and applies it to the current session's limits and cookie persistence, under the same commit-time checks as renewal. `409 keep_signed_in_unavailable` when the operator disabled the option; `401` if the session ended meanwhile or the standard limits already end it. |
 | `POST /api/account/logout` | Revoke the browser session and Grafana access; clear authentication cookies without revoking API keys. |
 | `GET /api/account/flows/{kind}/browser` | Start `login`, `settings` or enabled `recovery`; `returnTo` must be a same-dashboard relative path. |
 | `GET /api/account/flows/{kind}?id={uuid}` | Read an existing matching form. |
@@ -335,6 +335,42 @@ Origin and the Kratos form's CSRF field/cookie. Browser credentials never replac
 machine authentication: explicit bearer credentials take precedence, including
 invalid bearers. CLI approval still requires explicit human consent and
 organization API-key-write permission.
+
+### Session renewal
+
+A renewal reads the session, extends the upstream Kratos session if needed, and
+then commits the new idle deadline with one conditional update. The update
+applies only if, at commit time, the row still has the request cookie's token
+hash, is not revoked, and still has the persistence flag, absolute expiry, idle
+deadline and last renewal time that the request read. Eligibility is
+re-evaluated with the commit-time clock: the idle deadline and absolute expiry
+have not passed and the session is inside its renewal window. The new deadline
+is capped by the absolute expiry and by the upstream session's expiry.
+
+- **Competing renewals** of one session coalesce. One request extends it; the
+  others see that the renewal window has moved and return the already-renewed
+  session unchanged with `200`. The local session is extended once. Kratos sets
+  its expiry from the time of each extension rather than adding to it, so a
+  repeated upstream extension does not lengthen the session.
+- **Preference changes** use the same conditional update. Whichever commits
+  first wins; a renewal that loses re-reads the session and applies the current
+  policy.
+- **Logout, revocation, rotation and expiry** made while a renewal waits on
+  Kratos are never undone. If the session expired, the renewal ends it and
+  returns `401`. If this renewal extended the upstream session and the local
+  session ended meanwhile (logout, revocation or expiry), the API revokes the
+  upstream session again so the late extension cannot keep it alive. This also
+  happens when the extension times out or Kratos fails. A new sign-in on the
+  same device replaces the token, and an older renewal leaves the new session and
+  its upstream session untouched.
+- A successful renewal never sets a cookie and keeps the CSRF token.
+
+The dashboard runs one account request at a time per tab and uses a Web Lock so
+one tab renews at a time; other tabs adopt its broadcast result. A sign-out
+broadcast, a rejected renewal (`401`, or `403` after a rotation elsewhere), or a
+network reconnect always triggers a fresh `GET /api/account/session`, queued
+behind any request in flight. Only that read signs the tab out. A reconnect
+never counts as user activity.
 
 Account responses are not cacheable. Confirmed expiry is 401; authorization denial
 remains 403/resource-hiding 404. Identity dependency failures are sanitized 503
