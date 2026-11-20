@@ -27,7 +27,9 @@ jobs:
       - name: Repeat worker tests
         run: |
           dotnet build modules/tests/Minicloud.Worker.Tests -c Release -v q
-          for i in $(seq 1 10); do echo "### run $i"; dotnet test modules/tests/Minicloud.Worker.Tests -c Release --no-build 2>&1 | grep -E "Passed!|Failed!|^\s+Failed Mini|Error Message" -A3 || true; done
+          for i in $(seq 1 6); do echo "### run $i"; dotnet test modules/tests/Minicloud.Worker.Tests -c Release --no-build 2>&1 | grep -E "Passed!|Failed!|^\s+Failed Mini|Error Message" -A3 || true; done
       - name: Diagnostics
         if: always()
-        run: cat /tmp/wsdiag.log || true
+        run: |
+          cat /tmp/poollag.log || true
+          grep -B1 -A3 "HttpClient.Timeout" /tmp/wsdiag.log | grep -E "^20|Timeout" || true
