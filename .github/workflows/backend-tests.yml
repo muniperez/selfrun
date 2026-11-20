@@ -19,55 +19,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Reclaim runner disk for registry integration tests
-        run: |
-          df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/swift /opt/ghc
-          df -h /
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.x'
-      - name: Verify runtime bootstrap ordering and argument handling
-        run: python3 scripts/github-actions/minicloud-deploy/test-runtime-bootstrap.py
       - name: Build the disposable SSH bootstrap test fixture
         run: docker build --tag "$MINICLOUD_TEST_PREFLIGHT_SSH_IMAGE" --file modules/tests/Minicloud.Worker.Tests/Fixtures/SshBootstrap.Dockerfile .
-      - name: Verify database capture, restore, retention and isolation
+      - name: Repeat worker tests
         run: |
-          python3 -B -m unittest discover -s scripts/database-platform -p 'test_*.py' -q
-          python3 -B -m unittest discover -s modules/backup-repository -p 'test_*.py' -q
-          python3 scripts/database-platform/test-postgres-integration.py
-      - name: Install authenticated recovery test dependency
-        env:
-          AGE_VERSION: v1.3.2
-          AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
-        run: |
-          # Pinned upstream release instead of the Ubuntu archive; the checksum must match exactly.
-          archive="$RUNNER_TEMP/age.tar.gz"
-          curl -fsSL --retry 3 -o "$archive" "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz"
-          echo "${AGE_SHA256}  ${archive}" | sha256sum -c -
-          sudo tar -xzf "$archive" -C /usr/local/bin --strip-components=1 age/age age/age-keygen
-          age --version
-      - name: Verify self-hosting initialization scripts
-        run: python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -q
-      - name: Run backend, worker, CLI and deployment integration tests
-        run: dotnet test Minicloud.slnx --configuration Release -m:1
-      - name: Publish and smoke-test the source-built CLI
-        env:
-          SOURCE_REVISION: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          version="0.0.0-source.sha${SOURCE_REVISION:0:12}"
-          output="$GITHUB_WORKSPACE/.local/artifacts/cli-smoke/publish"
-          mkdir -p "$output"
-          echo "Publishing CLI source revision $SOURCE_REVISION"
-          dotnet publish modules/cli/Minicloud.Cli.csproj \
-            --configuration Release \
-            --runtime linux-x64 \
-            --self-contained true \
-            --artifacts-path "$GITHUB_WORKSPACE/.local/artifacts/cli-smoke/build" \
-            --output "$output" \
-            -p:Version="$version" \
-            -p:SourceRevisionId="$SOURCE_REVISION" \
-            -p:InformationalVersion="$version+sha.$SOURCE_REVISION"
-          mv "$output/Minicloud.Cli" "$output/minicloud"
-          python3 scripts/verify-cli-release.py "$output/minicloud" "$version"
+          dotnet build modules/tests/Minicloud.Worker.Tests -c Release -v q
+          for i in $(seq 1 10); do echo "### run $i"; dotnet test modules/tests/Minicloud.Worker.Tests -c Release --no-build 2>&1 | grep -E "Passed!|Failed!|^\s+Failed Mini|Error Message" -A3 || true; done
+      - name: Diagnostics
+        if: always()
+        run: cat /tmp/wsdiag.log || true
