@@ -206,9 +206,12 @@ it("expands siblings independently and delegates complete Git, generation and ac
   }));
   expect(within(firstDetails).getByRole("article", { name: "VM sibling-one" })).toBeInTheDocument();
   expect(within(secondDetails).getByRole("article", { name: "VM sibling-two" })).toBeInTheDocument();
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ vm: expect.objectContaining({ id: "sibling-two" }), active: true }));
+  vmCards.mockClear();
   fireEvent.click(screen.getByRole("button", { name: "Collapse VM sibling-one" }));
   expect(firstDetails).not.toBeVisible();
   expect(secondDetails).toBeVisible();
+  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({ vm: expect.objectContaining({ id: "sibling-one" }), active: false }));
 });
 
 it("shows retained storage and observed per-VM estimates in the costs tab, primary first, without billing promises", () => {

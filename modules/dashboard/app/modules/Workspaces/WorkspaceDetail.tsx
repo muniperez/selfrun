@@ -341,7 +341,7 @@ function EphemeralRow({ vm, workspaceId, organizationId, currency, refresh, canM
       <TableCell colSpan={4} className={vm.phase === "awaiting_git_save" ? "border-t border-warning/30 bg-warning-surface p-0" : "bg-muted/20 p-0"}>
         <div id={detailsId} role="region" aria-label={`Details for VM ${vm.id}`} className="min-w-0">
           {visited && <WorkspaceVmCard workspaceId={workspaceId} organizationId={organizationId} vm={vm}
-            currency={currency} refresh={refresh} canManage={canManage} variant="embedded" />}
+            currency={currency} refresh={refresh} canManage={canManage} variant="embedded" active={expanded} />}
         </div>
       </TableCell>
     </TableRow>
