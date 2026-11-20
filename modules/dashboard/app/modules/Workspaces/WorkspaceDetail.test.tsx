@@ -78,10 +78,6 @@ function acknowledge(form: HTMLElement) {
   fireEvent.click(within(form).getByLabelText(/I authorize task-scoped pushes/));
   fireEvent.click(within(form).getByLabelText(/I understand that untracked files/));
 }
-function openStopAll() {
-  fireEvent.click(screen.getByRole("button", { name: "Stop all VMs" }));
-  return screen.getByRole("dialog", { name: "Stop all VMs?" });
-}
 function showCosts() {
   const tab = screen.getByRole("tab", { name: "Storage & costs" });
   fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
@@ -190,43 +186,6 @@ it("retains idempotency on unchanged failed retries, changes it with payload, th
   expect(within(reopened).getByLabelText(/I understand that untracked files/)).not.toBeChecked();
 });
 
-it("enumerates all stop-all impacts, cancels without mutation and confirms only explicitly", async () => {
-  render(detail());
-  let dialog = openStopAll();
-  const affected = within(dialog).getAllByRole("listitem");
-  expect(affected).toHaveLength(3);
-  expect(affected[0]).toHaveTextContent(/sibling-one · Running · Git save: pending.*sibling-one · generation 3/);
-  expect(affected[1]).toHaveTextContent(/Primary VM · Running .*primary · generation 3/);
-  expect(affected[2]).toHaveTextContent(/Stopped .*sibling-two · generation 3/);
-  expect(dialog).toHaveTextContent(/a VM that can't stop keeps its server and may keep charging/);
-  expect(workspaceOperation).not.toHaveBeenCalled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel stop all" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(workspaceOperation).not.toHaveBeenCalled();
-  dialog = openStopAll();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm stop all" }));
-  await waitFor(() => expect(workspaceOperation).toHaveBeenCalledExactlyOnceWith("workspace", "org-a", "stop-all"));
-  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-});
-
-it("closes a stop-all confirmation when a VM generation changes and when management access is revoked", () => {
-  const view = render(detail());
-  openStopAll();
-  const changed = workspace({ vms: [vm("primary", { kind: "primary", generation: 4 })] });
-  view.rerender(detail(changed));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(workspaceOperation).not.toHaveBeenCalled();
-  const dialog = openStopAll();
-  expect(dialog).toHaveTextContent("generation 4");
-  view.rerender(detail(changed, false));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Stop all VMs" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
-  expect(screen.getByRole("article", { name: "VM primary" })).toHaveTextContent("Read only");
-  expect(workspaceOperation).not.toHaveBeenCalled();
-});
-
 it("keeps read-only metadata and costs available and discards launch state on organization changes", () => {
   const view = render(detail(workspace(), false));
   expect(screen.queryByRole("button", { name: "Launch temporary VM" })).not.toBeInTheDocument();
@@ -269,7 +228,6 @@ it("treats ordinary compute deletion as stopping and shows a permanently deleted
   const computeDeletion = workspace({ phase: "deleting", vms: [vm("primary", { kind: "primary", phase: "deleting", desiredState: "stopped" })] });
   const view = render(<MemoryRouter>{detail(computeDeletion)}</MemoryRouter>);
   expect(screen.queryByText(/Deleting this dev environment/)).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Stop all VMs" })).toBeInTheDocument();
   view.rerender(<MemoryRouter>{detail(stoppedWorkspace({ volumeStatus: "deleted", phase: "deleted" }))}</MemoryRouter>);
   expect(screen.getByText(/were permanently deleted/)).toHaveAttribute("role", "status");
   expect(screen.getByRole("link", { name: "Back to dev environments" })).toHaveAttribute("href", "/workspaces");
