@@ -785,6 +785,7 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         sibling.LastBackupAt = clock.GetUtcNow();
         sibling.BackupStatus = "completed";
         await db.SaveChangesAsync();
+        var siblingLastBackupAt = (await CurrentWorkspace(sibling.Id)).LastBackupAt;
         cloud.SiblingVolumes.Add(siblingVolume.Id, siblingVolume);
         var siblingServer = cloud.Server(VolumeLabels(sibling)) with { Id = "server-sibling" };
         cloud.Servers.Add(siblingServer.Id, siblingServer);
@@ -818,7 +819,7 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Equal(siblingServer, Assert.Single(cloud.Servers).Value);
         var survivingWorkspace = await CurrentWorkspace(sibling.Id);
         Assert.Equal(siblingVolume.Id, survivingWorkspace.ProviderVolumeId);
-        Assert.Equal(sibling.LastBackupAt, survivingWorkspace.LastBackupAt);
+        Assert.Equal(siblingLastBackupAt, survivingWorkspace.LastBackupAt);
         Assert.Equal(sibling.BackupStatus, survivingWorkspace.BackupStatus);
         Assert.Equal("available", (await cloud.GetWorkspaceImageAsync(imageId, default))?.Status);
         Assert.Empty(cloud.DetachedVolumes);
