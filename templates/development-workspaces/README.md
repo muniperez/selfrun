@@ -303,9 +303,9 @@ release yields a candidate lockfile and qualification checklist. The candidate
 pins the upstream commit, verifies the Linux x64 archive against GitHub's
 published SHA-256, and pins the resource monitor extracted by reading its archive
 entry. A draft PR is optional. Configure the repository secret
-`T3_RELEASE_PR_TOKEN` with a bot or GitHub App token scoped to this repository
-with Contents and Pull requests write permissions. With no token, download the
-workflow artifact and use its lockfile in a manual candidate PR.
+`T3_RELEASE_PR_TOKEN` with a bot's fine-grained personal access token scoped
+to this repository with Contents and Pull requests write permissions. With no
+token, use the workflow artifact's lockfile in a manual candidate PR.
 
 To prepare the same candidate locally from the repository root with Python 3.11+
 and network access:
@@ -335,7 +335,8 @@ qualified image as the default only after the native and hosted checks pass.
 ### Rolling out to existing workspaces
 
 Build, qualify, generalize, power off, capture/register a **new immutable image revision**;
-retain the previous image for rollback. Update the approved image selection for new
+retain the previous image and its exact policy registration until all running
+generations that use it are stopped. Keep it available for rollback. Update the approved image selection for new
 workspaces. Changing a catalog/default image alone does not update an existing VM.
 Do not install packages ad hoc on retained workspaces or change the manifest in place.
 
@@ -466,8 +467,8 @@ Optional `caFile` selects a private trust CA. Then invoke over **pinned manageme
 python3 -B /opt/minicloud-workspace/bootstrap.py bootstrap
 ```
 
-It mounts/initializes the declared layout, starts services, verifies the loopback T3
-descriptor (`serverVersion:0.1.9`, `orchestrationProtocolVersion:2`), and POSTs HTTPS JSON
+It mounts/initializes the declared layout, starts services, verifies that the loopback
+T3 descriptor matches the installed image's T3 version and protocol, and POSTs HTTPS JSON
 `{schemaVersion,vmId,generation,kind,operationId,imageManifestSha256,bootstrapReceipt}`
 with the one-time token as Bearer authorization. HTTP 200 is explicit acceptance; no redirects.
 Intent is persisted **before** enrollment I/O, and token input is deleted after an attempt.
