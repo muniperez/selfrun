@@ -18,6 +18,18 @@ const selectClass = "h-10 w-full min-w-0 rounded-md border border-input bg-backg
 
 const optionKey = (option: WorkspaceSelectionOption) => JSON.stringify([option.imageId, option.profile, option.planId]);
 
+function persistedCreateKey(storageKey: string) {
+  try {
+    const existing = sessionStorage.getItem(storageKey);
+    if (existing) return existing;
+    const key = crypto.randomUUID();
+    sessionStorage.setItem(storageKey, key);
+    return key;
+  } catch {
+    throw new Error("Couldn't save a safe retry for this request. Enable browser session storage and try again. No create request was sent.");
+  }
+}
+
 function sizeLabel(option: WorkspaceSelectionOption) {
   const specs = [option.cpuCount ? `${option.cpuCount} vCPU` : null, option.memoryGiB ? `${option.memoryGiB} GB RAM` : null].filter(Boolean);
   return specs.length ? `${option.profile} · ${specs.join(", ")}` : option.profile;
@@ -48,7 +60,6 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
   const [error, setError] = useState<string | null>(null);
   const submission = useRef(false);
   const mounted = useRef(true);
-  const previous = useRef<{ payload: string; key: string } | null>(null);
   const chosen = useRef("");
   chosen.current = choice;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -95,7 +106,7 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
 
   const reset = () => {
     setName(""); setChoice(""); setVolumeSize(defaultStorageGb); setCustomizing(false); setNotice(null); setError(null);
-    setCatalog({ state: "loading" }); previous.current = null;
+    setCatalog({ state: "loading" });
   };
   const changeOpen = (next: boolean) => {
     if (submission.current) return;
@@ -111,14 +122,13 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
     }
     const request = { organizationId, name: name.trim(), imageId: selected.imageId, profile: selected.profile, planId: selected.planId,
       volumeSizeGb, startPrimaryVm: true };
-    const payload = JSON.stringify(request);
-    if (previous.current?.payload !== payload) previous.current = { payload, key: crypto.randomUUID() };
+    const storageKey = `minicloud:workspace-create:${JSON.stringify(request)}`;
     submission.current = true;
     setBusy(true);
     setError(null);
     let workspace: DevelopmentWorkspace;
     try {
-      workspace = await createDevelopmentWorkspace({ ...request, idempotencyKey: previous.current.key });
+      workspace = await createDevelopmentWorkspace({ ...request, idempotencyKey: persistedCreateKey(storageKey) });
     } catch (reason) {
       if (mounted.current) {
         setError(reason instanceof Error && reason.message ? reason.message
@@ -131,6 +141,8 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
       if (mounted.current) setBusy(false);
     }
     if (!mounted.current) return;
+    try { sessionStorage.removeItem(storageKey); }
+    catch { /* Keeping a successful key is safer than losing an uncertain create. */ }
     setOpen(false);
     reset();
     onCreated(workspace);

@@ -233,6 +233,15 @@ the reason. The dashboard uses this when creating a dev environment, then
 opens the new environment's detail page to follow startup. Viewing or
 refreshing that page never starts a VM.
 
+The dashboard saves an outstanding create's idempotency key in browser session
+storage before sending it. If the result is uncertain, submitting the same
+selection and name again in that tab reuses the key, even after closing the
+dialog or reloading the page. A different request gets its own key. Once the
+dashboard receives the created environment and opens its detail page, the key
+is cleared. Browser session storage must be available; if saving the key fails,
+the dashboard sends no create request. Closing the tab or clearing its storage
+loses outstanding retry keys; check the environment list before creating again.
+
 ## Development workspace idle timeout
 
 Workspace list and detail responses include `idleTimeoutMinutes` (the saved
