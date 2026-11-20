@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Minicloud.Api.Auth;
 using Minicloud.Api.Services;
@@ -57,46 +58,78 @@ public sealed class AccountController(
     /// <summary>
     /// Renews the idle deadline of the current session once it is inside its renewal window (the last half of the
     /// idle timeout), never past its maximum lifetime, and extends the upstream Kratos session when it would otherwise
-    /// end first. Calls outside the window return the unchanged session, so concurrent tabs coalesce safely.
+    /// end first. Eligibility is decided again when the renewal commits, against the cookie generation that made the
+    /// request: calls outside the window, or that lost to a competing renewal, return the committed session
+    /// unchanged, and a session logged out, revoked, rotated or expired meanwhile is never restored. The cookie and
+    /// CSRF token are not rotated.
     /// </summary>
     [Authorize]
     [HttpPost("session/renew")]
     public async Task<IResult> RenewSession(CancellationToken cancellationToken)
     {
         NoStore();
-        var (session, _, csrfToken) = await LoadCurrentSessionAsync(cancellationToken);
+        var (session, cookie, csrfToken) = await LoadCurrentSessionAsync(cancellationToken);
         if (session is null)
         {
             return Unauthenticated();
         }
 
         var target = sessions.GetRenewalTarget(session);
-        if (target is not null)
+        if (target is null)
         {
-            var upstream = await kratosSessions.GetActiveSessionAsync(session.KratosSessionId, session.KratosIdentityId, cancellationToken);
-            if (upstream?.ExpiresAt is { } upstreamExpiry && upstreamExpiry < target)
-            {
-                upstream = await kratosSessions.ExtendSessionAsync(session.KratosSessionId, session.KratosIdentityId, cancellationToken);
-            }
-            if (upstream is null)
-            {
-                await sessions.RevokeByIdAsync(session.Id, cancellationToken);
-                ClearAuthCookies();
-                return Unauthenticated();
-            }
-            if (upstream.ExpiresAt is { } cappedExpiry && cappedExpiry < target)
-            {
-                target = cappedExpiry;
-            }
-            // Compare with the effective deadline: a shortened policy leaves the stored deadline later than it.
-            if (target > sessions.GetDeadlines(session).IdleExpiresAt &&
-                !await sessions.RenewAsync(session.Id, target.Value, cancellationToken))
-            {
-                return Unauthenticated();
-            }
+            return Results.Ok(BrowserSessionCookie.ToResponse(session, sessions.GetDeadlines(session), csrfToken!));
         }
 
-        return Results.Ok(BrowserSessionCookie.ToResponse(session, sessions.GetDeadlines(session), csrfToken!));
+        var generation = BrowserSessionService.HashSecret(cookie!);
+        var upstream = await kratosSessions.GetActiveSessionAsync(session.KratosSessionId, session.KratosIdentityId, cancellationToken);
+        var extended = false;
+        if (upstream?.ExpiresAt is { } upstreamExpiry && upstreamExpiry < target)
+        {
+            // From here on the upstream session may change, so finish (or compensate) even if the client goes away.
+            extended = true;
+            try
+            {
+                upstream = await kratosSessions.ExtendSessionAsync(session.KratosSessionId, session.KratosIdentityId, CancellationToken.None);
+            }
+            catch (KratosUnavailableException)
+            {
+                // The extension may still have been applied; never let it outlive a session that ended meanwhile.
+                await EndUpstreamIfLocallyEndedAsync(session.Id, session.KratosSessionId);
+                throw;
+            }
+        }
+        if (upstream is null)
+        {
+            await sessions.RevokeByIdAsync(session.Id, CancellationToken.None);
+            ClearAuthCookies();
+            return Unauthenticated();
+        }
+
+        BrowserSessionWrite renewal;
+        try
+        {
+            renewal = await sessions.RenewAsync(session.Id, generation, upstream.ExpiresAt, CancellationToken.None);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return SessionConflict();
+        }
+        switch (renewal.Outcome)
+        {
+            case BrowserSessionWriteOutcome.Applied or BrowserSessionWriteOutcome.Unchanged:
+                return Results.Ok(BrowserSessionCookie.ToResponse(renewal.Session!, sessions.GetDeadlines(renewal.Session!), csrfToken!));
+            case BrowserSessionWriteOutcome.Expired:
+                await RevokeUpstreamAsync(session.KratosSessionId);
+                return Unauthenticated();
+            default:
+                // Revoked or superseded meanwhile. Whoever ended the session may have revoked upstream before this
+                // extension landed, so revoke again unless a newer generation still uses the upstream session.
+                if (extended)
+                {
+                    await EndUpstreamIfLocallyEndedAsync(session.Id, session.KratosSessionId);
+                }
+                return Unauthenticated();
+        }
     }
 
     /// <summary>Stores the user's "Keep me signed in" preference and applies it to the current session.</summary>
@@ -118,24 +151,30 @@ public sealed class AccountController(
                 "This instance does not allow staying signed in.", StatusCodes.Status409Conflict);
         }
 
-        var updated = await sessions.SetRememberedAsync(session.Id, request.KeepSignedIn, cancellationToken);
-        if (updated is null || updated.RevokedAt is not null)
+        BrowserSessionWrite updated;
+        try
         {
-            try
-            {
-                await kratosSessions.RevokeSessionAsync(session.KratosSessionId, cancellationToken);
-            }
-            catch (KratosUnavailableException)
-            {
-                // The local session is already revoked; the upstream session expires on its own.
-            }
-            ClearAuthCookies();
-            return Unauthenticated();
+            updated = await sessions.SetRememberedAsync(session.Id, BrowserSessionService.HashSecret(cookie!),
+                request.KeepSignedIn, cancellationToken);
         }
-
-        var deadlines = sessions.GetDeadlines(updated);
-        BrowserSessionCookie.Append(Response, cookie!, deadlines);
-        return Results.Ok(BrowserSessionCookie.ToResponse(updated, deadlines, csrfToken!));
+        catch (DbUpdateConcurrencyException)
+        {
+            return SessionConflict();
+        }
+        switch (updated.Outcome)
+        {
+            case BrowserSessionWriteOutcome.Applied:
+                var deadlines = sessions.GetDeadlines(updated.Session!);
+                BrowserSessionCookie.Append(Response, cookie!, deadlines);
+                return Results.Ok(BrowserSessionCookie.ToResponse(updated.Session!, deadlines, csrfToken!));
+            case BrowserSessionWriteOutcome.Expired:
+                await RevokeUpstreamAsync(session.KratosSessionId);
+                ClearAuthCookies();
+                return Unauthenticated();
+            default:
+                // Revoked or superseded meanwhile: the revoker or the newer generation owns the upstream session.
+                return Unauthenticated();
+        }
     }
 
     [Authorize]
@@ -192,6 +231,37 @@ public sealed class AccountController(
 
     private static IResult Unauthenticated() =>
         EndpointResults.Problem("unauthenticated", "A browser session is required.", StatusCodes.Status401Unauthorized);
+
+    private static IResult SessionConflict() =>
+        EndpointResults.Problem("session_conflict", "The session changed. Try again.", StatusCodes.Status409Conflict);
+
+    /// <summary>
+    /// Revokes the upstream session when no active local session is bound to it any more. A row keeps its upstream
+    /// binding across rotations, so the row is re-read by ID whatever generation it now holds. Local revocation stays
+    /// authoritative either way: a revoked generation is never reactivated, and binding the upstream session again
+    /// requires a fresh sign-in.
+    /// </summary>
+    private async Task EndUpstreamIfLocallyEndedAsync(string sessionId, string kratosSessionId)
+    {
+        var current = await sessions.FindCommittedAsync(sessionId, CancellationToken.None);
+        if (current is null || current.RevokedAt is not null || sessions.IsExpired(current))
+        {
+            await RevokeUpstreamAsync(kratosSessionId);
+        }
+    }
+
+    private async Task RevokeUpstreamAsync(string kratosSessionId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            await kratosSessions.RevokeSessionAsync(kratosSessionId, timeout.Token);
+        }
+        catch (Exception exception) when (exception is KratosUnavailableException or OperationCanceledException)
+        {
+            // The local session has ended and cannot be restored; the upstream session expires on its own.
+        }
+    }
 
     private async Task<string> GetBootstrapStateAsync(string? installationId, CancellationToken cancellationToken)
     {

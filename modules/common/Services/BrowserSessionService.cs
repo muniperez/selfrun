@@ -20,12 +20,32 @@ public sealed record BrowserSessionDeadlines(
 /// <param name="EndedKratosSessionId">Set when this validation ended the local session because it expired.</param>
 public sealed record BrowserSessionValidation(BrowserSession? Session, string? EndedKratosSessionId = null);
 
+/// <summary>How a conditional write to a session generation was resolved at commit time.</summary>
+public enum BrowserSessionWriteOutcome
+{
+    /// <summary>This call committed the change.</summary>
+    Applied,
+    /// <summary>The committed session already satisfied the request (for example a competing renewal won).</summary>
+    Unchanged,
+    /// <summary>The cookie generation was rotated by a newer sign-in or settings flow; that generation owns the row.</summary>
+    Superseded,
+    /// <summary>The session was revoked, logged out or removed by someone else.</summary>
+    Revoked,
+    /// <summary>The session had passed a deadline; this call revoked it.</summary>
+    Expired
+}
+
+/// <param name="Session">The committed state when the generation is still active; otherwise null.</param>
+public sealed record BrowserSessionWrite(BrowserSessionWriteOutcome Outcome, BrowserSession? Session);
+
 public sealed class BrowserSessionService(
     MinicloudDbContext db,
     IIdGenerator ids,
     TimeProvider timeProvider,
     IOptions<PortalSessionOptions>? options = null)
 {
+    // Bounds compare-and-swap retries; each retry means another writer committed to the same row in between.
+    private const int WriteAttempts = 4;
     private readonly PortalSessionOptions _policy = options?.Value ?? new PortalSessionOptions();
 
     public PortalSessionOptions Policy => _policy;
@@ -80,27 +100,45 @@ public sealed class BrowserSessionService(
             return new BrowserSessionValidation(null);
         }
 
+        var tokenHash = HashSecret(cookie);
         var session = await db.BrowserSessions
             .Include(x => x.User)
-            .SingleOrDefaultAsync(x => x.TokenHash == HashSecret(cookie), cancellationToken);
-        if (session is null || session.RevokedAt is not null)
+            .SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
+        for (var attempt = 0; session is not null && attempt < WriteAttempts; attempt++)
         {
-            return new BrowserSessionValidation(null);
+            if (attempt > 0)
+            {
+                await db.Entry(session).ReloadAsync(cancellationToken);
+                if (db.Entry(session).State == EntityState.Detached)
+                {
+                    break;
+                }
+            }
+            if (session.TokenHash != tokenHash || session.RevokedAt is not null)
+            {
+                break;
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var deadlines = GetDeadlines(session);
+            var expired = deadlines.ExpiresAt <= now || deadlines.IdleExpiresAt <= now;
+            if (!expired && session.User.KratosIdentityId == session.KratosIdentityId)
+            {
+                session.LastSeenAt = now;
+                await db.SaveChangesAsync(cancellationToken);
+                return new BrowserSessionValidation(session);
+            }
+
+            // End only the generation and deadlines that were judged; a concurrent rotation or renewal is re-read.
+            if (await WhereUnchanged(session).ExecuteUpdateAsync(
+                    update => update.SetProperty(x => x.RevokedAt, now), cancellationToken) == 1)
+            {
+                await db.Entry(session).ReloadAsync(cancellationToken);
+                return new BrowserSessionValidation(null, expired ? session.KratosSessionId : null);
+            }
         }
 
-        var now = timeProvider.GetUtcNow();
-        var deadlines = GetDeadlines(session);
-        var expired = deadlines.ExpiresAt <= now || deadlines.IdleExpiresAt <= now;
-        if (expired || session.User.KratosIdentityId != session.KratosIdentityId)
-        {
-            session.RevokedAt = now;
-            await db.SaveChangesAsync(cancellationToken);
-            return new BrowserSessionValidation(null, expired ? session.KratosSessionId : null);
-        }
-
-        session.LastSeenAt = now;
-        await db.SaveChangesAsync(cancellationToken);
-        return new BrowserSessionValidation(session);
+        return new BrowserSessionValidation(null);
     }
 
     public BrowserSessionDeadlines GetDeadlines(BrowserSession session)
@@ -117,10 +155,11 @@ public sealed class BrowserSessionService(
     }
 
     /// <summary>The idle deadline an accepted renewal would set now, or null when renewal is not yet due.</summary>
-    public DateTimeOffset? GetRenewalTarget(BrowserSession session)
+    public DateTimeOffset? GetRenewalTarget(BrowserSession session) =>
+        GetRenewalTarget(GetDeadlines(session), timeProvider.GetUtcNow());
+
+    private DateTimeOffset? GetRenewalTarget(BrowserSessionDeadlines deadlines, DateTimeOffset now)
     {
-        var now = timeProvider.GetUtcNow();
-        var deadlines = GetDeadlines(session);
         if (deadlines.RenewAfter is null || now < deadlines.RenewAfter || deadlines.IdleExpiresAt <= now ||
             deadlines.ExpiresAt <= now)
             return null;
@@ -129,59 +168,203 @@ public sealed class BrowserSessionService(
     }
 
     /// <summary>
-    /// Moves the idle deadline of a still-active session. The update is conditional on the session not being revoked,
-    /// so a renewal racing a logout or revocation can never restore it.
+    /// Renews the idle deadline of one cookie generation, deciding at commit time rather than when the request began.
+    /// The committed row is re-read and must still carry <paramref name="tokenHash"/>, be unrevoked, be before its idle
+    /// and absolute deadlines and be inside its renewal window under its current remembered flag; the write is then a
+    /// compare-and-swap on every column that decision read. A renewal that raced a logout, revocation, rotation,
+    /// expiry or preference change therefore cannot restore or extend the session, and competing renewals coalesce:
+    /// one is <see cref="BrowserSessionWriteOutcome.Applied"/>, the others observe the renewed state as
+    /// <see cref="BrowserSessionWriteOutcome.Unchanged"/> without extending it again.
     /// </summary>
-    public async Task<bool> RenewAsync(string sessionId, DateTimeOffset idleExpiresAt, CancellationToken cancellationToken)
+    /// <param name="upstreamExpiresAt">Expiry of the upstream session, which caps the renewed idle deadline.</param>
+    /// <exception cref="DbUpdateConcurrencyException">The session kept changing under the request.</exception>
+    public async Task<BrowserSessionWrite> RenewAsync(
+        string sessionId,
+        string tokenHash,
+        DateTimeOffset? upstreamExpiresAt,
+        CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
-        var updated = await db.BrowserSessions
-            .Where(x => x.Id == sessionId && x.RevokedAt == null)
-            .ExecuteUpdateAsync(update => update
-                .SetProperty(x => x.IdleExpiresAt, idleExpiresAt)
-                .SetProperty(x => x.RenewedAt, now)
-                .SetProperty(x => x.LastSeenAt, now), cancellationToken);
-        var tracked = db.BrowserSessions.Local.FirstOrDefault(x => x.Id == sessionId);
-        if (tracked is not null)
+        try
         {
-            await db.Entry(tracked).ReloadAsync(cancellationToken);
+            for (var attempt = 0; attempt < WriteAttempts; attempt++)
+            {
+                var current = await ReadCommittedAsync(sessionId, cancellationToken);
+                if (Ended(current, tokenHash) is { } ended)
+                {
+                    return ended;
+                }
+
+                var now = timeProvider.GetUtcNow();
+                var deadlines = GetDeadlines(current!);
+                if (deadlines.ExpiresAt <= now || deadlines.IdleExpiresAt <= now)
+                {
+                    if (await WhereUnchanged(current!).ExecuteUpdateAsync(
+                            update => update.SetProperty(x => x.RevokedAt, now), cancellationToken) == 1)
+                    {
+                        return new BrowserSessionWrite(BrowserSessionWriteOutcome.Expired, null);
+                    }
+                    continue;
+                }
+
+                var target = GetRenewalTarget(deadlines, now);
+                if (target is { } wanted && upstreamExpiresAt is { } upstream && upstream < wanted)
+                {
+                    target = upstream;
+                }
+                // Not due, already renewed by a competing request, or capped by the upstream session: report as is.
+                if (target is not { } renewed || renewed <= deadlines.IdleExpiresAt)
+                {
+                    return new BrowserSessionWrite(BrowserSessionWriteOutcome.Unchanged, current);
+                }
+
+                if (await WhereUnchanged(current!).ExecuteUpdateAsync(update => update
+                        .SetProperty(x => x.IdleExpiresAt, renewed)
+                        .SetProperty(x => x.RenewedAt, now)
+                        .SetProperty(x => x.LastSeenAt, now), cancellationToken) == 1)
+                {
+                    current!.IdleExpiresAt = renewed;
+                    current.RenewedAt = now;
+                    current.LastSeenAt = now;
+                    return new BrowserSessionWrite(BrowserSessionWriteOutcome.Applied, current);
+                }
+            }
+            throw new DbUpdateConcurrencyException("The session changed while it was being renewed.");
         }
-        return updated == 1;
+        finally
+        {
+            await ReloadTrackedAsync(sessionId, cancellationToken);
+        }
     }
 
     /// <summary>
-    /// Applies the user's "Keep me signed in" choice to their current session. Turning it on extends the maximum to the
-    /// remembered lifetime from sign-in; turning it off applies standard limits measured from sign-in.
+    /// Applies the user's "Keep me signed in" choice to the current session generation. Turning it on extends the
+    /// maximum to the remembered lifetime from sign-in; turning it off applies standard limits measured from sign-in.
+    /// The change is a compare-and-swap like <see cref="RenewAsync"/>, so it serializes deterministically with
+    /// renewals, revocation and rotation; the stored preference follows the session change in the same transaction.
     /// </summary>
-    public async Task<BrowserSession?> SetRememberedAsync(string sessionId, bool remembered, CancellationToken cancellationToken)
+    /// <exception cref="DbUpdateConcurrencyException">The session kept changing under the request.</exception>
+    public async Task<BrowserSessionWrite> SetRememberedAsync(
+        string sessionId,
+        string tokenHash,
+        bool remembered,
+        CancellationToken cancellationToken)
     {
-        var session = await db.BrowserSessions.Include(x => x.User)
-            .SingleOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
-        if (session is null || session.RevokedAt is not null)
-        {
-            return null;
-        }
-
         var effective = remembered && _policy.KeepSignedInEnabled;
-        var now = timeProvider.GetUtcNow();
-        session.User.KeepSignedIn = remembered;
-        session.User.UpdatedAt = now;
-        if (session.Persistent != effective)
+        try
         {
-            session.Persistent = effective;
-            session.ExpiresAt = session.CreatedAt.Add(_policy.MaxLifetime(effective));
-            session.IdleExpiresAt = effective
-                ? session.IdleExpiresAt
-                : Min(session.IdleExpiresAt, now.Add(_policy.IdleTimeout(false)));
+            for (var attempt = 0; attempt < WriteAttempts; attempt++)
+            {
+                var current = await ReadCommittedAsync(sessionId, cancellationToken);
+                if (Ended(current, tokenHash) is { } ended)
+                {
+                    return ended;
+                }
+
+                var now = timeProvider.GetUtcNow();
+                var next = Copy(current!);
+                if (next.Persistent != effective)
+                {
+                    next.Persistent = effective;
+                    next.ExpiresAt = next.CreatedAt.Add(_policy.MaxLifetime(effective));
+                    next.IdleExpiresAt = effective
+                        ? next.IdleExpiresAt
+                        : Min(next.IdleExpiresAt, now.Add(_policy.IdleTimeout(false)));
+                }
+                var deadlines = GetDeadlines(next);
+                DateTimeOffset? revokedAt = deadlines.ExpiresAt <= now || deadlines.IdleExpiresAt <= now ? now : null;
+                next.RevokedAt = revokedAt;
+                next.User.KeepSignedIn = remembered;
+                next.User.UpdatedAt = now;
+
+                var applied = await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+                    if (await WhereUnchanged(current!).ExecuteUpdateAsync(update => update
+                            .SetProperty(x => x.Persistent, next.Persistent)
+                            .SetProperty(x => x.ExpiresAt, next.ExpiresAt)
+                            .SetProperty(x => x.IdleExpiresAt, next.IdleExpiresAt)
+                            .SetProperty(x => x.RevokedAt, revokedAt), cancellationToken) != 1)
+                    {
+                        return false;
+                    }
+                    await db.Users.Where(x => x.Id == next.UserId).ExecuteUpdateAsync(update => update
+                        .SetProperty(x => x.KeepSignedIn, remembered)
+                        .SetProperty(x => x.UpdatedAt, now), cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    return true;
+                });
+                if (applied)
+                {
+                    return revokedAt is null
+                        ? new BrowserSessionWrite(BrowserSessionWriteOutcome.Applied, next)
+                        : new BrowserSessionWrite(BrowserSessionWriteOutcome.Expired, null);
+                }
+            }
+            throw new DbUpdateConcurrencyException("The session changed while its preference was being applied.");
         }
-        var deadlines = GetDeadlines(session);
-        if (deadlines.ExpiresAt <= now || deadlines.IdleExpiresAt <= now)
+        finally
         {
-            session.RevokedAt = now;
+            await ReloadTrackedAsync(sessionId, cancellationToken);
         }
-        await db.SaveChangesAsync(cancellationToken);
-        return session;
     }
+
+    private Task<BrowserSession?> ReadCommittedAsync(string sessionId, CancellationToken cancellationToken) =>
+        db.BrowserSessions.AsNoTracking().Include(x => x.User)
+            .SingleOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
+
+    private static BrowserSessionWrite? Ended(BrowserSession? current, string tokenHash) =>
+        current is null ? new BrowserSessionWrite(BrowserSessionWriteOutcome.Revoked, null)
+        : !string.Equals(current.TokenHash, tokenHash, StringComparison.Ordinal)
+            ? new BrowserSessionWrite(BrowserSessionWriteOutcome.Superseded, null)
+        : current.RevokedAt is not null || current.User.KratosIdentityId != current.KratosIdentityId
+            ? new BrowserSessionWrite(BrowserSessionWriteOutcome.Revoked, null)
+        : null;
+
+    /// <summary>
+    /// Matches the row only while it is still the same unrevoked generation with the lifetime the caller judged.
+    /// <see cref="BrowserSession.LastSeenAt"/> is excluded so request bookkeeping never conflicts with a decision.
+    /// </summary>
+    private IQueryable<BrowserSession> WhereUnchanged(BrowserSession expected)
+    {
+        var (id, tokenHash, persistent) = (expected.Id, expected.TokenHash, expected.Persistent);
+        var (createdAt, expiresAt, idleExpiresAt, renewedAt) =
+            (expected.CreatedAt, expected.ExpiresAt, expected.IdleExpiresAt, expected.RenewedAt);
+        return db.BrowserSessions.Where(x => x.Id == id && x.TokenHash == tokenHash && x.RevokedAt == null &&
+            x.Persistent == persistent && x.CreatedAt == createdAt && x.ExpiresAt == expiresAt &&
+            x.IdleExpiresAt == idleExpiresAt && x.RenewedAt == renewedAt);
+    }
+
+    private async Task ReloadTrackedAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        var tracked = db.BrowserSessions.Local.FirstOrDefault(x => x.Id == sessionId);
+        if (tracked is null)
+        {
+            return;
+        }
+        await db.Entry(tracked).ReloadAsync(cancellationToken);
+        if (tracked.User is { } user && db.Entry(user).State != EntityState.Detached)
+        {
+            await db.Entry(user).ReloadAsync(cancellationToken);
+        }
+    }
+
+    private static BrowserSession Copy(BrowserSession session) => new()
+    {
+        Id = session.Id,
+        UserId = session.UserId,
+        KratosIdentityId = session.KratosIdentityId,
+        KratosSessionId = session.KratosSessionId,
+        TokenHash = session.TokenHash,
+        CsrfTokenHash = session.CsrfTokenHash,
+        Persistent = session.Persistent,
+        CreatedAt = session.CreatedAt,
+        LastSeenAt = session.LastSeenAt,
+        RenewedAt = session.RenewedAt,
+        ExpiresAt = session.ExpiresAt,
+        IdleExpiresAt = session.IdleExpiresAt,
+        RevokedAt = session.RevokedAt,
+        User = session.User
+    };
 
     public async Task<CreatedBrowserSession> CreateOrRotateAsync(
         string userId,
@@ -261,6 +444,17 @@ public sealed class BrowserSessionService(
     {
         var csrfToken = CreateCsrfToken(cookie, session.Id);
         return VerifySecret(session.CsrfTokenHash, csrfToken) ? csrfToken : null;
+    }
+
+    /// <summary>Reads the committed row, bypassing any instance tracked earlier in the request.</summary>
+    public Task<BrowserSession?> FindCommittedAsync(string sessionId, CancellationToken cancellationToken) =>
+        ReadCommittedAsync(sessionId, cancellationToken);
+
+    public bool IsExpired(BrowserSession session)
+    {
+        var now = timeProvider.GetUtcNow();
+        var deadlines = GetDeadlines(session);
+        return deadlines.ExpiresAt <= now || deadlines.IdleExpiresAt <= now;
     }
 
     public async Task<BrowserSession?> FindByIdAsync(string sessionId, CancellationToken cancellationToken) =>
