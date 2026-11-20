@@ -33,7 +33,10 @@ STORAGE_TIERS = Path("/opt/minicloud-workspace/storage_tiers.py")
 EXPECTED_RUNTIME_SHA256 = None
 ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
-UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
+T3_UNIT = "minicloud-t3.service"
+WORK_CGROUP = Path("/sys/fs/cgroup/minicloudwork.slice")
+T3_CGROUP = WORK_CGROUP / T3_UNIT
+UNITS = (T3_UNIT, "minicloud-workspace.service",
          "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service",
          "minicloud-scratch-mounts.service", "minicloud-scratch-watch.service")
 SCRATCH_HELPER = Path("/opt/minicloud-workspace/scratch_mounts.py")
@@ -403,6 +406,7 @@ class Native:
         self.alias = None
         self.client = None
         self.environment_id = None
+        self.t3_project_id = str(uuid.uuid4())
         self.config = None
         self.owns_runtime = False
         self.shell_pid = None
@@ -955,7 +959,7 @@ class Native:
                 secret.write(token)
             tokens[name] = str(path)
         self.client = T3Client(self.directory)
-        result = self.client.call("init", tokenFiles=tokens, createProject=True)
+        result = self.client.call("init", tokenFiles=tokens, createProject=True, projectId=self.t3_project_id)
         self.environment_id = result.pop("environmentId")
         self.snapshot = result["snapshotSequence"]
         return {**result, "tokenFilesRootOnly": True, "freshBootstrapStartedT3WithoutManualStart": True}
@@ -999,19 +1003,25 @@ class Native:
                     noT3AccountApprovalRequested=True)
 
     def t3_unit(self):
+        properties = ["ActiveState", "SubState", "Result", "Job", "MainPID", "ControlPID", "NRestarts",
+                      "ExecMainCode", "ExecMainStatus"]
         values = dict(line.split("=", 1) for line in command(
-            ["systemctl", "show", "minicloud-t3.service", "-p", "ActiveState", "-p", "SubState",
-             "-p", "Result", "-p", "MainPID", "-p", "NRestarts"]).splitlines() if "=" in line)
-        values["MainPID"] = int(values["MainPID"])
-        values["NRestarts"] = int(values["NRestarts"])
+            ["systemctl", "show", T3_UNIT, "-p", ",".join(properties)]).splitlines() if "=" in line)
+        check(values.keys() == set(properties), "T3_UNIT_PROPERTIES_MISSING")
+        for key in ("MainPID", "ControlPID", "NRestarts", "ExecMainCode", "ExecMainStatus"):
+            values[key] = int(values[key])
         return values
 
-    def kill_t3_main(self):
+    def signal_t3_main(self, sig):
         pid = self.t3_unit()["MainPID"]
-        check(pid > 0 and Path("/proc", str(pid), "cgroup").read_text().strip() ==
-              "0::/minicloudwork.slice/minicloud-t3.service", "T3_MAIN_PID_NOT_IN_OWNED_CGROUP")
-        os.kill(pid, signal.SIGKILL)
+        self.check_t3_pid(pid)
+        os.kill(pid, sig)
         return pid
+
+    @staticmethod
+    def check_t3_pid(pid):
+        check(pid > 0 and Path("/proc", str(pid), "cgroup").read_text().strip() ==
+              "0::/minicloudwork.slice/" + T3_UNIT, "T3_PID_NOT_IN_OWNED_CGROUP")
 
     def wait_t3(self, predicate, seconds=30):
         seen = {}
@@ -1022,18 +1032,36 @@ class Native:
         self.wait(probe, seconds=seconds)
         return dict(seen)
 
-    def t3_stays_stopped(self):
-        # Outlast RestartSec=5 so a surviving restart job would have fired.
-        time.sleep(6)
-        state = self.t3_unit()
-        check(state["ActiveState"] == "inactive" and state["MainPID"] == 0 and
-              not any(p["cgroup"] == "0::/minicloudwork.slice/minicloud-t3.service"
-                      for p in self.rt.Procfs().inventory().values()),
-              "T3_REVIVED_AFTER_INTENTIONAL_STOP")
+    def t3_restart_delay(self, result):
+        state = self.wait_t3(lambda s: s["SubState"] == "auto-restart", seconds=10)
+        # On the image's systemd, RestartSec is a timer; the start job is installed later.
+        check(state["ActiveState"] == "activating" and state["Result"] == result and state["Job"] == ""
+              and state["MainPID"] == state["ControlPID"] == 0, "T3_RESTART_DELAY_NOT_OBSERVED")
+        return state
 
-    def t3_recovered(self, previous_pid):
+    def check_t3_freezer(self, frozen):
+        expected = "1" if frozen else "0"
+        check((WORK_CGROUP / "cgroup.freeze").read_text().strip() == expected and
+              "frozen " + expected in (WORK_CGROUP / "cgroup.events").read_text().splitlines(),
+              "T3_UNEXPECTED_WORK_SLICE_FREEZER_STATE")
+
+    def t3_stays_stopped(self, *, frozen=False, failed=False):
+        # Check immediately and through an entire RestartSec=5 window.
+        deadline = time.monotonic() + 6
+        expected = ("failed", "failed", "signal") if failed else ("inactive", "dead", "success")
+        while True:
+            state = self.t3_unit()
+            check((state["ActiveState"], state["SubState"], state["Result"]) == expected and
+                  state["Job"] == "" and state["MainPID"] == state["ControlPID"] == 0 and
+                  self.rt.Linux.t3_cgroup_empty(), "T3_DID_NOT_REMAIN_STOPPED")
+            self.check_t3_freezer(frozen)
+            if time.monotonic() >= deadline:
+                return state
+            time.sleep(0.2)
+
+    def t3_ready(self, previous_pid=0):
         def ready(state):
-            if state["ActiveState"] != "active" or state["MainPID"] in (0, previous_pid):
+            if state["SubState"] != "running" or state["Job"] != "" or state["MainPID"] in (0, previous_pid):
                 return False
             client = http.client.HTTPConnection("127.0.0.1", 3773, timeout=5)
             try:
@@ -1041,13 +1069,17 @@ class Native:
                 return client.getresponse().status == 200
             finally:
                 client.close()
-        self.wait_t3(ready, seconds=90)
+        return self.wait_t3(ready, seconds=90)
+
+    def t3_recovered(self, previous_pid):
+        self.t3_ready(previous_pid)
         self.wait(lambda: command(["systemctl", "is-active", "minicloud-t3-connect.service"]) == "active")
         if self.client is not None:
             self.client.close()
         self.client = T3Client(self.directory)
-        result = self.client.call("init", tokenFiles={name: str(self.directory / (name + ".secret"))
-                                                      for name in ("operate", "readonly")})
+        result = self.client.call("init", projectId=self.t3_project_id,
+                                  tokenFiles={name: str(self.directory / (name + ".secret"))
+                                              for name in ("operate", "readonly")})
         check(result.pop("environmentId") == self.environment_id, "T3_ENVIRONMENT_IDENTITY_CHANGED")
         check(result["realTicketWebSocketOpened"] is True and
               result["snapshotSequence"] >= self.snapshot, "T3_STATE_NOT_RETAINED_AFTER_RESTART")
@@ -1058,8 +1090,44 @@ class Native:
               "VM_GENERATION_CHANGED_DURING_T3_RECOVERY")
         check(status["workInventory"]["state"] == "IdleCandidate", "T3_RESTART_LEFT_UNKNOWN_WORK")
 
+    def t3_frozen_stop(self, adapter, stop_at):
+        before = self.t3_ready()
+        try:
+            if stop_at != "before-freeze":
+                adapter.freeze()
+                self.check_t3_freezer(True)
+            if stop_at == "start-pre":
+                # In the disposable fixture, kill the monitor too. A remaining
+                # service cgroup lets systemd thaw its parent on a restart job.
+                self.check_t3_pid(before["MainPID"])
+                command(["systemctl", "kill", "--kill-whom=all", "--signal=SIGKILL", T3_UNIT])
+            else:
+                self.signal_t3_main(signal.SIGKILL)
+            during_delay = self.t3_restart_delay("signal")
+            if stop_at == "before-freeze":
+                self.check_t3_freezer(False)
+                adapter.freeze()
+            self.check_t3_freezer(True)
+            if stop_at == "start-pre":
+                before_stop = self.wait_t3(lambda s: s["SubState"] == "start-pre", seconds=10)
+                check(before_stop["ActiveState"] == "activating" and before_stop["MainPID"] == 0 and
+                      before_stop["Job"].isdecimal() and int(before_stop["Job"]) > 0 and
+                      before_stop["NRestarts"] == before["NRestarts"] + 1,
+                      "T3_FROZEN_PRESTART_JOB_NOT_OBSERVED")
+                self.check_t3_pid(before_stop["ControlPID"])
+            else:
+                before_stop = self.t3_restart_delay("signal")
+            self.check_t3_freezer(True)
+            adapter.stop_services()
+            after_stop = self.t3_stays_stopped(frozen=True)
+        finally:
+            adapter.thaw()
+        self.check_t3_freezer(False)
+        return dict(restartDelay=during_delay, beforeRuntimeStop=before_stop,
+                    afterRuntimeStop=after_stop, stayedRefrozenPastRestartDelay=True)
+
     def t3_recovery(self):
-        unit = "minicloud-t3.service"
+        unit = T3_UNIT
         for prop, expected in (("Restart", "on-failure"), ("RestartUSec", "5s"), ("OOMPolicy", "stop"),
                                ("StartLimitBurst", "5"), ("StartLimitIntervalUSec", "5min"),
                                ("KillMode", "process"), ("SendSIGKILL", "no")):
@@ -1067,75 +1135,82 @@ class Native:
                   "UNQUALIFIED_T3_RESTART_POLICY")
         adapter = self.rt.Linux(self.config)
         evidence = {}
-        # Count this probe's starts from zero against StartLimitBurst=5.
         command(["systemctl", "reset-failed", unit])
+        before = self.t3_ready()
+        pid = self.signal_t3_main(signal.SIGKILL)
+        evidence["sigkillRestartDelay"] = self.t3_restart_delay("signal")
+        self.check_t3_freezer(False)
+        self.t3_recovered(pid)
+        check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_CRASH_NOT_AUTOMATICALLY_RESTARTED")
+        evidence["sigkillAutomaticallyRestartedWithSameIdentityAndProject"] = True
 
         # A real kernel cgroup OOM kill, as in the incident, rather than a synthetic signal.
-        before = self.wait_t3(lambda s: s["ActiveState"] == "active" and s["MainPID"] > 0)
-        cgroup = Path("/sys/fs/cgroup/minicloudwork.slice", unit)
-        limit, swap = cgroup / "memory.max", cgroup / "memory.swap.max"
-        check(limit.is_file() and limit.read_text().strip() == "max", "T3_MEMORY_LIMIT_UNAVAILABLE")
+        before = self.t3_ready()
+        limit, swap = T3_CGROUP / "memory.max", T3_CGROUP / "memory.swap.max"
+        check(limit.read_text().strip() == "max", "T3_MEMORY_LIMIT_UNAVAILABLE")
+        limits = {path: path.read_text().strip() for path in (limit, swap) if path.is_file()}
         try:
-            if swap.is_file():
+            if swap in limits:
                 swap.write_text("0")
             limit.write_text(str(1024**2))
         finally:
-            for path in (limit, swap):
+            for path, value in limits.items():
                 try:
-                    if path.is_file():
-                        path.write_text("max")
+                    path.write_text(value)
                 except FileNotFoundError:
-                    pass
-        crashed = self.wait_t3(lambda s: s["SubState"].startswith("auto-restart"), seconds=10)
-        check(crashed["Result"] == "oom-kill" and crashed["MainPID"] == 0, "T3_OOM_KILL_NOT_OBSERVED")
+                    pass  # The killed unit's cgroup was reaped.
+        evidence["oomRestartDelay"] = self.t3_restart_delay("oom-kill")
+        self.check_t3_freezer(False)
         self.t3_recovered(before["MainPID"])
         check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_OOM_NOT_AUTOMATICALLY_RESTARTED")
         evidence["oomKillAutomaticallyRestarted"] = True
 
-        # Crash, then an explicit stop while the restart is pending.
-        pid = self.kill_t3_main()
-        crashed = self.wait_t3(lambda s: s["SubState"].startswith("auto-restart"), seconds=10)
-        check(crashed["Result"] == "signal", "T3_CRASH_NOT_OBSERVED")
+        self.signal_t3_main(signal.SIGKILL)
+        self.t3_restart_delay("signal")
+        self.check_t3_freezer(False)
         command(["systemctl", "stop", unit])
         self.t3_stays_stopped()
-        adapter.start_services()
         evidence["stopDuringPendingRestartStaysStopped"] = True
 
-        # Crash inside a frozen drain, then the runtime's actual stop sequence.
-        self.wait_t3(lambda s: s["ActiveState"] == "active" and s["MainPID"] not in (0, pid))
-        adapter.freeze()
-        try:
-            pid = self.kill_t3_main()
-            self.wait_t3(lambda s: s["SubState"].startswith("auto-restart") and s["MainPID"] == 0, seconds=10)
-            time.sleep(6)
-            check(self.t3_unit()["MainPID"] == 0, "T3_RESTARTED_INSIDE_FROZEN_SLICE")
-            adapter.stop_services()
-            check("frozen 1" in Path("/sys/fs/cgroup/minicloudwork.slice/cgroup.events").read_text(),
-                  "STOP_DID_NOT_REFREEZE")
-        finally:
-            adapter.thaw()
-        self.t3_stays_stopped()
-        adapter.start_services()
-        evidence["frozenCrashThenRuntimeStopStaysStopped"] = True
+        frozen = {}
+        for stop_at in ("before-freeze", "auto-restart", "start-pre"):
+            adapter.start_services()
+            frozen[stop_at] = self.t3_frozen_stop(adapter, stop_at)
+        evidence.update(frozenCrashThenRuntimeStopStaysStopped=True, frozenStopStages=frozen)
 
-        # Exhaust the budget; failure must stay visible until an explicit start.
-        state = self.wait_t3(lambda s: s["ActiveState"] == "active" and s["MainPID"] not in (0, pid))
-        for kills in range(1, 7):
-            pid = self.kill_t3_main()
+        adapter.start_services()
+        self.t3_ready()
+        self.signal_t3_main(signal.SIGINT)
+        exited = self.wait_t3(lambda s: s["ActiveState"] == "inactive")
+        check(exited["ExecMainCode"] == 1 and exited["ExecMainStatus"] == 130,
+              "T3_INTENTIONAL_EXIT_130_NOT_OBSERVED")
+        self.t3_stays_stopped()
+        evidence["exit130StaysStopped"] = True
+
+        # Reset while loaded, then count a fresh explicit start as the first of five.
+        adapter.start_services()
+        command(["systemctl", "reset-failed", unit])
+        budget_started = time.monotonic()
+        command(["systemctl", "restart", unit])
+        for kills in range(1, 6):
+            self.t3_ready()
+            pid = self.signal_t3_main(signal.SIGKILL)
+            delayed = self.t3_restart_delay("signal")
+            check(delayed["NRestarts"] == kills - 1, "T3_RETRY_COUNTER_UNEXPECTED")
             state = self.wait_t3(lambda s: s["ActiveState"] == "failed" or
                                  s["MainPID"] not in (0, pid), seconds=20)
-            if state["ActiveState"] == "failed":
-                break
-        # systemd reports start-limit-hit or keeps the crash result, depending on version.
-        check(state["ActiveState"] == "failed" and state["Result"] != "success",
-              "T3_RETRY_BUDGET_NOT_BOUNDED")
-        exhausted = state["Result"]
-        time.sleep(6)
-        check(self.t3_unit()["ActiveState"] == "failed", "T3_EXHAUSTED_FAILURE_NOT_VISIBLE")
+            if kills < 5:
+                check(state["ActiveState"] == "active" and state["NRestarts"] == kills,
+                      "T3_RETRY_BUDGET_EXHAUSTED_EARLY")
+        budget_seconds = time.monotonic() - budget_started
+        check(budget_seconds < 300, "T3_RETRY_BUDGET_WINDOW_EXCEEDED")
+        exhausted = self.t3_stays_stopped(failed=True)
+        check(exhausted["NRestarts"] == 5, "T3_RETRY_COUNTER_UNEXPECTED")
         command(["systemctl", "reset-failed", unit])
         adapter.start_services()
         self.t3_recovered(pid)
-        evidence.update(retryBudgetExhaustedResult=exhausted, crashesUntilBudgetExhausted=kills,
+        evidence.update(retryBudgetExhaustedResult=exhausted["Result"], crashesUntilBudgetExhausted=kills,
+                        retryBudgetExhaustedInSeconds=round(budget_seconds, 2),
                         exhaustedFailureStayedVisible=True,
                         sameVmGeneration=True, retainedVolumeUuid=True, environmentIdentityRetained=True,
                         authenticatedHttpAndWebSocketRecovered=True, connectManagementRecovered=True,
