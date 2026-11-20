@@ -25,10 +25,11 @@ async function open() {
 describe("CreateWorkspaceDialog", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    sessionStorage.clear();
     vi.mocked(getWorkspaceSelections).mockResolvedValue(catalog([standard]));
     vi.mocked(createDevelopmentWorkspace).mockResolvedValue(workspace);
   });
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it("does not offer creation or request eligibility to read-only users", () => {
     render(<CreateWorkspaceDialog {...props} canManage={false} />);
@@ -73,6 +74,25 @@ describe("CreateWorkspaceDialog", () => {
     await open();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Summary" })).toHaveTextContent("large · 4 vCPU, 16 GB RAM");
+  });
+
+  it.each([
+    { hourly: 0, storageRate: 0, storage: "$0.00", total: "$0.00" },
+    { hourly: 1000, storageRate: 50, storage: "$1,000.00", total: "$721,000.00" },
+  ])("keeps a $total monthly projection informational and allows automatic startup", async ({ hourly, storageRate, storage, total }) => {
+    vi.mocked(getWorkspaceSelections).mockResolvedValue({
+      ...catalog([{ ...standard, computeHourlyRate: hourly }]), volumeMonthlyRatePerGb: storageRate,
+    });
+    render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    const estimate = screen.getByRole("group", { name: "Projected monthly cost" });
+    expect(estimate).toHaveTextContent(`Storage${storage}/month`);
+    expect(estimate).toHaveTextContent(`Projected monthly total${total} if the VM runs 720 hours this month`);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    expect(submitButton()).toBeEnabled();
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith(workspace));
+    expect(createDevelopmentWorkspace).toHaveBeenCalledWith(expect.objectContaining({ startPrimaryVm: true }));
   });
 
   it("asks for a choice inline when several options have no default, and allows customization", async () => {
@@ -159,6 +179,84 @@ describe("CreateWorkspaceDialog", () => {
     await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith(workspace));
     const calls = vi.mocked(createDevelopmentWorkspace).mock.calls;
     expect(calls[0][0]).toEqual(calls[1][0]);
+  });
+
+  it("reuses an uncertain create after cancel, remount or refresh instead of creating and starting another environment", async () => {
+    vi.mocked(createDevelopmentWorkspace).mockRejectedValueOnce(new Error("Connection interrupted; result unknown."));
+    const first = render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    first.unmount();
+
+    render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    expect(createDevelopmentWorkspace).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith(workspace));
+    const calls = vi.mocked(createDevelopmentWorkspace).mock.calls;
+    expect(calls[1][0]).toEqual(calls[0][0]);
+  });
+
+  it("keeps an in-flight create's key after unmount, even if its response arrives before the retry", async () => {
+    let resolve!: (value: DevelopmentWorkspace) => void;
+    vi.mocked(createDevelopmentWorkspace).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const first = render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    first.unmount();
+    resolve(workspace);
+    await waitFor(() => expect(props.onCreated).not.toHaveBeenCalled());
+
+    render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith(workspace));
+    const calls = vi.mocked(createDevelopmentWorkspace).mock.calls;
+    expect(calls[1][0]).toEqual(calls[0][0]);
+  });
+
+  it("does not send a create when browser storage cannot preserve a safe retry", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Quota exceeded", "QuotaExceededError"); });
+    render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("No create request was sent.");
+    expect(createDevelopmentWorkspace).not.toHaveBeenCalled();
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("separates changed requests while retaining uncertain retries and clears an acknowledged success", async () => {
+    vi.mocked(createDevelopmentWorkspace)
+      .mockRejectedValueOnce(new Error("Result unknown."))
+      .mockRejectedValueOnce(new Error("Result unknown."));
+    render(<CreateWorkspaceDialog {...props} />);
+    await open();
+    const name = screen.getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    await screen.findByRole("alert");
+    fireEvent.change(name, { target: { value: "Different environment" } });
+    fireEvent.click(submitButton());
+    await screen.findByRole("alert");
+    fireEvent.change(name, { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(props.onCreated).toHaveBeenCalledTimes(1));
+
+    await open();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API sandbox" } });
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(props.onCreated).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(createDevelopmentWorkspace).mock.calls;
+    expect(calls[0][0].idempotencyKey).not.toEqual(calls[1][0].idempotencyKey);
+    expect(calls[2][0]).toEqual(calls[0][0]);
+    expect(calls[3][0].idempotencyKey).not.toEqual(calls[0][0].idempotencyKey);
   });
 
   it("reloads options after a stale-selection rejection and asks only for the stale choice", async () => {
