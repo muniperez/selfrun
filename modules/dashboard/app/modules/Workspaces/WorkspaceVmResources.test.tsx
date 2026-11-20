@@ -37,6 +37,19 @@ it("shows current CPU, memory, disk and file slot availability with the sample t
   expect(section.textContent).toContain(new Date("2026-01-01T10:00:00Z").toLocaleString());
 });
 
+it("labels the retained volume and scratch storage when the image reports storage tiers", () => {
+  render(<WorkspaceVmResources vm={vm({ filesystems: [
+    { paths: ["/"], roles: ["system", "scratch"], totalBytes: 30 * GiB, freeBytes: 20 * GiB, availableBytes: 18 * GiB },
+    { paths: ["/workspace"], roles: ["workspace"], totalBytes: 100 * GiB, freeBytes: 45 * GiB, availableBytes: 40 * GiB,
+      nestedMountsExcluded: 0, scratchBindMounts: 2 }] })} />);
+  const section = screen.getByRole("region", { name: "Resources for dev environment vm-1" });
+  expect(within(section).getByText("System disk /")).toBeTruthy();
+  expect(within(section).getByText("Retained volume /workspace")).toBeTruthy();
+  expect(section.textContent).toContain("Also holds scratch storage: caches and build outputs");
+  expect(section.textContent).toContain("2 build output folders are kept on scratch storage, not counted here");
+  expect(section.textContent).not.toContain("separately mounted");
+});
+
 it("marks stale and stopped samples instead of presenting them as current", () => {
   const { rerender } = render(<WorkspaceVmResources vm={vm({ state: "stale" })} />);
   expect(screen.getByText("Stale")).toBeTruthy();

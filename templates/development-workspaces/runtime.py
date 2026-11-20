@@ -36,7 +36,7 @@ DIAGNOSTIC_STAGES = frozenset({
     "request", "git-preflight", "freeze-guard", "idle-before-freeze", "kernel-freeze",
     "idle-after-freeze", "t3-snapshot", "stop-services", "idle-after-stop",
     "t3-final-snapshot", "remount-readonly", "verify-fence", "git-inspect",
-    "git-reinspect", "resume", "cancel-drain",
+    "git-reinspect", "resume", "cancel-drain", "scratch-suspend", "scratch-unmount",
 })
 
 
@@ -673,10 +673,15 @@ def t3_idle_database(path, expected_sequence):
 RESOURCE_SAMPLE_SECONDS = 30
 RESOURCE_PROBE_SECONDS = 2
 FS_HELPER = "/opt/minicloud-workspace/disk_usage.py"
+SCRATCH_HELPER = "/opt/minicloud-workspace/scratch_mounts.py"
+SCRATCH_UNITS = ("minicloud-scratch-watch.service", "minicloud-scratch-mounts.service")
 FS_JOB_PATTERN = r"[A-Za-z0-9_-]{8,128}"
 FS_JOB_RETENTION_SECONDS = 24 * 3600
 FS_OUTPUT_LIMIT = 320 * 1024
 FS_DELETE_ROOTS = ("repos", "home", "artifacts")
+# Storage tiers (#202): caches, temporary files and build outputs live on the VM's local disk.
+SCRATCH_ROOT = "/var/lib/minicloud-scratch"
+SCRATCH_ENV = "/opt/minicloud-workspace/scratch.env"
 
 
 def _unescape_mount(value):
@@ -690,8 +695,9 @@ class ResourceSampler:
     up to RESOURCE_SAMPLE_SECONDS and CPU utilization comes from the delta between two samples.
     """
     def __init__(self, proc=Path("/proc"), monotonic=time.monotonic, wall=time.time, statvfs=os.statvfs,
-                 stat_path=os.stat, probe_seconds=RESOURCE_PROBE_SECONDS):
+                 stat_path=os.stat, probe_seconds=RESOURCE_PROBE_SECONDS, scratch=SCRATCH_ROOT):
         self.proc = Path(proc)
+        self.scratch = scratch
         self.monotonic = monotonic
         self.wall = wall
         self.statvfs = statvfs
@@ -794,40 +800,79 @@ class ResourceSampler:
         if "error" in box:
             unavailable["filesystems"] = "unreadable"
             return []
-        return box["value"]
+        filesystems, reasons = box["value"]
+        unavailable.update(reasons)
+        return filesystems
 
-    def _mounts(self):
-        mounts = []
+    def _mount_table(self):
+        rows = []
         for line in (self.proc / "self/mountinfo").read_text().splitlines():
             fields = line.split(" ")
             if len(fields) > 4:
-                mounts.append(_unescape_mount(fields[4]))
-        return mounts
+                rows.append((fields[2], _unescape_mount(fields[3]), _unescape_mount(fields[4])))
+        return rows
 
     def _probe_filesystems(self, workspace):
         workspace = os.path.normpath(workspace)
         try:
-            mounts = self._mounts()
+            rows = self._mount_table()
         except OSError:
-            mounts = None
-        filesystems = {}
-        for path in ("/", workspace):
-            device = self.stat_path(path).st_dev
+            rows = None
+        filesystems, unavailable = {}, {}
+        for path, role in (("/", "system"), (workspace, "workspace"), (self.scratch, "scratch")):
+            try:
+                device = self.stat_path(path).st_dev
+            except OSError:
+                if role != "scratch":
+                    raise
+                unavailable["filesystems.scratch"] = "unreadable"
+                continue
             if device in filesystems:
-                filesystems[device]["paths"].append(path)
+                item = filesystems[device]
+                if role != "scratch":
+                    item["paths"].append(path)
+                item["roles"].append(role)
+                continue
+            if role == "scratch":
+                # The legacy control-plane contract accepts only "/" and the workspace as paths.
+                unavailable["filesystems.scratch"] = "separate_device"
                 continue
             info = self.statvfs(path)
             size = info.f_frsize or info.f_bsize
-            filesystems[device] = dict(paths=[path], totalBytes=info.f_blocks * size,
+            filesystems[device] = dict(paths=[path], roles=[role], totalBytes=info.f_blocks * size,
                                        freeBytes=info.f_bfree * size, availableBytes=info.f_bavail * size,
                                        inodesTotal=info.f_files or None,
                                        inodesAvailable=info.f_favail if info.f_files else None)
-        nested = None
-        if mounts is not None:
-            nested = sum(1 for mount in mounts if mount != workspace and mount.startswith(workspace.rstrip("/") + "/"))
+        nested = scratch = None
+        if rows is not None:
+            inside = {point for _, _, point in rows
+                      if point != workspace and point.startswith(workspace.rstrip("/") + "/")}
+            scratch = len(inside & scratch_bind_mounts(rows, self.scratch))
+            nested = len(inside) - scratch
         for item in filesystems.values():
-            item["nestedMountsExcluded"] = nested if workspace in item["paths"] else 0
-        return list(filesystems.values())
+            owns = workspace in item["paths"]
+            item["nestedMountsExcluded"] = nested if owns else 0
+            item["scratchBindMounts"] = scratch if owns else 0
+        return list(filesystems.values()), unavailable
+
+
+def scratch_bind_mounts(rows, scratch=SCRATCH_ROOT):
+    """Mountpoints whose source lies below the scratch repos directory (bind-mounted build outputs).
+
+    rows are (major:minor, root within the filesystem, mountpoint) from /proc/self/mountinfo.
+    """
+    source = scratch.rstrip("/") + "/repos"
+    best = None
+    for device, root, point in rows:
+        if (source == point or source.startswith(point.rstrip("/") + "/")) and \
+                (best is None or len(point) >= len(best[2])):
+            best = (device, root, point)
+    if best is None:
+        return set()
+    prefix = os.path.normpath(best[1].rstrip("/") + "/" + source[len(best[2].rstrip("/")):].lstrip("/"))
+    return {point for device, root, point in rows
+            if device == best[0] and (root == prefix or root.startswith(prefix.rstrip("/") + "/")) and
+            point != scratch and not point.startswith(scratch.rstrip("/") + "/")}
 
 
 RESOURCES = ResourceSampler()
@@ -920,7 +965,9 @@ class Linux:
              "--uid=" + str(self.config["uid"]), "--gid=" + str(self.config["gid"]),
              "--slice=minicloudwork.slice", "--working-directory=" + str(self.workspace),
              "--property=KillMode=control-group", "--property=NoNewPrivileges=yes",
-             "--property=ProtectSystem=strict", "--property=ReadWritePaths=" + str(self.workspace),
+             "--property=ProtectSystem=strict",
+             "--property=ReadWritePaths=" + str(self.workspace) + " -" + SCRATCH_ROOT,
+             "--property=EnvironmentFile=-" + SCRATCH_ENV,
              "--property=PrivateTmp=yes", "--setenv=HOME=" + str(self.workspace / "home"),
              "--", *argv])
         return unit
@@ -1138,7 +1185,35 @@ class Linux:
         options = run(["findmnt", "-rn", "-M", str(self.workspace), "-o", "OPTIONS"]).split(",")
         require("ro" in options, "Workspace did not become read-only")
 
+    # Build-output scratch bind mounts (scratch_mounts.py) never outlive a fence or the volume.
+    def scratch_helper(self, command):
+        if not Path(SCRATCH_HELPER).is_file():
+            return None  # Image without the helper: nothing is ever mounted.
+        output = run(["/usr/bin/python3", "-I", "-B", SCRATCH_HELPER, command], timeout=180)
+        try:
+            return json.loads(output.splitlines()[-1])
+        except (IndexError, ValueError) as error:
+            raise Blocked("Scratch mount helper returned no result") from error
+
+    def scratch_suspend(self):
+        if self.scratch_helper("suspend") is not None:
+            run(["systemctl", "stop", *SCRATCH_UNITS], timeout=150)
+
+    def scratch_detach(self):
+        self.scratch_suspend()
+        report = self.scratch_helper("unmount-all")
+        if report is None:
+            return None
+        require(report.get("failed") == 0, "Scratch build-output mounts remain under the workspace")
+        return dict(unmounted=report.get("unmounted", 0), lazy=report.get("lazy", 0),
+                    lazyPaths=report.get("lazyPaths", [])[:50])
+
+    def scratch_resume(self):
+        if self.scratch_helper("resume") is not None:
+            run(["systemctl", "start", "--no-block", *reversed(SCRATCH_UNITS)])
+
     def unmount(self):
+        self.scratch_helper("unmount-all")
         run(["umount", str(self.workspace)])
         result = subprocess.run(["findmnt", "-rn", "-M", str(self.workspace)],
                                 capture_output=True, timeout=30)
@@ -1198,6 +1273,10 @@ class Runtime:
     def save(self):
         self.s["revision"] += 1
         atomic_json(self.state_file, self.s)
+
+    def scratch(self, step):
+        method = getattr(self.adapter, "scratch_" + step, None)
+        return method() if method else None
 
     def receipt(self, receipt_type, operation, **extra):
         result = dict(schemaVersion=1, type=receipt_type, **self.identity(), operationId=operation,
@@ -1380,6 +1459,7 @@ class Runtime:
             self.adapter.layout()
             if self.c["kind"] == "ephemeral":
                 self.git.prepare(self.c.get("repositories", []), self.c["workspace"])
+            self.scratch("resume")  # Initial clones get their build-output mounts before T3 starts.
             self.s["phase"] = "Ready"
             self.save()
             return self.receipt("BootstrapReady", operation, toolchainReinstalled=False)
@@ -1431,6 +1511,7 @@ class Runtime:
             require(self.s["phase"] == "Fenced" and self.s.get("fenceOperation") == operation,
                     "Only an unfrozen pending drain can be cancelled")
             self.adapter.thaw()
+            self.scratch("resume")
             self.s["phase"] = "Ready"
             self.s.pop("fenceOperation", None)
             self.save()
@@ -1449,6 +1530,7 @@ class Runtime:
                 (self.root / prepared["objectId"]).unlink(missing_ok=True)
             if self.s.get("filesystemReadOnly", True):
                 self.adapter.writable()
+            self.scratch("resume")
             self.adapter.thaw()
             self.adapter.start_services()
             self.s["phase"] = "Ready"
@@ -1496,6 +1578,9 @@ class Runtime:
                 self.s["fenceOperation"] = operation
                 self.s["phase"] = "Fenced"
                 self.save()
+                # The helper acts as root over the checkout; it stops before any idle evidence.
+                self.diagnostic_stage = "scratch-suspend"
+                self.scratch("suspend")
                 # Check both before and after the kernel freeze to close the task-start race.
                 self.diagnostic_stage = "idle-before-freeze"
                 self.adapter.idle(self.s["tasks"])
@@ -1509,6 +1594,9 @@ class Runtime:
                 self.adapter.verify_t3_snapshot(sequence)
                 self.diagnostic_stage = "stop-services"
                 self.adapter.stop_services()
+                self.diagnostic_stage = "scratch-unmount"
+                self.s["scratchUnmount"] = self.scratch("detach")
+                self.save()
                 self.diagnostic_stage = "idle-after-stop"
                 self.adapter.idle(self.s["tasks"])
                 self.diagnostic_stage = "t3-final-snapshot"
@@ -1552,6 +1640,7 @@ class Runtime:
             self.save()
             return self.receipt("PrimaryQuiesced", operation, filesystemUuid=
                                 self.c["volume"]["filesystemUuid"], unmounted=True, backup=backup,
+                                scratchMounts=self.s.get("scratchUnmount"),
                                 t3State=self.s["frozenT3State"],
                                 t3SnapshotSequence=self.s["freezeHttpSequence"])
         if action == "receipt-validate":
@@ -1789,13 +1878,37 @@ def file_hash(path):
     return result.hexdigest()
 
 
+BACKUP_EXCLUDED = (".minicloud-volume.json", "lost+found")
+
+
+def backup_paths(source):
+    """Sorted one-file-system walk (tarfile order). Nested mount points are kept as empty
+    directories, never entered: scratch build outputs and other mounts stay out of backups."""
+    root = Path(source)
+    info = root.lstat()
+    device = info.st_dev
+    yield root, info
+    pending = [iter([root / name for name in sorted(os.listdir(root)) if name not in BACKUP_EXCLUDED])]
+    while pending:
+        path = next(pending[-1], None)
+        if path is None:
+            pending.pop()
+            continue
+        info = path.lstat()
+        yield path, info
+        if stat.S_ISDIR(info.st_mode) and info.st_dev == device:
+            pending.append(iter([path / name for name in sorted(os.listdir(path))]))
+
+
 def write_backup_archive(source, stream):
     lost = Path(source) / "lost+found"
     require(not lost.is_symlink() and (not lost.exists() or lost.is_dir() and not any(lost.iterdir())),
             "Backup filesystem metadata is unsafe or contains recovered data")
     with tarfile.open(fileobj=stream, mode="w|") as archive:
-        archive.add(source, arcname="data", recursive=True, filter=lambda member:
-                    None if member.name in ("data/.minicloud-volume.json", "data/lost+found") else member)
+        for path, _ in backup_paths(source):
+            relative = path.relative_to(source)
+            archive.add(path, arcname="data" if relative == Path(".") else "data/" + relative.as_posix(),
+                        recursive=False)
 
 
 def encrypt_archive(source, output, recipient):
@@ -1816,16 +1929,15 @@ def encrypt_archive(source, output, recipient):
 
 
 def validate_backup_tree(source):
-    for path in Path(source).rglob("*"):
-        mode = path.lstat().st_mode
+    for _, info in backup_paths(source):
+        mode = info.st_mode
         require(stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode),
                 "Backup contains unsupported live socket/device/FIFO")
 
 
 def representative_hashes(root):
-    files = [p for p in sorted(Path(root).rglob("*"))
-             if p.is_file() and not p.is_symlink() and under(p, root)
-             and p.name != ".minicloud-volume.json"]
+    files = sorted(p for p, info in backup_paths(root) if stat.S_ISREG(info.st_mode)
+                   and under(p, root) and p.name != ".minicloud-volume.json")
     first_per_category = {}
     for path in files:
         first_per_category.setdefault(path.relative_to(root).parts[0], path)

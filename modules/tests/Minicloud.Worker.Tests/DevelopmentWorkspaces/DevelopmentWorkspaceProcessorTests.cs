@@ -1265,6 +1265,36 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Fact]
+    public void ResourceSamplesKeepStorageTierRolesAndScratchBindMountCounts()
+    {
+        var observedAt = clock.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
+        object Sample(int scratchMounts) => new
+        {
+            resources = new
+            {
+                schemaVersion = 1, vmId = "vm-a", generation = 1, observedAt,
+                filesystems = new object[]
+                {
+                    new { paths = new[] { "/" }, roles = new[] { "system", "scratch", "bogus" }, totalBytes = 40L << 30,
+                        freeBytes = 30L << 30, availableBytes = 28L << 30, nestedMountsExcluded = 0, scratchBindMounts = 0 },
+                    new { paths = new[] { "/workspace" }, roles = new[] { "workspace" }, totalBytes = 100L << 30,
+                        freeBytes = 60L << 30, availableBytes = 55L << 30, nestedMountsExcluded = 1, scratchBindMounts = scratchMounts },
+                },
+                unavailable = new Dictionary<string, string> { ["filesystems.scratch"] = "separate_device" }
+            }
+        };
+        var stored = DevelopmentWorkspaceService.NormalizeResourceSample(
+            JsonSerializer.SerializeToElement(Sample(3), Json), "vm-a", 1, clock.GetUtcNow())!;
+        using var document = JsonDocument.Parse(stored);
+        var filesystems = document.RootElement.GetProperty("filesystems");
+        Assert.Equal(["system", "scratch"], filesystems[0].GetProperty("roles").EnumerateArray().Select(x => x.GetString()));
+        Assert.Equal(3, filesystems[1].GetProperty("scratchBindMounts").GetInt32());
+        Assert.Equal("separate_device", document.RootElement.GetProperty("unavailable").GetProperty("filesystems.scratch").GetString());
+        Assert.Null(DevelopmentWorkspaceService.NormalizeResourceSample(
+            JsonSerializer.SerializeToElement(Sample(-1), Json), "vm-a", 1, clock.GetUtcNow()));
+    }
+
+    [Fact]
     public async Task OldImagesReportResourcesAsUnsupportedAndRejectFolderJobs()
     {
         var (workspace, vm) = await SeedFilesystemReady(capabilities: "");

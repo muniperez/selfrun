@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import type { DevelopmentWorkspaceVmResources } from "@/api/workspaceFilesystemApi";
 import type { DevelopmentWorkspaceVm } from "@/models/controlPlane";
 
 export function formatBytes(bytes: number | null | undefined) {
@@ -17,6 +18,15 @@ export function formatTime(value: string | null | undefined) {
 const stateLabel = {
   current: "Current", stale: "Stale", historical: "Last known", unsupported: "Not supported",
 } as const;
+
+type Filesystem = DevelopmentWorkspaceVmResources["filesystems"][number];
+
+/** Older images report only paths; newer ones say which storage tier each filesystem holds. */
+function filesystemLabel(fs: Filesystem) {
+  if (fs.roles?.includes("workspace")) return `Retained volume ${fs.paths.join(", ")}`;
+  if (fs.roles?.includes("system")) return `System disk ${fs.paths.join(", ")}`;
+  return `Disk ${fs.paths.join(", ")}`;
+}
 
 export function WorkspaceVmResources({ vm }: { vm: DevelopmentWorkspaceVm }) {
   const resources = vm.resources;
@@ -48,12 +58,16 @@ export function WorkspaceVmResources({ vm }: { vm: DevelopmentWorkspaceVm }) {
       </dd></div>
       {resources.filesystems.length === 0 && <div><dt className="text-muted-foreground">Disk</dt><dd>Unavailable</dd></div>}
       {resources.filesystems.map(fs => <div key={fs.paths.join(",")}>
-        <dt className="text-muted-foreground">Disk {fs.paths.join(", ")}</dt>
+        <dt className="text-muted-foreground">{filesystemLabel(fs)}</dt>
         <dd>{formatBytes(fs.availableBytes)} available of {formatBytes(fs.totalBytes)}
           {fs.inodesTotal != null && fs.inodesAvailable != null && <span className="block text-xs text-muted-foreground">
             {fs.inodesAvailable.toLocaleString()} of {fs.inodesTotal.toLocaleString()} file slots free</span>}
           {!!fs.nestedMountsExcluded && <span className="block text-xs text-muted-foreground">
             Excludes {fs.nestedMountsExcluded} separately mounted folder{fs.nestedMountsExcluded === 1 ? "" : "s"}</span>}
+          {!!fs.scratchBindMounts && <span className="block text-xs text-muted-foreground">
+            {fs.scratchBindMounts} build output folder{fs.scratchBindMounts === 1 ? " is" : "s are"} kept on scratch storage, not counted here</span>}
+          {fs.roles?.includes("scratch") && <span className="block text-xs text-muted-foreground">
+            Also holds scratch storage: caches and build outputs, regenerated automatically and not kept when the VM is replaced</span>}
         </dd>
       </div>)}
     </dl>

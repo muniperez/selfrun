@@ -341,13 +341,15 @@ class BootstrapTests(unittest.TestCase):
 
     def test_headless_auth_uses_verified_singular_scope_duration_and_sensitive_stdout(self):
         self.config["workspace"] = str(self.root)
+        scopes = ["terminal:operate", "orchestration:operate", "terminal:read", "orchestration:read"]
         arguments = ["issue-t3-session.py", "--vm-id", "vm", "--generation", "2",
-                     "--operation-id", "session", "--subject", "authorized-user", "--ttl", "120",
-                     "--scope", "fixture-scope-one", "--scope", "fixture-scope-two",
+                     "--operation-id", "session", "--subject", "minicloud-gateway", "--ttl", "120",
+                     *[value for scope in scopes for value in ("--scope", scope)],
                      "--state-dir", str(self.root)]
         captured = io.StringIO()
         fake_runtime = SimpleNamespace(s={"phase": "Ready"}, validate_request=lambda request: None)
-        with patch.object(sys, "argv", arguments), patch.object(sys, "stdout", captured), \
+        with patch.dict(os.environ, {"GH_TOKEN": "synthetic-not-a-credential"}), \
+             patch.object(sys, "argv", arguments), patch.object(sys, "stdout", captured), \
              patch.object(issuer.os, "geteuid", return_value=0), \
              patch.object(issuer, "load_config", return_value=self.config), \
              patch.object(issuer, "Runtime", return_value=fake_runtime), \
@@ -357,7 +359,9 @@ class BootstrapTests(unittest.TestCase):
             issuer.main()
         argv = command.call_args.args[0]
         self.assertIn("120s", argv)
-        self.assertEqual(2, argv.count("--scope"))
+        self.assertEqual(scopes, [argv[index + 1] for index, value in enumerate(argv) if value == "--scope"])
+        self.assertEqual(argv[:7], ["runuser", "-u", "coding", "--", "env", "-i", "HOME=/workspace/home"])
+        self.assertNotIn("synthetic-not-a-credential", " ".join(argv))
         self.assertNotIn("--scopes", argv)
         self.assertNotIn("--dpop", argv)
         self.assertEqual(self.config["workspace"], command.call_args.kwargs["cwd"])

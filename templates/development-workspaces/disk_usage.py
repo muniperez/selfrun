@@ -7,6 +7,7 @@ directory file descriptors only, and prints exactly one bounded JSON document to
 """
 import json
 import os
+import re
 import signal
 import stat
 import sys
@@ -26,6 +27,9 @@ MAX_HARDLINKS = 100_000
 MAX_COMPONENTS = 64
 MAX_NAME_BYTES = 255
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+# Storage tiers (#202): build outputs bind-mounted from the local scratch disk are labelled, never walked.
+SCRATCH_ROOT = "/var/lib/minicloud-scratch"
+MOUNTINFO = "/proc/self/mountinfo"
 ERROR_CATEGORIES = ("permission_denied", "vanished", "separate_mount", "io_error", "limit_reached",
                     "name_not_supported", "changed_during_scan")
 
@@ -98,11 +102,37 @@ class Budget:
         return round(self.clock() - self.started, 3)
 
 
+def scratch_mountpoints(mountinfo=MOUNTINFO, scratch=SCRATCH_ROOT):
+    """Mountpoints whose source lies below the scratch repos directory. Unreadable means none."""
+    try:
+        with open(mountinfo, encoding="utf-8", errors="surrogateescape") as stream:
+            lines = stream.read().splitlines()
+    except OSError:
+        return set()
+    unescape = lambda value: re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+    rows = [(fields[2], unescape(fields[3]), unescape(fields[4]))
+            for fields in (line.split(" ") for line in lines) if len(fields) > 4]
+    source = scratch.rstrip("/") + "/repos"
+    best = None
+    for device, root, point in rows:
+        if (source == point or source.startswith(point.rstrip("/") + "/")) and \
+                (best is None or len(point) >= len(best[2])):
+            best = (device, root, point)
+    if best is None:
+        return set()
+    prefix = os.path.normpath(best[1].rstrip("/") + "/" + source[len(best[2].rstrip("/")):].lstrip("/"))
+    return {point for device, root, point in rows
+            if device == best[0] and (root == prefix or root.startswith(prefix.rstrip("/") + "/")) and
+            point != scratch and not point.startswith(scratch.rstrip("/") + "/")}
+
+
 class Walk:
     """Allocated-size accounting shared across one job; hard links count once."""
-    def __init__(self, device, budget):
+    def __init__(self, device, budget, skip=frozenset()):
         self.device = device
         self.budget = budget
+        # (st_dev, st_ino) of scratch mount roots; also correct when scratch shares the device.
+        self.skip = skip
         self.links = set()
         self.links_approximate = False
         self.errors = {}
@@ -146,6 +176,8 @@ class Walk:
                                 continue
                             if not stat.S_ISDIR(child.st_mode):
                                 total += self.allocated(child)
+                                continue
+                            if (child.st_dev, child.st_ino) in self.skip:
                                 continue
                             if child.st_dev != self.device:
                                 categories.add("separate_mount")
@@ -220,9 +252,20 @@ def open_chain(root_fd, device, components):
         raise
 
 
-def scan(workspace, components, expect=None, budget=None):
+def scan(workspace, components, expect=None, budget=None, scratch=None):
     components = validate_path(components)
     budget = budget or Budget(SCAN_SECONDS)
+    workspace = os.path.normpath(workspace)
+    inside = workspace.rstrip("/") + "/"
+    scratch = {point for point in (scratch_mountpoints() if scratch is None else scratch)
+               if point.startswith(inside)}
+    skip = set()
+    for point in scratch:
+        try:
+            info = os.stat(point, follow_symlinks=False)
+            skip.add((info.st_dev, info.st_ino))
+        except OSError:
+            pass
     root_fd, root = open_root(workspace)
     fds = [root_fd]
     try:
@@ -230,7 +273,7 @@ def scan(workspace, components, expect=None, budget=None):
         target = os.fstat(fds[-1])
         if expect and (target.st_dev, target.st_ino) != (expect.get("dev"), expect.get("ino")):
             raise Refused("target_changed")
-        walk = Walk(root.st_dev, budget)
+        walk = Walk(root.st_dev, budget, frozenset(skip))
         files_here = walk.allocated(target)
         rows = []
         complete = True
@@ -258,6 +301,12 @@ def scan(workspace, components, expect=None, budget=None):
             rows.append(row)
             if not selectable:
                 row["errors"].append("name_not_supported")
+            if os.path.join(workspace, *components, entry.name) in scratch or \
+                    (info.st_dev, info.st_ino) in skip:
+                # "separate_mount" keeps older control planes describing it as a separate disk.
+                row.update(state="excluded", selectable=False, storage="scratch")
+                row["errors"].append("separate_mount")
+                continue
             if info.st_dev != root.st_dev:
                 row.update(state="excluded", selectable=False)
                 row["errors"].append("separate_mount")

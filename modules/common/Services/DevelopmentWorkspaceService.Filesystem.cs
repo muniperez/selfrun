@@ -26,7 +26,9 @@ public sealed partial class DevelopmentWorkspaceService
         "not_owned_by_coding_user", "invalid_workspace", "unknown_mode", "refuse_root", "invalid_request",
         "vanished", "io_error", "changed_during_scan"];
     private static readonly string[] UnavailableReasons = ["unreadable", "warming_up", "counters_reset",
-        "no_elapsed_time", "probe_pending", "probe_timeout", "sampling_failed"];
+        "no_elapsed_time", "probe_pending", "probe_timeout", "sampling_failed", "separate_device"];
+    // Storage tiers (#202): which roles share a filesystem; the scratch tier holds caches and build outputs.
+    private static readonly string[] FilesystemRoles = ["system", "workspace", "scratch"];
     private static readonly JsonSerializerOptions StoredJson = new(JsonSerializerDefaults.Web)
     { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
 
@@ -85,8 +87,12 @@ public sealed partial class DevelopmentWorkspaceService
                     long? inodes = item.TryGetProperty("inodesTotal", out var i) && i.ValueKind == JsonValueKind.Number ? Bytes(item, "inodesTotal") : null;
                     long? inodesFree = item.TryGetProperty("inodesAvailable", out var j) && j.ValueKind == JsonValueKind.Number ? Bytes(item, "inodesAvailable") : null;
                     int? nested = item.TryGetProperty("nestedMountsExcluded", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : null;
-                    if (inodesFree > inodes || nested is < 0 or > 10000) return null;
-                    filesystems.Add(new(paths!, total, free, available, inodes, inodesFree, nested));
+                    int? scratchMounts = item.TryGetProperty("scratchBindMounts", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetInt32() : null;
+                    if (inodesFree > inodes || nested is < 0 or > 10000 || scratchMounts is < 0 or > 10000) return null;
+                    string[]? roles = item.TryGetProperty("roles", out var r) && r.ValueKind == JsonValueKind.Array
+                        ? [.. FilesystemRoles.Where(role => r.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && x.GetString() == role))]
+                        : null;
+                    filesystems.Add(new(paths!, total, free, available, inodes, inodesFree, nested, roles, scratchMounts));
                 }
             }
             return JsonSerializer.Serialize(new StoredResources(observedAt, cpu, memory, filesystems, unavailable), StoredJson);
@@ -234,7 +240,7 @@ public sealed partial class DevelopmentWorkspaceService
                 stored.OmittedBytes, stored.HardLinksApproximate, stored.Errors, targetsExpire,
                 stored.Entries.Select(x => new DevelopmentWorkspaceDiskUsageEntry(x.Name, DisplayPath([.. path, x.Name]), x.Bytes,
                     x.State, x.Errors, x.Selectable && live, x.Deletable && live,
-                    live && x.Selectable ? $"{job.Id}.{x.Token}" : null, ProtectedReason(path, x))).ToArray());
+                    live && x.Selectable ? $"{job.Id}.{x.Token}" : null, ProtectedReason(path, x), x.Storage)).ToArray());
         }
         else if (job.ResultJson is not null)
         {
@@ -354,9 +360,11 @@ public sealed partial class DevelopmentWorkspaceService
                 long? bytes = entry.GetProperty("bytes").ValueKind == JsonValueKind.Null ? null : Bytes(entry, "bytes");
                 var entryState = Str(entry, "state") is "complete" or "partial" or "excluded" or "unreadable" ? Str(entry, "state")! : "unreadable";
                 var deletable = selectable && entry.GetProperty("deletable").GetBoolean() && Deletable([.. PathOf(job), name]);
-                entries.Add(new(name.Length > 255 ? name[..255] : name, bytes, entryState, errors, selectable, deletable,
-                    Bytes(entry, "dev"), Bytes(entry, "ino"), Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
-                    Int(entry, "uid") == CodingUid));
+                var scratch = Str(entry, "storage") == "scratch";
+                entries.Add(new(name.Length > 255 ? name[..255] : name, bytes, entryState, errors, selectable && !scratch,
+                    deletable && !scratch, Bytes(entry, "dev"), Bytes(entry, "ino"),
+                    Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), Int(entry, "uid") == CodingUid,
+                    scratch ? "scratch" : null));
             }
             var errorsTotal = new Dictionary<string, int>();
             if (result.TryGetProperty("errors", out var counts) && counts.ValueKind == JsonValueKind.Object)
@@ -504,6 +512,7 @@ public sealed partial class DevelopmentWorkspaceService
 
     private static string? ProtectedReason(string[] parent, StoredEntry entry) =>
         entry.Deletable ? null
+        : entry.Storage == "scratch" ? "scratch"
         : entry.Errors.Contains("separate_mount") ? "separate_mount"
         : entry.Errors.Contains("name_not_supported") ? "name_not_supported"
         : entry.State == "unreadable" ? "unreadable"
@@ -559,7 +568,7 @@ public sealed partial class DevelopmentWorkspaceService
         long OmittedBytes, bool HardLinksApproximate, Dictionary<string, int> Errors, long TargetDevice, long TargetInode,
         List<StoredEntry> Entries);
     private sealed record StoredEntry(string Name, long? Bytes, string State, List<string> Errors, bool Selectable, bool Deletable,
-        long Device, long Inode, string Token, bool Owned = true);
+        long Device, long Inode, string Token, bool Owned = true, string? Storage = null);
     private sealed record StoredDeletion(string Outcome, long RemovedEntries, long RemovedBytes, string? LimitReached,
         Dictionary<string, int> Errors);
 }

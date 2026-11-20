@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -111,6 +112,16 @@ class FakeLinux:
     def unmount(self):
         self.events.append("unmount")
         self.mounted = False
+
+    def scratch_suspend(self):
+        self.events.append("scratch-suspend")
+
+    def scratch_detach(self):
+        self.events.append("scratch-unmount")
+        return dict(unmounted=2, lazy=0, lazyPaths=[])
+
+    def scratch_resume(self):
+        self.events.append("scratch-resume")
 
 
 class LayoutTests(unittest.TestCase):
@@ -701,6 +712,33 @@ class RuntimeTests(unittest.TestCase):
         self.assertLess(self.adapter.events.index("stop-services"), self.adapter.events.index("unmount"))
         self.assertEqual(receipt, self.request("quiesce"))
 
+    def test_scratch_mounts_stop_before_idle_evidence_and_detach_before_readonly_and_unmount(self):
+        self.runtime = self.primary()
+        self.request("bootstrap")
+        events = self.adapter.events
+        self.assertLess(events.index("layout"), events.index("scratch-resume"))
+        del events[:]
+        receipt = self.request("quiesce")
+        self.assertEqual(dict(unmounted=2, lazy=0, lazyPaths=[]), receipt["scratchMounts"])
+        self.assertEqual(["scratch-suspend", "idle", "freeze"], events[:3])
+        self.assertLess(events.index("stop-services"), events.index("scratch-unmount"))
+        self.assertLess(events.index("scratch-unmount"), events.index("readonly"))
+        self.assertLess(events.index("readonly"), events.index("unmount"))
+        self.assertNotIn("scratch-resume", events)
+
+    def test_scratch_detach_failure_keeps_volume_mounted_and_resume_reestablishes(self):
+        self.runtime = self.primary()
+        self.request("bootstrap")
+        with patch.object(self.adapter, "scratch_detach",
+                          side_effect=rt.Blocked("Scratch build-output mounts remain under the workspace")):
+            self.assert_blocked("quiesce", "Scratch")
+        self.assertNotIn("readonly", self.adapter.events)
+        self.assertNotIn("unmount", self.adapter.events)
+        self.assertEqual("scratch-unmount", self.runtime.diagnostic_stage)
+        del self.adapter.events[:]
+        self.request("resume", deletionNotCommitted=True)
+        self.assertLess(self.adapter.events.index("scratch-resume"), self.adapter.events.index("start-services"))
+
     def test_ephemeral_rejects_all_storage_claims(self):
         for field in ("volume", "backup", "restore"):
             with self.subTest(field=field), self.assertRaisesRegex(rt.Blocked, "forbidden"):
@@ -845,6 +883,33 @@ class RuntimeTests(unittest.TestCase):
                 with self.assertRaisesRegex(rt.Blocked, "metadata"):
                     rt.write_backup_archive(self.workspace, io.BytesIO())
                 lost.unlink()
+
+    def test_backup_never_enters_nested_mounts_such_as_scratch_build_outputs(self):
+        modules = self.repo / "node_modules"
+        (modules / "pkg").mkdir(parents=True)
+        (modules / "pkg/index.js").write_text("scratch content")
+        (self.repo / "dist").mkdir()
+        (self.repo / "dist/app.js").write_text("volume content")
+        real_lstat = Path.lstat
+
+        def lstat(path):
+            info = real_lstat(path)
+            if path == modules:  # Simulates a bind mount from the local scratch disk.
+                values = list(info)
+                values[stat.ST_DEV] = info.st_dev + 1
+                return os.stat_result(values)
+            return info
+        with patch.object(Path, "lstat", autospec=True, side_effect=lstat):
+            rt.validate_backup_tree(self.workspace)
+            hashes = rt.representative_hashes(self.workspace)
+            stream = io.BytesIO()
+            rt.write_backup_archive(self.workspace, stream)
+        names = rt.tarfile.open(fileobj=io.BytesIO(stream.getvalue())).getnames()
+        self.assertIn("data/repos/project/node_modules", names)
+        self.assertIn("data/repos/project/dist/app.js", names)
+        self.assertFalse(any(name.startswith("data/repos/project/node_modules/") for name in names))
+        self.assertFalse(any("node_modules" in name for name in hashes))
+        self.assertIn("repos/project/dist/app.js", hashes)
 
     def test_backup_restore_preserves_unfollowed_tool_and_virtualenv_symlinks(self):
         os.link(self.repo / "file.txt", self.repo / "hardlinked.txt")
@@ -993,6 +1058,28 @@ class LinuxAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(rt.Blocked, "UUID"):
                 adapter.mount(claim)
         self.assertTrue(all(argv[0] == "blkid" for argv in calls))
+
+    def test_scratch_detach_stops_helper_units_before_unmounting_and_fails_closed(self):
+        adapter = rt.Linux(dict(workspace="/workspace"))
+        for failed in (0, 1):
+            calls = []
+
+            def command(argv, **kwargs):
+                calls.append(argv[-1] if argv[0] != "systemctl" else " ".join(argv[:2]))
+                if argv[-1] == "unmount-all":
+                    return json.dumps(dict(unmounted=3, lazy=1, failed=failed, lazyPaths=["/w/x"]))
+                return json.dumps(dict(ok=True))
+            with self.subTest(failed=failed), patch.object(Path, "is_file", return_value=True), \
+                    patch.object(rt, "run", side_effect=command):
+                if failed:
+                    with self.assertRaisesRegex(rt.Blocked, "remain"):
+                        adapter.scratch_detach()
+                else:
+                    self.assertEqual(dict(unmounted=3, lazy=1, lazyPaths=["/w/x"]), adapter.scratch_detach())
+                self.assertEqual(["suspend", "systemctl stop", "unmount-all"], calls)
+        with patch.object(Path, "is_file", return_value=False), patch.object(rt, "run") as command:
+            self.assertIsNone(adapter.scratch_detach())
+            command.assert_not_called()
 
     def test_unexpected_filesystem_never_formatted(self):
         adapter = rt.Linux(dict(workspace="/workspace"))
