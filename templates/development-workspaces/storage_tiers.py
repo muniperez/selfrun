@@ -55,7 +55,7 @@ LINKS = ((".cache", ""), (".cargo/registry", "cargo/registry"), (".cargo/git", "
          (".yarn/berry/cache", "yarn-berry/cache"))
 
 SCRATCH_LAYOUT = (("", 0, 0o755), ("cache", CODING_UID, 0o700), ("tmp", CODING_UID, 0o700),
-                  ("docker", 0, 0o711), ("repos", 0, 0o755))
+                  ("docker", 0, 0o711), ("repos", 0, 0o700))
 
 
 class Skip(Exception):

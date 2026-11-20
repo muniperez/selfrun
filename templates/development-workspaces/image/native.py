@@ -34,13 +34,19 @@ EXPECTED_RUNTIME_SHA256 = None
 ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
 UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
-         "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service")
+         "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service",
+         "minicloud-scratch-mounts.service", "minicloud-scratch-watch.service")
+SCRATCH_HELPER = Path("/opt/minicloud-workspace/scratch_mounts.py")
+SCRATCH_FIXTURE = Path("/workspace/repos/native-scratch")
+SCRATCH_OUTPUTS = ("node_modules", "bin", "obj", "dist")
 UNIT_HASHES = {
-    "minicloud-t3.service": "31f7491788665c43af8066c7759830b0e927201bab696deb30a760da16f25ce1",
+    "minicloud-t3.service": "9eb2db6c2b591bc86017325b7d525f02e69fb6ca08592d0aff0d2ddd444bb533",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
     "minicloud-t3-connect.service": "788796e55235f9cac13bcbfaf1267840f5e729d30bf753cd04274aa0a5906c03",
     "minicloud-t3-connect-activate.service": "57992a035b9bcedf2e018b2bfa6bcfeee26e9a9a6d61ff24721b98300e84ced7",
+    "minicloud-scratch-mounts.service": "648a595bf5b2ac1de30fd33fa7501219163bc8cdfb1fdbd9fa32cc7db473872f",
+    "minicloud-scratch-watch.service": "80ea1b2f6b2915788f3d4221b3e6dddf0f4ed6edb3169b238c2c51f43996898b",
 }
 REQUIRED_PROBES = {
     "target-and-toolchain-guard", "pristine-tools-only-no-default-apps", "loop-ext4-root-bootstrap",
@@ -57,6 +63,7 @@ REQUIRED_PROBES = {
     "source-control-cli-service-terminal-and-discovery",
     "scratch-tier-environment-and-cache-migration",
     "t3-terminal-scratch-environment",
+    "scratch-build-output-bind-mounts",
 }
 
 
@@ -404,6 +411,7 @@ class Native:
         self.frozen_by_harness = False
         self.git_fixture_cleanup = "not-started"
         self.restore_fixture_cleanup = "not-started"
+        self.scratch_mounted = None
         self.original_workspace_exists = Path("/workspace").exists()
         self.expires = dt.datetime.fromisoformat(authorization["expiresAt"].replace("Z", "+00:00"))
         self.rt = None
@@ -1195,6 +1203,95 @@ class Native:
         return {**versions, **result, "servicePathChecked": True, "terminalVersionsExecuted": True,
                 "providerCredentialsSupplied": False, "userSignInQualified": False}
 
+    @staticmethod
+    def mount_points(pid):
+        points = {}
+        for line in Path("/proc", str(pid), "mountinfo").read_text().splitlines():
+            fields = line.split()
+            points[fields[4]] = fields[2]
+        return points
+
+    def scratch_mounts(self):
+        spec = importlib.util.spec_from_file_location("native_scratch_mounts", SCRATCH_HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        after = command(["systemctl", "show", "minicloud-t3.service", "-p", "After", "--value"]).split()
+        check("minicloud-scratch-mounts.service" in after, "T3_NOT_ORDERED_AFTER_SCRATCH_MOUNTS")
+        check(command(["systemctl", "is-active", "minicloud-scratch-watch.service"]) == "active",
+              "SCRATCH_WATCHER_NOT_STARTED_WITH_T3")
+        main_pid = int(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]))
+        check(main_pid > 0 and isinstance(self.shell_pid, int), "SCRATCH_T3_TERMINAL_REQUIRED")
+
+        def coding(*argv):
+            return command(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups", "env", "-i",
+                            "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/workspace/home", "git",
+                            "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                            "-C", str(SCRATCH_FIXTURE), *argv], cwd="/workspace")
+
+        def write(relative, value):
+            path = SCRATCH_FIXTURE / relative
+            for directory in reversed([path.parent, *path.parent.parents]):
+                if directory == SCRATCH_FIXTURE or SCRATCH_FIXTURE in directory.parents:
+                    if not directory.exists():
+                        directory.mkdir(mode=0o755)
+                        os.chown(directory, 2000, 2000)
+            path.write_text(value)
+            os.chown(path, 2000, 2000)
+
+        check(not SCRATCH_FIXTURE.exists(), "SCRATCH_FIXTURE_ALREADY_EXISTS")
+        SCRATCH_FIXTURE.mkdir(mode=0o755)
+        os.chown(SCRATCH_FIXTURE, 2000, 2000)
+        coding("init", "--quiet", "--initial-branch=main")
+        # The ignore rules exist before any output or manifest, so no watcher pass sees them unignored.
+        write(".gitignore", "node_modules/\nbin/\nobj/\ndist/\n")
+        write("build/tracked.txt", "tracked build directory\n")
+        write("package.json", "{\"private\": true}\n")
+        write("native.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n")
+        coding("add", ".gitignore", "build/tracked.txt", "package.json", "native.csproj")
+        coding("-c", "user.name=Native fixture", "-c", "user.email=native@example.invalid",
+               "commit", "--quiet", "-m", "Native scratch fixture")
+        token = uuid.uuid4().hex + "\n"
+        write("dist.staging/app.js", token)
+        (SCRATCH_FIXTURE / "dist.staging/current.js").symlink_to("app.js")
+        os.chown(SCRATCH_FIXTURE / "dist.staging/current.js", 2000, 2000, follow_symlinks=False)
+        os.rename(SCRATCH_FIXTURE / "dist.staging", SCRATCH_FIXTURE / "dist")
+        workspace_device = os.stat("/workspace").st_dev
+        time.sleep(3)
+
+        def settled():
+            command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER), "apply",
+                     "--budget-seconds", "60", "--quiet-seconds", "2"], timeout=120)
+            views = (self.mount_points(self.shell_pid), self.mount_points(main_pid))
+            return all(str(SCRATCH_FIXTURE / name) in view for view in views for name in SCRATCH_OUTPUTS)
+        self.wait(settled, seconds=120)
+        repo = helper.Repo((SCRATCH_FIXTURE.name,), SCRATCH_FIXTURE.stat().st_ino)
+        leaf = Path(helper.SCRATCH) / "repos" / repo.id
+        for name in SCRATCH_OUTPUTS:
+            info = (SCRATCH_FIXTURE / name).lstat()
+            check(stat.S_ISDIR(info.st_mode) and info.st_uid == 2000 and info.st_dev != workspace_device and
+                  info.st_dev == (leaf / name).lstat().st_dev and
+                  info.st_ino == (leaf / name).lstat().st_ino, "OUTPUT_NOT_BOUND_FROM_SCRATCH")
+        for view in (self.mount_points(self.shell_pid), self.mount_points(main_pid)):
+            check(str(SCRATCH_FIXTURE / "build") not in view and str(SCRATCH_FIXTURE) not in view,
+                  "TRACKED_OR_REPOSITORY_DIRECTORY_MOUNTED")
+        check((SCRATCH_FIXTURE / "build").lstat().st_dev == workspace_device and
+              (SCRATCH_FIXTURE / "build/tracked.txt").read_text() == "tracked build directory\n",
+              "TRACKED_BUILD_DIRECTORY_CHANGED")
+        check((leaf / "dist/app.js").read_text() == token and
+              os.readlink(SCRATCH_FIXTURE / "dist/current.js") == "app.js" and
+              (SCRATCH_FIXTURE / "dist/app.js").stat().st_uid == 2000, "RELOCATED_OUTPUT_DATA_LOST")
+        check(not Path("/workspace", helper.TRASH).exists(), "RELOCATION_LEFT_VOLUME_COPY")
+        self.client.call("input", kind="scratch")
+        self.wait(lambda: (leaf / "node_modules/.native-terminal-write").read_text() == "terminal-scratch\n")
+        check((SCRATCH_FIXTURE / "node_modules/.native-terminal-write").stat().st_uid == 2000,
+              "TERMINAL_WRITE_NOT_CODING_OWNED")
+        status = json.loads(command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER), "status"]))
+        check(status.get("state") == "active", "SCRATCH_STATUS_NOT_ACTIVE")
+        self.scratch_mounted = len(SCRATCH_OUTPUTS)
+        return {"boundOutputs": list(SCRATCH_OUTPUTS), "visibleInT3AndTerminalMountNamespace": True,
+                "terminalWriteLandedOnScratch": True, "trackedBuildDirectoryUntouched": True,
+                "nonEmptyOutputRelocatedWithSymlink": True, "t3OrderedAfterScratchMounts": True}
+
     def shell_proof(self):
         check(Path("/workspace/artifacts/native-input-seen").is_file(), "GENUINE_INPUT_NOT_YET_OBSERVED")
         processes = self.rt.Procfs()
@@ -1452,6 +1549,15 @@ class Native:
         result = self.control("quiesce", operation="native-quiesce", gatewayAdmissionsFenced=True,
                               unobservableToolsAbsent=True, t3SnapshotSequence=snapshot)
         check(result["type"] == "PrimaryQuiesced", "NO_REAL_QUIESCENCE_RECEIPT")
+        if self.scratch_mounted:
+            scratch = result.get("scratchMounts") or {}
+            check(scratch.get("unmounted", 0) >= self.scratch_mounted and scratch.get("lazy") == 0,
+                  "SCRATCH_MOUNTS_NOT_UNMOUNTED_BEFORE_QUIESCE")
+        check(not any(point.startswith("/workspace") for point in self.mount_points("self")),
+              "MOUNT_REMAINS_BELOW_WORKSPACE")
+        for unit in ("minicloud-scratch-watch.service", "minicloud-scratch-mounts.service"):
+            check(command(["systemctl", "show", unit, "-p", "ActiveState", "--value"]) in ("inactive", "failed"),
+                  "SCRATCH_HELPER_STILL_ACTIVE_AFTER_QUIESCE")
         check(not os.path.ismount("/workspace"), "WORKSPACE_NOT_UNMOUNTED")
         self.clean_workspace = True
         self.control("receipt-validate", operation="native-quiesce", receiptId=result["receiptId"])
@@ -1727,6 +1833,12 @@ class Native:
             check(not any(2000 in p["uids"] for p in self.rt.Procfs().inventory().values()),
                   "LEFTOVER_CODING_PROCESSES_KEEP_MOUNT_AND_LOOP_FOR_INSPECTION")
             command(["systemctl", "stop", UNITS[1]])
+            if os.path.ismount("/workspace") and SCRATCH_HELPER.is_file():
+                command(["systemctl", "stop", "minicloud-scratch-watch.service",
+                         "minicloud-scratch-mounts.service"], timeout=180)
+                report = json.loads(command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER),
+                                             "unmount-all"], timeout=180))
+                check(report.get("failed") == 0, "SCRATCH_MOUNTS_KEEP_WORKSPACE_FOR_INSPECTION")
             # Scratch is regenerable; do not leave this run's caches on the builder image.
             for name in ("cache", "tmp"):
                 directory = Path("/var/lib/minicloud-scratch", name)
@@ -1801,6 +1913,7 @@ class Native:
             if not self.report.probe("source-control-cli-service-terminal-and-discovery", self.source_control):
                 return
             self.report.probe("t3-terminal-scratch-environment", self.terminal_scratch)
+            self.report.probe("scratch-build-output-bind-mounts", self.scratch_mounts)
             self.report.probe("actual-pinned-t3-sqlite-idle", self.sqlite)
             self.report.probe("actual-schema-copy-wal-and-fail-closed", self.sqlite_negatives)
             self.report.probe("actual-kernel-frozen-readonly-t3-sqlite", self.frozen_sqlite)

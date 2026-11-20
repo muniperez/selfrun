@@ -196,6 +196,7 @@ async function handle(request) {
       marker: "printf 'native-input\\n' > /workspace/artifacts/native-input-seen\n",
       foreground: "/usr/bin/sleep 4\n",
       background: "/usr/bin/sleep 4 &\n",
+      scratch: "printf 'terminal-scratch\\n' > /workspace/repos/native-scratch/node_modules/.native-terminal-write\n",
     };
     requireTrue(Object.hasOwn(commands, request.kind));
     await rpc(socket, "terminal.write", { ...terminal, data: commands[request.kind] });
