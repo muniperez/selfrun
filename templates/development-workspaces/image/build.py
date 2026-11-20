@@ -288,9 +288,15 @@ def generalize():
     mounts = Path("/proc/self/mountinfo").read_text().splitlines()
     require(not any(line.split()[4].startswith("/workspace/") for line in mounts),
             "Never erase through a mount below the workspace")
-    scratch_repos = Path("/var/lib/minicloud-scratch/repos")
-    if os.path.ismount(scratch_repos):
-        run(["umount", str(scratch_repos)])
+    # The helper self-binds scratch/repos (nosuid,nodev); ismount() misses a same-filesystem bind.
+    scratch_repos = "/var/lib/minicloud-scratch/repos"
+    for _ in range(4):
+        if not any(line.split()[4] == scratch_repos
+                   for line in Path("/proc/self/mountinfo").read_text().splitlines()):
+            break
+        run(["umount", scratch_repos])
+    else:
+        require(False, "Scratch repos is still mounted")
     for path in ("/workspace", "/root/.codex", "/root/.t3", "/root/.config", "/root/.cache",
                  "/root/.npm", "/root/.ssh", "/home/ubuntu/.ssh", "/var/lib/minicloud-workspace",
                  "/var/lib/minicloud-scratch",

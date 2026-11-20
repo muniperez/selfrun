@@ -701,6 +701,8 @@ rejects unknown fields.
 * A global gitignore is not honored. Only repository ignore rules decide.
 * After a checkout is renamed, its old mounts stay until the next unmount, and unused scratch
   is collected.
+* After a checkout is deleted, the next complete pass unmounts its leftover mount points
+  (retrying while they are busy), so the directory can be removed or cloned again.
 * Scratch is disposable: it survives a reboot on the same VM but is empty on a new VM, where
   outputs are rebuilt.
 * Limits: 512 mounts, depth 12 and 100,000 scanned directories per pass.

@@ -7,6 +7,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -457,6 +458,30 @@ class ScratchMountTests(unittest.TestCase):
         self.assertEqual([{"path": "app/node_modules"}], status["recreated"])
         self.assertEqual(str(leaf), self.mounted()[str(app / "node_modules")])
         self.assertEqual([], os.listdir(leaf))
+
+    def test_deleted_checkout_releases_its_mounts_so_it_can_be_removed(self):
+        gone = self.repo("gone", ["node_modules/"], files=["package.json"])
+        kept = self.repo("kept", ["node_modules/"], files=["package.json"])
+        self.apply()
+        leaf = self.leaf(gone / "node_modules")
+        # rm -rf removes everything except the busy mount point.
+        shutil.rmtree(gone / ".git")
+        for name in (".gitignore", "package.json"):
+            (gone / name).unlink()
+        self.sys.busy[str(gone / "node_modules")] = 5
+        sm.time.sleep, sleep = (lambda seconds: None), sm.time.sleep
+        try:
+            status = self.apply()
+            self.assertEqual({str(gone / "node_modules"), str(kept / "node_modules")}, set(self.mounted()))
+            self.assertEqual([{"path": "gone/node_modules", "reason": "busy"}], status["deferred"])
+            self.sys.busy[str(gone / "node_modules")] = 0
+            status = self.apply()
+        finally:
+            sm.time.sleep = sleep
+        self.assertEqual({str(kept / "node_modules")}, set(self.mounted()))
+        self.assertEqual([{"path": "gone/node_modules", "reason": "repository_gone"}], status["unmounted"])
+        self.assertFalse(leaf.exists())
+        shutil.rmtree(gone)
 
     def test_unmount_all_is_deepest_first_with_lazy_fallback_and_suspends(self):
         app = self.repo("app", ["node_modules/", "packages/*/node_modules/"],

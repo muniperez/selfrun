@@ -1314,6 +1314,7 @@ class Helper:
                     self.mount_count = len(self.mounts)
                     for repo in sorted(self.repos.values(), key=lambda item: item.components):
                         self.apply_repo(repo)
+                    self.release_orphans()
                     self.collect_garbage()
                     self.status["pressure"] = self.relieve_pressure()
                     self.status["mounts"] = len(self.mount_view())
@@ -1403,6 +1404,28 @@ class Helper:
                 os.close(target)
         finally:
             os.close(parent)
+
+    def release_orphans(self):
+        """Unmounts our mounts left in deleted checkouts so the directory can be removed or re-cloned.
+
+        Only after a complete scan, and only for mounts outside every detected repository; renamed
+        checkouts keep their mounts (see README). Busy mounts are retried on a later pass.
+        """
+        if self.truncated or any(repo.git_failed for repo in self.repos.values()):
+            return
+        roots = [self.repo_path(repo.components) + "/" for repo in self.repos.values()]
+        orphans = [point for point in self.mounts if not any(point.startswith(root) for root in roots)]
+        for point in sorted(orphans, key=lambda item: (-item.count("/"), item)):
+            label = os.path.relpath(point, self.repos_path)
+            try:
+                self.unmount_entry(self.mounts[point], lazy_ok=False)
+                self.report("unmounted", label, "repository_gone")
+            except Deferred as error:
+                self.report("deferred", label, error.reason)
+            except (OSError, Unsafe) as error:
+                self.report("skipped", label, getattr(error, "code", None) or "io_error")
+        if orphans:
+            self.mount_view()
 
     def collect_garbage(self):
         """Removes scratch for vanished checkouts and stale staging; only after a complete scan."""
