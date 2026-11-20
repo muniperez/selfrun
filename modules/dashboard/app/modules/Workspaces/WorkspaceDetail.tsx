@@ -3,9 +3,6 @@ import { Link } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/core/auth/AuthProvider";
 import type { DevelopmentWorkspace } from "@/models/controlPlane";
-import { WorkspaceCodingAgents } from "./WorkspaceCodingAgents";
-import { WorkspaceCostEstimate } from "./WorkspaceCostEstimate";
-import { WorkspaceDeleteEnvironment } from "./WorkspaceDeleteEnvironment";
 import { WorkspaceOverviewTab } from "./WorkspaceOverviewTab";
 import { WorkspaceSettingsTab } from "./WorkspaceSettingsTab";
 import { WorkspaceStorageCostsTab } from "./WorkspaceStorageCostsTab";
@@ -49,7 +46,7 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
     {deletion === "deleting" && <p role="status" className="rounded-md border border-warning bg-warning-surface p-3 text-sm text-warning">
       Deleting this dev environment and its saved files. Refresh to check progress.</p>}
     {deletion === "failed" && <p className="rounded-md border border-destructive p-3 text-sm text-destructive">
-      Deleting this dev environment failed. Fix the reported problem, then retry from Delete environment below.</p>}
+      Deleting this dev environment failed. Fix the reported problem, then retry from Delete environment in the Settings tab.</p>}
     {deletion === "deleted" && <p role="status" className="rounded-md border p-3 text-sm">
       This dev environment and its saved files were permanently deleted. <Link className="font-medium text-primary underline" to="/workspaces">Back to dev environments</Link></p>}
     {!canManageRole && <p className="text-sm text-muted-foreground">You can view this dev environment but can't change it.</p>}
@@ -64,20 +61,13 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
       <TabsContent value="overview" className="space-y-8 pt-4">
         <WorkspaceOverviewTab item={item} organizationId={organizationId} refresh={refresh} refreshAfterMutation={refreshAfterMutation}
           canManage={canManage} canManageConnect={canManageConnect} actorId={profile?.id} />
-        {primary && <section aria-labelledby="cost-estimate-heading" className="space-y-2">
-          <h2 id="cost-estimate-heading" className="text-lg font-semibold">Projected cost</h2>
-          <WorkspaceCostEstimate computeHourlyRate={primary.computeHourlyRate} monthlyStorage={item.estimatedMonthlyStorage}
-            currency={item.currency} className="space-y-2 rounded-md border p-4 text-sm" />
-        </section>}
-        <WorkspaceCodingAgents agents={item.agents} />
-        {canManageRole && deletion !== "deleted" && <WorkspaceDeleteEnvironment item={item} organizationId={organizationId}
-          vms={vms} failed={deletion === "failed"} deleting={deletion === "deleting"} refresh={refresh} />}
       </TabsContent>
       <TabsContent value="storage" className="space-y-6 pt-4">
-        <WorkspaceStorageCostsTab item={item} />
+        <WorkspaceStorageCostsTab item={item} organizationId={organizationId} refresh={refresh} canManage={canManage} />
       </TabsContent>
       <TabsContent value="settings" className="pt-4">
-        <WorkspaceSettingsTab item={item} organizationId={organizationId} refreshAfterMutation={refreshAfterMutation} canManage={canManage} />
+        <WorkspaceSettingsTab item={item} organizationId={organizationId} refresh={refresh} refreshAfterMutation={refreshAfterMutation}
+          canManage={canManage} canManageRole={canManageRole} canManageConnect={canManageConnect} deletion={deletion} actorId={profile?.id} />
       </TabsContent>
     </Tabs>
   </div>;
