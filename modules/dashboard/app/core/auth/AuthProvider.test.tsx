@@ -94,6 +94,28 @@ describe("AuthProvider", () => {
     expect(screen.queryByText(accountProfile.email)).not.toBeInTheDocument();
   });
 
+  it("announces a confirmed sign-out to other tabs, but not a guest page load", async () => {
+    const posted: unknown[] = [];
+    vi.stubGlobal("BroadcastChannel", class {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      postMessage(message: unknown) { posted.push(message); }
+      close() {}
+    });
+    installAccount(401);
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByText("unauthenticated");
+    expect(posted).toEqual([]);
+    cleanup();
+
+    const fetcher = installAccount();
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByText("authenticated");
+    fetcher.mockImplementationOnce(async () => jsonResponse({ error: { code: "unauthenticated", message: "Sign in" } }, 401));
+    await expect(apiRequest("/api/apps")).rejects.toMatchObject({ status: 401 });
+    await screen.findByText("unauthenticated");
+    expect(posted).toEqual([{ type: "signed-out" }]);
+  });
+
   it.each(["required", "blocked"] as const)("exposes explicit setup_%s without requesting a profile", async state => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({ ...accountCapabilities, bootstrapState: state }));
     vi.stubGlobal("fetch", fetcher);

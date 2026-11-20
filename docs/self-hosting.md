@@ -141,9 +141,12 @@ idle stop. Roll it out with the API and worker together like the idle timeout.
 Dashboard sessions end after an inactivity timeout or an absolute lifetime,
 whichever comes first. While a user is active, the dashboard renews the session
 during the last half of its idle window; background polling alone never keeps a
-session alive. Renewal never extends past the absolute lifetime, and logout,
-revocation and upstream Kratos session loss still end the session immediately.
-A Kratos outage during renewal is retried and is not treated as a logout.
+session alive, and neither does a network reconnect. Renewal never extends past
+the absolute lifetime. Logout, revocation and upstream Kratos session loss end
+the session immediately, including while a renewal is in flight; see
+[session renewal](api.md#session-renewal). Open tabs renew one at a time and
+re-check the session when another tab signs out. A Kratos outage during renewal
+is retried and is not treated as a logout.
 
 Users opt in per device with **Keep me signed in** at sign-in, or change it for
 the current device under account settings. Remembered sessions use a persistent

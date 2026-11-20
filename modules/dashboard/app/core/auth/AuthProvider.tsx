@@ -36,14 +36,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const generation = useRef(0);
   const renewal = useRef<{ stop: () => void } | null>(null);
+  const authenticated = useRef(false);
 
-  const signedOut = useCallback(() => {
+  const signedOut = useCallback((announce = false) => {
+    const wasAuthenticated = authenticated.current;
+    authenticated.current = false;
     renewal.current?.stop();
     renewal.current = null;
     setCsrfToken(null);
     setProfile(null);
     setSession(null);
     setStatus("unauthenticated");
+    // Other tabs re-read their session on this message instead of trusting it, so announcing is always safe.
+    if (announce || wasAuthenticated) broadcastSignedOut();
   }, []);
 
   const refreshSession = useCallback(async () => {
@@ -70,6 +75,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setProfile(nextProfile);
       setSession(nextSession);
       setStatus("authenticated");
+      authenticated.current = true;
       renewal.current = startSessionRenewal(nextSession, {
         renew: renewAccountSession,
         read: getAccountSession,
@@ -123,12 +129,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     renewal.current = null;
     try {
       await logoutAccount();
-      signedOut();
+      signedOut(true);
       setProfileError(null);
-      broadcastSignedOut();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        signedOut();
+        signedOut(true);
       } else {
         setStatus("unavailable");
         setProfileError("Sign out could not be confirmed. Retry account access.");
