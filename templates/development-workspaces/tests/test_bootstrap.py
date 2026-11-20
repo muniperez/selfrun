@@ -116,7 +116,11 @@ class BootstrapTests(unittest.TestCase):
         self.config = dict(vmId="vm", generation=2, kind="ephemeral", startServices=False)
         self.envelope = dict(vmId="vm", generation=2, operationId="start", expiresAt=1e12,
                              token="not-a-real-credential", url="https://example.invalid/enroll")
-        self.manifest = dict(architecture="linux/amd64", provenance=dict(toolArtifactsVerified=True))
+        self.manifest = dict(architecture="linux/amd64", provenance=dict(toolArtifactsVerified=True),
+            t3=dict(version="1.2.3", environmentProtocol=2,
+                    resourceMonitor=dict(path="t3-1.2.3-linux-x64/resource-monitor/linux-x64/t3-resource-monitor",
+                                         sha256="a" * 64),
+                    relayClient=dict(sha256="b" * 64)))
         self.manifest_bytes = (json.dumps(self.manifest, indent=2) + "\n").encode()
 
     def test_installed_systemd_units_are_root_owned_and_not_checkout_writable(self):
@@ -171,32 +175,21 @@ class BootstrapTests(unittest.TestCase):
     def execute(self, opener, process_effect=None):
         def load(path):
             return self.envelope if Path(path) == self.enrollment else self.config
-        read_text = Path.read_text
-        read_bytes = Path.read_bytes
-        def read(path, *args, **kwargs):
-            if str(path) == "/opt/minicloud-workspace/image-manifest.json":
-                return self.manifest_bytes.decode()
-            return read_text(path, *args, **kwargs)
-        def read_raw(path):
-            if str(path) == "/opt/minicloud-workspace/image-manifest.json":
-                return self.manifest_bytes
-            return read_bytes(path)
         with patch.object(bootstrap, "load_config", side_effect=load), \
              patch.object(bootstrap, "call", return_value={"type": "BootstrapReady"}), \
              patch.object(bootstrap, "run", side_effect=process_effect) as process, \
-             patch.object(Path, "read_text", read), \
-             patch.object(Path, "read_bytes", read_raw), \
+             patch.object(bootstrap, "read_image_manifest", return_value=(self.manifest, self.manifest_bytes)), \
              patch.object(bootstrap.urllib.request, "build_opener", return_value=opener):
             result = bootstrap.bootstrap(self.root / "config.json", self.enrollment, self.root / "state")
         if self.config.get("startServices") is False:
             self.assertTrue(all(call.args[0][0] == "systemctl" for call in process.call_args_list))
         return result
 
-    def preview_startup(self, safe=True):
+    def preview_startup(self, safe=True, version="1.2.3", protocol=2):
         self.config.update(workspace=str(self.root), uid=2000, gid=2000,
             infrastructureUnits=["minicloud-t3.service", "minicloud-preview-user-app.service"],
             stopUnits=["minicloud-t3.service", "minicloud-preview-user-app.service"])
-        self.config.pop("startServices")
+        self.config.pop("startServices", None)
         started = []
         def process(argv, **kwargs):
             if argv[:2] == ["systemctl", "start"]:
@@ -208,7 +201,7 @@ class BootstrapTests(unittest.TestCase):
             return ""
         class Opener:
             def open(inner, request, timeout):
-                body = (b'{"serverVersion":"0.1.9","orchestrationProtocolVersion":2}'
+                body = (json.dumps(dict(serverVersion=version, orchestrationProtocolVersion=protocol)).encode()
                         if isinstance(request, str) else b"{}")
                 return contextlib.nullcontext(SimpleNamespace(status=200, read=lambda n: body))
         return started, process, Opener()
@@ -221,6 +214,22 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual("EnrollmentAccepted", result["type"])
         self.assertEqual(["minicloud-workspace.service", "minicloud-t3.service"], started)
         unit_file.assert_not_called()
+
+    def test_other_t3_versions_and_protocols_fail_closed(self):
+        for version, protocol in (("0.1.9", 2), ("1.2.3", 3), ("1.2.3", 2.0)):
+            with self.subTest(version=version, protocol=protocol):
+                _, process, opener = self.preview_startup(version=version, protocol=protocol)
+                with self.assertRaisesRegex(runtime.Blocked, "version or protocol"):
+                    self.execute(opener, process)
+
+    def test_release_manifest_rejects_unsupported_protocol_and_unsafe_artifact_pins(self):
+        for key, value in (("version", "1.2.3-rc.1"), ("environmentProtocol", 3),
+                           ("resourceMonitor", dict(path="../helper", sha256="a" * 64)),
+                           ("relayClient", dict(sha256="unverified"))):
+            with self.subTest(key=key):
+                manifest = dict(self.manifest, t3=dict(self.manifest["t3"], **{key: value}))
+                with self.assertRaises(runtime.Blocked):
+                    runtime.qualified_t3(manifest)
 
     def test_optional_connect_management_failure_preserves_routine_primary_enrollment(self):
         started, process, opener = self.preview_startup()

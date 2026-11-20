@@ -169,6 +169,21 @@ class ConnectTests(unittest.TestCase):
         self.assertNotIn("private", json.dumps(status))
         self.assertNotIn("secret", json.dumps(status))
 
+    def test_status_requires_version_and_protocol_of_installed_image(self):
+        manager = connect.Enrollment(self.config, self.root)
+        for version, protocol, accepted in (("1.2.3", 2, True), ("0.1.9", 2, False), ("1.2.3", 3, False)):
+            with self.subTest(version=version, protocol=protocol):
+                descriptor = json.dumps(dict(serverVersion=version, orchestrationProtocolVersion=protocol,
+                                             environmentId="test-env")).encode()
+                with patch.object(connect, "installed_t3", return_value=dict(version="1.2.3", environmentProtocol=2)), \
+                        patch.object(connect.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="{}")), \
+                        patch.object(connect.urllib.request, "urlopen", return_value=io.BytesIO(descriptor)):
+                    if accepted:
+                        self.assertEqual(manager.status()["environmentId"], "test-env")
+                    else:
+                        with self.assertRaisesRegex(rt.Blocked, "Unqualified environment descriptor"):
+                            manager.status()
+
     def test_approval_is_memory_only_and_cleared_on_completion(self):
         manager = connect.Enrollment(self.config, self.root)
         gate = threading.Event()
