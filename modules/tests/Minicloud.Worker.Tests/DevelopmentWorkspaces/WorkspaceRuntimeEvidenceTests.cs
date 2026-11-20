@@ -138,6 +138,20 @@ public sealed class WorkspaceRuntimeEvidenceTests
             WorkspaceBootstrap.CloudConfig(bootstrap, "ssh-ed25519 AAAAtest management", "Team\nOTHER=value"));
     }
 
+    [Fact]
+    public void BootstrapInstallsDeviceAuthLauncherForTheManagedCodexBinary()
+    {
+        var config = WorkspaceBootstrap.CloudConfig(WorkspaceBootstrap.Generate(), "ssh-ed25519 AAAAtest management", "minicloud-dev");
+        using var document = JsonDocument.Parse(config["#cloud-config\n".Length..]);
+        var payload = document.RootElement;
+        var launcher = Assert.Single(payload.GetProperty("write_files").EnumerateArray(), file =>
+            file.GetProperty("path").GetString() == "/opt/minicloud-workspace/codex-device-auth");
+        Assert.Equal("root:root", launcher.GetProperty("owner").GetString());
+        Assert.Equal("0755", launcher.GetProperty("permissions").GetString());
+        Assert.Contains("set -- login --device-auth", launcher.GetProperty("content").GetString());
+        Assert.Contains("readlink /usr/local/bin/codex", payload.GetProperty("runcmd")[0][2].GetString());
+    }
+
     [Theory]
     [InlineData("idle", true)]
     [InlineData("completed", true)]

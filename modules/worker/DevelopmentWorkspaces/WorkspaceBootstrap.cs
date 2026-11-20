@@ -10,6 +10,16 @@ internal sealed record WorkspaceBootstrapSecret(string HostPrivateKey, string Ho
 
 internal static class WorkspaceBootstrap
 {
+    private const string CodexBinary = "/opt/minicloud-tools/node_modules/.bin/codex";
+    private const string CodexWrapperPath = "/opt/minicloud-workspace/codex-device-auth";
+    internal const string CodexDeviceAuthWrapper = $"""
+        #!/bin/sh
+        if [ "$#" -eq 1 ] && [ "$1" = login ]; then
+            set -- login --device-auth
+        fi
+        exec {CodexBinary} "$@"
+        """;
+
     public static WorkspaceBootstrapSecret Generate()
     {
         using var rsa = RSA.Create(3072);
@@ -50,9 +60,19 @@ internal static class WorkspaceBootstrap
                     // T3 reads the pretty hostname as display text, stripping only the outer quotes.
                     path = "/etc/machine-info", owner = "root:root", permissions = "0644",
                     content = $"PRETTY_HOSTNAME=\"{workspaceName}\"\n"
+                },
+                new
+                {
+                    path = CodexWrapperPath, owner = "root:root", permissions = "0755",
+                    content = CodexDeviceAuthWrapper + "\n"
                 }
             },
-            runcmd = new[] { new[] { "systemctl", "restart", "ssh" } }
+            runcmd = new[]
+            {
+                // Only replace the launcher installed by the managed workspace image.
+                new[] { "/bin/sh", "-c", $"if [ -x {CodexBinary} ] && [ \"$(readlink /usr/local/bin/codex)\" = {CodexBinary} ]; then ln -sfnT {CodexWrapperPath} /usr/local/bin/codex; fi" },
+                new[] { "systemctl", "restart", "ssh" }
+            }
         });
     }
 
