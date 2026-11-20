@@ -70,6 +70,46 @@ class DiskUsageTests(unittest.TestCase):
         self.assertEqual(result["totalBytes"], result["filesHereBytes"] + sum(r["bytes"] for r in result["entries"]))
         self.assertNotIn("escape", names)
 
+    def test_scratch_bind_mounts_are_labelled_and_never_walked(self):
+        write(self.workspace / "repos/big/target/out.bin", 512 * 1024)
+        target = str(self.workspace / "repos/big/target")
+        unlabelled = self.scan("repos")["entries"][0]["bytes"]
+        big = self.scan("repos", scratch={target, "/elsewhere/target"})["entries"][0]
+        # Same device here, so only the scratch label keeps the build output out of the retained total.
+        self.assertEqual("complete", big["state"])
+        self.assertEqual([], big["errors"])
+        self.assertLessEqual(big["bytes"], unlabelled - 512 * 1024)
+        rows = {row["name"]: row for row in self.scan("repos", "big", scratch={target})["entries"]}
+        self.assertEqual(("excluded", False, False, "scratch", ["separate_mount"]),
+                         (rows["target"]["state"], rows["target"]["selectable"], rows["target"]["deletable"],
+                          rows["target"]["storage"], rows["target"]["errors"]))
+        self.assertNotIn("storage", rows[".cache"])
+
+    def test_scratch_mountpoints_follow_the_scratch_repos_source(self):
+        mountinfo = Path(self.temp.name) / "mountinfo"
+        cases = {
+            # Scratch on the root disk: bind sources are paths below /var/lib/minicloud-scratch/repos.
+            "shared": ("1 0 8:1 / / rw - ext4 /dev/sda1 rw\n"
+                       "2 1 8:2 / /workspace rw - ext4 /dev/sdb rw\n"
+                       "3 2 8:1 /var/lib/minicloud-scratch/repos/p/target /workspace/repos/p/tar\\040get rw - ext4 /dev/sda1 rw\n"
+                       "4 2 8:1 /srv/other /workspace/repos/p/other rw - ext4 /dev/sda1 rw\n"
+                       "5 2 8:1 /var/lib/minicloud-scratch/repos-old /workspace/repos/p/old rw - ext4 /dev/sda1 rw\n"),
+            # Scratch on its own filesystem: bind roots are relative to that filesystem.
+            "separate": ("1 0 8:1 / / rw - ext4 /dev/sda1 rw\n"
+                         "2 1 8:2 / /workspace rw - ext4 /dev/sdb rw\n"
+                         "3 1 8:3 / /var/lib/minicloud-scratch rw - ext4 /dev/sdc rw\n"
+                         "4 2 8:3 /repos/p/target /workspace/repos/p/tar\\040get rw - ext4 /dev/sdc rw\n"
+                         "5 2 8:3 /cache /workspace/repos/p/other rw - ext4 /dev/sdc rw\n"),
+        }
+        for name, text in cases.items():
+            with self.subTest(name):
+                mountinfo.write_text(text)
+                rows = [(f[2], rt._unescape_mount(f[3]), rt._unescape_mount(f[4]))
+                        for f in (line.split(" ") for line in text.splitlines())]
+                self.assertEqual({"/workspace/repos/p/tar get"}, du.scratch_mountpoints(str(mountinfo)))
+                self.assertEqual({"/workspace/repos/p/tar get"}, rt.scratch_bind_mounts(rows))
+        self.assertEqual(set(), du.scratch_mountpoints(str(Path(self.temp.name) / "missing")))
+
     def test_roots_and_tool_folders_are_never_deletable(self):
         result = self.scan()
         rows = {row["name"]: row for row in result["entries"]}
@@ -159,7 +199,8 @@ class FakeProc:
         (self.root / "self/mountinfo").write_text(
             "1 0 8:1 / / rw - ext4 /dev/sda1 rw\n"
             "2 1 8:2 / /workspace rw - ext4 /dev/sdb rw\n"
-            "3 2 0:5 / /workspace/repos/with\\040space rw - tmpfs tmpfs rw\n")
+            "3 2 0:5 / /workspace/repos/with\\040space rw - tmpfs tmpfs rw\n"
+            "4 2 8:1 /var/lib/minicloud-scratch/repos/p/target /workspace/repos/p/target rw - ext4 /dev/sda1 rw\n")
 
     def boot(self, value):
         (self.root / "sys/kernel/random/boot_id").write_text(value + "\n")
@@ -176,14 +217,19 @@ class ResourceSamplerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.proc = FakeProc(self.temp.name)
         self.now = 1000.0
-        devices = {"/": 1, "/workspace": 2}
+        devices = {"/": 1, "/workspace": 2, rt.SCRATCH_ROOT: 1}
         self.vfs = lambda path: SimpleNamespace(f_frsize=4096, f_bsize=4096, f_blocks=1000, f_bfree=600,
                                                 f_bavail=500, f_files=100, f_favail=40)
         self.devices = devices
         self.sampler = rt.ResourceSampler(proc=self.temp.name, monotonic=lambda: self.now, wall=lambda: 5000.0,
                                           statvfs=lambda path: self.vfs(path),
-                                          stat_path=lambda path: SimpleNamespace(st_dev=self.devices[path]))
+                                          stat_path=self.stat_path)
         self.config = dict(vmId="vm-a", generation=3, workspace="/workspace")
+
+    def stat_path(self, path):
+        if path not in self.devices:
+            raise FileNotFoundError(path)
+        return SimpleNamespace(st_dev=self.devices[path])
 
     def test_cpu_needs_two_samples_and_cache_limits_sampling(self):
         first = self.sampler.sample(self.config)
@@ -213,7 +259,10 @@ class ResourceSamplerTests(unittest.TestCase):
     def test_filesystems_report_reserved_space_inodes_and_nested_mounts(self):
         result = self.sampler.sample(self.config)
         self.assertEqual([["/"], ["/workspace"]], [item["paths"] for item in result["filesystems"]])
+        self.assertEqual([["system", "scratch"], ["workspace"]], [item["roles"] for item in result["filesystems"]])
+        self.assertNotIn("filesystems.scratch", result["unavailable"])
         workspace = result["filesystems"][1]
+        self.assertEqual((0, 1), (result["filesystems"][0]["scratchBindMounts"], workspace["scratchBindMounts"]))
         self.assertEqual((4096000, 2457600, 2048000), (workspace["totalBytes"], workspace["freeBytes"],
                                                         workspace["availableBytes"]))
         self.assertEqual((100, 40, 1), (workspace["inodesTotal"], workspace["inodesAvailable"],
@@ -221,6 +270,27 @@ class ResourceSamplerTests(unittest.TestCase):
         self.devices["/workspace"] = 1
         self.now += 31
         self.assertEqual([["/", "/workspace"]], [item["paths"] for item in self.sampler.sample(self.config)["filesystems"]])
+
+    def test_scratch_is_never_counted_twice_and_is_reported_when_separate_or_missing(self):
+        statvfs = []
+        self.vfs = lambda path: statvfs.append(path) or SimpleNamespace(
+            f_frsize=4096, f_bsize=4096, f_blocks=1000, f_bfree=600, f_bavail=500, f_files=100, f_favail=40)
+        for device, roles, reason in ((2, [["system"], ["workspace", "scratch"]], None),
+                                      (3, [["system"], ["workspace"]], "separate_device"),
+                                      (None, [["system"], ["workspace"]], "unreadable")):
+            with self.subTest(device=device):
+                if device is None:
+                    del self.devices[rt.SCRATCH_ROOT]
+                else:
+                    self.devices[rt.SCRATCH_ROOT] = device
+                statvfs.clear()
+                self.now += 31
+                result = self.sampler.sample(self.config)
+                self.assertEqual(roles, [item["roles"] for item in result["filesystems"]])
+                self.assertEqual([["/"], ["/workspace"]], [item["paths"] for item in result["filesystems"]])
+                self.assertEqual(["/", "/workspace"], statvfs)
+                self.assertEqual(reason, result["unavailable"].get("filesystems.scratch"))
+                self.assertNotIn("filesystems", result["unavailable"])
 
     def test_missing_values_are_null_with_reason_and_hung_probe_is_bounded(self):
         (Path(self.temp.name) / "meminfo").unlink()

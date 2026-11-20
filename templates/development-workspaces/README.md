@@ -323,8 +323,10 @@ ignored files and local credentials are not retained by that flow.
 
 The image installs:
 
-* `/opt/minicloud-workspace/{runtime.py,bootstrap.py,issue-t3-session.py,git-credential.py,copilot_provider.py}`
+* `/opt/minicloud-workspace/{runtime.py,bootstrap.py,issue-t3-session.py,git-credential.py,copilot_provider.py,storage_tiers.py,scratch.env}`
 * `/etc/systemd/system/minicloud{work.slice,-workspace.service,-t3.service}`
+* `/etc/tmpfiles.d/minicloud-scratch.conf` and `/etc/profile.d/minicloud-scratch.sh` (see
+  [Storage tiers](#storage-tiers))
 * `/opt/minicloud-workspace/image-manifest.json`
 
 Upload root-owned mode-0600 configuration to `/etc/minicloud-workspace/runtime.json`.
@@ -450,6 +452,91 @@ under their workspace. Root home, `/run`, temporary files and caches are **not d
 There is no assumed database engine, emulator export format or application migration.
 Application-specific lifecycle integration must be explicit, not inferred from a path.
 
+### Storage tiers
+
+`/workspace` is the **retained** tier: the provider volume that survives VM replacement.
+Regenerable data lives on the **scratch** tier, `/var/lib/minicloud-scratch` on the VM's
+local disk, which is never under `/workspace` and may be empty after any VM replacement:
+
+| Path | Owner, mode | Holds |
+| --- | --- | --- |
+| `/var/lib/minicloud-scratch` | root, 0755 | scratch root |
+| `cache` | coding, 0700 | package, build and tool caches (below) |
+| `tmp` | coding, 0700 | `TMPDIR`; emptied at every boot |
+| `docker` | root, 0711 | reserved for a container runtime's data root |
+| `repos` | root, 0755 | sources of build-output bind mounts into `/workspace/repos` |
+
+`/etc/tmpfiles.d/minicloud-scratch.conf` creates the layout at every boot
+(`systemd-tmpfiles-setup.service`, before `sysinit.target` and therefore before T3), and
+`storage_tiers.py prepare` re-applies it before each T3 start.
+
+`/opt/minicloud-workspace/scratch.env` is the single list of redirected variables. The T3
+service reads it with `EnvironmentFile=`, so T3, its terminals and agents inherit it;
+processes started by the runtime with `systemd-run` get the same `EnvironmentFile=`; and
+`/etc/profile.d/minicloud-scratch.sh` exports it in login shells of UID 2000 only (for
+example `su - coding` or `runuser -l coding` from the root management SSH session).
+Root and other users are unchanged. Values are fixed absolute paths, parsed line by line,
+never sourced.
+
+| Variable | Scratch path (under `/var/lib/minicloud-scratch`) |
+| --- | --- |
+| `XDG_CACHE_HOME` | `cache` (also Yarn 1, pip/uv fallbacks, Playwright fallback, …) |
+| `TMPDIR` | `tmp` |
+| `npm_config_cache` | `cache/npm` |
+| `pnpm_config_store_dir` | `cache/pnpm/store` (pnpm 11; pnpm 10 follows the store link below) |
+| `NUGET_PACKAGES`, `NUGET_HTTP_CACHE_PATH` | `cache/nuget/packages`, `cache/nuget/http-cache` |
+| `PIP_CACHE_DIR`, `UV_CACHE_DIR` | `cache/pip`, `cache/uv` |
+| `GOCACHE`, `GOMODCACHE` | `cache/go-build`, `cache/go-mod` |
+| `PLAYWRIGHT_BROWSERS_PATH` | `cache/ms-playwright` |
+| `PYTHONPYCACHEPREFIX` | `cache/pycache` |
+
+Tools whose home directory mixes caches with configuration or credentials keep that home
+under `/workspace/home`; only their cache subdirectories become symlinks into
+`scratch/cache`, created by `storage_tiers.py` as the coding user when absent:
+`~/.cache` (the cache root itself), `~/.cargo/{registry,git}`,
+`~/.gradle/{caches,wrapper/dists}`, `~/.m2/repository`, `~/.local/share/pnpm/store` and
+`~/.yarn/berry/cache`. An existing real directory or a user-chosen link is left alone.
+Deliberately **not** set:
+
+* `CARGO_HOME` and `GRADLE_USER_HOME`: they also hold `credentials.toml`/`config.toml`,
+  `gradle.properties` and installed binaries, which must stay retained.
+* `CARGO_TARGET_DIR`: one shared target directory breaks project-relative `./target`
+  paths and lets projects collide; build outputs use per-repository bind mounts instead.
+* `YARN_CACHE_FOLDER`: it would also override Yarn Berry's per-project (zero-install) cache.
+* `PNPM_HOME`: it holds globally installed pnpm binaries.
+* `/etc/environment`: pam_env would apply it to root and every other user.
+
+Consequences: Playwright browsers, `~/.m2/repository` (including artifacts installed with
+`mvn install`) and every cache must be re-downloaded or rebuilt after VM replacement.
+Tools that keep credentials under `$XDG_CACHE_HOME` now keep them on scratch; notably the
+Hugging Face token (`$XDG_CACHE_HOME/huggingface/token` by default). To keep it retained,
+export `HF_TOKEN_PATH=/workspace/home/.config/huggingface/token` (or `HF_HOME`) before
+signing in, or supply `HF_TOKEN` per session.
+
+**Container runtimes.** The image ships no Docker, containerd or Podman. If one is added,
+its data root must be under `/var/lib/minicloud-scratch/docker` (for Docker,
+`"data-root"` in `/etc/docker/daemon.json`); native qualification fails with
+`CONTAINER_RUNTIME_DATA_ROOT_UNQUALIFIED` until that is qualified.
+
+**One-time cache migration.** Before T3 starts, `minicloud-t3.service` runs
+`storage_tiers.py prepare` as root (`ExecStartPre=-+`, so a failure is logged and never
+blocks T3). Unless the root-only marker
+`/var/lib/minicloud-workspace/storage-tiers-migrated.json` (0600) records completion, a
+child that has dropped to UID/GID 2000 renames known cache directories in
+`/workspace/home` (`.cache`, `.npm`, `.nuget/packages`, NuGet's `http-cache`, `v3-cache`
+and `plugins-cache`, the pnpm and Yarn Berry stores, `go/pkg/mod`,
+`.cargo/{registry,git}`, `.gradle/{caches,wrapper/dists}`, `.m2/repository`,
+`.local/share/docker`) into `/workspace/home/.minicloud-cache-trash` and deletes them.
+Every path component is opened with `O_NOFOLLOW` relative to its parent; only real
+directories owned by UID 2000 on the `/workspace` filesystem are moved; symlinks, other
+owners and other mounts are skipped. Configuration and credential files
+(`.cargo/credentials.toml`, `.gradle/gradle.properties`, `.npmrc`, `NuGet.Config`, …) are
+never touched, and `~/.cache` stays in place when it holds a Hugging Face token. Deletion
+is bounded to 40 seconds per T3 start; anything left is retried at the next start (the
+trash folder can also be deleted from the folder-size view). The marker is on the root
+disk, so a replacement VM repeats the migration, which is then a no-op. The helper logs
+one bounded JSON line to the journal and always exits 0.
+
 `runtime.py serve` owns `/run/minicloud-workspace/control.sock` (0600, root peer UID checked).
 The agent is outside the freezable coding slice. State/atomic fsynced receipts live in
 `/var/lib/minicloud-workspace`; parent must durably persist returned lifecycle receipts
@@ -533,9 +620,16 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
 * `status` also returns `capabilities` (`resources-v1`, plus `disk-usage-v1` and
   `directory-delete-v1` when the adapter can run folder jobs) and a cached, read-only
   `resources` sample (CPU utilization over a delta window, memory, `/` and `/workspace`
-  filesystem bytes and inodes). Sampling never walks directories, never sleeps on the
-  request path and does not change `revision`; a sampling failure reports
-  `resources.unavailable` instead of failing status.
+  filesystem bytes and inodes). Each filesystem entry lists `roles` (`system`,
+  `workspace`, `scratch`): filesystems are deduplicated by device, so a scratch tier on the
+  root disk adds `scratch` to the `/` entry instead of being counted twice, and
+  `scratch` is never added to `paths`. A scratch tier on its own device is reported as
+  `unavailable["filesystems.scratch"]="separate_device"` (older control planes accept only
+  `/` and `/workspace` entries). The workspace entry's `scratchBindMounts` counts
+  bind mounts into `/workspace` whose source is under `/var/lib/minicloud-scratch/repos`;
+  they are not included in `nestedMountsExcluded`. Sampling never walks directories,
+  never sleeps on the request path and does not change `revision`; a sampling failure
+  reports `resources.unavailable` instead of failing status.
 * `fs-job-start`: `jobId`, `mode` `scan` or `delete`, `path` (component list under
   `/workspace`) and, for delete, `expect:{dev,ino}` from the scan. The job record is
   persisted before `systemd-run` launches `disk_usage.py` as the coding user with a
@@ -543,7 +637,10 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
   One job runs at a time and jobs are refused while stopping. The helper opens each path
   component with `O_NOFOLLOW` relative to the parent descriptor, stays on one filesystem,
   and deletes only strict descendants of `repos`, `home` or `artifacts` owned by the
-  coding user whose device/inode still match the scan.
+  coding user whose device/inode still match the scan. Scratch bind mounts (sources under
+  `/var/lib/minicloud-scratch/repos`) are listed as excluded, non-selectable rows with
+  `storage:"scratch"` and the `separate_mount` error, and are never walked or counted, even
+  when scratch shares the workspace device.
 * `fs-job-status` / `fs-job-cancel`: report `running`, `completed` (with the helper's
   JSON result), `lost` or `not_found`. Quiesce, Git save and discard stop running
   folder jobs before freezing.
