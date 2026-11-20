@@ -236,6 +236,28 @@ class ResourceSamplerTests(unittest.TestCase):
         release.set()
         self.sampler.probe.join(5)
 
+    def test_retained_repos_and_home_usage_is_counted_by_one_workspace_probe(self):
+        allocated = dict(repos=7, home=11)
+        calls = []
+
+        def statvfs(path):
+            calls.append(path)
+            used = sum(allocated.values()) if path == "/workspace" else 3
+            return SimpleNamespace(f_frsize=4096, f_blocks=100, f_bfree=100 - used,
+                                   f_bavail=100 - used, f_files=100, f_favail=40)
+
+        self.vfs = statvfs
+        for folder in (None, "repos", "home"):
+            if folder:
+                allocated[folder] += 5
+            result = self.sampler.sample(self.config)
+            workspace = next(item for item in result["filesystems"] if "/workspace" in item["paths"])
+            self.assertEqual(sum(allocated.values()) * 4096,
+                             workspace["totalBytes"] - workspace["freeBytes"])
+            self.assertEqual(["/", "/workspace"], calls)
+            calls.clear()
+            self.now += 31
+
 
 class FilesystemLinux:
     def __init__(self):

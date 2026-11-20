@@ -221,7 +221,7 @@ def install(source_revision, builder):
     runtime.mkdir(exist_ok=True)
     for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py",
                  "t3_connect.py", "t3-connect.html", "t3-connect.js", "t3-connect.css", "copilot_provider.py",
-                 "disk_usage.py"):
+                 "disk_usage.py", "t3_project_defaults.py"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
     install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))

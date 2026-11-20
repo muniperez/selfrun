@@ -8,6 +8,13 @@ and Git; they never mount disks, contact providers, install tools, or start T3.
 templates/development-workspaces/test.sh
 ```
 
+Prepared images seed the supported T3 clone/add-folder default to
+`/workspace/repos` without overwriting an explicit user choice. This does not
+enable Clone for reduced gateway sessions or change named New Project's
+hard-coded parent in pinned T3. See [project defaults and the exact upstream
+dependency for #202](../../docs/workspace-projects.md); broad filesystem and
+source-control scopes remain deliberately ungranted.
+
 Outputs: ignored `.local/artifacts/issue110/runtime/`. Fixtures use two real independent
 clones and a local bare remote; injected process/mount/encryption/transport adapters test
 failure handling. This is not a real ext4, systemd-freezer, age, or live restore qualification.

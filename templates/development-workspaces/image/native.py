@@ -35,7 +35,7 @@ SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "termi
 UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
          "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service")
 UNIT_HASHES = {
-    "minicloud-t3.service": "e5ddcb36e27b227158a4c7921de2aabd37f379b3f3d8dda0421af6198dc6ddfe",
+    "minicloud-t3.service": "a44ae8da462be6c8d96e3df73ab3a7227a2a82daf9f083ba74573e837761d12c",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
     "minicloud-t3-connect.service": "788796e55235f9cac13bcbfaf1267840f5e729d30bf753cd04274aa0a5906c03",
