@@ -16,7 +16,6 @@ vi.mock("@/api/workspacesApi", () => ({ deleteWorkspace: vi.fn(), launchEphemera
 vi.mock("./WorkspaceVmCard", () => ({
   WorkspaceVmCard: (props: {
     workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm; currency: string; canManage: boolean;
-    variant?: "primary" | "embedded"; retainedStorage?: { sizeGb: number; status?: string | null; estimatedMonthlyStorage: number };
   }) => {
     useEffect(() => () => releasedCards(props.vm.id), [props.vm.id]);
     vmCards(props);
@@ -98,28 +97,6 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
-it.each([
-  ["owner", "someone-else", true], ["developer", "creator", true],
-  ["admin", "someone-else", false], ["developer", "someone-else", false],
-])("offers primary-only account management to the creator or organization owner: %s", (role, createdBy, allowed) => {
-  auth.selectedOrganization.role = role as string;
-  render(detail(workspace({ createdBy: createdBy as string })));
-  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({
-    vm: expect.objectContaining({ kind: "primary" }), canManageConnect: allowed,
-  }));
-  expect(launchEphemeralVm).not.toHaveBeenCalled();
-  expect(workspaceOperation).not.toHaveBeenCalled();
-});
-
-it("fences Connect ownership against organization context and read-only management", () => {
-  auth.selectedOrganization.id = "different-org";
-  const view = render(detail(workspace({ createdBy: "creator" })));
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
-  auth.selectedOrganization.id = "org-a";
-  view.rerender(detail(workspace({ createdBy: "creator" }), false));
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: false }));
-});
-
 it("releases the previous primary management context when the signed-in actor changes, even between organization owners", () => {
   const item = workspace();
   const view = render(detail(item));
@@ -127,70 +104,40 @@ it("releases the previous primary management context when the signed-in actor ch
   auth.profile = { id: "another-owner" };
   view.rerender(detail(item));
   expect(releasedCards).toHaveBeenCalledWith("primary");
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ canManageConnect: true }));
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ vm: expect.objectContaining({ id: "primary" }) }));
 });
 
-it("resolves the primary by identity and passes observed state and retained storage into one unified card without starting compute", () => {
+it("resolves the primary by identity, selects it by default and shows only the selected VM without starting compute", () => {
   const item = workspace();
   const view = render(detail(item));
-  const primary = screen.getByRole("region", { name: "Primary VM" });
-  expect(within(primary).getByRole("article", { name: "VM primary" })).toHaveTextContent("workspace / org-a / primary / generation 3 / EUR / Manage");
-  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({
-    vm: item.vms[1], variant: "primary",
-    retainedStorage: { sizeGb: 20, status: "retained", estimatedMonthlyStorage: 1.25 },
-  }));
-  expect(within(primary).getAllByRole("article")).toHaveLength(1);
-  expect(within(primary).queryByRole("article", { name: "VM sibling-one" })).not.toBeInTheDocument();
-  expect(screen.getAllByRole("table")).toHaveLength(1);
+  const list = screen.getByRole("region", { name: "Virtual machines" });
+  expect(within(list).getByRole("button", { pressed: true })).toBe(within(list).getByRole("button", { name: "Primary VM, Running" }));
+  expect(within(list).getByRole("button", { name: "work/sibling-one, https://git.example/sibling-one.git, Running", pressed: false })).toBeInTheDocument();
+  expect(within(list).getByRole("button", { name: "work/sibling-two, https://git.example/sibling-two.git, Stopped", pressed: false })).toBeInTheDocument();
+  const selected = screen.getByRole("region", { name: "Selected VM" });
+  expect(within(selected).getByRole("article", { name: "VM primary" })).toHaveTextContent("workspace / org-a / primary / generation 3 / EUR / Manage");
+  expect(vmCards).toHaveBeenLastCalledWith(expect.objectContaining({ vm: item.vms![1] }));
+  expect(within(selected).getAllByRole("article")).toHaveLength(1);
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
   expect(launchEphemeralVm).not.toHaveBeenCalled();
   expect(workspaceOperation).not.toHaveBeenCalled();
   view.rerender(detail(workspace({ vms: [vm("primary", { kind: "primary", desiredState: "stopped", phase: "stopped" })] })));
-  expect(within(primary).getByRole("article")).toHaveTextContent("stopped");
-  expect(screen.getByText("No temporary VMs")).toBeInTheDocument();
+  expect(within(selected).getByRole("article")).toHaveTextContent("stopped");
+  expect(within(list).getAllByRole("button")).toHaveLength(2);
+  expect(within(list).getByRole("button", { name: "Launch temporary VM" })).toBeInTheDocument();
+  expect(within(list).getByRole("button", { name: "Primary VM, Stopped", pressed: true })).toBeInTheDocument();
 });
 
 it("falls back to explicit primary kind and never substitutes an ephemeral VM when primary metadata is missing", () => {
   const view = render(detail(workspace({ primaryVmId: null })));
-  expect(within(screen.getByRole("region", { name: "Primary VM" })).getByRole("article", { name: "VM primary" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Selected VM" })).getByRole("article", { name: "VM primary" })).toBeInTheDocument();
   view.rerender(detail(workspace({ vms: [vm("sibling-one")] })));
-  const primary = screen.getByRole("region", { name: "Primary VM" });
-  expect(within(primary).getByText("No primary VM reported.")).toBeInTheDocument();
-  expect(within(primary).queryByRole("article")).not.toBeInTheDocument();
-  expect(screen.getByText("work/sibling-one")).toBeInTheDocument();
-});
-
-it("expands siblings independently and delegates complete Git, generation and activity metadata to embedded VM controls", () => {
-  render(detail(workspace({ vms: [
-    vm("primary", { kind: "primary" }),
-    vm("sibling-one", { verifiedRemoteRef: "refs/heads/work/one", verifiedRemoteCommit: "c".repeat(40), finalHead: "c".repeat(40) }),
-    vm("sibling-two", { phase: "awaiting_git_save", gitStatus: "remote_unavailable" }),
-  ] })));
-  const table = screen.getByRole("table", { name: "Temporary VMs" });
-  expect(within(table).getByText("work/sibling-one")).toBeInTheDocument();
-  expect(within(table).getByText("https://git.example/sibling-two.git")).toBeInTheDocument();
-  expect(within(table).getByText("Remote unavailable")).toBeInTheDocument();
-  expect(within(table).getByText("Git save blocked")).toBeInTheDocument();
-  const one = screen.getByRole("button", { name: "Expand VM sibling-one" });
-  const two = screen.getByRole("button", { name: "Expand VM sibling-two" });
-  fireEvent.click(one);
-  fireEvent.click(two);
-  const firstDetails = screen.getByRole("region", { name: "Details for VM sibling-one" });
-  const secondDetails = screen.getByRole("region", { name: "Details for VM sibling-two" });
-  expect(one).toHaveAttribute("aria-expanded", "true");
-  expect(two).toHaveAttribute("aria-expanded", "true");
-  expect(one).toHaveAttribute("aria-controls", firstDetails.id);
-  expect(vmCards).toHaveBeenCalledWith(expect.objectContaining({
-    variant: "embedded",
-    vm: expect.objectContaining({
-      id: "sibling-one", generation: 3, baseRef: "refs/heads/main", baseCommit: "a".repeat(40),
-      verifiedRemoteRef: "refs/heads/work/one", verifiedRemoteCommit: "c".repeat(40), lastActivityAt: "2026-11-16T10:00:00Z",
-    }),
-  }));
-  expect(within(firstDetails).getByRole("article", { name: "VM sibling-one" })).toBeInTheDocument();
-  expect(within(secondDetails).getByRole("article", { name: "VM sibling-two" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Collapse VM sibling-one" }));
-  expect(firstDetails).not.toBeVisible();
-  expect(secondDetails).toBeVisible();
+  const selected = screen.getByRole("region", { name: "Selected VM" });
+  expect(within(selected).getByText("No primary VM reported.")).toBeInTheDocument();
+  expect(within(selected).queryByRole("article")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Primary VM, Not reported", pressed: true })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^work\/sibling-one/ }));
+  expect(within(selected).getByRole("article", { name: "VM sibling-one" })).toBeInTheDocument();
 });
 
 it("guards launch on eligible selections, resolved SHA and both acknowledgments, including programmatic submits", () => {
