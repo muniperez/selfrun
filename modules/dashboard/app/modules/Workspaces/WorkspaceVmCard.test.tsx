@@ -34,11 +34,29 @@ const refresh = vi.fn<() => Promise<void>>();
 function card(machine = vm(), canManage = true) {
   return <WorkspaceVmCard workspaceId="workspace" organizationId="org" vm={machine} currency="EUR" refresh={refresh} canManage={canManage} />;
 }
-function openAdvanced() {
-  fireEvent.click(screen.getByText("Advanced VM controls"));
+function openMenu(scope: HTMLElement = document.body) {
+  const trigger = within(scope).getByRole("button", { name: /^More actions for / });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+  return screen.getByRole("menu");
+}
+function menuItem(name: string, scope?: HTMLElement) {
+  return within(openMenu(scope)).getByRole("menuitem", { name });
+}
+function choose(name: string, scope?: HTMLElement) {
+  fireEvent.click(menuItem(name, scope));
+}
+function openPanel(name: "Next-start size…" | "Task leases…" | "VM details…") {
+  choose(name);
+  return screen.getByRole("dialog");
+}
+function closePanel() {
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+}
+function expectStatus(text: string) {
+  expect(screen.getAllByText(text).some(element => element.getAttribute("role") === "status")).toBe(true);
 }
 function openDiscard() {
-  fireEvent.click(screen.getByRole("button", { name: "Discard local data…" }));
+  choose("Discard local data…");
   return screen.getByRole("dialog", { name: "Discard VM task-vm generation 3" });
 }
 function confirmDiscard(dialog: HTMLElement, phrase = "discard task-vm 3") {
@@ -56,31 +74,6 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
-it("embeds opt-in Connect only in an explicitly owner-authorized primary card", () => {
-  const props = { workspaceId: "workspace", organizationId: "org", currency: "EUR", refresh, canManage: true };
-  const view = render(<WorkspaceVmCard {...props} vm={vm({ kind: "primary" })} canManageConnect />);
-  expect(screen.getByRole("button", { name: "Manage T3 Connect" })).toBeEnabled();
-  expect(getWorkspaceLaunchUrl).not.toHaveBeenCalled();
-  view.rerender(<WorkspaceVmCard {...props} vm={vm({ kind: "primary" })} canManageConnect={false} />);
-  expect(screen.queryByRole("button", { name: "Manage T3 Connect" })).not.toBeInTheDocument();
-  view.rerender(<WorkspaceVmCard {...props} vm={vm()} canManageConnect />);
-  expect(screen.queryByRole("button", { name: "Manage T3 Connect" })).not.toBeInTheDocument();
-});
-
-it("closes pending Connect authorization when primary ownership is lost", async () => {
-  const popup = { opener: null, close: vi.fn(), location: { replace: vi.fn() } };
-  vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
-  let resolve!: (result: { url: string; expiresAt: string }) => void;
-  vi.mocked(getWorkspaceLaunchUrl).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-  const props = { workspaceId: "workspace", organizationId: "org", currency: "EUR", refresh, canManage: true, vm: vm({ kind: "primary" }) };
-  const view = render(<WorkspaceVmCard {...props} canManageConnect />);
-  fireEvent.click(screen.getByRole("button", { name: "Manage T3 Connect" }));
-  view.rerender(<WorkspaceVmCard {...props} canManageConnect={false} />);
-  await act(async () => resolve({ url: "https://connect.example/launch", expiresAt: "2099-01-01T00:00:00Z" }));
-  expect(popup.close).toHaveBeenCalled();
-  expect(popup.location.replace).not.toHaveBeenCalled();
-});
-
 it("viewing a sleeping VM never starts compute or authorizes sessions; start uses current generation", async () => {
   let accept!: (observation: DevelopmentWorkspace) => void;
   vi.mocked(mutateWorkspaceVm).mockImplementationOnce(() => new Promise(resolve => { accept = resolve; }));
@@ -88,10 +81,12 @@ it("viewing a sleeping VM never starts compute or authorizes sessions; start use
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();
   expect(getWorkspaceLaunchUrl).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Connect to T3" })).not.toBeInTheDocument();
-  expect(screen.getByText(/doesn't confirm provider deletion/)).toBeInTheDocument();
+  expect(within(openPanel("VM details…")).getByText(/doesn't confirm provider deletion/)).toBeInTheDocument();
+  closePanel();
+  expect(mutateWorkspaceVm).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Start VM" }));
   expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "start", { generation: 3 });
-  expect(screen.getByText("Starting VM…")).toHaveAttribute("role", "status");
+  expectStatus("Starting VM…");
   expect(screen.getByRole("button", { name: "Start VM" })).toBeDisabled();
   expect(screen.queryByRole("list", { name: "VM startup stages" })).not.toBeInTheDocument();
   const observation: DevelopmentWorkspace = {
@@ -107,12 +102,11 @@ it("viewing a sleeping VM never starts compute or authorizes sessions; start use
 
 it("shows only reported startup stages, distinguishes failure, and waits for confirmed readiness", () => {
   const view = render(card(vm({ kind: "primary", phase: "provisioning" })));
-  expect(screen.getByText("Starting VM…")).toHaveAttribute("role", "status");
+  expectStatus("Starting VM…");
   expect(screen.queryByRole("list", { name: "VM startup stages" })).not.toBeInTheDocument();
   expect(screen.getByText(/T3 and previews become available/)).toBeInTheDocument();
   expect(screen.getAllByText(/Waiting for first activity/)).not.toHaveLength(0);
   expect(screen.queryByText(/Last activity: unavailable/i)).not.toBeInTheDocument();
-  expect(screen.getByText("0.1000 EUR / hour while running")).toBeInTheDocument();
 
   view.rerender(card(vm({ kind: "primary", phase: "attaching", startupStage: "preparing_storage" })));
   const progress = screen.getByRole("list", { name: "VM startup stages" });
@@ -121,7 +115,7 @@ it("shows only reported startup stages, distinguishes failure, and waits for con
   expect(within(progress).getAllByText("Upcoming:")).toHaveLength(3);
 
   view.rerender(card(vm({ kind: "primary", phase: "blocked", startupStage: "setting_up", errorCode: "workspace_reconciliation_required" })));
-  expect(screen.getByText("VM startup failed")).toHaveAttribute("role", "status");
+  expectStatus("VM startup failed");
   expect(progress.querySelector("[aria-current=step]")).toHaveTextContent("Last reported: Setting up VM");
   expect(screen.getByText(/contact your operator/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Start VM" })).not.toBeInTheDocument();
@@ -140,7 +134,7 @@ it("never requests another start when a just-created VM's startup page re-render
   view.rerender(card({ ...starting, revision: 2, startupStage: "preparing_vm" }));
   view.unmount();
   render(card(starting));
-  expect(screen.getByText("Starting VM…")).toHaveAttribute("role", "status");
+  expectStatus("Starting VM…");
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();
 });
 
@@ -163,7 +157,7 @@ it("retries a failed startup on the same environment by stopping the attempt and
   vi.mocked(mutateWorkspaceVm).mockResolvedValueOnce({ id: "workspace" } as DevelopmentWorkspace).mockResolvedValueOnce(observation);
   render(card(vm({ kind: "primary", generation: 1, phase: "blocked", startupStage: "setting_up",
     errorCode: "workspace_reconciliation_required", errorMessage: "Provider state is unconfirmed." })));
-  expect(screen.getByText("VM startup failed")).toHaveAttribute("role", "status");
+  expectStatus("VM startup failed");
   expect(screen.getByRole("alert")).toHaveTextContent("Provider state is unconfirmed.");
   fireEvent.click(screen.getByRole("button", { name: "Retry start" }));
   await waitFor(() => expect(refresh).toHaveBeenCalledExactlyOnceWith(observation));
@@ -197,8 +191,8 @@ it("queues an explicit next-generation start and allows stop to cancel that queu
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "start", { generation: 3 }));
   view.rerender(card({ ...machine, startAfterStop: true, revision: 2 }));
   expect(screen.getByRole("button", { name: "Start VM after it stops" })).toBeDisabled();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Stop VM" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Stop VM" }));
+  await waitFor(() => expect(menuItem("Stop VM")).not.toHaveAttribute("aria-disabled"));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Stop VM" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenLastCalledWith("workspace", "task-vm", "org", "stop", { generation: 3 }));
 });
 
@@ -208,9 +202,11 @@ it("isolates pending requests to the selected VM and surfaces mutation errors", 
   render(<>{card()}<WorkspaceVmCard workspaceId="workspace" organizationId="org" vm={vm({ id: "sibling" })} currency="EUR" refresh={refresh} canManage /></>);
   const selected = screen.getByRole("article", { name: "VM task-vm" });
   const sibling = screen.getByRole("article", { name: "VM sibling" });
-  fireEvent.click(within(selected).getByRole("button", { name: "Stop VM" }));
-  expect(within(selected).getByRole("button", { name: "Stop VM" })).toBeDisabled();
-  expect(within(sibling).getByRole("button", { name: "Stop VM" })).toBeEnabled();
+  choose("Stop VM", selected);
+  expect(menuItem("Stop VM", selected)).toHaveAttribute("aria-disabled", "true");
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  expect(menuItem("Stop VM", sibling)).not.toHaveAttribute("aria-disabled");
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   await act(async () => reject(new Error("Shutdown was already claimed.")));
   expect(within(selected).getByRole("alert")).toHaveTextContent("Shutdown was already claimed.");
   expect(refresh).not.toHaveBeenCalled();
@@ -218,18 +214,22 @@ it("isolates pending requests to the selected VM and surfaces mutation errors", 
 
 it("supports generation-scoped idle-stop cancellation, next-start resize and task lease transitions", async () => {
   render(card(vm({ shutdownDeadline: "2099-01-01T00:00:00Z" })));
-  fireEvent.click(screen.getByRole("button", { name: "Cancel idle stop" }));
+  choose("Cancel idle stop");
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "cancel-idle-stop", { generation: 3 }));
-  openAdvanced();
+  openPanel("Next-start size…");
   await waitFor(() => expect(screen.getByRole("button", { name: "Use this size at next start" })).toBeEnabled());
   fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "Heavy" } });
   fireEvent.submit(screen.getByRole("form", { name: "Resize VM task-vm" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenLastCalledWith("workspace", "task-vm", "org", "resize", {
     generation: 3, imageId: "image", profile: "Heavy", planId: "plan",
   }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  openPanel("Next-start size…");
   fireEvent.change(screen.getByLabelText("Image"), { target: { value: "image-two" } });
   expect(screen.getByRole("button", { name: "Use this size and image at next start" })).toBeInTheDocument();
   expect(screen.getByText(/This also changes the VM's image/)).toBeInTheDocument();
+  closePanel();
+  openPanel("Task leases…");
   await waitFor(() => expect(screen.getByRole("button", { name: "Renew keep-awake lease" })).toBeDisabled());
   fireEvent.change(screen.getByLabelText("Task ID"), { target: { value: "build" } });
   for (const [label, complete, cancelled] of [
@@ -370,14 +370,20 @@ it("clears session authorization permanently on permission loss", async () => {
 });
 
 it("gates mutations and sessions for read-only access including direct form submission", () => {
-  render(card(vm(), false));
-  openAdvanced();
-  expect(screen.getByRole("button", { name: "Stop VM" })).toBeDisabled();
+  render(card(vm({ shutdownDeadline: "2099-01-01T00:00:00Z" }), false));
   expect(screen.getByRole("button", { name: "Connect to T3" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Open preview" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Discard local data…" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Task ID"), { target: { value: "build" } });
+  const menu = openMenu();
+  for (const name of ["Stop VM", "Cancel idle stop", "Discard local data…"])
+    expect(within(menu).getByRole("menuitem", { name })).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Discard local data…" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.keyDown(menu, { key: "Escape" });
+  openPanel("Next-start size…");
   fireEvent.submit(screen.getByRole("form", { name: "Resize VM task-vm" }));
+  closePanel();
+  openPanel("Task leases…");
+  fireEvent.change(screen.getByLabelText("Task ID"), { target: { value: "build" } });
   fireEvent.submit(screen.getByRole("form", { name: "Task lease for VM task-vm" }));
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();
   expect(workspaceTask).not.toHaveBeenCalled();
@@ -386,7 +392,7 @@ it("gates mutations and sessions for read-only access including direct form subm
 
 it("cannot renew a lease before readiness but can complete the current generation's task", async () => {
   render(card(vm({ phase: "draining", desiredState: "stopped" })));
-  openAdvanced();
+  openPanel("Task leases…");
   fireEvent.change(screen.getByLabelText("Task ID"), { target: { value: "build" } });
   expect(screen.getByRole("button", { name: "Renew keep-awake lease" })).toBeDisabled();
   fireEvent.submit(screen.getByRole("form", { name: "Task lease for VM task-vm" }));
@@ -423,53 +429,76 @@ it("cancel discard performs no write and reopening clears all confirmation input
 
 it("closes discard and resets lease inputs when the generation changes", async () => {
   const view = render(card());
-  openAdvanced();
+  openPanel("Task leases…");
   fireEvent.change(screen.getByLabelText("Task ID"), { target: { value: "old-task" } });
+  closePanel();
   confirmDiscard(openDiscard());
   view.rerender(card(vm({ generation: 4, revision: 2 })));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  openAdvanced();
+  openPanel("Task leases…");
   expect(screen.getByLabelText("Task ID")).toHaveValue("");
   expect(mutateWorkspaceVm).not.toHaveBeenCalled();
   expect(workspaceTask).not.toHaveBeenCalled();
 });
 
-it("combines retained-storage observations with primary metrics and collapses secondary controls", () => {
-  render(<WorkspaceVmCard workspaceId="workspace" organizationId="org" vm={vm({ kind: "primary" })}
-    currency="EUR" refresh={refresh} canManage variant="primary"
-    retainedStorage={{ sizeGb: 25, status: "retained", estimatedMonthlyStorage: 1.52 }} />);
-  expect(screen.getAllByRole("heading", { name: "Primary VM" })).toHaveLength(1);
+it("shows a compact header and keeps secondary controls and VM details in the overflow menu", () => {
+  render(card(vm({ kind: "primary", lastActivityAt: new Date(Date.now() - 2 * 60_000).toISOString() })));
   const article = screen.getByRole("article", { name: "VM task-vm" });
-  const metrics = article.querySelector(":scope > dl")!;
-  expect(metrics).toHaveTextContent("Storage25 GB");
-  expect(metrics).toHaveTextContent("Storage cost1.52 EUR / month");
-  expect(metrics).toHaveTextContent("Server allocated · charges may continue");
-  const advanced = screen.getByText("Advanced VM controls").closest("details")!;
-  expect(advanced).not.toHaveAttribute("open");
-  expect(within(advanced).getByText(/Generation 3/)).toBeInTheDocument();
-  expect(within(advanced).getByRole("button", { name: "Stop VM" })).toBeInTheDocument();
+  expect(within(article).getByRole("heading", { name: "Primary VM" })).toBeInTheDocument();
+  expect(within(article).getByText("Running")).toBeInTheDocument();
+  expect(article).toHaveTextContent("Standard · sku · region · Active 2m ago");
+  expect(within(article).queryByText("Repository")).not.toBeInTheDocument();
+  expect(within(article).queryByRole("button", { name: "Stop VM" })).not.toBeInTheDocument();
+  expect(within(article).queryByText(/Storage cost/)).not.toBeInTheDocument();
+  const menu = openMenu();
+  expect(screen.getByRole("button", { name: "More actions for Primary VM" })).toHaveAttribute("aria-expanded", "true");
+  expect(within(menu).getAllByRole("menuitem").map(item => item.textContent))
+    .toEqual(["Stop VM", "Next-start size…", "Task leases…", "VM details…"]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "VM details…" }));
+  const details = screen.getByRole("dialog", { name: "VM details for Primary VM" });
+  expect(details).toHaveTextContent("task-vm · Generation 3");
+  expect(details).toHaveTextContent("0.1000 EUR/hour · 72.00 EUR/month");
+  expect(details).toHaveTextContent(/Only files on this dev environment's storage are kept/);
+  expect(mutateWorkspaceVm).not.toHaveBeenCalled();
+  expect(getWorkspaceLaunchUrl).not.toHaveBeenCalled();
 });
 
-it("embeds compact Git recovery first without repeating VM headers or metrics", async () => {
-  render(<WorkspaceVmCard workspaceId="workspace" organizationId="org" vm={vm({
+it("labels a temporary VM by work branch with its repository and Git save status, and keeps resources below the controls", () => {
+  render(card(vm({ workBranch: "feat/search", repository: "https://git.example/repo.git", gitStatus: "remote_unavailable",
+    resources: { state: "current", observedAt: "2026-11-20T10:00:00Z", cpu: { logicalCount: 4 }, memory: null, filesystems: [],
+    unavailable: {}, diskUsageSupported: false, directoryDeletionSupported: false } })));
+  const article = screen.getByRole("article", { name: "VM task-vm" });
+  expect(within(article).getByRole("heading", { name: "feat/search" })).toBeInTheDocument();
+  expect(article).toHaveTextContent("Repositoryhttps://git.example/repo.git");
+  expect(article).toHaveTextContent("Git saveRemote unavailable");
+  const connections = within(article).getByRole("region", { name: "Connections for VM task-vm" });
+  const resources = within(article).getByRole("region", { name: "Resources for dev environment task-vm" });
+  expect(resources).toHaveTextContent("Resource usage· Latest reading");
+  expect(connections.compareDocumentPosition(resources) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole("button", { name: "More actions for feat/search" })).toBeInTheDocument();
+});
+
+it("shows prominent Git recovery with retry stop and discard, and full Git metadata in VM details", async () => {
+  render(card(vm({
     phase: "awaiting_git_save", desiredState: "stopped", errorMessage: "Remote unavailable.",
     baseRef: "refs/heads/main", baseCommit: "base-sha", finalHead: "final-sha",
     verifiedRemoteRef: "refs/heads/work", verifiedRemoteCommit: "verified-sha",
-  })} currency="EUR" refresh={refresh} canManage variant="embedded" />);
-  const article = screen.getByRole("article", { name: "VM task-vm" });
-  expect(within(article).queryByRole("heading", { name: "Ephemeral VM" })).not.toBeInTheDocument();
-  expect(article.querySelector(":scope > dl")).toBeNull();
+  })));
+  expect(screen.getAllByText("Git save blocked").length).toBeGreaterThan(0);
   const recovery = screen.getByRole("region", { name: "Git save recovery for VM task-vm" });
-  expect(article.firstElementChild).toBe(recovery);
   expect(recovery).toHaveClass("bg-warning-surface");
   expect(recovery).toHaveTextContent("Remote unavailable.");
   expect(recovery).toHaveTextContent("server is still allocated");
   expect(within(recovery).getByRole("button", { name: "Discard local data…" })).toBeEnabled();
-  const advanced = screen.getByText("Advanced VM controls").closest("details")!;
-  expect(advanced).not.toHaveAttribute("open");
-  expect(advanced).toHaveTextContent("refs/heads/main@base-sha");
-  expect(advanced).toHaveTextContent("final-sha");
-  expect(advanced).toHaveTextContent("refs/heads/work@verified-sha");
+  const menu = openMenu();
+  expect(within(menu).queryByRole("menuitem", { name: "Retry stop" })).not.toBeInTheDocument();
+  expect(within(menu).queryByRole("menuitem", { name: "Discard local data…" })).not.toBeInTheDocument();
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "VM details…" }));
+  const details = screen.getByRole("dialog");
+  expect(details).toHaveTextContent("refs/heads/main@base-sha");
+  expect(details).toHaveTextContent("final-sha");
+  expect(details).toHaveTextContent("refs/heads/work@verified-sha");
+  closePanel();
   fireEvent.click(within(recovery).getByRole("button", { name: "Retry stop" }));
   await waitFor(() => expect(mutateWorkspaceVm).toHaveBeenCalledWith("workspace", "task-vm", "org", "stop", { generation: 3 }));
 });
