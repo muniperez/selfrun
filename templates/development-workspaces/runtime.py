@@ -1060,6 +1060,35 @@ class Linux:
         require(under(path, self.workspace), "T3 state database escapes the workspace")
         return t3_idle_database(path, expected_sequence)
 
+    @staticmethod
+    def t3_cgroup_empty():
+        events = Path("/sys/fs/cgroup/minicloudwork.slice/minicloud-t3.service/cgroup.events")
+        try:
+            return "populated 0" in events.read_text().splitlines()
+        except FileNotFoundError:
+            return True  # systemd can remove the empty service cgroup
+
+    def verify_t3_stopped(self):
+        unit = "minicloud-t3.service"
+
+        def stopped_state():
+            output = run(["systemctl", "show", unit, "-p", "ActiveState", "-p", "SubState",
+                          "-p", "Result", "-p", "Job", "-p", "MainPID", "-p", "ControlPID"])
+            state = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+            require(state.get("Job") == "" and state.get("MainPID") == state.get("ControlPID") == "0"
+                    and self.t3_cgroup_empty(), "Managed T3 still has a job or processes")
+            return state
+
+        state = stopped_state()
+        # A canceled restart can leave a crash result, e.g. if systemd signals
+        # ExecStartPre. Clear it only after the explicit stop has drained the unit.
+        if ((state.get("ActiveState"), state.get("SubState")) == ("failed", "failed") and
+                state.get("Result") in ("signal", "oom-kill")):
+            run(["systemctl", "reset-failed", unit])
+            state = stopped_state()
+        require((state.get("ActiveState"), state.get("SubState")) == ("inactive", "dead"),
+                "Designated service did not stop cleanly")
+
     def stop_services(self):
         self.infrastructure_units()
         for unit in self.config.get("stopUnits", ["minicloud-t3.service"]):
@@ -1070,14 +1099,23 @@ class Linux:
             if unit != "minicloud-t3.service":
                 self.verify_preview_unit(unit)
             # Only explicitly managed infrastructure can stop; unknown work still blocks.
-            run(["systemctl", "stop", "--no-block", unit])
             try:
+                run(["systemctl", "stop", "--no-block", unit])
                 self.thaw()
                 run(["systemctl", "stop", unit])
+                if unit == "minicloud-t3.service":
+                    # The monitor can still be exiting after losing its T3 parent.
+                    deadline = time.monotonic() + 5
+                    while not self.t3_cgroup_empty():
+                        require(time.monotonic() < deadline, "Managed T3 cgroup did not drain")
+                        time.sleep(0.05)
             finally:
                 self.freeze()
-            state = run(["systemctl", "show", unit, "-p", "ActiveState", "--value"])
-            require(state == "inactive", "Designated service did not stop cleanly")
+            if unit == "minicloud-t3.service":
+                self.verify_t3_stopped()
+            else:
+                state = run(["systemctl", "show", unit, "-p", "ActiveState", "--value"])
+                require(state == "inactive", "Designated service did not stop cleanly")
 
     def readonly(self):
         if self.config["kind"] == "primary":

@@ -75,7 +75,7 @@ async function ticket(token) {
   requireTrue(result.status === 200 && typeof result.body.ticket === "string");
   return result.body.ticket;
 }
-async function snapshot() {
+async function snapshot(projectId) {
   const result = await http("/api/orchestration/shell", bearer);
   requireTrue(result.status === 200 && Number.isSafeInteger(result.body.snapshotSequence)
     && result.body.snapshotSequence >= 0 && Array.isArray(result.body.threads)
@@ -86,6 +86,10 @@ async function snapshot() {
       && thread.pendingRuntimeRequest === null && inactive.has(thread.status)
       && thread.hasActionableProposedPlan === false && thread.blockedOnThreadWait !== true
       && Array.isArray(thread.pendingBackgroundTasks ?? []) && (thread.pendingBackgroundTasks ?? []).length === 0);
+  }
+  if (projectId !== undefined) {
+    requireTrue(Array.isArray(result.body.projects)
+      && result.body.projects.some((project) => project.id === projectId));
   }
   return { snapshotSequence: result.body.snapshotSequence };
 }
@@ -133,9 +137,10 @@ async function handle(request) {
     attach(socket);
     let afterProject = await snapshot();
     if (request.createProject === true) {
+      requireTrue(typeof request.projectId === "string" && request.projectId.length > 0);
       const beforeProject = afterProject;
       const created = await http("/api/projects/mutate", bearer, "POST", {
-        type: "project.create", commandId: crypto.randomUUID(), projectId: crypto.randomUUID(),
+        type: "project.create", commandId: crypto.randomUUID(), projectId: request.projectId,
         title: "Native qualification fixture", workspaceRoot: "/workspace",
       });
       requireTrue([200, 201].includes(created.status));
@@ -146,6 +151,7 @@ async function handle(request) {
       }
       requireTrue(afterProject.snapshotSequence > beforeProject.snapshotSequence);
     }
+    if (request.projectId !== undefined) afterProject = await snapshot(request.projectId);
     return { descriptorProtocol: 2, environmentId: descriptor.body.environmentId,
       actualSessionScopesChecked: true, unauthorizedHttpDenied: true,
       readonlyHttpMutationDenied: true, readonlyTerminalMutationDenied: true,

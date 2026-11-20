@@ -463,22 +463,27 @@ cgroup OOM kill into a failed run that restarts on the same VM generation and re
 volume, so environment identity, projects, threads, and sign-ins persist. Interrupted
 agent turns are not resumed. Exit 130, T3's graceful stop code, is a success and does not
 restart. `StartLimitIntervalSec=300` and `StartLimitBurst=5` bound the retries, including
-explicit starts. When the budget is exhausted, the unit stays `failed` until an operator
-runs `systemctl reset-failed minicloud-t3.service` and starts it again.
+explicit starts: a fresh start followed by five SIGKILLs within the window ends in
+`failed` (`Result=signal` on Ubuntu systemd `255.4-1ubuntu8.10`). To recover from
+exhaustion without a lifecycle stop, run `systemctl reset-failed minicloud-t3.service`
+and start it again.
 
-Explicit stops always win. `systemctl stop` cancels a pending restart. While the work
-slice is frozen, systemd queues a restart but cannot start it, and the runtime's
-stop-under-freeze sequence cancels it. After unmount, `ConditionPathIsDirectory=/workspace/t3`
-also refuses a start. Upstream's `t3 service install` user unit is not used; it would add a
-second supervisor outside the workspace lifecycle.
+`systemctl stop` cancels a pending restart. Freezing the work slice is not a restart
+barrier: the restart timer can create a start job and an `ExecStartPre` control process.
+The runtime queues the stop before thawing, waits for managed T3's cgroup to drain, then
+refreezes. It checks for no job, no main or control process, and an empty cgroup before clearing any
+residual signal/OOM failure from the canceled restart and requiring `inactive`. An unrelated
+failure or any remaining work blocks the lifecycle stop. After unmount,
+`ConditionPathIsDirectory=/workspace/t3` also refuses a start. Upstream's `t3 service install`
+user unit is not used; it would add a second supervisor outside the workspace lifecycle.
 
-The native probe `t3-oom-crash-restart-stop-race-and-retry-budget` covers a cgroup OOM
-kill, a crash racing `systemctl stop`, a crash in a frozen slice followed by the runtime
-stop, and budget exhaustion. After each restart, it checks the same environment ID,
-filesystem UUID, and VM generation, authenticated HTTP and WebSocket access, and Connect
-management. Because these checks restart T3, the probe runs before terminal probes. Before
-rollout, a disposable hosted workspace must also show that a Minicloud gateway launch and a
-previously linked T3 Connect relay recover after a T3 crash.
+The native probe `t3-oom-crash-restart-stop-race-and-retry-budget` separately verifies
+automatic SIGKILL and cgroup OOM recovery: same environment ID, retained project, filesystem
+UUID and VM generation; authenticated HTTP and WebSocket access; and Connect management.
+It also checks exit 130, the exact five-failure budget, and job and freezer state when a
+stop lands during the restart delay or frozen `ExecStartPre`. The probe runs before terminal
+probes. Before rollout, a disposable hosted workspace must also show that a Minicloud gateway
+launch and a previously linked T3 Connect relay recover after a T3 crash.
 
 ### JSON control protocol
 

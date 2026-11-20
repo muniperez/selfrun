@@ -113,6 +113,58 @@ class FakeLinux:
         self.mounted = False
 
 
+class ManagedT3StopTests(unittest.TestCase):
+    unit = "minicloud-t3.service"
+    failed = dict(ActiveState="failed", SubState="failed", Result="signal", Job="", MainPID="0", ControlPID="0")
+    stopped = dict(failed, ActiveState="inactive", SubState="dead", Result="success")
+
+    def setUp(self):
+        self.adapter = rt.Linux(dict(workspace="/workspace"))
+        self.events = []
+
+    def stop(self, *states, populated=(False, False, False)):
+        def systemctl(argv):
+            self.events.append(argv[1:])
+            if argv[1] == "show":
+                return "\n".join(f"{key}={value}" for key, value in next(state).items())
+            return ""
+
+        state = iter(states)
+        with patch.object(rt, "run", side_effect=systemctl), \
+                patch.object(self.adapter, "thaw", side_effect=lambda: self.events.append(["thaw"])), \
+                patch.object(self.adapter, "freeze", side_effect=lambda: self.events.append(["freeze"])), \
+                patch.object(Path, "read_text", side_effect=[
+                    f"populated {int(value)}\n" for value in populated]):
+            self.adapter.stop_services()
+
+    def test_normalizes_crash_result_only_after_stop_and_refreeze(self):
+        self.stop(self.failed, self.stopped)
+        self.assertEqual(self.events[:4], [["stop", "--no-block", self.unit], ["thaw"],
+                                          ["stop", self.unit], ["freeze"]])
+        self.assertEqual([command[0] for command in self.events[4:]], ["show", "reset-failed", "show"])
+
+    def test_preserves_unrelated_failure_and_never_resets_pending_or_populated_unit(self):
+        for change, populated, reason in [
+                (dict(Result="timeout"), False, "did not stop cleanly"),
+                (dict(Job="42"), False, "still has a job or processes"),
+                (dict(ControlPID="124"), False, "still has a job or processes"),
+                ({}, True, "still has a job or processes")]:
+            with self.subTest(change=change, populated=populated):
+                self.events.clear()
+                with self.assertRaisesRegex(rt.Blocked, reason):
+                    self.stop(self.failed | change, populated=(False, populated))
+                self.assertNotIn(["reset-failed", self.unit], self.events)
+
+    def test_rechecks_for_jobs_after_reset(self):
+        with self.assertRaisesRegex(rt.Blocked, "still has a job or processes"):
+            self.stop(self.failed, self.stopped | dict(Job="42"))
+
+    def test_waits_for_cgroup_to_drain_before_refreezing(self):
+        with patch.object(rt.time, "sleep", side_effect=lambda _: self.events.append(["wait"])):
+            self.stop(self.stopped, populated=[True, False, False])
+        self.assertEqual(self.events[2:5], [["stop", self.unit], ["wait"], ["freeze"]])
+
+
 class LayoutTests(unittest.TestCase):
     def test_layout_prepares_only_tooling_and_preserves_user_application_data(self):
         for existing_home in (False, True):

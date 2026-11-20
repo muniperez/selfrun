@@ -29,6 +29,17 @@ native = load("generic_native_qualification", "native.py")
 
 
 class ImageTests(unittest.TestCase):
+    def test_t3_restart_timer_is_distinct_from_a_start_job(self):
+        probe = native.Native.__new__(native.Native)
+        delay = dict(ActiveState="activating", SubState="auto-restart", Result="signal",
+                     Job="", MainPID=0, ControlPID=0)
+        with patch.object(probe, "wait_t3", return_value=delay):
+            self.assertEqual(probe.t3_restart_delay("signal"), delay)
+        for change in (dict(Job="42"), dict(ControlPID=123), dict(Result="oom-kill")):
+            with self.subTest(change=change), patch.object(probe, "wait_t3", return_value=delay | change):
+                with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_DELAY_NOT_OBSERVED"):
+                    probe.t3_restart_delay("signal")
+
     def test_copilot_install_verifies_pin_and_uses_credential_free_initialize(self):
         lock = json.loads((HERE / "image/manifest.lock.json").read_text())
         with patch.object(builder, "download") as download, \

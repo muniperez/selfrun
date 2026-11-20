@@ -360,6 +360,8 @@ class PreviewServiceTests(unittest.TestCase):
     def systemctl(self, argv):
         self.calls.append(argv)
         if argv[:2] == ["systemctl", "show"]:
+            if "Job" in argv:
+                return "ActiveState=inactive\nSubState=dead\nResult=success\nJob=\nMainPID=0\nControlPID=0"
             if "MainPID" in argv:
                 return "100" if argv[2] == "minicloud-t3.service" else self.main_pid
             if "ActiveState" in argv:
@@ -450,6 +452,7 @@ class PreviewServiceTests(unittest.TestCase):
         self.config["stopUnits"] = [self.unit, "minicloud-t3.service"]
         with patch.object(rt, "run", side_effect=self.systemctl), \
                 patch.object(self.adapter, "verify_unit_file"), \
+                patch.object(self.adapter, "t3_cgroup_empty", return_value=True), \
                 patch.object(self.adapter, "thaw", side_effect=lambda: self.calls.append(["thaw"])), \
                 patch.object(self.adapter, "freeze", side_effect=lambda: self.calls.append(["freeze"])):
             self.adapter.stop_services()
@@ -497,6 +500,7 @@ class PreviewServiceTests(unittest.TestCase):
         state = self.adapter.workspace / "custom-application.pid"
         state.write_bytes(b"user-owned data, not a lifecycle control file")
         with patch.object(rt, "run", side_effect=self.systemctl), \
+                patch.object(self.adapter, "t3_cgroup_empty", return_value=True), \
                 patch.object(self.adapter, "thaw"), patch.object(self.adapter, "freeze"):
             self.adapter.stop_services()
         stopped = [call[-1] for call in self.calls if call[:2] == ["systemctl", "stop"]]
