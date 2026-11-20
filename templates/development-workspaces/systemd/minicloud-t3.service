@@ -15,6 +15,8 @@ WorkingDirectory=/workspace
 Environment=HOME=/workspace/home
 Environment=CODEX_HOME=/workspace/home/.codex
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/opt/minicloud-workspace/scratch.env
+ExecStartPre=-+/usr/bin/python3 -B /opt/minicloud-workspace/storage_tiers.py prepare
 ExecStartPre=-/usr/bin/python3 -B /opt/minicloud-workspace/t3_project_defaults.py
 ExecStartPre=-/usr/bin/python3 -B /opt/minicloud-workspace/copilot_provider.py configure --base-dir /workspace/t3
 ExecStart=/usr/local/bin/t3 serve --host 127.0.0.1 --port 3773 --base-dir /workspace/t3 --no-browser
@@ -24,7 +26,7 @@ SuccessExitStatus=130
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/workspace
+ReadWritePaths=/workspace -/var/lib/minicloud-scratch
 PrivateTmp=yes
 KillMode=process
 TimeoutStopSec=30

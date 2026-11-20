@@ -29,13 +29,14 @@ import uuid
 
 HERE = Path(__file__).resolve().parent
 RUNTIME = Path("/opt/minicloud-workspace/runtime.py")
+STORAGE_TIERS = Path("/opt/minicloud-workspace/storage_tiers.py")
 EXPECTED_RUNTIME_SHA256 = None
 ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
 UNITS = ("minicloud-t3.service", "minicloud-workspace.service",
          "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service")
 UNIT_HASHES = {
-    "minicloud-t3.service": "a44ae8da462be6c8d96e3df73ab3a7227a2a82daf9f083ba74573e837761d12c",
+    "minicloud-t3.service": "31f7491788665c43af8066c7759830b0e927201bab696deb30a760da16f25ce1",
     "minicloud-workspace.service": "a16e51b25b6cccd0c0314b106cf371880a43b52387c444070418c2e539276198",
     "minicloudwork.slice": "e1de2748256aed52d74784f73c1c640eb25ec50ac7a3788b09c84599b5e66618",
     "minicloud-t3-connect.service": "788796e55235f9cac13bcbfaf1267840f5e729d30bf753cd04274aa0a5906c03",
@@ -54,6 +55,8 @@ REQUIRED_PROBES = {
     "t3-oom-crash-restart-stop-race-and-retry-budget",
     "copilot-stdio-provider-setup",
     "source-control-cli-service-terminal-and-discovery",
+    "scratch-tier-environment-and-cache-migration",
+    "t3-terminal-scratch-environment",
 }
 
 
@@ -813,6 +816,109 @@ class Native:
         return {"stdioInitializeAsCodingUser": True, "version": "1.0.114",
                 "providerSeededBeforeT3Start": True, "providerReapplyIdempotent": True,
                 "authenticatedPromptAndFollowupQualified": False}
+
+    def storage_tiers(self):
+        spec = importlib.util.spec_from_file_location("native_storage_tiers", STORAGE_TIERS)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def scratch_tier(self):
+        tiers = self.storage_tiers()
+        try:
+            expected = tiers.load_environment()
+        except (OSError, ValueError):
+            raise ProbeError("SCRATCH_ENVIRONMENT_FILE_INVALID") from None
+        check(not tiers.scratch_ready(tiers.SCRATCH), "SCRATCH_LAYOUT_NOT_PREPARED")
+        check(os.stat(tiers.SCRATCH).st_dev != os.stat("/workspace").st_dev, "SCRATCH_ON_RETAINED_VOLUME")
+        check(command(["systemctl", "show", "minicloud-t3.service", "-p", "EnvironmentFiles", "--value"])
+              .startswith(tiers.ENV_FILE), "T3_SCRATCH_ENVIRONMENT_FILE_NOT_LOADED")
+        main_pid = self.t3_unit()["MainPID"]
+        environment = dict(entry.split("=", 1) for entry in
+                           Path("/proc", str(main_pid), "environ").read_text().split("\0") if "=" in entry)
+        check(all(environment.get(name) == value for name, value in expected.items()),
+              "T3_SERVICE_SCRATCH_ENVIRONMENT_MISMATCH")
+        def login_environment(uid, home):
+            output = command(["setpriv", "--reuid=" + str(uid), "--regid=" + str(uid), "--clear-groups",
+                              "env", "-i", "HOME=" + home, "PATH=/usr/bin:/bin", "bash", "-l", "-c", "env"],
+                             cwd="/")
+            return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        coding = login_environment(2000, "/workspace/home")
+        check(all(coding.get(name) == value for name, value in expected.items()),
+              "CODING_LOGIN_SHELL_SCRATCH_ENVIRONMENT_MISMATCH")
+        check(not any(value.startswith(tiers.SCRATCH) for value in login_environment(0, "/root").values()),
+              "ROOT_LOGIN_SHELL_GOT_SCRATCH_ENVIRONMENT")
+        check(not any(shutil.which(name, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+                      for name in ("dockerd", "containerd", "podman")),
+              "CONTAINER_RUNTIME_DATA_ROOT_UNQUALIFIED")
+
+        # One-time migration on an existing workspace: synthetic caches move, credentials stay.
+        home = Path("/workspace/home")
+        caches = (".npm/_cacache/index", ".nuget/packages/demo/1.0.0", ".cargo/registry/cache/demo",
+                  ".cargo/git/db/demo", ".gradle/caches/modules-2", "go/pkg/mod/cache/download",
+                  ".cache/pip/http")
+        credentials = (".cargo/credentials.toml", ".cargo/config.toml", ".gradle/gradle.properties", ".npmrc",
+                       ".nuget/NuGet/NuGet.Config")
+        def owned(path, data=None):
+            for parent in reversed(path.relative_to(home).parents[:-1]):
+                directory = home / parent
+                directory.mkdir(mode=0o700, exist_ok=True)
+                os.chown(directory, 2000, 2000)
+            if data is None:
+                path.mkdir(mode=0o700, exist_ok=True)
+                path = path / "native-cache-entry"
+                data = "regenerable\n"
+            path.write_text(data)
+            os.chown(path, 2000, 2000)
+        for name in (".cache", ".cargo/registry", ".cargo/git", ".gradle/caches"):
+            if (home / name).is_symlink():
+                (home / name).unlink()
+        for name in caches:
+            owned(home / name)
+        for name in credentials:
+            owned(home / name, "native-credential-" + name + "\n")
+        Path(tiers.MARKER).unlink(missing_ok=True)
+        previous = self.t3_unit()["MainPID"]
+        adapter = self.rt.Linux(self.config)
+        try:
+            adapter.stop_services()
+        finally:
+            # stop_services leaves minicloudwork.slice frozen; T3 must not start inside it.
+            adapter.thaw()
+        adapter.start_services()
+        self.t3_recovered(previous)
+        marker = Path(tiers.MARKER)
+        check(tiers.read_marker(marker) is True and stat.S_IMODE(marker.stat().st_mode) == 0o600,
+              "CACHE_MIGRATION_MARKER_NOT_WRITTEN")
+        for name in caches:
+            check(not (home / name / "native-cache-entry").exists(), "RETAINED_CACHE_NOT_MIGRATED")
+        for name in credentials:
+            path = home / name
+            check(not path.is_symlink() and path.read_text() == "native-credential-" + name + "\n" and
+                  path.stat().st_uid == 2000, "CREDENTIAL_TOUCHED_BY_CACHE_MIGRATION")
+        links = {name: target for name, target in tiers.LINKS
+                 if name in (".cache", ".cargo/registry", ".cargo/git", ".gradle/caches")}
+        for name, target in links.items():
+            check((home / name).is_symlink() and os.readlink(home / name) ==
+                  os.path.join(tiers.SCRATCH, "cache", target).rstrip("/"), "CACHE_LINK_NOT_ON_SCRATCH")
+        check(not (home / tiers.TRASH).exists(), "CACHE_TRASH_NOT_PURGED")
+        return {"scratchLayoutVerified": True, "scratchSeparateFromRetainedVolume": True,
+                "t3ServiceEnvironmentMatched": sorted(expected), "codingLoginShellMatched": True,
+                "rootLoginShellUnchanged": True, "containerRuntimePresent": False,
+                "cacheMigrationMovedCaches": len(caches), "credentialsUntouched": len(credentials),
+                "migrationMarkerRootOnly": True}
+
+    def terminal_scratch(self):
+        expected = self.storage_tiers().load_environment()
+        output = Path("/workspace/artifacts/native-scratch-env")
+        result = self.client.call("scratch-env", names=sorted(expected))
+        self.wait(output.exists)
+        check(output.stat().st_uid == 2000, "TERMINAL_SCRATCH_PROBE_NOT_CODING_USER")
+        lines = output.read_text().splitlines()
+        check(lines[-1:] == ["scratch-writable"] and
+              dict(line.split("=", 1) for line in lines[:-1] if "=" in line) == expected,
+              "T3_TERMINAL_SCRATCH_ENVIRONMENT_MISMATCH")
+        return {**result, "terminalEnvironmentMatched": sorted(expected), "terminalWroteScratchCacheAndTmp": True}
 
     def start_services(self):
         check(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]) != "0",
@@ -1621,6 +1727,14 @@ class Native:
             check(not any(2000 in p["uids"] for p in self.rt.Procfs().inventory().values()),
                   "LEFTOVER_CODING_PROCESSES_KEEP_MOUNT_AND_LOOP_FOR_INSPECTION")
             command(["systemctl", "stop", UNITS[1]])
+            # Scratch is regenerable; do not leave this run's caches on the builder image.
+            for name in ("cache", "tmp"):
+                directory = Path("/var/lib/minicloud-scratch", name)
+                for child in (directory.iterdir() if directory.is_dir() and not directory.is_symlink() else ()):
+                    if child.is_dir() and not child.is_symlink():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
             if os.path.ismount("/workspace"):
                 check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"]) ==
                       self.config["volume"]["filesystemUuid"], "CLEANUP_MOUNT_CHANGED")
@@ -1679,11 +1793,14 @@ class Native:
                 return
             if not self.report.probe("copilot-stdio-provider-setup", self.copilot_provider):
                 return
+            # Restarts T3, so it runs before the probe terminal is opened.
+            self.report.probe("scratch-tier-environment-and-cache-migration", self.scratch_tier)
             self.report.probe("authenticated-generation-task-and-activity-hooks", self.root_hooks)
             if not self.report.probe("real-terminal-input-and-passive-root-hook", self.terminals):
                 return
             if not self.report.probe("source-control-cli-service-terminal-and-discovery", self.source_control):
                 return
+            self.report.probe("t3-terminal-scratch-environment", self.terminal_scratch)
             self.report.probe("actual-pinned-t3-sqlite-idle", self.sqlite)
             self.report.probe("actual-schema-copy-wal-and-fail-closed", self.sqlite_negatives)
             self.report.probe("actual-kernel-frozen-readonly-t3-sqlite", self.frozen_sqlite)

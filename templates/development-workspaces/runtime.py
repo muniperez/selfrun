@@ -635,6 +635,9 @@ FS_JOB_PATTERN = r"[A-Za-z0-9_-]{8,128}"
 FS_JOB_RETENTION_SECONDS = 24 * 3600
 FS_OUTPUT_LIMIT = 320 * 1024
 FS_DELETE_ROOTS = ("repos", "home", "artifacts")
+# Storage tiers (#202): caches, temporary files and build outputs live on the VM's local disk.
+SCRATCH_ROOT = "/var/lib/minicloud-scratch"
+SCRATCH_ENV = "/opt/minicloud-workspace/scratch.env"
 
 
 def _unescape_mount(value):
@@ -648,8 +651,9 @@ class ResourceSampler:
     up to RESOURCE_SAMPLE_SECONDS and CPU utilization comes from the delta between two samples.
     """
     def __init__(self, proc=Path("/proc"), monotonic=time.monotonic, wall=time.time, statvfs=os.statvfs,
-                 stat_path=os.stat, probe_seconds=RESOURCE_PROBE_SECONDS):
+                 stat_path=os.stat, probe_seconds=RESOURCE_PROBE_SECONDS, scratch=SCRATCH_ROOT):
         self.proc = Path(proc)
+        self.scratch = scratch
         self.monotonic = monotonic
         self.wall = wall
         self.statvfs = statvfs
@@ -752,40 +756,79 @@ class ResourceSampler:
         if "error" in box:
             unavailable["filesystems"] = "unreadable"
             return []
-        return box["value"]
+        filesystems, reasons = box["value"]
+        unavailable.update(reasons)
+        return filesystems
 
-    def _mounts(self):
-        mounts = []
+    def _mount_table(self):
+        rows = []
         for line in (self.proc / "self/mountinfo").read_text().splitlines():
             fields = line.split(" ")
             if len(fields) > 4:
-                mounts.append(_unescape_mount(fields[4]))
-        return mounts
+                rows.append((fields[2], _unescape_mount(fields[3]), _unescape_mount(fields[4])))
+        return rows
 
     def _probe_filesystems(self, workspace):
         workspace = os.path.normpath(workspace)
         try:
-            mounts = self._mounts()
+            rows = self._mount_table()
         except OSError:
-            mounts = None
-        filesystems = {}
-        for path in ("/", workspace):
-            device = self.stat_path(path).st_dev
+            rows = None
+        filesystems, unavailable = {}, {}
+        for path, role in (("/", "system"), (workspace, "workspace"), (self.scratch, "scratch")):
+            try:
+                device = self.stat_path(path).st_dev
+            except OSError:
+                if role != "scratch":
+                    raise
+                unavailable["filesystems.scratch"] = "unreadable"
+                continue
             if device in filesystems:
-                filesystems[device]["paths"].append(path)
+                item = filesystems[device]
+                if role != "scratch":
+                    item["paths"].append(path)
+                item["roles"].append(role)
+                continue
+            if role == "scratch":
+                # The legacy control-plane contract accepts only "/" and the workspace as paths.
+                unavailable["filesystems.scratch"] = "separate_device"
                 continue
             info = self.statvfs(path)
             size = info.f_frsize or info.f_bsize
-            filesystems[device] = dict(paths=[path], totalBytes=info.f_blocks * size,
+            filesystems[device] = dict(paths=[path], roles=[role], totalBytes=info.f_blocks * size,
                                        freeBytes=info.f_bfree * size, availableBytes=info.f_bavail * size,
                                        inodesTotal=info.f_files or None,
                                        inodesAvailable=info.f_favail if info.f_files else None)
-        nested = None
-        if mounts is not None:
-            nested = sum(1 for mount in mounts if mount != workspace and mount.startswith(workspace.rstrip("/") + "/"))
+        nested = scratch = None
+        if rows is not None:
+            inside = {point for _, _, point in rows
+                      if point != workspace and point.startswith(workspace.rstrip("/") + "/")}
+            scratch = len(inside & scratch_bind_mounts(rows, self.scratch))
+            nested = len(inside) - scratch
         for item in filesystems.values():
-            item["nestedMountsExcluded"] = nested if workspace in item["paths"] else 0
-        return list(filesystems.values())
+            owns = workspace in item["paths"]
+            item["nestedMountsExcluded"] = nested if owns else 0
+            item["scratchBindMounts"] = scratch if owns else 0
+        return list(filesystems.values()), unavailable
+
+
+def scratch_bind_mounts(rows, scratch=SCRATCH_ROOT):
+    """Mountpoints whose source lies below the scratch repos directory (bind-mounted build outputs).
+
+    rows are (major:minor, root within the filesystem, mountpoint) from /proc/self/mountinfo.
+    """
+    source = scratch.rstrip("/") + "/repos"
+    best = None
+    for device, root, point in rows:
+        if (source == point or source.startswith(point.rstrip("/") + "/")) and \
+                (best is None or len(point) >= len(best[2])):
+            best = (device, root, point)
+    if best is None:
+        return set()
+    prefix = os.path.normpath(best[1].rstrip("/") + "/" + source[len(best[2].rstrip("/")):].lstrip("/"))
+    return {point for device, root, point in rows
+            if device == best[0] and (root == prefix or root.startswith(prefix.rstrip("/") + "/")) and
+            point != scratch and not point.startswith(scratch.rstrip("/") + "/")}
 
 
 RESOURCES = ResourceSampler()
@@ -878,7 +921,9 @@ class Linux:
              "--uid=" + str(self.config["uid"]), "--gid=" + str(self.config["gid"]),
              "--slice=minicloudwork.slice", "--working-directory=" + str(self.workspace),
              "--property=KillMode=control-group", "--property=NoNewPrivileges=yes",
-             "--property=ProtectSystem=strict", "--property=ReadWritePaths=" + str(self.workspace),
+             "--property=ProtectSystem=strict",
+             "--property=ReadWritePaths=" + str(self.workspace) + " -" + SCRATCH_ROOT,
+             "--property=EnvironmentFile=-" + SCRATCH_ENV,
              "--property=PrivateTmp=yes", "--setenv=HOME=" + str(self.workspace / "home"),
              "--", *argv])
         return unit
