@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import type { DevelopmentWorkspaceVm } from "@/models/controlPlane";
+import { WorkspaceVmResourceChart } from "./WorkspaceVmResourceChart";
 
 export function formatBytes(bytes: number | null | undefined) {
   if (bytes == null) return "Unknown";
@@ -18,10 +19,22 @@ const stateLabel = {
   current: "Current", stale: "Stale", historical: "Last known", unsupported: "Not supported",
 } as const;
 
-export function WorkspaceVmResources({ vm }: { vm: DevelopmentWorkspaceVm }) {
+export function WorkspaceVmResources({ workspaceId, organizationId, vm, active = true }: {
+  workspaceId: string; organizationId: string; vm: DevelopmentWorkspaceVm;
+  /** Whether the VM's resources are on screen; history refreshes only while active. */
+  active?: boolean;
+}) {
   const resources = vm.resources;
-  if (!resources) return null;
   const label = `Resources for dev environment ${vm.id}`;
+  const chart = <WorkspaceVmResourceChart workspaceId={workspaceId} organizationId={organizationId} vm={vm} active={active} />;
+  if (!resources) {
+    if (vm.phase !== "ready" || vm.desiredState !== "running") return null;
+    return <section aria-label={label} className="border-t px-5 py-3 text-sm">
+      <h3 className="font-medium">Resources</h3>
+      <p className="text-xs text-muted-foreground">Waiting for the first sample from this dev environment.</p>
+      {chart}
+    </section>;
+  }
   if (resources.state === "unsupported")
     return <section aria-label={label} className="border-t px-5 py-3 text-sm">
       <h3 className="font-medium">Resources <Badge variant="outline">Not supported</Badge></h3>
@@ -57,5 +70,6 @@ export function WorkspaceVmResources({ vm }: { vm: DevelopmentWorkspaceVm }) {
         </dd>
       </div>)}
     </dl>
+    {chart}
   </section>;
 }

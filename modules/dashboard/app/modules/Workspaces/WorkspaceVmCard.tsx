@@ -24,6 +24,8 @@ type Props = {
   canManageConnect?: boolean;
   variant?: "primary" | "embedded";
   retainedStorage?: { sizeGb: number; status?: string | null; estimatedMonthlyStorage: number };
+  /** Whether the card is on screen; resource history refreshes only while active. */
+  active?: boolean;
 };
 
 const lossDisclosure = "This VM has its own Git-only disk and can't see the primary VM's storage. Untracked files, files ignored by Git and unpushed work can be lost permanently. There is no backup.";
@@ -37,7 +39,7 @@ export function WorkspaceVmCard(props: Props) {
   return <VmGenerationCard key={`${props.organizationId}:${props.workspaceId}:${props.vm.id}:${props.vm.generation}`} {...props} />;
 }
 
-function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, canManage, canManageConnect = false, variant = "primary", retainedStorage }: Props) {
+function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, canManage, canManageConnect = false, variant = "primary", retainedStorage, active = true }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<WorkspaceSelection>({
@@ -227,7 +229,7 @@ function VmGenerationCard({ workspaceId, organizationId, vm, currency, refresh, 
       <WorkspaceT3Connect workspaceId={workspaceId} vmId={vm.id} organizationId={organizationId}
         generation={vm.generation} revision={vm.revision} ready={ready && !busy} />
     </div>}
-    <WorkspaceVmResources vm={vm} />
+    <WorkspaceVmResources workspaceId={workspaceId} organizationId={organizationId} vm={vm} active={active} />
     {canManage && vm.resources && vm.resources.state !== "unsupported" && <WorkspaceDiskUsage workspaceId={workspaceId}
       organizationId={organizationId} vm={vm} ready={ready && !busy} refresh={() => refresh()} />}
     <details className="min-w-0 border-t px-5 py-2 text-sm">
