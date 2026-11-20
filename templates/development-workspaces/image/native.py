@@ -1045,13 +1045,17 @@ class Native:
               "frozen " + expected in (WORK_CGROUP / "cgroup.events").read_text().splitlines(),
               "T3_UNEXPECTED_WORK_SLICE_FREEZER_STATE")
 
-    def t3_stays_stopped(self, *, frozen=False, failed=False):
+    def t3_stays_stopped(self, *, frozen=False, failed=False, after_crash=False):
         # Check immediately and through an entire RestartSec=5 window.
         deadline = time.monotonic() + 6
-        expected = ("failed", "failed", "signal") if failed else ("inactive", "dead", "success")
+        expected = ("failed", "failed") if failed else ("inactive", "dead")
+        results = ("signal",) if failed else ("success",)
+        if after_crash and not failed:
+            # A dependent unit can keep the stopped service loaded with its previous crash result.
+            results += ("signal",)
         while True:
             state = self.t3_unit()
-            check((state["ActiveState"], state["SubState"], state["Result"]) == expected and
+            check((state["ActiveState"], state["SubState"]) == expected and state["Result"] in results and
                   state["Job"] == "" and state["MainPID"] == state["ControlPID"] == 0 and
                   self.rt.Linux.t3_cgroup_empty(), "T3_DID_NOT_REMAIN_STOPPED")
             self.check_t3_freezer(frozen)
@@ -1119,7 +1123,7 @@ class Native:
                 before_stop = self.t3_restart_delay("signal")
             self.check_t3_freezer(True)
             adapter.stop_services()
-            after_stop = self.t3_stays_stopped(frozen=True)
+            after_stop = self.t3_stays_stopped(frozen=True, after_crash=True)
         finally:
             adapter.thaw()
         self.check_t3_freezer(False)
@@ -1169,7 +1173,7 @@ class Native:
         self.t3_restart_delay("signal")
         self.check_t3_freezer(False)
         command(["systemctl", "stop", unit])
-        self.t3_stays_stopped()
+        self.t3_stays_stopped(after_crash=True)
         evidence["stopDuringPendingRestartStaysStopped"] = True
 
         frozen = {}

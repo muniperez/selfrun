@@ -10,7 +10,7 @@ import tempfile
 import sys
 import unittest
 import zipfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 HERE = Path(__file__).resolve().parents[1]
@@ -39,6 +39,38 @@ class ImageTests(unittest.TestCase):
             with self.subTest(change=change), patch.object(probe, "wait_t3", return_value=delay | change):
                 with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_DELAY_NOT_OBSERVED"):
                     probe.t3_restart_delay("signal")
+
+    def test_t3_cancelled_restart_allows_retained_signal_result(self):
+        probe = native.Native.__new__(native.Native)
+        probe.rt = Mock()
+        probe.rt.Linux.t3_cgroup_empty.return_value = True
+        stopped = dict(ActiveState="inactive", SubState="dead", Result="signal",
+                       Job="", MainPID=0, ControlPID=0)
+        cleared = stopped | dict(Result="success")
+        with patch.object(probe, "t3_unit", side_effect=[stopped, cleared]), \
+                patch.object(probe, "check_t3_freezer") as freezer, \
+                patch.object(native.time, "monotonic", side_effect=[0, 0, 6]), \
+                patch.object(native.time, "sleep"):
+            self.assertEqual(probe.t3_stays_stopped(frozen=True, after_crash=True), cleared)
+        self.assertEqual([call.args for call in freezer.call_args_list], [(True,), (True,)])
+
+    def test_t3_retained_signal_does_not_hide_unexpected_stop_state(self):
+        probe = native.Native.__new__(native.Native)
+        probe.rt = Mock()
+        stopped = dict(ActiveState="inactive", SubState="dead", Result="signal",
+                       Job="", MainPID=0, ControlPID=0)
+        for state, empty, options in (
+                (stopped, True, {}),
+                (stopped | dict(Job="42"), True, {"after_crash": True}),
+                (stopped, False, {"after_crash": True}),
+                (stopped | dict(ActiveState="failed", SubState="failed"), True, {"after_crash": True}),
+                (stopped | dict(ActiveState="failed", SubState="failed", Result="start-limit-hit"),
+                 True, {"failed": True})):
+            with self.subTest(state=state, empty=empty, options=options):
+                probe.rt.Linux.t3_cgroup_empty.return_value = empty
+                with patch.object(probe, "t3_unit", return_value=state), \
+                        self.assertRaisesRegex(native.ProbeError, "T3_DID_NOT_REMAIN_STOPPED"):
+                    probe.t3_stays_stopped(**options)
 
     def test_copilot_install_verifies_pin_and_uses_credential_free_initialize(self):
         lock = json.loads((HERE / "image/manifest.lock.json").read_text())
