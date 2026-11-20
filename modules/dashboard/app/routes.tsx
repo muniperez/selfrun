@@ -15,6 +15,7 @@ import { DeploymentsModule } from "./modules/Deployments/DeploymentsModule";
 import { OnboardingModule } from "./modules/Onboarding/OnboardingModule";
 import { SignInModule } from "./modules/Auth/SignInModule";
 import { AccountFlowForm } from "./modules/Auth/AccountFlowForm";
+import { SessionSettingsCard } from "./modules/Auth/SessionSettingsCard";
 import { ProviderContinuationModule } from "./modules/Auth/ProviderContinuationModule";
 import { TeamSettingsModule } from "./modules/Settings/TeamSettingsModule";
 import { GitHubCallbackModule, GitHubSettingsModule } from "./modules/Settings/GitHubSettingsModule";
@@ -59,7 +60,12 @@ export const routes: RouteObject[] = [
       { path: "/deployments", element: <DeploymentsModule /> },
       { path: "/deployments/:deploymentNumber", element: <DeploymentDetailModule /> },
       { path: "/settings/api-keys", element: <ApiKeysModule /> },
-      { path: "/settings/account", element: <AccountFlowForm kind="settings" returnTo="/settings/account" /> },
+      { path: "/settings/account", element: (
+        <div className="space-y-6">
+          <AccountFlowForm kind="settings" returnTo="/settings/account" />
+          <SessionSettingsCard />
+        </div>
+      ) },
       { path: "/settings/team", element: <TeamSettingsModule /> },
       { path: "/settings/github", element: <GitHubSettingsModule /> }
     ]

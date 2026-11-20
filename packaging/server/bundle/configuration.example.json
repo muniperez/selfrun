@@ -6,6 +6,13 @@
   "consoleHostname": "cloud.example.com",
   "manageDnsRecords": false,
   "googleOidc": { "enabled": false },
+  "portalSessions": {
+    "keepSignedInEnabled": true,
+    "standardIdleMinutes": 120,
+    "standardMaxMinutes": 720,
+    "rememberedIdleMinutes": 10080,
+    "rememberedMaxMinutes": 43200
+  },
   "sourceUrl": "https://github.com/muniventures/minicloud",
   "recovery": {
     "openBaoUnsealMaterialPath": "/mnt/operator-recovery",

@@ -15,6 +15,7 @@ using Minicloud.Api.Auth;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
+using Minicloud.Common.Services;
 
 namespace Minicloud.Tests;
 
@@ -359,7 +360,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         Assert.Contains("secure", pending);
         Assert.Contains("httponly", pending);
         Assert.DoesNotContain("domain=", pending);
-        Assert.Equal(Pending("synthetic-state", "/cli/login?session=request-1"), pending.Split(';')[0].Split('=', 2)[1]);
+        Assert.Equal(Pending("synthetic-state", "/cli/login?session=request-1") + ".0", pending.Split(';')[0].Split('=', 2)[1]);
         Assert.DoesNotContain(cookies, cookie => cookie.StartsWith("__Host-minicloud-session="));
     }
 
@@ -484,6 +485,156 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             value => value.StartsWith("__Host-minicloud-oidc=settings."));
     }
 
+    [Fact]
+    public async Task KeepSignedInIssuesARememberedPersistentCookieAndStoresThePreference()
+    {
+        var standard = await _client.SendAsync(Submit("login", LoginFields()));
+        var standardCookie = standard.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-session="));
+        Assert.DoesNotContain("expires=", standardCookie);
+        Assert.False((await standard.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.KeepSignedIn);
+
+        using var request = Submit("login", LoginFields(), keepSignedIn: true);
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var cookie = response.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-session="));
+        Assert.Contains("expires=", cookie);
+        var session = (await response.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!;
+        Assert.True(session.KeepSignedIn);
+        Assert.True(session.KeepSignedInPreference);
+        Assert.True(session.ExpiresAt > DateTimeOffset.UtcNow.AddDays(29));
+        Assert.True(session.IdleExpiresAt > DateTimeOffset.UtcNow.AddDays(6));
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        Assert.True((await db.Users.SingleAsync()).KeepSignedIn);
+    }
+
+    [Fact]
+    public async Task RenewalRequiresCsrfIsWindowedAndExtendsTheUpstreamSession()
+    {
+        var (cookie, csrf) = await Login();
+        using (var missingCsrf = Renew(cookie, null))
+            Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(missingCsrf)).StatusCode);
+
+        using (var early = Renew(cookie, csrf))
+        {
+            var response = await _client.SendAsync(early);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = (await response.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+            Assert.True(body.RenewAfter > DateTimeOffset.UtcNow);
+            Assert.Equal(0, _factory.Kratos.Extensions);
+        }
+
+        // Move the session into its renewal window, with the upstream session ending before the renewed deadline.
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        using var due = Renew(cookie, csrf);
+        var renewed = await _client.SendAsync(due);
+        Assert.Equal(HttpStatusCode.OK, renewed.StatusCode);
+        var session = (await renewed.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+        Assert.Equal(1, _factory.Kratos.Extensions);
+        Assert.True(session.IdleExpiresAt > DateTimeOffset.UtcNow.AddMinutes(115));
+        Assert.Equal(csrf, session.CsrfToken);
+        Assert.False(renewed.Headers.Contains("Set-Cookie"));
+    }
+
+    [Fact]
+    public async Task RenewalStillExtendsRememberedSessionsAfterTheOperatorShortensThePolicy()
+    {
+        using var login = Submit("login", LoginFields(), keepSignedIn: true);
+        var loggedIn = await _client.SendAsync(login);
+        var cookie = LocalCookie(loggedIn);
+        var csrf = (await loggedIn.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.CsrfToken;
+        _factory.Services.GetRequiredService<IOptions<PortalSessionOptions>>().Value.KeepSignedInEnabled = false;
+
+        // The stored idle deadline is still days away, but the standard policy now ends it 30 minutes from now.
+        await AgeSession(TimeSpan.FromMinutes(90));
+        using var due = Renew(cookie, csrf);
+        var renewed = await _client.SendAsync(due);
+        Assert.Equal(HttpStatusCode.OK, renewed.StatusCode);
+        var session = (await renewed.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+        Assert.False(session.KeepSignedIn);
+        Assert.True(session.IdleExpiresAt > DateTimeOffset.UtcNow.AddMinutes(115));
+        Assert.True(session.RenewAfter > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task RenewalDuringAnOutageIsRecoverableAndAfterLogoutCannotRestoreTheSession()
+    {
+        var (cookie, csrf) = await Login();
+        await AgeSession(TimeSpan.FromMinutes(90));
+        _factory.Kratos.Unavailable = true;
+        using (var outage = Renew(cookie, csrf))
+        {
+            var response = await _client.SendAsync(outage);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Contains("auth_unavailable", await response.Content.ReadAsStringAsync());
+        }
+        _factory.Kratos.Unavailable = false;
+        using (var recovered = Renew(cookie, csrf))
+            Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(recovered)).StatusCode);
+
+        using var logout = new HttpRequestMessage(HttpMethod.Post, "/api/account/logout");
+        logout.Headers.Add("Cookie", cookie);
+        logout.Headers.Add("Origin", Dashboard);
+        logout.Headers.Add("X-Minicloud-CSRF", csrf);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(logout)).StatusCode);
+        using var afterLogout = Renew(cookie, csrf);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(afterLogout)).StatusCode);
+    }
+
+    [Fact]
+    public async Task UpstreamRevocationEndsRenewal()
+    {
+        var (cookie, csrf) = await Login();
+        _factory.Kratos.Active = false;
+        using var request = Renew(cookie, csrf);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(request)).StatusCode);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        Assert.NotNull((await db.BrowserSessions.AsNoTracking().SingleAsync()).RevokedAt);
+    }
+
+    [Fact]
+    public async Task PreferenceChangesTheCurrentSessionCookiePersistence()
+    {
+        var (cookie, csrf) = await Login();
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/account/session/preference")
+        { Content = JsonContent.Create(new { keepSignedIn = true }) };
+        request.Headers.Add("Cookie", cookie);
+        request.Headers.Add("Origin", Dashboard);
+        request.Headers.Add("X-Minicloud-CSRF", csrf);
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reissued = response.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-session="));
+        Assert.Equal(cookie, reissued.Split(';')[0]);
+        Assert.Contains("expires=", reissued);
+        var session = (await response.Content.ReadFromJsonAsync<AccountSessionResponse>())!;
+        Assert.True(session.KeepSignedIn);
+        Assert.True(session.ExpiresAt > DateTimeOffset.UtcNow.AddDays(29));
+    }
+
+    private HttpRequestMessage Renew(string cookie, string? csrf)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/account/session/renew");
+        request.Headers.Add("Cookie", cookie);
+        request.Headers.Add("Origin", Dashboard);
+        if (csrf is not null) request.Headers.Add("X-Minicloud-CSRF", csrf);
+        return request;
+    }
+
+    private async Task AgeSession(TimeSpan age)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var session = await db.BrowserSessions.SingleAsync(x => x.RevokedAt == null);
+        session.CreatedAt -= age;
+        session.RenewedAt -= age;
+        session.LastSeenAt -= age;
+        session.ExpiresAt -= age;
+        session.IdleExpiresAt -= age;
+        await db.SaveChangesAsync();
+    }
+
     private void EnableGoogle()
     {
         _factory.Upstream.Google = true;
@@ -533,9 +684,10 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     private static object LoginFields() =>
         new { csrf_token = "synthetic-flow-csrf", identifier = "operator@example.test", password = "synthetic-password", method = "password" };
 
-    private static HttpRequestMessage Submit(string kind, object fields, string? cookie = null)
+    private static HttpRequestMessage Submit(string kind, object fields, string? cookie = null, bool? keepSignedIn = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/account/flows/{kind}?flow={FlowId}")
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/account/flows/{kind}?flow={FlowId}" +
+            (keepSignedIn is null ? "" : $"&keepSignedIn={keepSignedIn.Value.ToString().ToLowerInvariant()}"))
         { Content = JsonContent.Create(fields) };
         request.Headers.Add("Origin", Dashboard);
         if (cookie is not null) request.Headers.Add("Cookie", cookie + "; ory_kratos_session=synthetic-ory-session");
@@ -552,6 +704,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     private sealed class FlowFactory(SqliteConnection connection) : WebApplicationFactory<Program>
     {
         public UpstreamHandler Upstream { get; } = new();
+        public SessionValidator Kratos { get; } = new();
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -566,7 +719,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             {
                 services.UseSharedSqliteConnection(connection);
                 services.RemoveAll<IKratosSessionValidator>();
-                services.AddSingleton<IKratosSessionValidator>(new SessionValidator());
+                services.AddSingleton<IKratosSessionValidator>(Kratos);
                 services.AddHttpClient<KratosBrowserFlowClient>().ConfigurePrimaryHttpMessageHandler(() => Upstream);
             });
         }
@@ -574,7 +727,19 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
 
     private sealed class SessionValidator : IKratosSessionValidator
     {
-        public Task<bool> IsSessionActiveAsync(string sessionId, string identityId, CancellationToken cancellationToken) => Task.FromResult(true);
+        public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddDays(1);
+        public bool Unavailable { get; set; }
+        public bool Active { get; set; } = true;
+        public int Extensions { get; private set; }
+        public Task<bool> IsSessionActiveAsync(string sessionId, string identityId, CancellationToken cancellationToken) => Task.FromResult(Active);
+        public Task<KratosSessionState?> GetActiveSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken) =>
+            Unavailable ? throw new KratosUnavailableException() : Task.FromResult(Active ? new KratosSessionState(ExpiresAt) : null);
+        public Task<KratosSessionState?> ExtendSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken)
+        {
+            Extensions++;
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(7);
+            return GetActiveSessionAsync(sessionId, identityId, cancellationToken);
+        }
         public Task RevokeSessionAsync(string sessionId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

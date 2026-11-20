@@ -82,7 +82,7 @@ public sealed class IdentityAndBrowserSessionsMigrationTests
         Assert.Contains(PreviousMigration, await db.Database.GetAppliedMigrationsAsync());
         await db.Database.MigrateAsync(CurrentMigration);
 
-        var user = await db.Users.AsNoTracking().SingleAsync();
+        var user = await db.Users.AsNoTracking().Select(x => new { x.Id, x.KratosIdentityId }).SingleAsync();
         var member = await db.OrganizationMembers.AsNoTracking().SingleAsync();
         var apiKey = await db.ApiKeys.AsNoTracking().SingleAsync();
         Assert.Equal("usr_existing", user.Id);

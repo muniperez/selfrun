@@ -31,15 +31,16 @@ public sealed class AccountFlowsController(
 
     [HttpGet("browser")]
     public Task<IResult> Start(string kind, [FromQuery] string? returnTo, CancellationToken cancellationToken) =>
-        Execute(kind, "start", null, returnTo, null, cancellationToken);
+        Execute(kind, "start", null, returnTo, null, null, cancellationToken);
 
     [HttpGet]
     public Task<IResult> Read(string kind, [FromQuery] string? id, CancellationToken cancellationToken) =>
-        Execute(kind, "read", id, null, null, cancellationToken);
+        Execute(kind, "read", id, null, null, null, cancellationToken);
 
     [HttpPost]
     [RequestSizeLimit(KratosBrowserFlowClient.BodyLimit)]
-    public async Task<IResult> Submit(string kind, [FromQuery] string? flow, CancellationToken cancellationToken)
+    public async Task<IResult> Submit(string kind, [FromQuery] string? flow, [FromQuery] bool? keepSignedIn,
+        CancellationToken cancellationToken)
     {
         NoStore();
         if (!IsDashboardOrigin())
@@ -47,7 +48,7 @@ public sealed class AccountFlowsController(
         var (body, problem) = await ReadBoundedJsonAsync(cancellationToken);
         if (problem is not null) return problem;
         using (body)
-            return await Execute(kind, "submit", flow, null, body!.RootElement, cancellationToken);
+            return await Execute(kind, "submit", flow, null, body!.RootElement, keepSignedIn, cancellationToken);
     }
 
     /// <summary>
@@ -56,7 +57,7 @@ public sealed class AccountFlowsController(
     [HttpPost("oidc")]
     [RequestSizeLimit(KratosBrowserFlowClient.BodyLimit)]
     public async Task<IResult> StartProvider(string kind, [FromQuery] string? flow, [FromQuery] string? returnTo,
-        CancellationToken cancellationToken)
+        [FromQuery] bool? keepSignedIn, CancellationToken cancellationToken)
     {
         NoStore();
         if (!IsDashboardOrigin())
@@ -81,7 +82,8 @@ public sealed class AccountFlowsController(
                     $"https://{Request.Host.Value}{KratosBrowserFlowClient.GoogleCallbackPath}", cancellationToken);
                 WriteCookies(redirect.Cookies);
                 Response.Cookies.Append(ProviderPendingCookie, string.Join('.', kind, flowId.ToString("N"),
-                    StateHash(redirect.State), WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(returnPath))), new CookieOptions
+                    StateHash(redirect.State), WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(returnPath)),
+                    keepSignedIn == true ? "1" : "0"), new CookieOptions
                 {
                     HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/", MaxAge = TimeSpan.FromMinutes(10)
                 });
@@ -128,7 +130,8 @@ public sealed class AccountFlowsController(
                 WriteCookies(result.Cookies);
                 return ProviderContinue(kind, "failed", result.ContinueFlowId, returnPath);
             }
-            var (session, _) = await AdmitAsync(kind, principal, result.IdentityId, result.SessionId, result.Cookies, cancellationToken);
+            var (session, _) = await AdmitAsync(kind, principal, result.IdentityId, result.SessionId, result.Cookies,
+                pending.Value.KeepSignedIn, cancellationToken);
             return ProviderContinue(kind, session is null ? "forbidden" : "success", null, returnPath);
         }
         catch (AccountFlowException)
@@ -142,7 +145,7 @@ public sealed class AccountFlowsController(
     }
 
     private async Task<IResult> Execute(string kind, string operation, string? id, string? returnTo,
-        JsonElement? fields, CancellationToken cancellationToken)
+        JsonElement? fields, bool? keepSignedIn, CancellationToken cancellationToken)
     {
         NoStore();
         var principal = HttpContext.User.GetControlPlanePrincipal();
@@ -161,7 +164,8 @@ public sealed class AccountFlowsController(
                 WriteCookies(result.Cookies);
                 return Results.Ok(new AccountFlowResponse(result.Flow, null));
             }
-            var (session, problem) = await AdmitAsync(kind, principal, result.IdentityId, result.SessionId, result.Cookies, cancellationToken);
+            var (session, problem) = await AdmitAsync(kind, principal, result.IdentityId, result.SessionId, result.Cookies,
+                keepSignedIn, cancellationToken);
             return problem ?? Results.Ok(new AccountFlowResponse(null, session));
         }
         catch (AccountFlowException exception)
@@ -171,11 +175,27 @@ public sealed class AccountFlowsController(
     }
 
     private async Task<(AccountSessionResponse? Session, IResult? Problem)> AdmitAsync(string kind, ControlPlanePrincipal? principal,
-        string identityId, string sessionId, IReadOnlyDictionary<string, string> cookies, CancellationToken cancellationToken)
+        string identityId, string sessionId, IReadOnlyDictionary<string, string> cookies, bool? keepSignedIn,
+        CancellationToken cancellationToken)
     {
         var user = await db.Users.SingleOrDefaultAsync(x => x.KratosIdentityId == identityId, cancellationToken);
         if (user is null || kind == "settings" && user.Id != principal?.UserId)
             return (null, EndpointResults.Problem("forbidden", "This identity is not admitted to this instance.", 403));
+        // Login applies the explicit sign-in choice; settings keeps the current session's choice; recovery is standard.
+        var remembered = false;
+        if (kind == "login")
+        {
+            remembered = keepSignedIn == true && sessions.Policy.KeepSignedInEnabled;
+            if (keepSignedIn is not null && user.KeepSignedIn != keepSignedIn.Value)
+            {
+                user.KeepSignedIn = keepSignedIn.Value;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+        else if (kind == "settings" && principal?.BrowserSessionId is { } currentSessionId)
+        {
+            remembered = (await sessions.FindByIdAsync(currentSessionId, cancellationToken))?.Persistent == true;
+        }
         if (kind is "settings" or "recovery")
         {
             var previous = await db.BrowserSessions.AsNoTracking()
@@ -190,14 +210,11 @@ public sealed class AccountFlowsController(
         {
             await sessions.RevokeAsync(oldCookie, cancellationToken);
         }
-        var created = await sessions.CreateOrRotateAsync(user.Id, identityId, sessionId, cancellationToken);
+        var created = await sessions.CreateOrRotateAsync(user.Id, identityId, sessionId, remembered, cancellationToken);
         WriteCookies(cookies);
-        Response.Cookies.Append("__Host-minicloud-session", created.Cookie, new CookieOptions
-        {
-            HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/",
-            Expires = created.Session.ExpiresAt
-        });
-        return (new AccountSessionResponse(user.Id, created.Session.ExpiresAt, created.Session.IdleExpiresAt, created.CsrfToken), null);
+        var deadlines = sessions.GetDeadlines(created.Session);
+        BrowserSessionCookie.Append(Response, created.Cookie, deadlines);
+        return (BrowserSessionCookie.ToResponse(created.Session, deadlines, created.CsrfToken), null);
     }
 
     private bool IsDashboardOrigin()
@@ -237,17 +254,20 @@ public sealed class AccountFlowsController(
     private string? SingleQuery(string name) =>
         Request.Query.TryGetValue(name, out var values) && values.Count == 1 ? values[0] : null;
 
-    private (string Kind, Guid FlowId, string StateHash, string ReturnPath)? ReadPendingProvider()
+    private (string Kind, Guid FlowId, string StateHash, string ReturnPath, bool KeepSignedIn)? ReadPendingProvider()
     {
         if (!Request.Cookies.TryGetValue(ProviderPendingCookie, out var value) || value.Length > 4096) return null;
         var parts = value.Split('.');
-        if (parts.Length != 4 || parts[0] is not ("login" or "settings") ||
+        // Four-part values predate "Keep me signed in" and continue as standard sessions.
+        if (parts.Length is not (4 or 5) || parts.Length == 5 && parts[4] is not ("0" or "1") ||
+            parts[0] is not ("login" or "settings") ||
             !Guid.TryParseExact(parts[1], "N", out var flowId) || flowId == Guid.Empty || parts[2].Length != 43)
             return null;
         try
         {
             var returnPath = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(parts[3]));
-            return (parts[0], flowId, parts[2], new Uri(flows.ValidateReturnTo(returnPath)).PathAndQuery);
+            return (parts[0], flowId, parts[2], new Uri(flows.ValidateReturnTo(returnPath)).PathAndQuery,
+                parts.Length == 5 && parts[4] == "1");
         }
         catch (Exception exception) when (exception is FormatException or AccountFlowException or ArgumentException)
         {

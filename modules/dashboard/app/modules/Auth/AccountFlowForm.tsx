@@ -2,10 +2,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
-  browserNavigation, getAccountFlow, startAccountFlow, startProviderRedirect, submitAccountFlow,
+  browserNavigation, getAccountFlow, keepSignedInHint, rememberKeepSignedInHint, startAccountFlow, startProviderRedirect,
+  submitAccountFlow,
   type BrowserFlow, type FlowKind, type FlowNode
 } from "../../api/accountApi";
 import { accountErrorMessage } from "../../api/apiClient";
@@ -52,6 +53,9 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
   const [revision, setRevision] = useState(0);
   const generation = useRef(0);
   const enabled = kind === "recovery" ? capabilities?.emailRecovery === true : capabilities?.password === true;
+  const offerKeepSignedIn = kind === "login" && capabilities?.keepSignedIn === true;
+  const [keepSignedIn, setKeepSignedIn] = useState(keepSignedInHint);
+  const keepSignedInChoice = offerKeepSignedIn ? keepSignedIn : undefined;
 
   useEffect(() => {
     const current = ++generation.current;
@@ -102,8 +106,10 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     setBusy(true);
     setError(null);
     try {
-      const destination = await startProviderRedirect(flow, "google", returnTo);
-      if (current === generation.current) browserNavigation.assign(destination);
+      const destination = await startProviderRedirect(flow, "google", returnTo, keepSignedInChoice);
+      if (current !== generation.current) return;
+      if (keepSignedInChoice !== undefined) rememberKeepSignedInHint(keepSignedInChoice);
+      browserNavigation.assign(destination);
     } catch (providerError) {
       if (current !== generation.current) return;
       if (expiredLoginFlow(kind, providerError)) {
@@ -140,11 +146,12 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
       restartFlow();
     }
     try {
-      const result = await submitAccountFlow(flow, fields);
+      const result = await submitAccountFlow(flow, fields, keepSignedInChoice);
       if (current !== generation.current) return;
       form.reset();
       setFlow(result.flow);
       if (result.session) {
+        if (keepSignedInChoice !== undefined) rememberKeepSignedInHint(keepSignedInChoice);
         setComplete(true);
         await refreshSession();
       }
@@ -180,7 +187,16 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
   const nodes = flow?.ui.nodes.filter(supportedNode) ?? [];
   const google = capabilities?.google === true && kind !== "recovery" &&
     flow?.ui.providers?.some(provider => provider.id === "google") === true;
-  const hasSubmit = nodes.some(node => node.type === "submit");
+  const firstSubmit = nodes.findIndex(node => node.type === "submit");
+  const hasSubmit = firstSubmit >= 0;
+  const keepSignedInControl = offerKeepSignedIn ? (
+    <label className="flex items-start gap-2 text-sm">
+      {/* Unnamed so it is never sent as an upstream form field. */}
+      <input type="checkbox" className="mt-1 accent-primary" checked={keepSignedIn} disabled={busy || restartRequired}
+        onChange={event => setKeepSignedIn(event.target.checked)} />
+      <span>Keep me signed in on this device</span>
+    </label>
+  ) : null;
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
@@ -201,9 +217,12 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
               const key = `${node.group}:${node.name}:${node.type}`;
               if (node.type === "hidden") return <input key={key} type="hidden" name={node.name} value={node.value ?? ""} />;
               if (node.type === "submit") return (
-                <Button key={key} type="submit" name={node.name} value={node.value ?? ""} disabled={busy || restartRequired}>
-                  {kind === "login" ? "Sign in" : kind === "settings" ? node.value === "profile" ? "Save profile" : "Save password" : "Continue recovery"}
-                </Button>
+                <Fragment key={key}>
+                  {index === firstSubmit ? keepSignedInControl : null}
+                  <Button type="submit" name={node.name} value={node.value ?? ""} disabled={busy || restartRequired}>
+                    {kind === "login" ? "Sign in" : kind === "settings" ? node.value === "profile" ? "Save profile" : "Save password" : "Continue recovery"}
+                  </Button>
+                </Fragment>
               );
               return (
                 <div key={key} className="space-y-2">

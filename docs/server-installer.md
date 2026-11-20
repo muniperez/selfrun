@@ -73,6 +73,9 @@ directory. Supply lowercase hostnames and exact HTTPS origins without a port,
 path or trailing slash. The API hostname is `api.<dashboard hostname>`.
 The app suffix is separate; wildcard app DNS is **not** control-plane DNS.
 Unknown/duplicate fields, ambiguous paths and symlinks are rejected.
+The optional `portalSessions` object sets dashboard sign-in timeouts and the
+**Keep me signed in** option; see
+[dashboard sign-in sessions](self-hosting.md#dashboard-sign-in-sessions).
 
 Choose three distinct canonical absolute paths:
 

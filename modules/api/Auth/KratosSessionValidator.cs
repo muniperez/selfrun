@@ -10,6 +10,60 @@ public sealed class KratosSessionValidator(HttpClient client, IOptions<KratosOpt
     public async Task<bool> IsSessionActiveAsync(
         string sessionId,
         string identityId,
+        CancellationToken cancellationToken) =>
+        await GetActiveSessionAsync(sessionId, identityId, cancellationToken) is not null;
+
+    public async Task<KratosSessionState?> ExtendSessionAsync(
+        string sessionId,
+        string identityId,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetAdminUri(sessionId, out var uri))
+        {
+            throw new KratosUnavailableException();
+        }
+
+        // Kratos ExtendSession does not check expiry, so never extend a session that is no longer active.
+        if (await GetActiveSessionAsync(sessionId, identityId, cancellationToken) is null)
+        {
+            return null;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Patch, new Uri(uri.AbsoluteUri + "/extend"));
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new KratosUnavailableException();
+            }
+        }
+        catch (KratosUnavailableException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException)
+        {
+            throw new KratosUnavailableException();
+        }
+
+        // Kratos v1.3 answers 200 with the session or 204 depending on a feature flag; read the result back either way.
+        return await GetActiveSessionAsync(sessionId, identityId, cancellationToken);
+    }
+
+    public async Task<KratosSessionState?> GetActiveSessionAsync(
+        string sessionId,
+        string identityId,
         CancellationToken cancellationToken)
     {
         if (!TryGetAdminUri(sessionId, out var uri))
@@ -26,7 +80,7 @@ public sealed class KratosSessionValidator(HttpClient client, IOptions<KratosOpt
             using var response = await client.GetAsync(sessionUri, HttpCompletionOption.ResponseHeadersRead, upstreamToken);
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                return false;
+                return null;
             }
 
             if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > 64 * 1024)
@@ -61,9 +115,16 @@ public sealed class KratosSessionValidator(HttpClient client, IOptions<KratosOpt
                 identityElement.TryGetProperty("id", out var identityIdElement)
                     ? identityIdElement.GetString()
                     : null;
+            DateTimeOffset? expiresAt = root.TryGetProperty("expires_at", out var expiresElement) &&
+                expiresElement.ValueKind == JsonValueKind.String &&
+                expiresElement.TryGetDateTimeOffset(out var parsedExpiry)
+                    ? parsedExpiry
+                    : null;
             return active &&
                 string.Equals(returnedId, sessionId, StringComparison.Ordinal) &&
-                string.Equals(returnedIdentityId, identityId, StringComparison.Ordinal);
+                string.Equals(returnedIdentityId, identityId, StringComparison.Ordinal)
+                    ? new KratosSessionState(expiresAt)
+                    : null;
         }
         catch (KratosUnavailableException)
         {

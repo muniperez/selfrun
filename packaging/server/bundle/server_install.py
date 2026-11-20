@@ -160,7 +160,7 @@ def configuration(path):
     value = read_json(path)
     required = {"apiUrl", "consoleUrl", "apiHostname", "consoleHostname", "appDomain"}
     require(isinstance(value, dict) and required <= value.keys()
-            and value.keys() <= required | {"manageDnsRecords", "sourceUrl", "recovery", "googleOidc"},
+            and value.keys() <= required | {"manageDnsRecords", "sourceUrl", "recovery", "googleOidc", "portalSessions"},
             "Unknown/missing configuration fields.")
     for key in ("apiHostname", "consoleHostname", "appDomain"):
         hostname(value[key])
@@ -187,6 +187,8 @@ def configuration(path):
         source = urllib.parse.urlsplit(value["sourceUrl"])
         require(source.scheme == "https" and source.hostname and not source.username
                 and not source.password and not source.fragment, "Invalid HTTPS source URL.")
+    if "portalSessions" in value:
+        portal_sessions(value)
     if "recovery" in value:
         recovery = value["recovery"]
         require(isinstance(recovery, dict)
@@ -194,6 +196,34 @@ def configuration(path):
                 and all(isinstance(item, str) and item for item in recovery.values()),
                 "Invalid recovery configuration.")
     return value
+
+
+PORTAL_SESSION_DEFAULTS = {
+    "keepSignedInEnabled": True,
+    "standardIdleMinutes": 120,
+    "standardMaxMinutes": 12 * 60,
+    "rememberedIdleMinutes": 7 * 24 * 60,
+    "rememberedMaxMinutes": 30 * 24 * 60,
+}
+
+
+def portal_sessions(config):
+    """Return the validated dashboard session policy; mirrors the API's PortalSessionOptions validation."""
+    supplied = config.get("portalSessions", {})
+    require(isinstance(supplied, dict) and supplied.keys() <= PORTAL_SESSION_DEFAULTS.keys(),
+            "Invalid portalSessions configuration.")
+    policy = PORTAL_SESSION_DEFAULTS | supplied
+    require(type(policy["keepSignedInEnabled"]) is bool, "portalSessions.keepSignedInEnabled must be boolean.")
+    for kind in ("standard", "remembered"):
+        idle, maximum = policy[kind + "IdleMinutes"], policy[kind + "MaxMinutes"]
+        require(type(idle) is int and 1 <= idle <= 30 * 24 * 60,
+                f"portalSessions.{kind}IdleMinutes must be an integer from 1 to 43200.")
+        require(type(maximum) is int and idle <= maximum <= 90 * 24 * 60,
+                f"portalSessions.{kind}MaxMinutes must be an integer from the idle timeout to 129600.")
+    require(policy["rememberedIdleMinutes"] >= policy["standardIdleMinutes"]
+            and policy["rememberedMaxMinutes"] >= policy["standardMaxMinutes"],
+            "portalSessions remembered durations must not be shorter than standard durations.")
+    return policy
 
 
 def google_provider(config, root, recovery_dir, assets_dir):
@@ -638,6 +668,18 @@ class Installer:
             "MINICLOUD_SECRETS_DIR": str(self.root / "secrets"),
             "MINICLOUD_HOST_ID": self.host_id(),
             "MINICLOUD_GOOGLE_OIDC_ENABLED": str(self.google_provider is not None).lower(),
+        })
+        sessions = portal_sessions(self.config)
+        env.update({
+            "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED": str(sessions["keepSignedInEnabled"]).lower(),
+            "MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES": str(sessions["standardIdleMinutes"]),
+            "MINICLOUD_PORTAL_STANDARD_MAX_MINUTES": str(sessions["standardMaxMinutes"]),
+            "MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES": str(sessions["rememberedIdleMinutes"]),
+            "MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES": str(sessions["rememberedMaxMinutes"]),
+            # Each renewal extends the upstream Kratos session by its lifespan, so it must cover the longest idle window.
+            "MINICLOUD_KRATOS_SESSION_LIFESPAN": "%dm" % (sessions["rememberedIdleMinutes"]
+                                                         if sessions["keepSignedInEnabled"]
+                                                         else sessions["standardIdleMinutes"]),
         })
         for component, reference in (self.installed["images"] | self.installed["dependencies"]).items():
             env[f"MINICLOUD_{component.upper()}_IMAGE"] = reference

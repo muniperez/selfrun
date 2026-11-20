@@ -330,6 +330,29 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaisesRegex(installer.InstallError, "must not overlap"):
             self.subject()
 
+    def test_portal_session_policy_is_validated_and_drives_api_and_kratos_lifespan(self):
+        value = json.loads(self.config.read_text())
+        self.assertEqual(installer.PORTAL_SESSION_DEFAULTS, installer.portal_sessions(value))
+        for invalid in ({"standardIdleMinutes": 0}, {"standardIdleMinutes": 800}, {"rememberedIdleMinutes": 60},
+                        {"rememberedMaxMinutes": 200000}, {"keepSignedInEnabled": "yes"},
+                        {"standardIdleMinutes": 1.5}, {"unknown": 1}):
+            value["portalSessions"] = invalid
+            self.config.write_text(json.dumps(value))
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(installer.InstallError, "portalSessions"):
+                self.subject()
+        value["portalSessions"] = {"keepSignedInEnabled": False, "standardIdleMinutes": 30, "standardMaxMinutes": 480}
+        self.config.write_text(json.dumps(value))
+        subject = self.subject()
+        subject.state = {"installationId": "inst_test"}
+        subject.installed = {"images": {}, "dependencies": {}}
+        env = subject.environment()
+        self.assertEqual("false", env["MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED"])
+        self.assertEqual("30", env["MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES"])
+        self.assertEqual("480", env["MINICLOUD_PORTAL_STANDARD_MAX_MINUTES"])
+        self.assertEqual("10080", env["MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES"])
+        # With remembered sessions disabled, the upstream lifespan only needs to cover the standard idle window.
+        self.assertEqual("30m", env["MINICLOUD_KRATOS_SESSION_LIFESPAN"])
+
     def test_symlink_input_and_duplicate_configuration_fail_closed(self):
         link = self.base / "link.json"
         link.symlink_to(self.config)

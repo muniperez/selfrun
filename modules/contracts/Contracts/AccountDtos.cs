@@ -6,13 +6,22 @@ public sealed record AccountCapabilitiesResponse(
     bool Password,
     bool Google,
     bool EmailRecovery,
-    string BootstrapState);
+    string BootstrapState,
+    bool KeepSignedIn = false);
 
+/// <param name="KeepSignedIn">Whether this session is a remembered ("Keep me signed in") session.</param>
+/// <param name="RenewAfter">Earliest time <c>POST /api/account/session/renew</c> extends the idle deadline; null at the cap.</param>
+/// <param name="KeepSignedInPreference">The user's stored preference, used as the sign-in form default.</param>
 public sealed record AccountSessionResponse(
     string UserId,
     DateTimeOffset ExpiresAt,
     DateTimeOffset IdleExpiresAt,
-    string CsrfToken);
+    string CsrfToken,
+    bool KeepSignedIn = false,
+    DateTimeOffset? RenewAfter = null,
+    bool KeepSignedInPreference = false);
+
+public sealed record AccountSessionPreferenceRequest(bool KeepSignedIn);
 
 public sealed record AccountFlowResponse(
     AccountBrowserFlow? Flow,
