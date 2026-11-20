@@ -1,0 +1,22 @@
+[Unit]
+Description=Watch /workspace/repos and keep build-output scratch bind mounts current
+After=minicloud-workspace.service minicloud-scratch-mounts.service
+PartOf=minicloud-t3.service
+ConditionPathIsDirectory=/workspace/repos
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I -B /opt/minicloud-workspace/scratch_mounts.py watch
+User=root
+UMask=0077
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SYS_PTRACE
+StandardOutput=null
+StandardError=journal

@@ -221,7 +221,7 @@ def install(source_revision, builder):
     runtime.mkdir(exist_ok=True)
     for name in ("runtime.py", "bootstrap.py", "issue-t3-session.py", "git-credential.py",
                  "t3_connect.py", "t3-connect.html", "t3-connect.js", "t3-connect.css", "copilot_provider.py",
-                 "disk_usage.py"):
+                 "disk_usage.py", "scratch_mounts.py"):
         shutil.copy2(HERE.parent / name, runtime / name)
         (runtime / name).chmod(0o755)
     install_systemd_units(HERE.parent / "systemd", Path("/etc/systemd/system"))
@@ -260,13 +260,24 @@ def install(source_revision, builder):
 def generalize():
     # Guard is applied by main before either install or this destructive operation.
     os.chdir("/")
-    for unit in ("minicloud-workspace.service", "minicloud-t3.service",
+    for unit in ("minicloud-scratch-watch.service", "minicloud-scratch-mounts.service",
+                 "minicloud-workspace.service", "minicloud-t3.service",
                  "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service"):
         subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=120, check=False)
     require(not os.path.ismount("/workspace"), "Never erase an attached workspace")
+    # Build-output bind mounts must go first: erasing through one would empty scratch, not the image.
+    if Path("/opt/minicloud-workspace/scratch_mounts.py").is_file():
+        subprocess.run(["/usr/bin/python3", "-I", "-B", "/opt/minicloud-workspace/scratch_mounts.py",
+                        "unmount-all"], capture_output=True, timeout=180, check=False)
+    mounts = Path("/proc/self/mountinfo").read_text().splitlines()
+    require(not any(line.split()[4].startswith("/workspace/") for line in mounts),
+            "Never erase through a mount below the workspace")
+    scratch_repos = Path("/var/lib/minicloud-scratch/repos")
+    if os.path.ismount(scratch_repos):
+        run(["umount", str(scratch_repos)])
     for path in ("/workspace", "/root/.codex", "/root/.t3", "/root/.config", "/root/.cache",
                  "/root/.npm", "/root/.ssh", "/home/ubuntu/.ssh", "/var/lib/minicloud-workspace",
-                 "/var/cache/minicloud-workspace/verification",
+                 "/var/cache/minicloud-workspace/verification", str(scratch_repos),
                  "/etc/minicloud-workspace", "/var/log/journal"):
         target = Path(path)
         if target.is_dir() and not target.is_symlink():
