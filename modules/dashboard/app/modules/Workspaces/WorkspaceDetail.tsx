@@ -6,7 +6,6 @@ import type { DevelopmentWorkspace } from "@/models/controlPlane";
 import { WorkspaceCodingAgents } from "./WorkspaceCodingAgents";
 import { WorkspaceCostEstimate } from "./WorkspaceCostEstimate";
 import { WorkspaceDeleteEnvironment } from "./WorkspaceDeleteEnvironment";
-import { WorkspaceEnvironmentActions } from "./WorkspaceEnvironmentActions";
 import { WorkspaceOverviewTab } from "./WorkspaceOverviewTab";
 import { WorkspaceSettingsTab } from "./WorkspaceSettingsTab";
 import { WorkspaceStorageCostsTab } from "./WorkspaceStorageCostsTab";
@@ -55,13 +54,12 @@ function ScopedWorkspaceDetail({ item, organizationId, refresh, canManage: canMa
       This dev environment and its saved files were permanently deleted. <Link className="font-medium text-primary underline" to="/workspaces">Back to dev environments</Link></p>}
     {!canManageRole && <p className="text-sm text-muted-foreground">You can view this dev environment but can't change it.</p>}
     <Tabs defaultValue="overview" className="min-w-0">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+      <div className="border-b pb-3">
         <TabsList aria-label="Dev environment details" className="h-auto gap-6 rounded-none bg-transparent p-0">
           <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Overview</TabsTrigger>
           <TabsTrigger value="storage" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Storage &amp; costs</TabsTrigger>
           <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent px-0 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">Settings</TabsTrigger>
         </TabsList>
-        <WorkspaceEnvironmentActions item={item} organizationId={organizationId} refreshAfterMutation={refreshAfterMutation} canManage={canManage} />
       </div>
       <TabsContent value="overview" className="space-y-8 pt-4">
         <WorkspaceOverviewTab item={item} organizationId={organizationId} refresh={refresh} refreshAfterMutation={refreshAfterMutation}
