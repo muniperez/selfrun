@@ -27,8 +27,15 @@ using Minicloud.Worker.Pipeline;
 
 namespace Minicloud.Worker.Tests.DevelopmentWorkspaces;
 
-public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
+public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
 {
+    private readonly DbContextOptions<MinicloudDbContext>? postgresOptions;
+
+    public DevelopmentWorkspaceProcessorTests() { }
+
+    internal DevelopmentWorkspaceProcessorTests(DbContextOptions<MinicloudDbContext> postgresOptions) =>
+        this.postgresOptions = postgresOptions;
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly SqliteConnection connection = new("Data Source=:memory:");
     private readonly FrozenClock clock = new();
@@ -55,7 +62,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     {
         await connection.OpenAsync();
         db = Context();
-        await db.Database.EnsureCreatedAsync();
+        if (postgresOptions is null) await db.Database.EnsureCreatedAsync();
+        else await db.Database.MigrateAsync("20261119160815_DevelopmentWorkspaceDeletion");
         db.Organizations.Add(new Organization { Id = "org", Name = "Org", Slug = "org" });
         db.ProviderAccounts.Add(new ProviderAccount { Id = "account", OrganizationId = "org", Name = "Synthetic",
             ProviderType = CloudProvider.Hetzner, CredentialPath = "synthetic", CredentialGeneration = "fixture" });
@@ -127,7 +135,8 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         tunnels.Port = new Uri(address).Port;
     }
 
-    private MinicloudDbContext Context() => new(new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
+    private MinicloudDbContext Context() => new(postgresOptions ??
+        new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
     private DevelopmentWorkspaceProcessor Processor() => ActivatorUtilities.CreateInstance<DevelopmentWorkspaceProcessor>(services);
 
     [Theory]
@@ -746,7 +755,26 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PermanentDeleteReconcilesLostResponseWithoutTouchingSiblingResources()
+    public Task PermanentDeleteReconcilesLostResponseWithoutTouchingSiblingResources() =>
+        VerifyPermanentDeletionAsync(loseResponse: true);
+
+    [Fact]
+    public Task PermanentDeleteCompletesWithoutTouchingSiblingResources() =>
+        VerifyPermanentDeletionAsync(loseResponse: false);
+
+    [Theory]
+    [InlineData("region", "workspace_delete_volume_mismatch")]
+    [InlineData("account", "workspace_delete_identity_mismatch")]
+    [InlineData("missing", "workspace_delete_volume_unverified")]
+    [InlineData("inventory", "workspace_delete_volume_unexpected")]
+    public Task PermanentDeleteRejectsUnverifiedStorage(string mismatch, string errorCode) =>
+        VerifyUnsafeDeletionAsync(mismatch, errorCode);
+
+    [Fact]
+    public Task PermanentDeleteCompletionRequiresCurrentVerifiedOperationAndLease() =>
+        VerifyDeletionFencingAsync();
+
+    internal async Task VerifyPermanentDeletionAsync(bool loseResponse)
     {
         var workspace = await SeedRetainedVolume();
         var sibling = await lifecycle.CreateAsync(
@@ -757,26 +785,29 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         sibling.LastBackupAt = clock.GetUtcNow();
         sibling.BackupStatus = "completed";
         await db.SaveChangesAsync();
+        var siblingLastBackupAt = (await CurrentWorkspace(sibling.Id)).LastBackupAt;
         cloud.SiblingVolumes.Add(siblingVolume.Id, siblingVolume);
         var siblingServer = cloud.Server(VolumeLabels(sibling)) with { Id = "server-sibling" };
         cloud.Servers.Add(siblingServer.Id, siblingServer);
         var imageId = sibling.Vms.Single().ProviderImage;
-        cloud.LoseDeleteVolumeResponse = true;
+        cloud.LoseDeleteVolumeResponse = loseResponse;
 
         await lifecycle.DeleteAsync(workspace.Id, "org", true, "actor", default);
         await Hop("delete-verified-volume");
         Assert.Empty(cloud.DeletedVolumes);
         await Hop();
-        Assert.Equal("deleting", (await CurrentVm(workspace.PrimaryVmId)).Phase);
         Assert.Equal("volume-retained", Assert.Single(cloud.DeletedVolumes));
         Assert.Null(cloud.Volume);
-        var unconfirmed = await CurrentWorkspace(workspace.Id);
-        Assert.Equal("volume-retained", unconfirmed.ProviderVolumeId);
-        Assert.Equal(workspace.StorageMonthlyRate, unconfirmed.StorageMonthlyRate);
-
-        Assert.False(await Processor().ProcessNextAsync(default));
-        clock.Advance(TimeSpan.FromSeconds(5));
-        await Hop();
+        if (loseResponse)
+        {
+            Assert.Equal("deleting", (await CurrentVm(workspace.PrimaryVmId)).Phase);
+            var unconfirmed = await CurrentWorkspace(workspace.Id);
+            Assert.Equal("volume-retained", unconfirmed.ProviderVolumeId);
+            Assert.Equal(workspace.StorageMonthlyRate, unconfirmed.StorageMonthlyRate);
+            Assert.False(await Processor().ProcessNextAsync(default));
+            clock.Advance(TimeSpan.FromSeconds(5));
+            await Hop();
+        }
 
         var deleted = await CurrentWorkspace(workspace.Id);
         Assert.Equal("deleted", (await CurrentVm(workspace.PrimaryVmId)).Phase);
@@ -788,13 +819,24 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Equal(siblingServer, Assert.Single(cloud.Servers).Value);
         var survivingWorkspace = await CurrentWorkspace(sibling.Id);
         Assert.Equal(siblingVolume.Id, survivingWorkspace.ProviderVolumeId);
-        Assert.Equal(sibling.LastBackupAt, survivingWorkspace.LastBackupAt);
+        Assert.Equal(siblingLastBackupAt, survivingWorkspace.LastBackupAt);
         Assert.Equal(sibling.BackupStatus, survivingWorkspace.BackupStatus);
         Assert.Equal("available", (await cloud.GetWorkspaceImageAsync(imageId, default))?.Status);
         Assert.Empty(cloud.DetachedVolumes);
         Assert.Empty(cloud.DeletedServers);
         Assert.Empty(cloud.DeletedIps);
         Assert.Empty(cloud.DeletedFirewalls);
+        var completed = await CurrentOperation((await CurrentVm(workspace.PrimaryVmId)).OperationId!);
+        Assert.Equal("completed", completed.Status);
+        Assert.Equal("provider-absence-confirmed", completed.Step);
+        Assert.Equal("volume-retained", completed.ProviderResourceId);
+        Assert.Null(completed.ErrorCode);
+        Assert.Null(completed.LeaseToken);
+        var recreated = await lifecycle.CreateAsync(
+            new("org", workspace.Name, "image", "standard", "plan", 20, workspace.IdempotencyKey), "actor", default);
+        Assert.NotEqual(workspace.Id, recreated.Id);
+        Assert.Equal("deleted", Assert.IsType<DevelopmentWorkspace>(
+            await lifecycle.GetAsync(workspace.Id, "org", default)).VolumeStatus);
     }
 
     [Fact]
@@ -837,6 +879,7 @@ public sealed class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         workspace.ProviderVolumeId = "volume-retained";
         workspace.VolumeFilesystemUuid = "filesystem-retained";
         workspace.VolumeStatus = "retained";
+        workspace.Vms.Single().Generation = 1;
         cloud.Volume = new("volume-retained", "retained", 20, "nbg1", null, "ext4", "/dev/disk/by-id/owned",
             VolumeLabels(workspace));
         await db.SaveChangesAsync();
