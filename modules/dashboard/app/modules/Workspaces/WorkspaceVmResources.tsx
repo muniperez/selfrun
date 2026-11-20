@@ -24,12 +24,12 @@ export function WorkspaceVmResources({ vm }: { vm: DevelopmentWorkspaceVm }) {
   const label = `Resources for dev environment ${vm.id}`;
   if (resources.state === "unsupported")
     return <section aria-label={label} className="border-t px-5 py-3 text-sm">
-      <h3 className="font-medium">Resources <Badge variant="outline">Not supported</Badge></h3>
+      <h3 className="font-medium">Resource usage <Badge variant="outline">Not supported</Badge></h3>
       <p className="text-muted-foreground">This dev environment image does not report CPU, memory or disk usage. Rebuild with a newer image to see them.</p>
     </section>;
   const { cpu, memory } = resources;
   return <section aria-label={label} className="border-t px-5 py-3 text-sm">
-    <h3 className="flex flex-wrap items-center gap-2 font-medium">Resources
+    <h3 className="flex flex-wrap items-center gap-2 font-medium">Resource usage<span className="font-normal text-muted-foreground">· Latest reading</span>
       <Badge variant={resources.state === "current" ? "secondary" : "outline"}>{stateLabel[resources.state]}</Badge>
     </h3>
     <p className="text-xs text-muted-foreground">

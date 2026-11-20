@@ -63,7 +63,7 @@ export function WorkspaceLaunchEphemeralDialog({ item, organizationId, refresh, 
     finally { pending.current = false; if (mounted.current) setBusy(false); }
   };
   return <Dialog open={open && canManage} onOpenChange={next => { if (!busy) { setOpen(next && canManage); setError(null); } }}>
-    {canManage && <DialogTrigger asChild><Button variant="outline"><Plus aria-hidden="true" className="mr-2 h-4 w-4" />Launch temporary VM</Button></DialogTrigger>}
+    {canManage && <DialogTrigger asChild><Button size="icon" variant="ghost" className="size-8" aria-label="Launch temporary VM" title="Launch temporary VM"><Plus aria-hidden="true" className="size-4" /></Button></DialogTrigger>}
     <DialogContent className="max-w-2xl" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}
       onInteractOutside={event => { if (busy) event.preventDefault(); }}>
       <DialogHeader>
