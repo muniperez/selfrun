@@ -101,7 +101,8 @@ async function handle(request) {
     for (let attempt = 0; attempt < 50; attempt++) {
       try { descriptor = await http("/.well-known/t3/environment"); break; } catch { await timeout(200); }
     }
-    requireTrue(descriptor?.status === 200 && descriptor.body.orchestrationProtocolVersion === 2);
+    requireTrue(descriptor?.status === 200 && descriptor.body.orchestrationProtocolVersion === 2
+      && typeof descriptor.body.environmentId === "string" && descriptor.body.environmentId.length > 0);
     const session = await http("/api/auth/session", bearer);
     requireTrue(session.status === 200 && session.body.authenticated === true
       && session.body.sessionMethod === "bearer-access-token"
@@ -145,7 +146,8 @@ async function handle(request) {
       }
       requireTrue(afterProject.snapshotSequence > beforeProject.snapshotSequence);
     }
-    return { descriptorProtocol: 2, actualSessionScopesChecked: true, unauthorizedHttpDenied: true,
+    return { descriptorProtocol: 2, environmentId: descriptor.body.environmentId,
+      actualSessionScopesChecked: true, unauthorizedHttpDenied: true,
       readonlyHttpMutationDenied: true, readonlyTerminalMutationDenied: true,
       protocolMissingWsDenied: true, realTicketWebSocketOpened: true,
       actualProjectMutationAdvancedApplicationCursor: request.createProject === true, ...afterProject };

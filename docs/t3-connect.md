@@ -132,7 +132,9 @@ own CLI authorization; owner-only enrollment is not a shell isolation boundary.
   accordingly. Generalization removes workspace, runtime state and account
   credentials; **never capture an enrolled workspace as a reusable machine image**.
 - A controlled service restart retains environment identity, projects, threads
-  and provider sign-ins. Root-owned admission locking and a pending-operation
+  and provider sign-ins. After a crash or OOM kill, systemd restarts T3 on the same VM
+  within a bounded retry budget. Connect management returns with T3. Restart does
+  not resume an interrupted agent turn. Root-owned admission locking and a pending-operation
   fence prevent CLI credential writes racing volume quiescence. Root service
   `PartOf=minicloud-t3.service` stops enrollment workers with T3; a weak `Wants`
   dependency brings primary management back on T3 start/resume without making
