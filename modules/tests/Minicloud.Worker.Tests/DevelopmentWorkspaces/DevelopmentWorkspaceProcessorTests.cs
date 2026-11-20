@@ -109,7 +109,7 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         t3 = builder.Build();
         t3.UseWebSockets();
         t3.MapGet("/.well-known/t3/environment", () => Results.Json(new
-            { serverVersion = "0.1.9", orchestrationProtocolVersion = 2, environmentId = "fixture-environment" }));
+            { serverVersion = t3Version, orchestrationProtocolVersion = 2, environmentId = "fixture-environment" }));
         t3.MapGet("/api/auth/session", () => Results.Json(new
             { authenticated = true, expiresAt = clock.GetUtcNow().AddMinutes(30).ToString("O") }));
         t3.MapPost("/api/auth/websocket-ticket", () => Results.Json(new { ticket = "fixture-ticket" }));
@@ -134,6 +134,8 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         var address = t3.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         tunnels.Port = new Uri(address).Port;
     }
+
+    private string t3Version = "0.1.9";
 
     private MinicloudDbContext Context() => new(postgresOptions ??
         new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
@@ -172,6 +174,31 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Null((await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync(x => x.Service == "t3")).RevokedAt);
         Assert.True((await CurrentVm(vm.Id)).GatewayReady);
         Assert.Equal("ready", (await CurrentVm(vm.Id)).Phase);
+    }
+
+    [Theory]
+    [InlineData("0.1.9", "0.1.9", 2, false, true)]
+    [InlineData("0.1.11", "0.1.11", 2, false, true)]
+    [InlineData("0.1.11", "0.1.9", 2, false, false)]
+    [InlineData("0.1.11", "0.1.11", 3, false, false)]
+    [InlineData("0.1.11", "0.1.11", 2, true, false)]
+    public async Task T3ReadinessRequiresTheReservedImageVersionAndProtocol(string registeredVersion,
+        string reportedVersion, int protocol, bool changedManifest, bool ready)
+    {
+        var (_, vm, _) = await Seed("session");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        await db.SaveChangesAsync();
+        var image = policy.Images[vm.ImageId];
+        image.T3Version = registeredVersion;
+        image.T3EnvironmentProtocol = protocol;
+        if (changedManifest) image.ManifestSha256 = new('b', 64);
+        t3Version = reportedVersion;
+
+        Assert.True(await Processor().ProcessNextAsync(default));
+
+        Assert.Equal(ready, (await CurrentVm(vm.Id)).GatewayReady);
+        Assert.Equal(ready, await db.DevelopmentWorkspaceGatewayRoutes.AnyAsync(
+            route => route.VmId == vm.Id && route.Service == "t3" && route.RevokedAt == null));
     }
 
     [Fact]

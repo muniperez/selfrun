@@ -20,10 +20,10 @@ import threading
 import time
 import uuid
 
-T3_RESOURCE_MONITOR = "/opt/minicloud-t3/t3-0.1.9-linux-x64/resource-monitor/linux-x64/t3-resource-monitor"
-T3_RESOURCE_MONITOR_SHA256 = "1b8040fc50484f8089c56aaaefc359dbfc9ff2d1d85dbf6b3df26aeceabda286"
+IMAGE_MANIFEST = Path("/opt/minicloud-workspace/image-manifest.json")
+T3_ROOT = Path("/opt/minicloud-t3")
 T3_RELAY_CLIENT = "/usr/local/bin/cloudflared"
-T3_RELAY_CLIENT_SHA256 = "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42"
+T3_ENVIRONMENT_PROTOCOL = 2
 
 
 class Blocked(Exception):
@@ -90,6 +90,43 @@ def failure_response(error, stage="request"):
 def require(condition, reason):
     if not condition:
         raise Blocked(reason)
+
+
+def read_image_manifest():
+    Linux.verify_unit_file(str(IMAGE_MANIFEST))
+    require(not IMAGE_MANIFEST.is_symlink(), "Installed image manifest must be a regular file")
+    raw = IMAGE_MANIFEST.read_bytes()
+    return json.loads(raw), raw
+
+
+def qualified_t3(manifest):
+    require(isinstance(manifest, dict) and manifest.get("architecture") == "linux/amd64" and
+            isinstance(manifest.get("provenance"), dict) and
+            manifest["provenance"].get("toolArtifactsVerified") is True, "Unqualified prepared image")
+    t3 = manifest.get("t3")
+    require(isinstance(t3, dict) and isinstance(t3.get("version"), str) and
+            re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", t3["version"]) and
+            type(t3.get("environmentProtocol")) is int and t3["environmentProtocol"] == T3_ENVIRONMENT_PROTOCOL,
+            "Unsupported qualified T3 version or protocol")
+    monitor = t3.get("resourceMonitor")
+    require(isinstance(monitor, dict) and isinstance(monitor.get("path"), str) and
+            re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*/resource-monitor/linux-x64/t3-resource-monitor",
+                         monitor["path"]), "Invalid qualified T3 telemetry helper path")
+    for artifact in (t3.get("relayClient"), monitor):
+        require(isinstance(artifact, dict) and isinstance(artifact.get("sha256"), str) and
+                re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]), "Invalid qualified T3 helper digest")
+    return t3
+
+
+def installed_t3():
+    manifest, _ = read_image_manifest()
+    return qualified_t3(manifest)
+
+
+def t3_descriptor_matches(descriptor, t3):
+    return (isinstance(descriptor, dict) and descriptor.get("serverVersion") == t3["version"] and
+            type(descriptor.get("orchestrationProtocolVersion")) is int and
+            descriptor["orchestrationProtocolVersion"] == t3["environmentProtocol"])
 
 
 def run(argv, **kwargs):
@@ -492,7 +529,7 @@ class Procfs:
                 "Pinned T3 relay is not root-owned immutable code")
         Linux.verify_unit_file(T3_RELAY_CLIENT)
         with Path(T3_RELAY_CLIENT).open("rb") as binary:
-            require(hashlib.file_digest(binary, "sha256").hexdigest() == T3_RELAY_CLIENT_SHA256,
+            require(hashlib.file_digest(binary, "sha256").hexdigest() == installed_t3()["relayClient"]["sha256"],
                     "Pinned T3 relay digest mismatch")
         argv = (directory / "cmdline").read_bytes().split(b"\0")
         expected = [os.fsencode(T3_RELAY_CLIENT), b"tunnel", b"--no-autoupdate",
@@ -512,7 +549,12 @@ class Procfs:
 
     def t3_resource_monitor(self, process, inventory, t3_pids):
         executable = self.executable(process["pid"])
-        if executable["path"] != T3_RESOURCE_MONITOR:
+        executable_path = Path(executable["path"])
+        if not executable_path.is_relative_to(T3_ROOT) or executable_path.name != "t3-resource-monitor":
+            return False
+        monitor = installed_t3()["resourceMonitor"]
+        monitor_path = T3_ROOT / monitor["path"]
+        if executable_path != monitor_path:
             return False
         directory = self.root / str(process["pid"])
         require(process["ppid"] in t3_pids and process["uids"] == (2000,) * 4 and
@@ -522,11 +564,11 @@ class Procfs:
                 "Pinned T3 telemetry helper has an unknown process identity")
         require(executable["uid"] == 0 and not executable["mode"] & 0o022,
                 "Pinned T3 telemetry helper is not root-owned immutable code")
-        Linux.verify_unit_file(T3_RESOURCE_MONITOR)
-        with Path(T3_RESOURCE_MONITOR).open("rb") as binary:
-            require(hashlib.file_digest(binary, "sha256").hexdigest() == T3_RESOURCE_MONITOR_SHA256,
+        Linux.verify_unit_file(str(monitor_path))
+        with monitor_path.open("rb") as binary:
+            require(hashlib.file_digest(binary, "sha256").hexdigest() == monitor["sha256"],
                     "Pinned T3 telemetry helper digest mismatch")
-        require((directory / "cmdline").read_bytes() == os.fsencode(T3_RESOURCE_MONITOR) + b"\0" and
+        require((directory / "cmdline").read_bytes() == os.fsencode(monitor_path) + b"\0" and
                 not any(p["ppid"] == process["pid"] for p in inventory.values()) and
                 not (directory / "task" / str(process["pid"]) / "children").read_text().strip(),
                 "Pinned T3 telemetry helper has arguments or unregistered children")
