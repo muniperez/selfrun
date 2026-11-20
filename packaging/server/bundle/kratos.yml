@@ -19,6 +19,11 @@ identity:
     - id: user
       url: file:///etc/config/identity.schema.json
 
+# The API owns dashboard session idle/absolute limits (PortalSessions) and extends this upstream session on
+# renewal; compose.yml sets the lifespan to the longest configured idle timeout.
+session:
+  lifespan: 168h
+
 # Console-facing URLs below are placeholders; compose.yml derives them from CONSOLE_URL.
 selfservice:
   default_browser_return_url: https://localhost/

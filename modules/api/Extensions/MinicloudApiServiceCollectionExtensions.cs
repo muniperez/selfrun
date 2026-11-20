@@ -150,6 +150,10 @@ public static class MinicloudApiServiceCollectionExtensions
                 AllowAutoRedirect = false,
                 UseCookies = false
             });
+        services.AddOptions<PortalSessionOptions>()
+            .Bind(configuration.GetSection(PortalSessionOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<PortalSessionOptions>, PortalSessionOptionsValidator>();
         services.AddScoped<BrowserSessionService>();
         services.AddHttpClient<KratosBrowserFlowClient>(client =>
             client.Timeout = TimeSpan.FromSeconds(10))

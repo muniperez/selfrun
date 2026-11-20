@@ -39,7 +39,8 @@ public sealed class AccountController(
             Password: true,
             Google: kratosOptions.Value.GoogleEnabled,
             EmailRecovery: kratosOptions.Value.EmailRecoveryEnabled,
-            BootstrapState: state));
+            BootstrapState: state,
+            KeepSignedIn: sessions.Policy.KeepSignedInEnabled));
     }
 
     [Authorize]
@@ -47,28 +48,94 @@ public sealed class AccountController(
     public async Task<IResult> GetSession(CancellationToken cancellationToken)
     {
         NoStore();
-        var principal = RequirePrincipal(HttpContext);
-        var cookie = Request.Cookies["__Host-minicloud-session"];
-        var sessionId = principal.BrowserSessionId ?? User.FindFirstValue("browser_session_id");
-        if (!principal.IsDashboardUser || principal.UserId is null ||
-            string.IsNullOrWhiteSpace(cookie) || string.IsNullOrWhiteSpace(sessionId))
+        var (session, _, csrfToken) = await LoadCurrentSessionAsync(cancellationToken);
+        return session is null
+            ? Unauthenticated()
+            : Results.Ok(BrowserSessionCookie.ToResponse(session, sessions.GetDeadlines(session), csrfToken!));
+    }
+
+    /// <summary>
+    /// Renews the idle deadline of the current session once it is inside its renewal window (the last half of the
+    /// idle timeout), never past its maximum lifetime, and extends the upstream Kratos session when it would otherwise
+    /// end first. Calls outside the window return the unchanged session, so concurrent tabs coalesce safely.
+    /// </summary>
+    [Authorize]
+    [HttpPost("session/renew")]
+    public async Task<IResult> RenewSession(CancellationToken cancellationToken)
+    {
+        NoStore();
+        var (session, _, csrfToken) = await LoadCurrentSessionAsync(cancellationToken);
+        if (session is null)
         {
-            return EndpointResults.Problem("unauthenticated", "A browser session is required.", StatusCodes.Status401Unauthorized);
+            return Unauthenticated();
         }
 
-        var session = await sessions.FindByIdAsync(sessionId, cancellationToken);
-        var csrfToken = session is null ? null : sessions.GetCsrfToken(session, cookie);
-        if (session is null || session.UserId != principal.UserId ||
-            session.RevokedAt is not null || csrfToken is null)
+        var target = sessions.GetRenewalTarget(session);
+        if (target is not null)
         {
-            return EndpointResults.Problem("unauthenticated", "A browser session is required.", StatusCodes.Status401Unauthorized);
+            var upstream = await kratosSessions.GetActiveSessionAsync(session.KratosSessionId, session.KratosIdentityId, cancellationToken);
+            if (upstream?.ExpiresAt is { } upstreamExpiry && upstreamExpiry < target)
+            {
+                upstream = await kratosSessions.ExtendSessionAsync(session.KratosSessionId, session.KratosIdentityId, cancellationToken);
+            }
+            if (upstream is null)
+            {
+                await sessions.RevokeByIdAsync(session.Id, cancellationToken);
+                ClearAuthCookies();
+                return Unauthenticated();
+            }
+            if (upstream.ExpiresAt is { } cappedExpiry && cappedExpiry < target)
+            {
+                target = cappedExpiry;
+            }
+            // Compare with the effective deadline: a shortened policy leaves the stored deadline later than it.
+            if (target > sessions.GetDeadlines(session).IdleExpiresAt &&
+                !await sessions.RenewAsync(session.Id, target.Value, cancellationToken))
+            {
+                return Unauthenticated();
+            }
         }
 
-        return Results.Ok(new AccountSessionResponse(
-            session.UserId,
-            session.ExpiresAt,
-            session.IdleExpiresAt,
-            csrfToken));
+        return Results.Ok(BrowserSessionCookie.ToResponse(session, sessions.GetDeadlines(session), csrfToken!));
+    }
+
+    /// <summary>Stores the user's "Keep me signed in" preference and applies it to the current session.</summary>
+    [Authorize]
+    [HttpPut("session/preference")]
+    public async Task<IResult> SetSessionPreference(
+        [FromBody] AccountSessionPreferenceRequest request,
+        CancellationToken cancellationToken)
+    {
+        NoStore();
+        var (session, cookie, csrfToken) = await LoadCurrentSessionAsync(cancellationToken);
+        if (session is null)
+        {
+            return Unauthenticated();
+        }
+        if (request.KeepSignedIn && !sessions.Policy.KeepSignedInEnabled)
+        {
+            return EndpointResults.Problem("keep_signed_in_unavailable",
+                "This instance does not allow staying signed in.", StatusCodes.Status409Conflict);
+        }
+
+        var updated = await sessions.SetRememberedAsync(session.Id, request.KeepSignedIn, cancellationToken);
+        if (updated is null || updated.RevokedAt is not null)
+        {
+            try
+            {
+                await kratosSessions.RevokeSessionAsync(session.KratosSessionId, cancellationToken);
+            }
+            catch (KratosUnavailableException)
+            {
+                // The local session is already revoked; the upstream session expires on its own.
+            }
+            ClearAuthCookies();
+            return Unauthenticated();
+        }
+
+        var deadlines = sessions.GetDeadlines(updated);
+        BrowserSessionCookie.Append(Response, cookie!, deadlines);
+        return Results.Ok(BrowserSessionCookie.ToResponse(updated, deadlines, csrfToken!));
     }
 
     [Authorize]
@@ -103,6 +170,28 @@ public sealed class AccountController(
 
         return Results.NoContent();
     }
+
+    private async Task<(Minicloud.Common.Models.BrowserSession? Session, string? Cookie, string? CsrfToken)> LoadCurrentSessionAsync(
+        CancellationToken cancellationToken)
+    {
+        var principal = RequirePrincipal(HttpContext);
+        var cookie = Request.Cookies[BrowserSessionCookie.Name];
+        var sessionId = principal.BrowserSessionId ?? User.FindFirstValue("browser_session_id");
+        if (!principal.IsDashboardUser || principal.UserId is null ||
+            string.IsNullOrWhiteSpace(cookie) || string.IsNullOrWhiteSpace(sessionId))
+        {
+            return (null, null, null);
+        }
+
+        var session = await sessions.FindByIdAsync(sessionId, cancellationToken);
+        var csrfToken = session is null ? null : sessions.GetCsrfToken(session, cookie);
+        return session is null || session.UserId != principal.UserId || session.RevokedAt is not null || csrfToken is null
+            ? (null, null, null)
+            : (session, cookie, csrfToken);
+    }
+
+    private static IResult Unauthenticated() =>
+        EndpointResults.Problem("unauthenticated", "A browser session is required.", StatusCodes.Status401Unauthorized);
 
     private async Task<string> GetBootstrapStateAsync(string? installationId, CancellationToken cancellationToken)
     {

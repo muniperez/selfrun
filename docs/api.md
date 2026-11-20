@@ -318,13 +318,15 @@ membership response for both browser users and authorized machine credentials.
 
 | Route | Behavior |
 | --- | --- |
-| `GET /api/account/capabilities` | Password/optional-method availability and authoritative `required`, `ready` or `blocked` bootstrap state. |
-| `GET /api/account/session` | Browser user ID, absolute/idle expiry and session-bound CSRF token. |
+| `GET /api/account/capabilities` | Password/optional-method availability, whether **Keep me signed in** is offered (`keepSignedIn`), and authoritative `required`, `ready` or `blocked` bootstrap state. |
+| `GET /api/account/session` | Browser user ID, absolute/idle expiry, `renewAfter`, `keepSignedIn` (this session) and `keepSignedInPreference` (sign-in default), and the session-bound CSRF token. Reading the session does not extend it. |
+| `POST /api/account/session/renew` | Explicit activity renewal. Inside the renewal window (`renewAfter`), extends the idle expiry (and the upstream Kratos session) up to the absolute expiry; earlier calls return the session unchanged. Never rotates the cookie or CSRF token and never restores a revoked session. |
+| `PUT /api/account/session/preference` | Body `{keepSignedIn}`. Stores the user's preference and applies it to the current session's limits and cookie persistence. `409 keep_signed_in_unavailable` when the operator disabled the option. |
 | `POST /api/account/logout` | Revoke the browser session and Grafana access; clear authentication cookies without revoking API keys. |
 | `GET /api/account/flows/{kind}/browser` | Start `login`, `settings` or enabled `recovery`; `returnTo` must be a same-dashboard relative path. |
 | `GET /api/account/flows/{kind}?id={uuid}` | Read an existing matching form. |
-| `POST /api/account/flows/{kind}?flow={uuid}` | Submit the form once; return a sanitized form or rotated browser-session metadata, never a session-cookie secret. |
-| `POST /api/account/flows/{kind}/oidc?flow={uuid}&returnTo={path}` | Optional Google only (`login` or `settings` link). Body `{csrf_token, provider:"google"}`; returns `{provider, redirectUrl}` for explicit top-level navigation. |
+| `POST /api/account/flows/{kind}?flow={uuid}[&keepSignedIn=true]` | Submit the form once; return a sanitized form or rotated browser-session metadata, never a session-cookie secret. |
+| `POST /api/account/flows/{kind}/oidc?flow={uuid}&returnTo={path}[&keepSignedIn=true]` | Optional Google only (`login` or `settings` link). Body `{csrf_token, provider:"google"}`; returns `{provider, redirectUrl}` for explicit top-level navigation. |
 | `GET /api/account/oidc/self-service/methods/oidc/callback/google` | Fixed provider callback. Completes the pending flow and answers `303` to the dashboard's `/sign-in/continue`. |
 
 Settings and other cookie-authenticated mutations require exact dashboard Origin

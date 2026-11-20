@@ -34,6 +34,11 @@ x-api-environment: &api-environment
   Kratos__AdminBaseUrl: http://kratos:4434/
   Kratos__DashboardOrigin: ${CONSOLE_URL:?set CONSOLE_URL}
   Kratos__GoogleEnabled: ${MINICLOUD_GOOGLE_OIDC_ENABLED:-false}
+  PortalSessions__KeepSignedInEnabled: ${MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED:-true}
+  PortalSessions__StandardIdleMinutes: ${MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES:-120}
+  PortalSessions__StandardMaxMinutes: ${MINICLOUD_PORTAL_STANDARD_MAX_MINUTES:-720}
+  PortalSessions__RememberedIdleMinutes: ${MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES:-10080}
+  PortalSessions__RememberedMaxMinutes: ${MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES:-43200}
   Bootstrap__InstallationId: ${MINICLOUD_INSTALLATION_ID:?set the persistent MINICLOUD_INSTALLATION_ID}
 
 services:
@@ -179,6 +184,7 @@ services:
       SELFSERVICE_FLOWS_LOGIN_UI_URL: ${CONSOLE_URL:?set CONSOLE_URL}/sign-in
       SELFSERVICE_FLOWS_SETTINGS_UI_URL: ${CONSOLE_URL:?set CONSOLE_URL}/settings/account
       SELFSERVICE_FLOWS_RECOVERY_UI_URL: ${CONSOLE_URL:?set CONSOLE_URL}/recovery
+      SESSION_LIFESPAN: ${MINICLOUD_KRATOS_SESSION_LIFESPAN:-10080m}
     env_file:
       - ${MINICLOUD_SECRETS_DIR:?set MINICLOUD_SECRETS_DIR}/kratos.env
     volumes:

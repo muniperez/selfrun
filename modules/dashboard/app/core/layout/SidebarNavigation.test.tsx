@@ -18,6 +18,7 @@ describe("SidebarNavigation", () => {
         value={{
           status: "authenticated",
           capabilities: { password: true, google: false, emailRecovery: false, bootstrapState: "ready" },
+          session: null,
           logout,
           refreshSession: async () => {},
           selectOrganization: () => false,

@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthContext } from "../../core/auth/AuthProvider";
 import { accountCapabilities, accountSession, authFixture, browserFlow, googleFlow, googleUrl, jsonResponse } from "../../test/accountFixtures";
 import { AccountFlowForm } from "./AccountFlowForm";
+import { SessionSettingsCard } from "./SessionSettingsCard";
 import { routes } from "../../routes";
 import { setCsrfToken } from "../../api/apiClient";
 import { browserNavigation } from "../../api/accountApi";
@@ -108,7 +109,7 @@ describe("account browser forms", () => {
   });
 
   it("does not render signup, Google or recovery unless explicitly enabled", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ flow: browserFlow(), session: null })));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ flow: browserFlow(), session: null })));
     mount();
     await screen.findByLabelText("Email");
     expect(screen.queryByText(/Google/)).not.toBeInTheDocument();
@@ -193,7 +194,7 @@ describe("account browser forms", () => {
     await screen.findByLabelText("Email");
     expect(screen.queryByText(/Google/)).not.toBeInTheDocument();
     cleanup();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ flow: browserFlow(), session: null })));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ flow: browserFlow(), session: null })));
     mount("login", false, true);
     await screen.findByLabelText("Email");
     expect(screen.queryByText(/Google/)).not.toBeInTheDocument();
@@ -224,5 +225,57 @@ describe("account browser forms", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Link Google account" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("keep me signed in", () => {
+  afterEach(() => window.localStorage.clear());
+
+  it("is offered only when enabled and sends the explicit choice without posting it as an upstream field", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ flow: browserFlow(), session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: { ...accountSession, keepSignedIn: true } }));
+    vi.stubGlobal("fetch", fetcher);
+    const auth = authFixture({ capabilities: { ...accountCapabilities, keepSignedIn: true } });
+    render(<AuthContext.Provider value={auth}><MemoryRouter><AccountFlowForm kind="login" /></MemoryRouter></AuthContext.Provider>);
+    const checkbox = await screen.findByRole("checkbox", { name: "Keep me signed in on this device" });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "operator@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "synthetic-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
+    expect(fetcher.mock.calls[1][0]).toMatch(/\/api\/account\/flows\/login\?flow=[0-9a-f-]+&keepSignedIn=true$/);
+    expect(Object.keys(JSON.parse(fetcher.mock.calls[1][1].body))).toEqual(["csrf_token", "identifier", "password", "method"]);
+    expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
+  });
+
+  it("defaults from this browser's last choice and is absent when the operator disables it", async () => {
+    window.localStorage.setItem("minicloud.keepSignedIn", "1");
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ flow: browserFlow(), session: null })));
+    const auth = authFixture({ capabilities: { ...accountCapabilities, keepSignedIn: true } });
+    const view = render(<AuthContext.Provider value={auth}><MemoryRouter><AccountFlowForm kind="login" /></MemoryRouter></AuthContext.Provider>);
+    expect(await screen.findByRole("checkbox", { name: "Keep me signed in on this device" })).toBeChecked();
+    view.unmount();
+    mount();
+    expect(await screen.findByLabelText("Email")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("changes the current session preference from account settings and reloads the session", async () => {
+    setCsrfToken("synthetic-csrf");
+    const fetcher = vi.fn(async (input: string) => input.endsWith("/session/preference")
+      ? jsonResponse({ ...accountSession, keepSignedIn: true, keepSignedInPreference: true })
+      : jsonResponse({ flow: browserFlow("settings"), session: null }));
+    vi.stubGlobal("fetch", fetcher);
+    const auth = authFixture({ capabilities: { ...accountCapabilities, keepSignedIn: true }, session: { ...accountSession, keepSignedIn: false } });
+    render(<AuthContext.Provider value={auth}><MemoryRouter><SessionSettingsCard /></MemoryRouter></AuthContext.Provider>);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep me signed in on this device" }));
+    await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
+    const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toMatch(/\/api\/account\/session\/preference$/);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ keepSignedIn: true });
+    expect((init.headers as Record<string, string>)["X-Minicloud-CSRF"]).toBe("synthetic-csrf");
+    expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
   });
 });

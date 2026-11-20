@@ -14,7 +14,7 @@ export const accountProfile = {
 };
 export function authFixture(overrides: Partial<ContextType<typeof AuthContext>> = {}): ContextType<typeof AuthContext> {
   return {
-    status: "authenticated", capabilities: accountCapabilities, profile: accountProfile,
+    status: "authenticated", capabilities: accountCapabilities, profile: accountProfile, session: accountSession,
     selectedOrganization: accountProfile.organizations[0], selectOrganization: vi.fn().mockReturnValue(false), profileError: null,
     refreshProfile: vi.fn().mockResolvedValue(undefined), refreshSession: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn().mockResolvedValue(undefined), ...overrides

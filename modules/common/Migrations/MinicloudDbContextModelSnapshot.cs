@@ -575,6 +575,14 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_seen_at");
 
+                    b.Property<bool>("Persistent")
+                        .HasColumnType("boolean")
+                        .HasColumnName("persistent");
+
+                    b.Property<DateTimeOffset>("RenewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("renewed_at");
+
                     b.Property<DateTimeOffset?>("RevokedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("revoked_at");
@@ -4848,6 +4856,10 @@ namespace Minicloud.Common.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("email");
+
+                    b.Property<bool>("KeepSignedIn")
+                        .HasColumnType("boolean")
+                        .HasColumnName("keep_signed_in");
 
                     b.Property<string>("KratosIdentityId")
                         .HasColumnType("text")
