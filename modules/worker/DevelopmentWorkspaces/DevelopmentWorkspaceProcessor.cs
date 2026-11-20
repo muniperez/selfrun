@@ -77,6 +77,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
         catch (DevelopmentWorkspaceException error) when (error.Code is "workspace_operation_stale" or "workspace_generation_stale" or "workspace_revision_conflict") { }
         catch (Exception error)
         {
+            System.IO.File.AppendAllText("/tmp/wsdiag.log", $"=== {DateTime.UtcNow:O} op={operation.Kind}/{operation.Step}\n{error}\n");
             logger?.LogError(
                 "Workspace operation {OperationId} ({OperationKind}) failed at step {Step}; exception type {ExceptionType}; HTTP status {HttpStatusCode}. Reconciliation is required.",
                 operation.Id, operation.Kind, operation.Step, error.GetType().Name,
