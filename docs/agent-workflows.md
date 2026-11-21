@@ -1,104 +1,37 @@
-# Agent deploy and validation workflow
+# Deploy and validate with a coding agent
 
-Use this workflow when you want an agent in a MiniCloud agentic cloud coding
-environment to change an app, deploy it, validate the public result, inspect
-logs, and make a follow-up fix. You choose the environment and the checks that
-define success. Give the agent the target explicitly and review its changes
-before deployment.
+Give the agent a target, a change to make, and a way to tell whether it worked. The same workflow works from an agentic cloud coding environment or a local checkout with the MiniCloud CLI.
 
-## Prepare the workspace
+## Prepare the project once
 
-Open the app repository in the [MiniCloud workspace](workspace-projects.md).
-The repository and its source are available in the workspace; the CLI builds
-from that checkout. Ensure Docker is available and install the MiniCloud CLI
-using the [CLI installation instructions](cli-distribution.md).
-
-Register and select the intended MiniCloud instance, then authenticate with an
-API key scoped for app and deployment work:
+Install a CLI compatible with your instance. From the application repository, register your dashboard hostname and sign in. Adding the instance makes it active.
 
 ```sh
 minicloud instance add personal cloud.example.com
-minicloud instance use personal
-minicloud login --token "$MINICLOUD_API_KEY"
+minicloud login
 ```
 
-The key needs `apps:read`, `apps:write`, `deployments:create`,
-`deployments:read`, and `plans:read`. Store it in the workspace's protected
-secret or environment-variable facility; do not put it in a prompt, source
-file, command history, or logs. See [CLI authentication](cli.md#authenticate).
-Instance selection and tokens are local to the workspace user.
+For a new project, run `minicloud init` to select or create an application and write `minicloud.yml`. For unattended use, supply a scoped organization API key through the process environment as `MINICLOUD_TOKEN`. Keep the key in your secret store. [CLI installation](cli-distribution.md) · [Authentication and scopes](cli.md#authenticate)
 
-## Give the agent a bounded task
+## Give the agent a task
 
-State the repository path, requested change, validation commands, public URL
-and intended environment. For example:
+> Fix the contact form in this repository. Run the project’s tests, deploy to the environment named in my request, and submit the form using synthetic data. Verify that the confirmation appears. If a check fails, use the logs to diagnose it, fix the problem, and try again. Report the deployment number, URL, and test result.
 
-> In `/workspace/repos/sample-app`, fix the contact form submission error.
-> Run `npm ci` and `npm test`, then deploy to the `production` environment on
-> the `personal` MiniCloud instance. Verify the contact form on
-> `https://sample.example.com` and report the deployment number, checks, and
-> any remaining issue. Do not change secrets or infrastructure.
+Supply the actual environment name, test fixture, and expected result with the task. Use `minicloud environments list` to see the application's available targets.
 
-Replace those synthetic values with the values for your app. If you have more
-than one active environment, name the target explicitly. The CLI requires
-`--environment <name>` for application deployment and logs; it does not infer
-the target from the dashboard selection. Confirm the target and expected impact
-with the agent before it deploys.
+## Deploy and check the result
 
-## Deploy and verify
-
-From the repository directory, first inspect the config and the working tree.
-Run the app's relevant validation commands before deployment. Then deploy all
-changed services to the chosen environment:
+In these examples, set `TARGET_ENV` to your chosen environment. Run the project's tests, then deploy from the checkout containing the changes. For a standard workspace image, build on the server:
 
 ```sh
-minicloud apps inspect sample-app
-git diff --check
-npm ci
-npm test
-minicloud deploy --environment production
+minicloud deploy --environment "$TARGET_ENV" --build-mode source
 ```
 
-MiniCloud's CLI builds service images from the workspace checkout, publishes
-them, creates a deployment and waits for it. `minicloud deploy` selects changed
-services by default; use `minicloud deploy all --environment production` when
-you intentionally need to redeploy every configured service. See [deploy
-options](cli.md#deploy).
+On a machine with Docker and Buildx, omit `--build-mode source` to build locally. The default service selection skips unchanged services. When a deployment runs, the CLI waits for the result and prints the deployment number and the assigned URLs of public services. Run the project's smoke or browser tests against the URL for the relevant service. [Deployment options](cli.md#deploy)
 
-The agent should record the deployment number printed by the command and check
-deployment progress and its deployment log:
+## Diagnose a failure and retry
 
-```sh
-minicloud status 20261121.1
-minicloud logs 20261121.1
-```
+- **Build or deployment failed.** Set `DEPLOYMENT_NUMBER` to the number printed for this attempt. Run `minicloud logs "$DEPLOYMENT_NUMBER"` for deployment output. If the client disconnected during a deployment, `minicloud status "$DEPLOYMENT_NUMBER" --watch` follows that same attempt.
+- **The service deployed but the form failed.** Use the application name and service name from your project. For an app called `sample-app` with a `web` service, run `minicloud logs sample-app --environment "$TARGET_ENV" --service web --tail 50` just after reproducing the failure.
 
-Use the actual number from this deployment. These commands show deployment
-status and build/deployment output. After it succeeds, check the public URL with
-the app's user-facing smoke checks, for example:
-
-```sh
-curl --fail --show-error --silent https://sample.example.com/health
-```
-
-Choose a URL and response check that make sense for your app; a successful
-deployment alone does not prove the app behaves correctly. If a runtime issue
-appears, retrieve the app's runtime logs by app name or ID:
-
-```sh
-minicloud logs sample-app --environment production
-```
-
-Use the runtime error to guide a focused code fix, rerun the relevant local
-checks, redeploy to the same explicitly chosen environment, and repeat the
-public URL verification. The [CLI reference](cli.md#status-logs-and-apps)
-describes deployment status and the difference between deployment and app
-runtime logs.
-
-## Review the result
-
-Ask the agent to summarize the files changed, validation commands and results,
-deployment number, environment, public checks, and any runtime log findings.
-Review the diff and the live behavior yourself. If the check fails or the
-result is unexpected, stop the cycle and investigate before requesting another
-deployment.
+Use the error to make a focused change, rerun the tests, deploy to the same target, and repeat the form submission. The final report can be as short as the environment, service URL, deployment number, and observed result. [Status and logs](cli.md#status-logs-and-apps)
