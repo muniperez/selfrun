@@ -21,6 +21,7 @@ public sealed partial class DevelopmentWorkspaceProcessor(
     IOptions<DevelopmentWorkspaceWorkerOptions> options,
     IOptions<DeploymentPipelineOptions> pipeline, IIdGenerator ids, TimeProvider clock, MaintenanceParticipant maintenance,
     WorkspaceGitAccessService gitAccess, IOptions<DevelopmentWorkspaceOptions> policy,
+    DevelopmentWorkspaceRefreshScheduler refreshScheduler,
     ILogger<DevelopmentWorkspaceProcessor>? logger = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

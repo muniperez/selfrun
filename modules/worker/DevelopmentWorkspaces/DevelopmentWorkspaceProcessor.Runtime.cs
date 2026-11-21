@@ -292,10 +292,7 @@ public sealed partial class DevelopmentWorkspaceProcessor
             if (!(await maintenance.CheckAsync(db, requireOpen: true, ct)).IsAdmitted) return;
             await admission.CommitAsync(ct);
         }
-        var vm = await db.DevelopmentWorkspaceVms.AsNoTracking()
-            .Where(x => x.Phase == "ready" && x.DesiredState == "running")
-            .OrderBy(x => x.ErrorCode == DevelopmentWorkspaceService.RetainedStorageUnavailable
-                ? (DateTimeOffset?)x.UpdatedAt : x.LastHeartbeatAt).FirstOrDefaultAsync(ct);
+        var vm = await refreshScheduler.NextAsync(db, ct);
         if (vm is not null) await MonitorVmAsync(vm, ct);
     }
 
@@ -325,10 +322,12 @@ public sealed partial class DevelopmentWorkspaceProcessor
                 await lifecycle.ScheduleIdleStopAsync(vm.WorkspaceId, vm.OrganizationId, vm.Id, vm.Generation,
                     Now.AddSeconds(Math.Clamp(options.Value.IdleShutdownDelaySeconds, 30, 600)), ct);
         }
-        catch (DevelopmentWorkspaceException) { }
-        catch (Exception)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception error)
         {
             // Missing evidence never advances activity or authorizes destruction. Receipt/heartbeat TTLs fail closed.
+            logger?.LogWarning("Workspace monitor attempt failed ({ErrorType}); readiness and route refresh require verified evidence.",
+                error.GetType().Name);
         }
     }
 }

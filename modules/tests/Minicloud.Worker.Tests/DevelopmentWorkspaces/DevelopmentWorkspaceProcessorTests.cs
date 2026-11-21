@@ -99,6 +99,7 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             .AddSingleton<ILogger<DevelopmentWorkspaceProcessor>>(diagnostics)
             .AddSingleton<IOptions<DevelopmentWorkspaceWorkerOptions>>(Options.Create(workerOptions))
             .AddSingleton<IOptions<DevelopmentWorkspaceOptions>>(Options.Create(policy))
+            .AddSingleton<DevelopmentWorkspaceRefreshScheduler>()
             .AddSingleton<IOptions<DeploymentPipelineOptions>>(Options.Create(new DeploymentPipelineOptions
                 { SshPublicKey = "ssh-ed25519 AAAAsynthetic-management-key" }))
             .AddSingleton(new WorkspaceGitAccessService(db, secrets, new(new HttpClient(github), clock), clock, Options.Create(policy)))
@@ -138,7 +139,8 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
     private string t3Version = "0.1.9";
 
     private MinicloudDbContext Context() => new(postgresOptions ??
-        new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
+        new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection)
+            .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCustomizer, WorkspaceMonitorSqliteModelCustomizer>().Options);
     private DevelopmentWorkspaceProcessor Processor() => ActivatorUtilities.CreateInstance<DevelopmentWorkspaceProcessor>(services);
 
     [Theory]
@@ -1591,6 +1593,8 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         public Dictionary<string, JsonElement> Rejections { get; } = [];
         public Action<string>? BeforeAction { get; set; }
         public List<string> Actions { get; } = [];
+        public HashSet<(string VmId, long Generation)> FailedStatusGenerations { get; } = [];
+        public List<WorkspaceRuntimeTarget> StatusTargets { get; } = [];
         public object? Resources { get; set; }
         public string[]? Capabilities { get; set; }
         public List<JsonElement> FilesystemRequests { get; } = [];
@@ -1608,6 +1612,9 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
             if (action == "receipt-validate" && FailReceipt) throw new InvalidOperationException("Receipt was not confirmed.");
             if (action == "status")
             {
+                StatusTargets.Add(target);
+                if (FailedStatusGenerations.Contains((target.VmId, target.Generation)))
+                    throw new InvalidOperationException("Synthetic refresh failure: credential-must-not-be-logged");
                 var result = new Dictionary<string, object?>
                 {
                     ["vmId"] = target.VmId, ["generation"] = target.Generation, ["kind"] = target.Kind, ["phase"] = Phase,
