@@ -6,6 +6,15 @@ namespace Minicloud.Api.Services;
 
 internal static class BootstrapProtectedInput
 {
+    private const int LinuxNonBlock = 0x800;
+    private const int LinuxCloseOnExec = 0x80000;
+    private const int LinuxX64NoFollow = 0x20000;
+    private const int LinuxArm64NoFollow = 0x8000;
+    private const int AtEmptyPath = 0x1000;
+    private const uint StatxType = 1;
+    private const uint StatxMode = 2;
+    private const uint StatxUid = 8;
+
     [StructLayout(LayoutKind.Explicit, Size = 256)]
     private struct Statx
     {
@@ -25,15 +34,14 @@ internal static class BootstrapProtectedInput
     public static FileStream OpenRead(string path)
     {
         if (!OperatingSystem.IsLinux()) throw BootstrapException.Conflict();
-        // Linux O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC: reject symlinks atomically,
-        // and never hang while opening a FIFO before we can verify its type.
-        var fd = Open(path, 0x20000 | 0x800 | 0x80000);
+        // O_NOFOLLOW differs between x86-64 and arm64; the other flags are asm-generic.
+        var fd = Open(path, GetReadOpenFlags(RuntimeInformation.ProcessArchitecture));
         if (fd < 0) throw BootstrapException.Conflict();
         var handle = new SafeFileHandle(fd, ownsHandle: true);
         try
         {
-            const uint fields = 1 | 2 | 8; // STATX_TYPE | STATX_MODE | STATX_UID
-            if (Stat(fd, "", 0x1000, fields, out var stat) != 0 ||
+            const uint fields = StatxType | StatxMode | StatxUid;
+            if (Stat(fd, "", AtEmptyPath, fields, out var stat) != 0 ||
                 (stat.Mask & fields) != fields || (stat.Mode & 0xF000) != 0x8000 ||
                 stat.UserId != EffectiveUserId() ||
                 (stat.Mode & 0x0FFF & ~0x180) != 0 || (stat.Mode & 0x100) == 0)
@@ -45,5 +53,18 @@ internal static class BootstrapProtectedInput
             handle.Dispose();
             throw;
         }
+    }
+
+    internal static int GetReadOpenFlags(Architecture architecture)
+    {
+        var noFollow = architecture switch
+        {
+            Architecture.X64 => LinuxX64NoFollow,
+            Architecture.Arm64 => LinuxArm64NoFollow,
+            _ => throw new BootstrapException("bootstrap_unsupported_architecture", 400,
+                $"Protected bootstrap input files are not supported on Linux architecture '{architecture}'. Use --stdin instead.")
+        };
+        // O_NONBLOCK avoids hanging on FIFOs before their file type can be checked.
+        return noFollow | LinuxNonBlock | LinuxCloseOnExec;
     }
 }

@@ -20,4 +20,8 @@
     <ProjectReference Include="..\common\Minicloud.Common.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Minicloud.Tests" />
+  </ItemGroup>
+
 </Project>
