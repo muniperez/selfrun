@@ -18,7 +18,7 @@ See [provider permissions and host requirements](seed.md#before-starting).
 
 ### Download a candidate
 
-The [setup page](https://muniventures.github.io/minicloud/#self-host) has direct
+The [CLI download page](https://muniventures.github.io/minicloud/downloads.html) has direct
 downloads for Windows x64, Apple silicon macOS, and glibc Linux on x64 or ARM64.
 Choose the build for the computer where you will run the CLI. Extract the
 archive and put `minicloud` (Windows: `minicloud.exe`) on your PATH.
