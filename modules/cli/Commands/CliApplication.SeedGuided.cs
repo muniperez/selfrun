@@ -194,9 +194,6 @@ public sealed partial class CliApplication
                         _console.WriteLine("No valid SSH enrollment proof received. No authenticated SSH was attempted. Rerun the same seed after first boot; if this persists, inspect cloud-init through the provider console. Do not recreate the server.");
                         return 10;
                     }
-                    target = new(resource.Id, resource.Address, fingerprint, resource.Image, resource.PrimaryIpId);
-                    (configForRun with { Target = target }).Validate();
-                    WriteGuided(targetPath, target);
                 }
                 else
                 {
@@ -205,7 +202,14 @@ public sealed partial class CliApplication
                     fingerprint = SeedAnswer("Paste only its independent SHA256:... fingerprint (Enter to pause): ", allowEmpty: true);
                     if (fingerprint.Length == 0) return 10;
                 }
-                configForRun = configForRun with { Target = new(resource.Id, resource.Address, fingerprint, resource.Image, resource.PrimaryIpId) };
+                var verifiedTarget = new SeedPortableTarget(resource.Id, resource.Address, fingerprint, resource.Image, resource.PrimaryIpId);
+                configForRun = configForRun with { Target = verifiedTarget };
+                if (dispatch.EnrollSsh)
+                {
+                    configForRun.Validate();
+                    WriteGuided(targetPath, verifiedTarget);
+                    target = verifiedTarget;
+                }
             }
             else
             {

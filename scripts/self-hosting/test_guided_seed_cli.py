@@ -255,15 +255,18 @@ def cloud_init_host(root, port):
     for source, target in ((ssh, "/etc/ssh"), (root / "isolated-run", "/run"), (root / "isolated-root", "/root")):
         subprocess.run(["mount", "--bind", source, target], check=True)
     instance = root / "cloud-instance"
-    cloud = SimpleNamespace(distro=SimpleNamespace(osfamily="debian"), get_ipath_cur=lambda: str(instance))
+    cloud = SimpleNamespace(distro=SimpleNamespace(osfamily="debian", get_default_user=lambda: {}),
+                            get_ipath_cur=lambda: str(instance))
     cc_ssh.handle("ssh", {"ssh_genkeytypes": ["ed25519"], "ssh_quiet_keygen": True,
                          "allow_public_ssh_keys": False, "ssh_publish_hostkeys": {"enabled": False}, "users": []}, cloud, [])
     handler = ShellScriptPartHandler(SimpleNamespace(get_ipath_cur=lambda name: str(instance / name)))
-    handler.handle_part(None, "text/x-shellscript", "seed", (root / "user-data").read_bytes(), None)
+    handler.handle_part(None, "text/x-shellscript", "seed", (root / "user-data").read_text(), None)
     assert (instance / "scripts" / "seed").stat().st_mode & 0o777 == 0o700
     cc_scripts_user.handle("scripts-user", {}, cloud, [])
     config = ["-f", "/etc/ssh/sshd_config", "-p", port, "-o", "ListenAddress=127.0.0.1"]
-    os.execv("/usr/sbin/sshd", ["/usr/sbin/sshd", "-D", "-e", *config])
+    # A single-ID user namespace cannot switch to sshd's privilege-separation account.
+    # Run the test daemon non-root; this fixture never offers an SSH credential.
+    os.execvp("unshare", ["unshare", "--map-user=1000", "--map-group=1000", "/usr/sbin/sshd", "-D", "-e", *config])
 
 
 def boot_fixture(root, user_data):
@@ -290,8 +293,9 @@ def boot_fixture(root, user_data):
         deadline = time.monotonic() + 10
         while True:
             if process.poll() is not None:
-                # Do not echo cloud-init diagnostics that might contain user-data.
-                raise AssertionError("Isolated cloud-init/sshd failed to start.")
+                _, error = process.communicate(timeout=5)
+                detail = re.sub(r"(?i)[0-9a-f]{64}", "[redacted]", error.decode(errors="replace"))
+                raise AssertionError(f"Isolated cloud-init/sshd failed to start:\n{detail}")
             try:
                 with socket.create_connection((ADDRESS, port), timeout=.2):
                     break
@@ -359,6 +363,7 @@ if [[ " $* " == *' PreferredAuthentications=none '* ]]; then
     exit 255
 fi
 [[ -f "$HOME/local/target.json" ]]
+[[ ! -e "$HOME/local/ssh-enrollment.secret" ]]
 printf '%s\\n' ssh >> "$HOME/ssh-calls"
 case "${@: -1}" in
     *'bash -s -- '*) cat >/dev/null; touch "$HOME/prepared";;
@@ -389,6 +394,7 @@ esac
         try:
             env = {"HOME": str(root), "PATH": str(path), "TERM": "dumb", "LC_ALL": "C",
                    "SSL_CERT_FILE": str(root / "ca.pem"), "DOTNET_BUNDLE_EXTRACT_BASE_DIR": str(root / "native"),
+                   "SSH_AUTH_SOCK": str(root / "never-use-agent"),
                    "HTTPS_PROXY": f"http://127.0.0.1:{server.server_address[1]}"}
             info = subprocess.check_output([cli, "--version"], cwd=root, env=env, text=True)
             revision = info.strip().splitlines()[-1].removeprefix("source ")
@@ -465,6 +471,16 @@ esac
                 output = dialogue(cli, root, env, state, [credential], 10)
                 assert "inventory absence never authorizes creation" in output
                 fixture.visible = True
+                public_ipv4 = fixture.droplet["networks"]["v4"]
+                fixture.droplet["networks"]["v4"] = []
+                output = dialogue(cli, root, env, state, [credential], 10)
+                assert "public IPv4 is not ready" in output
+                assert json.loads((state / "resource.json").read_text())["id"] == "17"
+                fixture.droplet["networks"]["v4"] = public_ipv4
+                fixture.droplet["id"] = 18
+                output = dialogue(cli, root, env, state, [credential], 2)
+                assert "Provider resource does not match" in output and not (root / "ssh-calls").exists()
+                fixture.droplet["id"] = 17
                 # Even under the original secret, a different seed or host key cannot enroll.
                 secret = (state / "ssh-enrollment.secret").read_bytes()
                 wrong_public = (root / "wrong-host-key.pub").read_text().split()[1]
@@ -491,9 +507,7 @@ esac
             assert len(secret) == 32 and secret_path.stat().st_mode & 0o777 == 0o600
             assert re.search(r'bytes.fromhex\("([0-9A-F]{64})"\)', fixture.user_data)[1] == secret.hex().upper()
             assert "PRIVATE KEY" not in fixture.user_data
-            if real_ssh:
-                sshd, pin = boot_fixture(root, fixture.user_data)
-            else:
+            if not real_ssh:
                 proof = hmac.new(secret, f"minicloud-seed-host-v1\n{saved['seedId']}\nssh-ed25519 {public}".encode(),
                                  hashlib.sha256).hexdigest()
                 (root / "proof").write_text(f"minicloud-seed-host-v1 {proof}\n")
@@ -510,12 +524,21 @@ esac
             (root / "installed.json").write_text(json.dumps(observation))
             (root / "ready.json").write_text(json.dumps(dict(observation, progress="awaiting_operator", health="ready",
                                                              openBao="ready", browser="pending")))
+            if real_ssh:
+                sshd, pin = boot_fixture(root, fixture.user_data)
             try:
                 output = dialogue(cli, root, env, state, [("Type 'install'", "install")], 10)
-            finally:
+            except BaseException as error:
                 if real_ssh:
                     sshd.terminate()
+                    _, diagnostics = sshd.communicate(timeout=5)
+                    error.add_note(re.sub(r"(?i)[0-9a-f]{64}", "[redacted]", diagnostics.decode(errors="replace")))
+                raise
+            finally:
+                if real_ssh and sshd.poll() is None:
+                    sshd.terminate()
                     sshd.communicate(timeout=5)
+                if real_ssh:
                     (root / "ssh-port").unlink()
             assert not secret_path.exists() and "ssh-keygen" not in output and "Paste only" not in output
             assert json.loads((state / "target.json").read_text())["hostFingerprint"] == pin

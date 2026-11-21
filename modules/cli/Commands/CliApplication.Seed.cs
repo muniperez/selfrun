@@ -261,6 +261,7 @@ public sealed partial class CliApplication
     private void PrintSeedHelp()
     {
         _console.WriteLine("minicloud seed [--state-dir PROTECTED_DIR]  Guided first install or resume in a terminal; no JSON to write.");
+        _console.WriteLine("New guided installs manage SSH automatically. Preserve the protected state to resume.");
         _console.WriteLine("Choose an exact signed server release or explicitly choose a local-source TEST install when available.");
         _console.WriteLine(SeedLocalSource.EmbeddedTag is { } tag ? $"Embedded TEST source: {tag}"
             : "No embedded TEST source in this build. See docs/stateless-seed.md for builds that carry it.");
@@ -281,6 +282,6 @@ public sealed partial class CliApplication
         _console.WriteLine("minicloud seed cleanup OP [--confirm-cleanup DIGEST] [--credential-file PATH] (forbidden after installation starts)");
         _console.WriteLine("minicloud seed export OP --recovery-dir NEW_LOCAL_PATH [--setup-token [--rotate-setup-token]] [--ack-recovery INSTALLATION_ID]");
         _console.WriteLine("minicloud seed register-provider OP --register-provider --organization ID --provider-name NAME [--use-existing-auth] [--credential-file PATH] [--confirm-provider-import DIGEST | --confirm-provider-account ID]");
-        _console.WriteLine("Default/legacy mode requires an exact signed published server. Public HTTPS and independent console SSH fingerprint required. IP-only access deferred. See docs/seed.md.");
+        _console.WriteLine("Legacy journal mode requires an exact signed published server, public HTTPS and an independent console SSH fingerprint. See docs/seed.md.");
     }
 }
