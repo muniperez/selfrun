@@ -56,10 +56,10 @@ public class Program
         builder.Services.AddSingleton<TelemetryStatusReporter>();
         builder.Services.AddSingleton<TelemetryQueryLimiter>();
         builder.Services.AddSingleton<OtlpIngestionLimiter>();
+        builder.Services.AddSingleton<TelemetryQuotaService>();
 
         builder.Services.AddScoped<TelemetryAuthorityService>();
         builder.Services.AddScoped<TelemetryCredentialAuthService>();
-        builder.Services.AddScoped<TelemetryQuotaService>();
         builder.Services.AddScoped<OtlpNormalizationService>();
         builder.Services.AddScoped<OtlpLokiForwarder>();
         builder.Services.AddScoped<TelemetryQueryService>();
