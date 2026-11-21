@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Run browser-based coding workspaces and host applications on your own servers with MiniCloud.">
-    <title>MiniCloud | Self-hosted coding and app hosting</title>
+    <meta name="description" content="Host and deploy applications on your own servers with MiniCloud.">
+    <title>MiniCloud | Self-hosted application hosting</title>
     <link rel="icon" href="./mark.svg" type="image/svg+xml">
     <link rel="stylesheet" href="./styles.css">
   </head>
@@ -24,8 +24,8 @@
 
     <main class="frame" id="main" tabindex="-1">
       <section class="hero" aria-labelledby="headline">
-        <h1 id="headline">Self-hosted coding<br class="hero-break"> and app hosting</h1>
-        <p class="hero-copy">Use coding agents in your browser and deploy Docker services on your own servers.</p>
+        <h1 id="headline">Self-hosted application hosting</h1>
+        <p class="hero-copy">Deploy Docker services and manage their infrastructure on your own servers.</p>
         <div class="actions">
           <a class="button button-primary" href="#get-started">Get started <span aria-hidden="true">&darr;</span></a>
           <a class="button" href="https://github.com/muniventures/minicloud">View on GitHub <span aria-hidden="true">&nearr;</span></a>
@@ -33,18 +33,10 @@
       </section>
 
       <section class="section" id="workflows" aria-labelledby="workflows-title">
-        <h2 id="workflows-title">Workspaces and apps</h2>
+        <h2 id="workflows-title">Deploy to your infrastructure</h2>
         <div class="workflow-grid">
           <article>
-            <h3>Browser workspaces</h3>
-            <p>Use T3 Code to work with a coding agent and terminal in your browser. The dashboard opens app previews. You can stop the primary VM and resume with your files and sessions intact.</p>
-            <a class="text-link" href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">First workspace guide <span aria-hidden="true">&nearr;</span></a>
-            <a class="product-media" href="./media/coding-workspace.png">
-              <img src="./media/coding-workspace.png" alt="A running coding workspace with T3 and preview controls and a CPU history chart" width="1679" height="1020" loading="lazy">
-            </a>
-          </article>
-          <article>
-            <h3>Application hosting</h3>
+            <h3>Multiple services, one environment</h3>
             <p>Deploy a web app, private API, and worker together or update them separately. Add HTTPS domains to public services and check deployment status and service logs.</p>
             <a class="text-link" href="https://github.com/muniventures/minicloud#deploy-your-first-app">First deployment guide <span aria-hidden="true">&nearr;</span></a>
             <a class="product-media" href="./media/services.png">
@@ -57,11 +49,11 @@
       <section class="section architecture" aria-labelledby="architecture-title">
         <div>
           <h2 id="architecture-title">Control plane and servers</h2>
-          <p>The dashboard, API, and deployment worker run on a dedicated VPS. MiniCloud provisions separate machines in your Hetzner, DigitalOcean, or Vultr account to run app services and coding workspaces. The workspace gateway connects your browser to the coding VM.</p>
+          <p>The dashboard, API, and deployment worker run on a dedicated VPS. MiniCloud provisions separate machines in your Hetzner, DigitalOcean, or Vultr account to run application services.</p>
         </div>
         <div class="architecture-media">
           <a class="product-media" href="./media/minicloud-architecture.svg">
-              <img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI connect to the control plane, which deploys app services and provisions coding workspace VMs" width="1120" height="480" loading="lazy">
+              <img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI connect to the control plane, which deploys application services" width="1120" height="480" loading="lazy">
             </a>
           <ul class="projects" aria-label="Open-source components">
             <li><a href="https://wiki.postgresql.org/wiki/Logo"><img src="./media/postgresql.svg" alt="" width="34" height="34"> PostgreSQL</a></li>
@@ -87,17 +79,6 @@ export PATH="$HOME/.local/bin:$PATH"
 minicloud instance add personal cloud.example.com
 minicloud login</code></pre>
           <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md">CLI installation, including Windows</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#instances">Instance and login commands</a></p>
-        </article>
-
-        <article class="setup-step" id="first-workspace">
-          <h3>Open a coding workspace</h3>
-          <p>Dev Environments require a configured workspace gateway, an approved VM image, and a plan. If you're the operator, <a href="https://github.com/muniventures/minicloud/blob/main/packaging/server/bundle/development-workspaces.md">enable Dev Environments</a> and <a href="https://github.com/muniventures/minicloud/blob/main/templates/development-workspaces/README.md#prepared-image">prepare a workspace image</a> first.</p>
-          <ol class="setup-instructions">
-            <li>Go to <strong>Dev Environments → Create dev environment</strong>. Name it, choose a size, location, and storage, then review the estimate and create it. This starts the primary VM.</li>
-            <li>When the VM is <strong>Running</strong>, select <strong>Connect to T3 → Open T3</strong>. In T3, open <strong>Settings → Providers</strong> and sign in to your coding provider. Open a project or clone a repository in the terminal.</li>
-            <li>Stop the VM when you're done. Files on the primary volume are retained, and storage charges continue while the VM is stopped.</li>
-          </ol>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">Workspace guide, previews, and idle settings</a></p>
         </article>
 
         <article class="setup-step" id="first-deploy">
