@@ -46,22 +46,23 @@ until all of these are present in the selected source revision:
   Keep operator secrets and generated execution output out of these assets.
 - T80 supplies `packaging/server/release.json` with selected candidate
   compatibility, schema versions and resolved dependency digests. The
-  `0.0.1-rc.2` input is pending operator review and selects exact CLI source
+  `0.0.1-rc.3` input is pending operator review and selects exact CLI source
   revisions, **not qualified runtime compatibility**. The prior
-  `server-v0.0.1-rc.1` tag exists from a failed publication attempt but has no
-  server release or assets and is not reused. See the test-prerelease pairing
+  `server-v0.0.1-rc.1` and `server-v0.0.1-rc.2` tags exist from failed publication
+  attempts and are not reused. See the test-prerelease pairing
   below and the [public candidate handoff](../../docs/public-candidate-handoff.md) for registry
   evidence, the explicit public-only scope decision and outstanding T90/T91
   qualification. Input presence or a successful preflight is not release acceptance.
 
 ### Selected TEST prerelease pairing (pending operator review)
 
-The pending `server-v0.0.1-rc.2` input preserves customer-workflow
+The pending `server-v0.0.1-rc.3` input preserves customer-workflow
 CLI source `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` and additionally allows seed
 stateless CLI source `7a4b16130215ea8b2c74221cb02c5e45344d4427` (#102).
 The superseded pre-stateless seed source is no longer selected. Both version bounds remain
 `null`; this is an exact-source allowlist, not a version range. Schema versions
-and dependency index digests are unchanged; only the prerelease version advances.
+and dependency index digests are unchanged; the prerelease version advances and
+new product builds use dedicated release-only repositories.
 Product image digests must come from the real release build, never placeholders.
 
 The stateless implementation passed all 453 CLI tests in a private local Linux
@@ -71,11 +72,17 @@ will build the local CLI with informational source exactly
 `7a4b16130215ea8b2c74221cb02c5e45344d4427`; the server manifest's source must
 instead identify the actual merged release-build commit containing this input.
 After operator review, only the authorized publisher may publish this signed **TEST
-prerelease** as the new `server-v0.0.1-rc.2` release; the existing rc1 tag must
+prerelease** as the new `server-v0.0.1-rc.3` release; the existing rc1 and rc2 tags must
 not be reused. Preparing or merging this input does not publish it. Live seed/provider,
 native amd64/arm64, full-image, OIDC/signature/anonymous-pull and
 installation/recovery qualification remain
 pending; the earlier workflow source is retained, not newly qualified.
+
+For #261, an exact-source historical `SeedRelease.VerifyAsync` harness accepted
+producer-generated synthetic release-only assets and rejected hash, archive,
+runtime-core and compatibility tampering. External Compose/Cosign calls were
+mocked; this proves the packaging/seed contract, not cryptographic or live
+qualification. See the [handoff evidence](../../docs/public-candidate-handoff.md#deferred-validation-and-release-gates).
 
 Compose must reference exactly the three product images and the four dependency
 images. Each image may be a literal manifest-pinned digest or the corresponding
@@ -115,11 +122,19 @@ Do not publish this candidate as qualified without that evidence.
 
 The producer adds `releaseTag`, the exact checked-out `sourceRevision`, and
 `images: {api, dashboard, worker}` with canonical
-`ghcr.io/muniventures/minicloud-<component>@sha256:<digest>` values. The workflow
+`ghcr.io/muniventures/minicloud-release-<component>@sha256:<digest>` values. The workflow
 builds both platforms separately, assembles each multi-architecture index,
 records the exact source revision in image labels, then signs the immutable
 index and attaches source/workflow provenance. Dependency indexes must also
 contain both supported platforms.
+
+Schema-1 consumers also support the exact historical
+`ghcr.io/muniventures/minicloud-<component>@sha256:<digest>` family. All three
+components must belong to one family, with exact component-to-repository mapping
+and lowercase immutable SHA-256 digests; mixed families, foreign repositories
+and tagged references are rejected. Producers accept only the release-only
+family. The shared downloaded verifier used by installer and maintenance retains
+the same signed inventory, source and canonical workflow/provenance checks.
 
 The final detached `server-manifest.json` additionally contains
 `bundle: {name, sha256}` and `files: {relativePath: sha256}`. The archive is
@@ -223,14 +238,20 @@ passed contracts, preflight and GHCR login, then failed pushing
 The current publish job already requests `packages: write`, `contents: write`
 and `id-token: write`; the `server-release` environment permits `server-v*` tags.
 
-Before an authorized rc2 publication, a package owner must inspect the
-`minicloud-api`, `minicloud-dashboard` and `minicloud-worker` GHCR packages:
-link them to `muniventures/minicloud`, grant that repository **Write** under
-**Manage Actions access** (or verify equivalent inherited access), and make
-them **public** for the mandatory anonymous-pull gate. Repository workflow
-permissions do not override package-level access. Read-only package API queries
-returned 404 during #251; that does not establish absence or current visibility,
-so owner confirmation remains required. No settings or credentials were changed.
+[The rc2 publisher](https://github.com/muniventures/minicloud/actions/runs/44935673888)
+also failed on its first push with `permission_denied: read_package`, colliding
+with a pre-existing private package (#261). Neither occupied tag may be moved
+or reused.
+
+**Never change access, repository linkage or visibility of the pre-existing
+`minicloud-api`, `minicloud-dashboard` or `minicloud-worker` packages.** Authorized
+rc3 publication instead creates `minicloud-release-api`,
+`minicloud-release-dashboard` and `minicloud-release-worker`. The operator owns
+publication and public visibility of these newly created release-only packages,
+including confirming repository Actions write access for that new family and
+the mandatory anonymous-pull gate. Repository workflow permissions do not
+override package-level access. This repair performs no publication, package
+inspection or permission changes.
 
 ## Focused checks and remaining evidence
 
@@ -238,6 +259,11 @@ From the repository root:
 
 ```sh
 python3 -B -m unittest discover -s scripts/server-release -p 'test_*.py' -v
+python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -v
+dotnet test modules/tests/Minicloud.Cli.Tests/Minicloud.Cli.Tests.csproj \
+  --configuration Release --artifacts-path .local/artifacts/t40-cli-dotnet \
+  --results-directory .local/artifacts/t40-cli-results \
+  --filter 'FullyQualifiedName~Seed|FullyQualifiedName~Release' -m:1
 dotnet test modules/tests/Minicloud.Tests/Minicloud.Tests.csproj \
   --configuration Release --artifacts-path .local/artifacts/t40-dotnet \
   --results-directory .local/artifacts/t40-test-results \

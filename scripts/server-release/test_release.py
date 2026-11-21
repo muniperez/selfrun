@@ -35,8 +35,9 @@ def release_input():
     }
 
 
-def images():
-    return {name: f"ghcr.io/muniventures/minicloud-{name}@sha256:{HASH}" for name in release.COMPONENTS}
+def images(legacy=False):
+    family = "minicloud" if legacy else "minicloud-release"
+    return {name: f"ghcr.io/muniventures/{family}-{name}@sha256:{HASH}" for name in release.COMPONENTS}
 
 
 class ReleaseTests(unittest.TestCase):
@@ -127,6 +128,55 @@ class ReleaseTests(unittest.TestCase):
             compose = json.load(archive.extractfile("compose.yml"))
         self.assertEqual(set(images().values()) | set(manifest["dependencies"].values()),
                          {service["image"] for service in compose["services"].values()})
+
+    def test_current_and_historical_images_use_exact_complete_component_families(self):
+        manifest = self.package()
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                manifest["images"] = images(legacy)
+                release.validate_manifest(manifest, TAG)
+        for legacy in (False, True):
+            valid = images(legacy)
+            for reference in (
+                valid["dashboard"], valid["api"].replace("ghcr.io", "ghcrXio"),
+                valid["api"].replace("ghcr.io", "registry.example.invalid"),
+                valid["api"].replace("muniventures/", "foreign/"),
+                valid["api"].replace("-api@", "-other@"),
+                valid["api"].replace("@sha256:", ":tag@sha256:"),
+                valid["api"].split("@")[0] + ":latest",
+                valid["api"][:-1], valid["api"].replace(HASH, HASH.upper()),
+            ):
+                with self.subTest(reference=reference):
+                    manifest["images"] = {**valid, "api": reference}
+                    with self.assertRaises(release.ReleaseError):
+                        release.validate_manifest(manifest, TAG)
+        with self.assertRaisesRegex(release.ReleaseError, "one canonical repository family"):
+            release.validate_images({**images(), "worker": images(True)["worker"]})
+
+    def test_historical_signed_assets_roundtrip_through_shared_verifier(self):
+        manifest = self.package()
+        bundle = self.output / manifest["bundle"]["name"]
+        with tarfile.open(bundle) as archive:
+            files = {entry.name: archive.extractfile(entry).read().replace(
+                b"ghcr.io/muniventures/minicloud-release-", b"ghcr.io/muniventures/minicloud-")
+                for entry in archive}
+        manifest["images"] = images(True)
+        manifest["files"] = {name: release.sha256(data) for name, data in files.items()}
+        with tarfile.open(bundle, "w:gz") as archive:
+            for name, data in files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+        manifest["bundle"]["sha256"] = release.sha256(bundle.read_bytes())
+        (self.output / "server-manifest.json").write_bytes(release.json_bytes(manifest))
+        self.resign_inventory()
+        with patch.object(release, "run", return_value=""):
+            self.assertEqual(manifest, release.verify_assets(self.output, TAG))
+
+    def test_producer_refuses_legacy_images(self):
+        self.images_path.write_bytes(release.json_bytes(images(True)))
+        with self.assertRaisesRegex(release.ReleaseError, "canonical"):
+            self.package()
 
     def test_optional_workspace_assets_are_included_and_hashed_without_changing_default_images(self):
         source = Path(__file__).resolve().parents[2] / "packaging/server/bundle"
@@ -403,12 +453,21 @@ class ReleaseTests(unittest.TestCase):
             release.build_images(self.root, TAG, SOURCE, self.root / ".local/artifacts/build")
         builds = [args for args in commands if args[:3] == ["docker", "buildx", "build"]]
         self.assertEqual(6, len(builds))
+        for component in release.COMPONENTS:
+            repository = f"ghcr.io/muniventures/minicloud-release-{component}"
+            tags = [args[args.index("--tag") + 1] for args in commands if "--tag" in args]
+            for suffix in ("-amd64", "-arm64", ""):
+                self.assertIn(f"{repository}:1.2.3-rc.1{suffix}", tags)
         self.assertEqual(2, agents.call_count)
         self.assertEqual(["amd64", "arm64"], [call.args[1] for call in agents.call_args_list])
         for platform in release.ARCHITECTURES:
             self.assertEqual(3, sum(args[args.index("--platform") + 1] == platform for args in builds))
         self.assertFalse(any(arg.startswith("MINICLOUD_AGENT_RID=") for args in builds for arg in args))
         self.assertEqual(images(), release.read_json(self.root / ".local/artifacts/build/images.json"))
+        self.images_path = self.root / ".local/artifacts/build/images.json"
+        manifest = self.package()
+        with patch.object(release, "run", return_value=""):
+            self.assertEqual(manifest, release.verify_assets(self.output, TAG))
 
     def test_workflow_remains_server_only_and_publication_follows_verification(self):
         workflow = (Path(__file__).resolve().parents[2] / release.WORKFLOW).read_text()
