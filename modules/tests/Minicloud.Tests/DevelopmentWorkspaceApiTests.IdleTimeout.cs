@@ -96,6 +96,53 @@ public sealed partial class DevelopmentWorkspaceApiTests
         await AssertNoCompute();
     }
 
+    [Fact]
+    public async Task IdleTimeoutChangesAreAuditedWithActorAndOldAndNewPolicyButNoOpsAreNot()
+    {
+        using var owner = Client(token);
+        var workspace = await Create(owner);
+        var settings = $"{Root}/{workspace.Id}/idle-timeout?organizationId=org";
+
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync(settings,
+            new UpdateDevelopmentWorkspaceIdleTimeoutRequest(null))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync(settings,
+            new JsonObject { ["idleTimeoutMinutes"] = 60, ["keepRunning"] = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync(settings,
+            new JsonObject { ["idleTimeoutMinutes"] = 60, ["keepRunning"] = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync(settings,
+            new JsonObject { ["idleTimeoutMinutes"] = 90, ["keepRunning"] = false })).StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var apiKeyId = await db.ApiKeys.Where(x => x.OrganizationId == "org").Select(x => x.Id).SingleAsync();
+        var events = (await db.AuditEvents.ToListAsync()).OrderBy(x => x.CreatedAt).ToArray();
+        Assert.Equal(2, events.Length);
+        Assert.All(events, audit =>
+        {
+            Assert.Equal("org", audit.OrganizationId);
+            Assert.Equal($"api_key:{apiKeyId}", audit.Actor);
+            Assert.Equal("development_workspace.idle_timeout_changed", audit.Action);
+        });
+
+        using var firstDetails = JsonDocument.Parse(events[0].Details!);
+        Assert.Equal(workspace.Id, firstDetails.RootElement.GetProperty("workspaceId").GetString());
+        var previousPolicy = firstDetails.RootElement.GetProperty("previousPolicy");
+        Assert.Equal(JsonValueKind.Null, previousPolicy.GetProperty("idleTimeoutMinutes").ValueKind);
+        Assert.False(previousPolicy.GetProperty("keepRunning").GetBoolean());
+        var newPolicy = firstDetails.RootElement.GetProperty("newPolicy");
+        Assert.Equal(60, newPolicy.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.True(newPolicy.GetProperty("keepRunning").GetBoolean());
+
+        using var secondDetails = JsonDocument.Parse(events[1].Details!);
+        previousPolicy = secondDetails.RootElement.GetProperty("previousPolicy");
+        Assert.Equal(60, previousPolicy.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.True(previousPolicy.GetProperty("keepRunning").GetBoolean());
+        newPolicy = secondDetails.RootElement.GetProperty("newPolicy");
+        Assert.Equal(90, newPolicy.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.False(newPolicy.GetProperty("keepRunning").GetBoolean());
+        await AssertNoCompute();
+    }
+
     [Theory]
     [InlineData("0")]
     [InlineData("-1")]
