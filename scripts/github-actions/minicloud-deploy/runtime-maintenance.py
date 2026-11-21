@@ -84,7 +84,10 @@ def configured_images(apps):
     for app in apps.iterdir():
         if app.is_symlink() or not app.is_dir():
             continue
-        for name in ('app.compose.json', 'infra.compose.json', 'observability.compose.json'):
+        if (app / '.rollout.pending').is_symlink():
+            raise ValueError('Rollout journal must not be a symlink')
+        for name in ('app.compose.json', 'infra.compose.json', 'observability.compose.json',
+                     '.rollout.pending/app.compose.json'):
             config = app / name
             if config.is_symlink():
                 raise ValueError('Compose configuration must not be a symlink')

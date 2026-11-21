@@ -50,13 +50,18 @@ class MaintenanceTests(unittest.TestCase):
             app = apps / 'club'
             app.mkdir()
             (app / 'app.compose.json').write_text(json.dumps({'services': {'api': {'image': 'app:recovery'}}}))
+            journal = app / '.rollout.pending'
+            journal.mkdir()
+            (journal / 'app.compose.json').write_text(json.dumps({'services': {'api': {'image': 'sha256:previous'}}}))
             calls = []
             def run(*args):
                 calls.append(args)
                 if args == ('docker', 'image', 'inspect', 'app:recovery'):
                     return '[{"Id":"sha256:recovery"}]'
+                if args == ('docker', 'image', 'inspect', 'sha256:previous'):
+                    return '[{"Id":"sha256:previous"}]'
                 if args == ('docker', 'image', 'ls', '--quiet', '--no-trunc'):
-                    return 'sha256:running\nsha256:recovery\nsha256:old\nsha256:dangling\n'
+                    return 'sha256:running\nsha256:recovery\nsha256:previous\nsha256:old\nsha256:dangling\n'
                 if args == ('docker', 'image', 'inspect', 'sha256:old'):
                     return '[{"Id":"sha256:old","RepoTags":["app:old"],"RepoDigests":[]}]'
                 if args == ('docker', 'image', 'inspect', 'sha256:dangling'):

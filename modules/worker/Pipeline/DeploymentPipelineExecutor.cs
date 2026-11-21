@@ -125,6 +125,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
 
         var context = await BuildContextAsync(deployment.Id, deployment.OwnershipToken, cancellationToken);
 
+        var verifyingPublicHealth = false;
         try
         {
             if (deployment.AssetReleaseId is null) { await RefreshDesiredServicesAsync(context, cancellationToken); }
@@ -200,6 +201,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
                 "Build done, containers started; running health checks.",
                 cancellationToken);
 
+            verifyingPublicHealth = true;
             await RunStepAsync(_healthStep, context, cancellationToken);
 
             _logger?.LogInformation("Deployment {DeploymentId} pipeline succeeded", context.DeploymentId);
@@ -207,7 +209,9 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         catch (PipelineStepException ex)
         {
             _logger?.LogError(ex, "Deployment {DeploymentId} pipeline failed at {Code}", context.DeploymentId, ex.FailureCode);
-            var needsRollback = deployment.AssetReleaseId is null && _sshStep is not null && (ex.FailureCode == SshDeployStep.FailureCode || ex.FailureCode == HealthCheckFinalizeStep.FailureCode);
+            // Local health failures are already handled under the runtime's deployment lock.
+            var needsRollback = deployment.AssetReleaseId is null && (ex.FailureCode == SshDeployStep.FailureCode ||
+                (verifyingPublicHealth && ex.FailureCode == HealthCheckFinalizeStep.FailureCode));
             if (needsRollback)
             {
                 await TryRollbackAsync(context, ex.FailureCode, cancellationToken);

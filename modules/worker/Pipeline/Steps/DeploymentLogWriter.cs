@@ -94,5 +94,6 @@ public sealed class DeploymentLogWriter
         content.StartsWith("===== phase: ", StringComparison.Ordinal) ||
         content.StartsWith("TIMING phase=", StringComparison.Ordinal) ||
         content.StartsWith("ERROR: ", StringComparison.Ordinal) ||
-        content.StartsWith("__MINICLOUD_DEPLOY_FAILURE__=", StringComparison.Ordinal);
+        content.StartsWith("__MINICLOUD_DEPLOY_FAILURE__=", StringComparison.Ordinal) ||
+        content.StartsWith(SshDeployStep.RollbackMarker, StringComparison.Ordinal);
 }

@@ -297,10 +297,18 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
         }
     }
 
-    [Fact]
-    public async Task TriggersRollbackAndMarksFailedOnSshDeployError()
+    [Theory]
+    [InlineData(null, "docker_build_failed", null)]
+    [InlineData("restored", "health_check_failed", "restored the previous app services")]
+    [InlineData("no_previous", "health_check_failed", "No previous running revision was available")]
+    [InlineData("failed", "health_check_failed", "Inspect the target host")]
+    [InlineData("missing-marker", "health_check_failed", "runtime did not confirm rollback")]
+    public async Task RecordsSshFailureWithoutOverwritingRuntimeHealthRecovery(string? rollbackOutcome, string failureCode, string? failureSummary)
     {
-        var (org, app) = await _harness.SeedOrgAndAppAsync("piperoll");
+        var fixture = "piperoll-" + (rollbackOutcome ?? "build");
+        // Theory cases share one database, so each needs its own server identity and route.
+        var caseIndex = Array.IndexOf(["build", "restored", "no_previous", "failed", "missing-marker"], rollbackOutcome ?? "build");
+        var (org, app) = await _harness.SeedOrgAndAppAsync(fixture);
         var now = DateTimeOffset.UtcNow;
 
         Deployment deployment;
@@ -308,12 +316,12 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
         {
             db.ServerInstances.Add(new ServerInstance
             {
-                Id = "srv-pipe-roll",
+                Id = "srv-" + fixture,
                 OrganizationId = org.Id,
                 AppId = app.Id,
                 Provider = "hetzner",
-                ProviderServerId = "prov-pipe-roll",
-                IpAddress = "192.0.2.89",
+                ProviderServerId = "prov-" + fixture,
+                IpAddress = $"192.0.2.{89 + caseIndex}",
                 Region = "nbg1",
                 Status = "active",
                 BootstrapStatus = "ready",
@@ -323,14 +331,14 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
 
             deployment = new Deployment
             {
-                Id = "dep-pipe-roll",
+                Id = "dep-" + fixture,
                 OrganizationId = org.Id,
                 AppId = app.Id,
                 Status = DeploymentStatus.Provisioning,
                 WorkerId = "test-worker",
                 OwnershipToken = "owner-pipe-roll",
                 OwnershipAcquiredAt = now,
-                Domain = "app-roll.example.com",
+                Domain = fixture + ".example.com",
                 Database = DatabaseMode.None,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -340,8 +348,18 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
         }
 
         var rollbackExecuted = false;
+        List<string> outputLines = rollbackOutcome is null
+            ? ["Build error"]
+            : ["ERROR: health_check_failed: Deployment aborted during phase verify_local_health.",
+                "__MINICLOUD_DEPLOY_FAILURE__=health_check_failed"];
+        if (rollbackOutcome is not (null or "missing-marker"))
+        {
+            outputLines.Add("__MINICLOUD_DEPLOY_ROLLBACK__=" + rollbackOutcome);
+        }
+        // The structured outcome is still surfaced when it falls outside the output excerpt.
+        outputLines.AddRange(Enumerable.Repeat("Other remote output", 5));
         var mockSsh = new MockSshDeploymentClient(
-            execDeploy: (_, _) => Task.FromResult(new SshDeploymentResult(1, false, null, ["Build error"])),
+            execDeploy: (_, _) => Task.FromResult(new SshDeploymentResult(1, false, null, outputLines)),
             execCmd: (ip, user, key, cmd) =>
             {
                 if (cmd.Contains("echo rollback-attempted", StringComparison.Ordinal))
@@ -388,19 +406,26 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 TimeProvider.System);
 
             var ex = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(deployment, CancellationToken.None));
-            Assert.Equal("docker_build_failed", ex.FailureCode);
-            Assert.True(rollbackExecuted, "Rollback SSH command should be invoked after ssh deploy failure");
+            Assert.Equal(failureCode, ex.FailureCode);
+            Assert.Equal(rollbackOutcome is null, rollbackExecuted);
 
             await using (var db = _harness.CreateDbContext())
             {
-                var failed = await db.Deployments.FindAsync("dep-pipe-roll");
+                var failed = await db.Deployments.FindAsync(deployment.Id);
                 Assert.NotNull(failed);
                 Assert.Equal(DeploymentStatus.Failed, failed.Status);
-                Assert.Equal("docker_build_failed", failed.FailureCode);
-                var rollbackEvent = await db.DeploymentEvents.SingleAsync(e =>
-                    e.DeploymentId == failed.Id && e.Message.StartsWith("Rollback command attempted"));
-                Assert.Equal(EventLevel.Warning, rollbackEvent.Level);
-                Assert.Contains("health was not verified", rollbackEvent.Message);
+                Assert.Equal(failureCode, failed.FailureCode);
+                if (failureSummary is not null)
+                {
+                    Assert.Contains(failureSummary, failed.FailureMessage);
+                }
+                else
+                {
+                    var rollbackEvent = await db.DeploymentEvents.SingleAsync(e =>
+                        e.DeploymentId == failed.Id && e.Message.StartsWith("Rollback command attempted"));
+                    Assert.Equal(EventLevel.Warning, rollbackEvent.Level);
+                    Assert.Contains("health was not verified", rollbackEvent.Message);
+                }
             }
         }
         finally
