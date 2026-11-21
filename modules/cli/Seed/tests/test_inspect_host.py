@@ -262,27 +262,75 @@ class ProviderLayoutTests(unittest.TestCase):
     def test_stock_monitoring_nonroot_modes_and_root_console_are_verified(self):
         before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in self.vendor.rglob("*") if p.is_file()}
         self.validate()
-        self.assertEqual(2, sum(args[:2] == ["dpkg-query", "--control-show"] for args in self.commands))
+        self.assertEqual(2, sum(args[:2] == ["dpkg", "--verify"] for args in self.commands))
         self.monitoring_owner = (0, 0)
         self.validate()
         self.assertEqual(before, {p: (p.stat().st_mtime_ns, p.read_bytes())
                                   for p in self.vendor.rglob("*") if p.is_file()})
 
-    def test_missing_legacy_upstart_conffile_does_not_reject_verified_provider_payload(self):
+    def register_conffile(self, package="do-agent", name="/etc/init/do-agent.conf"):
         status = self.db / "status"
         status.write_text(status.read_text().replace(
-            "Package: do-agent\n",
-            "Package: do-agent\nConffiles:\n /etc/init/do-agent.conf "
+            "Package: " + package + "\n",
+            "Package: " + package + "\nConffiles:\n " + name + " "
             + hashlib.md5(b"synthetic legacy Upstart configuration\n").hexdigest() + "\n", 1))
-        inventory = self.db / "info/do-agent.list"
-        inventory.write_text(inventory.read_text() + "/etc/init/do-agent.conf\n")
+        inventory = self.db / "info" / (package + ".list")
+        inventory.write_text(inventory.read_text() + name + "\n")
+
+    def test_missing_legacy_upstart_conffile_does_not_reject_verified_provider_payload(self):
+        self.register_conffile()
         result = self.package_command(["dpkg", "--verify", "do-agent"], capture_output=True, check=False)
         self.assertEqual(0, result.returncode)
         self.assertFalse(result.stderr)
         self.assertEqual(["missing", "c", "/etc/init/do-agent.conf"], result.stdout.decode().split())
         self.validate()
+        legacy = self.root / "etc/init/do-agent.conf"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("changed legacy configuration\n")
+        with self.assertRaises(AssertionError):
+            self.validate()
+        legacy.unlink()
+        binary = self.vendor / "bin/do-agent"
+        original = binary.read_text()
+        binary.write_text("changed package binary\n")
+        with self.assertRaises(AssertionError):
+            self.validate()
+        binary.write_text(original)
+        update = self.vendor / "do-agent/scripts/update.sh"
+        update.unlink()
+        with self.assertRaises(AssertionError):
+            self.validate()
+
+    def test_other_missing_conffiles_and_changed_legacy_configuration_are_refused(self):
+        self.register_conffile(name="/etc/init/unknown-agent.conf")
+        with self.assertRaises(AssertionError):
+            self.validate()
+        conffile = self.root / "etc/init/unknown-agent.conf"
+        conffile.parent.mkdir(parents=True)
+        conffile.write_text("synthetic legacy Upstart configuration\n")
+        self.validate()
+        self.register_conffile(package="droplet-agent")
+        with self.assertRaises(AssertionError):
+            self.validate()
+
+    def test_dpkg_errors_and_unrecognized_or_additional_diagnostics_are_refused(self):
+        for output, error, code in (
+                (b"missing c /etc/init/do-agent.conf\nunexpected\n", b"", 0),
+                (b"??5?????? c /etc/init/do-agent.conf\n", b"", 0),
+                (b"missing /etc/init/do-agent.conf\n", b"", 0),
+                (b"", b"verification unavailable\n", 0),
+                (b"", b"", 1)):
+            with self.subTest(output=output, error=error, code=code):
+                def run(args, **kwargs):
+                    if args[:2] == ["dpkg", "--verify"]:
+                        return subprocess.CompletedProcess(args, code, stdout=output, stderr=error)
+                    return self.package_command(args, **kwargs)
+                with patch.object(pathlib.Path, "lstat", lambda p, *args, **kwargs: self.metadata(p, *args, **kwargs)):
+                    with self.assertRaises(AssertionError):
+                        inspector.validate_provider_layout("digitalocean", self.root, run)
 
     def test_observation_accepts_stock_layout_but_not_workloads_bindings_or_unknown_opt(self):
+        self.register_conffile()
         # Model trusted ancestors without changing permissions on this shared VM.
         def metadata(p, *args, **kwargs):
             info = self.metadata(p, *args, **kwargs)
@@ -389,6 +437,7 @@ class ProviderLayoutTests(unittest.TestCase):
             self.validate()
 
     def test_preparation_executes_the_same_validator_before_accepting_opt(self):
+        self.register_conffile()
         source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
         start = source.index("if test -e /opt/containerd")
         end = source.index("test ! -e /opt/minicloud.seed-operation.pending")
@@ -439,6 +488,27 @@ pathlib.Path.lstat=fixture_lstat
         result = subprocess.run(["bash", "-s", "--", seed, "linux/amd64", "", "local-source", "digitalocean"],
                                 input=script.encode(), capture_output=True)
         self.assertNotEqual(0, result.returncode)
+
+    def test_preparation_without_vendor_layout_does_not_require_python_before_apt(self):
+        shutil.rmtree(self.vendor)
+        commands = self.root / "commands"
+        commands.mkdir()
+        (commands / "find").symlink_to(shutil.which("find"))
+        source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
+        prefix = source[source.index("if test -e /opt/containerd"):
+                        source.index("test ! -e /opt/minicloud.seed-operation.pending")]
+        quote = lambda value: "'" + value.replace("'", "'\\''") + "'"
+        script = "set -euo pipefail\n" + prefix.replace("/opt", str(self.root / "opt")).replace(
+            "__SEED_PROVIDER_LAYOUT__", quote(helper + "\nvalidate_provider_layout(sys.argv[1])\n"))
+        for provider in ("hetzner", "vultr", "digitalocean"):
+            result = subprocess.run(["/bin/bash", "-s", "--", seed, "linux/amd64", "", "local-source", provider],
+                                    input=script.encode(), capture_output=True, env={"PATH": str(commands)})
+            self.assertEqual(0, result.returncode, result.stderr.decode())
+        self.vendor.symlink_to(self.root / "missing-vendor")
+        result = subprocess.run(["/bin/bash", "-s", "--", seed, "linux/amd64", "", "local-source", "hetzner"],
+                                input=script.encode(), capture_output=True, env={"PATH": str(commands)})
+        self.assertNotEqual(0, result.returncode)
+        self.vendor.unlink()
 
 
 if __name__ == "__main__":

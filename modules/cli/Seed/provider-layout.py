@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
 """Bounded stock DigitalOcean package inventory; never execute vendor files."""
-import hashlib
 import pathlib
 import re
 import stat
@@ -43,18 +42,20 @@ def validate_provider_layout(provider, base=pathlib.Path("/"), run=subprocess.ru
     assert present
     expected_files = {name: package for name, package in files.items() if package in present}
     expected_dirs = {name: owners & present for name, owners in directories.items() if owners & present}
-    expected_checksums = {}
     for package in sorted(present):
         status = command(["dpkg-query", "-W", "-f=${Status}\n${Architecture}\n", package]).splitlines()
         assert len(status) == 2 and status[0] == "install ok installed" and status[1] in ("amd64", "arm64")
-        # Verify only admitted payload, not unrelated package conffiles.
+        # Require checksum coverage; dpkg itself performs integrity hashing.
         checksums = command(["dpkg-query", "--control-show", package, "md5sums"]).splitlines()
         for name, authority in expected_files.items():
             if authority == package:
-                matches = [match for line in checksums
-                           if (match := re.fullmatch(r"([a-f0-9]{32})  opt/digitalocean/" + re.escape(name), line))]
-                assert len(matches) == 1
-                expected_checksums[name] = matches[0].group(1)
+                assert sum(bool(re.fullmatch(r"[a-f0-9]{32}  opt/digitalocean/" + re.escape(name), line))
+                           for line in checksums) == 1
+        verification = [line.split() for line in command(["dpkg", "--verify", package]).splitlines()]
+        # Stock do-agent removes its legacy Upstart conffile on systemd hosts.
+        # Permit only that observed diagnostic, not other configuration changes.
+        assert not verification or (package == "do-agent"
+                                    and verification == [["missing", "c", "/etc/init/do-agent.conf"]])
 
     # Check every entry (including directories) against dpkg's ownership authority.
     # Exact enumeration rejects additional data, links, sockets and package lookalikes.
@@ -82,9 +83,3 @@ def validate_provider_layout(provider, base=pathlib.Path("/"), run=subprocess.ru
                 assert re.fullmatch(r"(do-agent|droplet-agent)(?::(?:amd64|arm64))?", package)
                 claimed.add(package.split(":")[0])
         assert claimed and claimed <= owners
-        if name in expected_files:
-            checksum = hashlib.md5()
-            with p.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    checksum.update(chunk)
-            assert checksum.hexdigest() == expected_checksums[name]
