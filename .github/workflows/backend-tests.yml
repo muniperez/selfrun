@@ -73,3 +73,16 @@ jobs:
             -p:InformationalVersion="$version+sha.$SOURCE_REVISION"
           mv "$output/Minicloud.Cli" "$output/minicloud"
           python3 scripts/verify-cli-release.py "$output/minicloud" "$version"
+
+  bootstrap-arm64-tests:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run protected bootstrap tests on ARM64
+        run: dotnet test modules/tests/Minicloud.Tests/Minicloud.Tests.csproj --configuration Release -m:1 --filter "FullyQualifiedName~BootstrapServiceTests"

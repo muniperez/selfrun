@@ -13,6 +13,22 @@ public sealed class BootstrapServiceTests
 {
     private const string Installation = "installation-test";
     private const string Operation = "operation-test";
+
+    [Theory]
+    [InlineData(Architecture.X64, 0xA0800)]
+    [InlineData(Architecture.Arm64, 0x88800)]
+    public void ProtectedInputOpenFlagsMatchLinuxArchitecture(Architecture architecture, int expectedFlags) =>
+        Assert.Equal(expectedFlags, BootstrapProtectedInput.GetReadOpenFlags(architecture));
+
+    [Fact]
+    public void ProtectedInputOpenFlagsRejectUnsupportedArchitecture()
+    {
+        var error = Assert.Throws<BootstrapException>(() =>
+            BootstrapProtectedInput.GetReadOpenFlags(Architecture.X86));
+        Assert.Equal("bootstrap_unsupported_architecture", error.Code);
+        Assert.Contains("X86", error.Message);
+    }
+
     private static CompleteSetupRequest Request(string token) =>
         new(token, "operator@example.test", "Synthetic-password-123!", "Test Operator", "Workspace", "workspace");
 
@@ -300,6 +316,11 @@ public sealed class BootstrapServiceTests
         if (!OperatingSystem.IsWindows())
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(outputPath));
         await Assert.ThrowsAsync<IOException>(() => sink.WriteAsync("must-not-overwrite", CancellationToken.None));
+        Assert.Equal(secret, (await File.ReadAllTextAsync(outputPath)).Trim());
+        var symlinkOutputPath = Path.Combine(fixture.Directory, "token-link");
+        File.CreateSymbolicLink(symlinkOutputPath, outputPath);
+        var symlinkSink = new BootstrapCommand.ProtectedTokenOutput(symlinkOutputPath, ordinaryOutput, false);
+        await Assert.ThrowsAsync<IOException>(() => symlinkSink.WriteAsync("must-not-follow", CancellationToken.None));
         Assert.Equal(secret, (await File.ReadAllTextAsync(outputPath)).Trim());
         await Error("setup_state_conflict", () => BootstrapCommand.ReadInputAsync(null, new StringReader(new string('x', 65537))));
         await Error("setup_state_conflict", () => BootstrapCommand.ReadInputAsync(null, new StringReader(new string('é', 40000))));
