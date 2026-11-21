@@ -8,12 +8,10 @@ artifacts, or substitute an unqualified release just to make seed proceed.
 
 ## Guided installation
 
-Both paths below lead to the same `seed` wizard. No JSON, Python, or helper
-script is needed on the workstation. Use a terminal, OpenSSH client tools,
-and an existing user-owned Ed25519 or RSA (at least 3072-bit) OpenSSH private
-key. Enter its absolute path (`~/` also works on Unix). If it is encrypted,
-unlock it in your own SSH agent and opt in when
-prompted. Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
+Choose a CLI build and run `minicloud seed`. No JSON, Python, or helper
+script is needed on the workstation. Use a terminal with OpenSSH client tools
+installed; the wizard handles keys and host verification for new installations.
+Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
 See [provider permissions and host requirements](seed.md#before-starting).
 
 ### Download a candidate
@@ -28,7 +26,8 @@ minicloud seed
 ```
 
 These are unsigned test builds. Each archive includes a `SOURCE.txt` file
-identifying the commit it was built from. You can also run the executable
+identifying the commit it was built from. Older builds may still prompt for
+SSH inputs; build from current source for automatic enrollment. You can also run the executable
 directly in the extracted directory with `./minicloud seed` on macOS or Linux,
 or `.\minicloud.exe seed` in Windows PowerShell.
 
@@ -69,17 +68,15 @@ natively using the existing installer (see the
    2.6.5. No compatible signed server release is currently available. Missing
    assets or incompatibility stop that operation; they never fall back to source.
 2. Select your provider, exact region and size IDs, architecture, dashboard
-   hostname and separate application suffix. Supply your user-owned SSH key and
-   use the hidden provider-credential prompt. Verify the provider account,
+   hostname and separate application suffix. Use the hidden provider-credential
+   prompt. Verify the provider account,
    selected source, quote, and exclusions. Typing `create` approves the exact
    displayed plan only, and asserts you are the sole authorized creator with
    no unresolved request. Nothing is allocated until then. Billing continues
    through pauses, DNS propagation, and install failures.
-3. Confirm the original server ID in your authenticated provider console. Run
-   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` **in that console**, and
-   paste its `SHA256:...` fingerprint into the wizard. Never use a fingerprint
-   obtained just by scanning the public IP. Review the separate pinned-host
-   plan and type `install` to approve it.
+3. The wizard verifies the original VPS as it boots. Review the separate
+   pinned-host plan and type `install` to approve it. If first boot takes
+   longer than the wait, rerun the same command; do not create another VPS.
 4. Set the two printed A records for the dashboard and API and remove conflicting
    records. Do not point the application wildcard at the control-plane VPS.
    When HTTPS is verified, use the protected recovery export and enter the
@@ -112,6 +109,33 @@ fingerprint of the original token in protected state, not the token or its
 fingerprint in the report. Use that same token when resuming a paused plan
 or reconciling an uncertain create. A matching project label does not let a
 different token make provider requests for this seed.
+
+### Automatic SSH and older sessions
+
+The wizard generates a dedicated, unencrypted Ed25519 operator identity in the
+owner-only state directory. It registers only the public key. Back up the
+private identity and state securely; the wizard does not use or forward an SSH
+agent for this key.
+
+The authenticated VPS creation request supplies a random one-time enrollment
+secret to that server's cloud-init. After the image generates its permanent
+host key, cloud-init publishes an SSH pre-authentication banner with a proof
+bound to the seed ID and that host's Ed25519 public key. The wizard probes
+without any SSH credentials, verifies the proof, saves the host pin, then
+removes the local enrollment secret. The host's private key stays on the VPS.
+A scan alone never authorizes SSH. Do not share cloud-init user-data or
+protected state. If proof collection keeps failing, inspect first boot in the
+authenticated provider console and preserve the original target.
+
+Sessions already pinned continue with their original identity and pin. For an
+older session already dispatched without automatic enrollment, preserve its
+original private key and state. Confirm the exact original VPS in the
+authenticated provider console and run
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` **in that console**, not
+over SSH. Paste the `SHA256:...` fingerprint when the older-session prompt
+appears. Never use a fingerprint obtained only by scanning the public IP.
+The [scripted interface](#explicit-local-source-alternative) still uses
+explicit operator-supplied SSH inputs.
 
 ## Explicit local source alternative
 

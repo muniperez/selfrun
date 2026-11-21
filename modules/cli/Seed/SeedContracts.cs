@@ -96,7 +96,7 @@ internal interface ISeedProvider : IDisposable
     Task<string?> FindUserKeyAsync(string publicKey, CancellationToken ct) => Task.FromResult<string?>(null);
     Task<string> CreateKeyAsync(string operation, string publicKey, CancellationToken ct);
     Task<SeedResource?> FindServerAsync(string operation, CancellationToken ct);
-    Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct);
+    Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct, string? userData = null);
     Task<bool> DeleteServerAsync(SeedState state, CancellationToken ct);
     Task DeleteKeyAsync(string id, string operation, string publicKey, CancellationToken ct);
 }

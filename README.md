@@ -77,7 +77,7 @@ With the project configured, your agent can run `minicloud deploy --environment 
 
 Run **`minicloud seed`** to set up a dedicated Ubuntu VPS. Use a [CLI test build for your computer](docs/stateless-seed.md#download-a-candidate) or [publish the CLI from a clean clone](docs/stateless-seed.md#publish-from-a-clone), including from your own local commit. The candidate runs without Python, Git, or .NET installed on your workstation. These are **test installations**: no compatible signed server release or production migration path is available yet. Do not treat a historical CLI release as this candidate.
 
-Have OpenSSH, a user-owned SSH key, a funded provider account, and DNS access. In the wizard, choose **`local`** to explicitly trust the executable's matching source for a test install. Review the provider quote before creating anything. Verify the host fingerprint in the provider console, approve installation, and follow the printed DNS and `/setup` instructions. Rerun the same command after a pause or interruption. [Guided setup and resume](docs/stateless-seed.md#guided-installation) · [Browser setup](docs/operator-setup.md)
+Have OpenSSH, a funded provider account, and DNS access. In the wizard, choose **`local`** to explicitly trust the executable's matching source for a test install. Review the provider quote before creating anything. The wizard creates a local SSH identity, verifies the VPS automatically, and guides you through installation, DNS, and `/setup`. Rerun the same command after a pause or interruption. [Guided setup and resume](docs/stateless-seed.md#guided-installation) · [Browser setup](docs/operator-setup.md)
 
 ### Open your first workspace
 

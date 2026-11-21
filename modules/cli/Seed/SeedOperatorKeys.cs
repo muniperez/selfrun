@@ -86,6 +86,30 @@ internal static class SeedOperatorKeys
         protect ? ["-t", "ed25519", "-C", "minicloud-operator", "-f", path]
                 : ["-t", "ed25519", "-C", "minicloud-operator", "-f", path, "-N", ""];
 
+    internal static async Task<string> ManagedIdentityAsync(string path, CancellationToken ct)
+    {
+        if (!File.Exists(path))
+        {
+            var staging = path + ".pending-" + Guid.NewGuid().ToString("N");
+            SeedFiles.Directory(staging);
+            var temporary = Path.Combine(staging, "identity");
+            try
+            {
+                await SeedProcess.RequireAsync("ssh-keygen", GenerationArguments(temporary, false), null, ct);
+                var derived = await SeedUserKey.ReadAsync(temporary, false, ct);
+                SeedGuard.Require(Read([temporary + ".pub"]).Single() == derived, "Generated SSH identity/public key mismatch.");
+                using (var stream = new FileStream(temporary, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    stream.Flush(true);
+                SeedJournal.PublishDurably(temporary, path, overwrite: false);
+            }
+            finally
+            {
+                Directory.Delete(staging, recursive: true);
+            }
+        }
+        return SeedUserKey.Fingerprint(await SeedUserKey.ReadAsync(path, false, ct));
+    }
+
     private static async Task GenerateAsync(string path, bool protect, IConsole console, CancellationToken ct)
     {
         var full = Path.GetFullPath(path);

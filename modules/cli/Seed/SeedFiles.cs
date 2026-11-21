@@ -238,10 +238,17 @@ internal sealed class SeedJournal : IDisposable
     public void Dispose() => operationLock.Dispose();
 }
 
-internal sealed record SeedProcessResult(int ExitCode, string Output);
+internal sealed record SeedProcessResult(int ExitCode, string Output, string Error = "");
 internal static class SeedProcess
 {
-    public static async Task<SeedProcessResult> RunAsync(string executable, IEnumerable<string> args, byte[]? input, CancellationToken ct, bool useSshAgent = false)
+    public static Task<SeedProcessResult> RunAsync(string executable, IEnumerable<string> args, byte[]? input, CancellationToken ct, bool useSshAgent = false)
+        => RunCoreAsync(executable, args, input, ct, useSshAgent, false);
+
+    internal static Task<SeedProcessResult> ProbeAsync(string executable, IEnumerable<string> args, CancellationToken ct) =>
+        RunCoreAsync(executable, args, null, ct, false, true);
+
+    private static async Task<SeedProcessResult> RunCoreAsync(string executable, IEnumerable<string> args, byte[]? input,
+        CancellationToken ct, bool useSshAgent, bool probe)
     {
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, CreateNoWindow = true };
         foreach (var arg in args) start.ArgumentList.Add(arg);
@@ -256,21 +263,38 @@ internal static class SeedProcess
         try { process.Start(); }
         catch (System.ComponentModel.Win32Exception) { throw new Commands.CliCommandException(CliExitCodes.ValidationError, $"Required tool unavailable: {executable}. See docs/seed.md."); }
         using var registration = ct.Register(() => { try { process.Kill(true); } catch (InvalidOperationException) { } });
-        var output = process.StandardOutput.ReadToEndAsync(ct);
-        var error = process.StandardError.ReadToEndAsync(ct);
+        var output = probe ? ReadProbeAsync(process.StandardOutput, ct) : process.StandardOutput.ReadToEndAsync(ct);
+        var error = probe ? ReadProbeAsync(process.StandardError, ct) : process.StandardError.ReadToEndAsync(ct);
         try
         {
             if (input is not null) await process.StandardInput.BaseStream.WriteAsync(input, ct);
             process.StandardInput.Close();
             await process.WaitForExitAsync(ct);
-            await error; // Tool/provider output may contain secrets; never relay stderr.
-            return new(process.ExitCode, await output);
+            var stderr = await error; // Only the enrollment probe consumes stderr; never relay it.
+            return new(process.ExitCode, await output, probe ? stderr : "");
         }
         catch
         {
             try { if (!process.HasExited) process.Kill(true); } catch (InvalidOperationException) { }
             throw;
         }
+    }
+
+    private static async Task<string> ReadProbeAsync(StreamReader stream, CancellationToken ct)
+    {
+        var buffer = new char[1024];
+        var text = new StringBuilder();
+        while (await stream.ReadAsync(buffer.AsMemory(), ct) is var length && length > 0)
+        {
+            if (text.Length + length <= 8192) text.Append(buffer, 0, length);
+            else
+            {
+                // Drain excess without allocating or using truncated output as proof.
+                while (await stream.ReadAsync(buffer.AsMemory(), ct) > 0) { }
+                return "";
+            }
+        }
+        return text.ToString();
     }
 
     public static async Task<string> RequireAsync(string executable, IEnumerable<string> args, byte[]? input, CancellationToken ct)

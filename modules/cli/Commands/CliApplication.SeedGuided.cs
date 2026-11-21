@@ -8,7 +8,7 @@ public sealed partial class CliApplication
 {
     private sealed record GuidedSession(SeedPortableConfig Config, string KeyPath, bool UseAgent,
         string KeyFingerprint, string? SourceSha256, string? HetznerCredentialScope);
-    private sealed record GuidedDispatch(string Image, SeedVerifiedRelease Release);
+    private sealed record GuidedDispatch(string Image, SeedVerifiedRelease Release, bool EnrollSsh = false);
 
     private async Task<int> RunGuidedSeedAsync(string? stateDirectory, CancellationToken ct)
     {
@@ -29,6 +29,7 @@ public sealed partial class CliApplication
             var dispatchPath = Path.Combine(home, "create-dispatched.json");
             var resourcePath = Path.Combine(home, "resource.json");
             var targetPath = Path.Combine(home, "target.json");
+            var enrollmentPath = Path.Combine(home, "ssh-enrollment.secret");
             var reports = Path.Combine(home, "reports");
             SeedFiles.Directory(reports);
             var reportPath = Path.Combine(reports, "seed-report.json");
@@ -56,13 +57,6 @@ public sealed partial class CliApplication
                 selection.Validate();
                 var architecture = SeedAnswer("Server architecture (linux/amd64 or linux/arm64): ");
                 SeedGuard.Require(architecture is "linux/amd64" or "linux/arm64", "Select the server architecture explicitly.");
-                var key = SeedAnswer("Absolute path to your owner-only OpenSSH private key (~/... also works on Unix): ");
-                if (!OperatingSystem.IsWindows() && key.StartsWith("~/", StringComparison.Ordinal))
-                    key = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), key[2..]);
-                SeedGuard.Require(Path.IsPathFullyQualified(key), "Supply an absolute SSH private-key path (~/... also works on Unix).");
-                key = Path.GetFullPath(key);
-                var useAgent = SeedConfirm("Use your independently unlocked SSH agent for this key? [y/N]: ", "y");
-                var keyFingerprint = SeedUserKey.Fingerprint(await SeedUserKey.ReadAsync(key, useAgent, ct));
                 string? project = null;
                 if (selection.Provider == "hetzner")
                     project = SeedAnswer("Hetzner project identifier you independently verified in the provider console: ");
@@ -81,7 +75,9 @@ public sealed partial class CliApplication
                     ServerVersion = tag, Architecture = architecture
                 };
                 config.Validate();
-                session = new(config, key, useAgent, keyFingerprint, verifiedSourceDigest, scope);
+                var key = Path.Combine(home, $"operator-{seedId}_ed25519");
+                var keyFingerprint = await SeedOperatorKeys.ManagedIdentityAsync(key, ct);
+                session = new(config, key, false, keyFingerprint, verifiedSourceDigest, scope);
                 SeedGuard.Require(!JsonSerializer.Serialize(session, SeedJournal.Json).Contains(credential, StringComparison.Ordinal),
                     "A configuration value contains the supplied credential. Never enter a credential in another prompt.");
                 WriteGuided(sessionPath, session);
@@ -120,8 +116,17 @@ public sealed partial class CliApplication
                     initial ? plan =>
                     {
                         var approved = plan.Plan!;
-                        dispatch = new(approved.Quote.Image, new(approved.ReleaseDigest, approved.ReleaseSource));
-                        WriteGuided(dispatchPath, dispatch);
+                        var secret = File.Exists(enrollmentPath) ? SeedEnrollment.ReadSecret(enrollmentPath)
+                            : SeedEnrollment.CreateSecret(enrollmentPath);
+                        try
+                        {
+                            var userData = SeedEnrollment.UserData(config.SeedId, secret);
+                            var intent = new GuidedDispatch(approved.Quote.Image, new(approved.ReleaseDigest, approved.ReleaseSource), EnrollSsh: true);
+                            WriteGuided(dispatchPath, intent);
+                            dispatch = intent;
+                            return userData;
+                        }
+                        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret); }
                     } : null,
                     initial ? created =>
                     {
@@ -158,33 +163,70 @@ public sealed partial class CliApplication
                     SeedGuard.Require(configForRun.Provider == "hetzner" || account == configForRun.ProviderAccount,
                         "Authorized provider account differs from the original account.");
                     var candidate = await provider.FindServerAsync(configForRun.SeedId, ct);
-                    if (candidate?.Address is null)
+                    if (candidate is null)
                     {
-                        _console.WriteLine("No uniquely identified server with a public IPv4 is visible yet. Reconcile with provider support; inventory absence never authorizes creation.");
+                        _console.WriteLine("No uniquely identified server is visible yet. Reconcile with provider support; inventory absence never authorizes creation.");
                         return 10;
                     }
                     var expected = configForRun.State();
                     expected.Plan = expected.Plan with { Quote = expected.Plan.Quote with { Image = dispatch.Image } };
                     expected.Server = resource;
                     SeedLifecycle.Match(expected, candidate);
+                    if (candidate != resource) WriteGuided(resourcePath, candidate, overwrite: resource is not null);
                     resource = candidate;
+                }
+                if (resource.Address is null)
+                {
+                    _console.WriteLine($"Original server ID: {resource.Id}; public IPv4 is not ready. Rerun the same seed; billing continues.");
+                    return 10;
                 }
                 _console.WriteLine($"Original server ID: {resource.Id}; public IPv4: {resource.Address}.");
                 PrintSeedDns(configForRun, resource.Address);
-                _console.WriteLine("Confirm that server in the authenticated provider console. In its console (not over SSH), run:");
-                _console.WriteLine("  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub");
-                var fingerprint = SeedAnswer("Paste only its independent SHA256:... fingerprint (Enter to pause): ", allowEmpty: true);
-                if (fingerprint.Length == 0) return 10;
-                configForRun = configForRun with { Target = new(resource.Id, resource.Address, fingerprint, resource.Image, resource.PrimaryIpId) };
+                string? fingerprint;
+                if (dispatch.EnrollSsh)
+                {
+                    _console.WriteLine("Waiting for the original server's first-boot SSH proof.");
+                    var secret = SeedEnrollment.ReadSecret(enrollmentPath);
+                    try { fingerprint = await SeedEnrollment.VerifyAsync(configForRun.SeedId, resource.Address, secret, home, ct); }
+                    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret); }
+                    if (fingerprint is null)
+                    {
+                        _console.WriteLine("No valid SSH enrollment proof received. No authenticated SSH was attempted. Rerun the same seed after first boot; if this persists, inspect cloud-init through the provider console. Do not recreate the server.");
+                        return 10;
+                    }
+                }
+                else
+                {
+                    _console.WriteLine("This older seed was created without automatic enrollment. In its authenticated provider console (not over SSH), run:");
+                    _console.WriteLine("  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub");
+                    fingerprint = SeedAnswer("Paste only its independent SHA256:... fingerprint (Enter to pause): ", allowEmpty: true);
+                    if (fingerprint.Length == 0) return 10;
+                }
+                var verifiedTarget = new SeedPortableTarget(resource.Id, resource.Address, fingerprint, resource.Image, resource.PrimaryIpId);
+                configForRun = configForRun with { Target = verifiedTarget };
+                if (dispatch.EnrollSsh)
+                {
+                    configForRun.Validate();
+                    WriteGuided(targetPath, verifiedTarget);
+                    target = verifiedTarget;
+                }
             }
-            else configForRun = configForRun with { Target = target };
+            else
+            {
+                configForRun = configForRun with { Target = target };
+                PrintSeedDns(configForRun, target.Ipv4!);
+            }
             configForRun.Validate();
+            if (dispatch.EnrollSsh && File.Exists(enrollmentPath))
+            {
+                SeedFiles.Check(enrollmentPath);
+                File.Delete(enrollmentPath);
+            }
 
             var continuation = await StepAsync("plan");
             if (continuation != 0) return ExplainGuidedExit(continuation, reportPath);
             if (target is null) WriteGuided(targetPath, configForRun.Target!);
             var observed = ReadGuided<SeedPortableReport>(reportPath)!;
-            if (target is not null) PrintSeedDns(configForRun, target.Ipv4!);
             if (observed.Classification == "continue_partial")
             {
                 if (!SeedConfirm("Review the pinned-target plan above. Type 'install' to approve it (Enter to pause): ", "install"))
@@ -284,10 +326,10 @@ public sealed partial class CliApplication
         return document.RootElement.Deserialize<T>(SeedJournal.Json) ?? throw new JsonException();
     }
 
-    private static void WriteGuided<T>(string path, T value)
+    private static void WriteGuided<T>(string path, T value, bool overwrite = false)
     {
         var pending = path + ".pending-" + Guid.NewGuid().ToString("N");
         SeedFiles.WriteNew(pending, JsonSerializer.SerializeToUtf8Bytes(value, SeedJournal.Json));
-        SeedJournal.PublishDurably(pending, path, overwrite: false);
+        SeedJournal.PublishDurably(pending, path, overwrite);
     }
 }

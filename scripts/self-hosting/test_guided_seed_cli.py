@@ -4,13 +4,16 @@
 
 import errno
 import hashlib
+import hmac
 import http.server
 import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import shutil
+import socket
 import socketserver
 import ssl
 import subprocess
@@ -25,7 +28,7 @@ import time
 TOKEN = "fixture-token-not-for-any-real-provider"
 CHANGED_TOKEN = "different-fixture-token-not-for-any-real-provider"
 TOKENS = (TOKEN, CHANGED_TOKEN)
-ADDRESS = "203.0.113.1"
+ADDRESS = "127.0.0.1"
 DOMAIN = "cloud.example.com"
 APP_DOMAIN = "apps.example.com"
 PROVIDER = "api.digitalocean.com"
@@ -40,6 +43,7 @@ class Fixture:
         self.droplet = None
         self.visible = False
         self.lose_response = False
+        self.user_data = None
 
     def api(self, path, body):
         if body is not None:
@@ -50,6 +54,7 @@ class Fixture:
                 return {"ssh_key": key}
             assert path == "/v2/droplets" and self.droplet is None
             assert body["ssh_keys"] == [7] and body["vpc_uuid"] == "existing-network"
+            self.user_data = body["user_data"]
             self.droplet = {"id": 17, "tags": body["tags"], "region": {"slug": "fixture"},
                             "size_slug": "fixture-size", "image": {"id": 42}, "networks": {
                                 "v4": [{"type": "public", "ip_address": ADDRESS}]}}
@@ -212,14 +217,13 @@ def check_hetzner_resume(cli, root, env, fixture):
     dialogue(cli, root, env, state, [
         ("Server source:", "local"), ("Provider (", "hetzner"), ("Region ID", "fixture"),
         ("Server size ID", "fixture-size"), ("Dashboard hostname", DOMAIN), ("Separate application DNS suffix", APP_DOMAIN),
-        ("Server architecture", "linux/amd64"), ("owner-only OpenSSH private key", "~/user-key"),
-        ("SSH agent", ""), ("Hetzner project identifier", "fixture-project"), credential, (approval, ""),
+        ("Server architecture", "linux/amd64"), ("Hetzner project identifier", "fixture-project"), credential, (approval, ""),
     ], 10)
     session_file = state / "session.json"
     session = json.loads(session_file.read_text())
-    assert session["keyPath"] == str(root / "user-key")
     scope = session["hetznerCredentialScope"]
     seed_id = session["config"]["seedId"]
+    assert session["keyPath"] == str(state / f"operator-{seed_id}_ed25519")
     assert scope == hashlib.sha256(f"minicloud-seed-scope:{seed_id}:{TOKEN}".encode()).hexdigest()
     report_file = state / "reports" / "seed-report.json"
     assert scope not in report_file.read_text()
@@ -240,20 +244,127 @@ def check_hetzner_resume(cli, root, env, fixture):
     assert all(token not in file.read_text() for token in TOKENS for file in state.glob("**/*.json"))
 
 
-def run(cli, root, lose_create_response):
+def cloud_init_host(root, port):
+    """Run the actual cloud-init handlers without accessing the host's SSH configuration."""
+    from types import SimpleNamespace
+    from cloudinit.config import cc_scripts_user, cc_ssh
+    from cloudinit.handlers.shell_script import ShellScriptPartHandler
+
+    subprocess.run(["mount", "--make-rprivate", "/"], check=True)
+    ssh = root / "isolated-ssh"
+    for source, target in ((ssh, "/etc/ssh"), (root / "isolated-run", "/run"), (root / "isolated-root", "/root")):
+        subprocess.run(["mount", "--bind", source, target], check=True)
+    instance = root / "cloud-instance"
+    cloud = SimpleNamespace(distro=SimpleNamespace(osfamily="debian", get_default_user=lambda: {}),
+                            get_ipath_cur=lambda: str(instance))
+    cc_ssh.handle("ssh", {"ssh_genkeytypes": ["ed25519"], "ssh_quiet_keygen": True,
+                         "allow_public_ssh_keys": False, "ssh_publish_hostkeys": {"enabled": False}, "users": []}, cloud, [])
+    handler = ShellScriptPartHandler(SimpleNamespace(get_ipath_cur=lambda name: str(instance / name)))
+    handler.handle_part(None, "text/x-shellscript", "seed", (root / "user-data").read_text(), None)
+    assert (instance / "scripts" / "seed").stat().st_mode & 0o777 == 0o700
+    cc_scripts_user.handle("scripts-user", {}, cloud, [])
+    config = ["-f", "/etc/ssh/sshd_config", "-p", port, "-o", "ListenAddress=127.0.0.1"]
+    # A single-ID user namespace cannot switch to sshd's privilege-separation account.
+    # Run the test daemon non-root; this fixture never offers an SSH credential.
+    os.execvp("unshare", ["unshare", "--map-user=1000", "--map-group=1000", "/usr/sbin/sshd", "-D", "-e", *config])
+
+
+def boot_fixture(root, user_data):
+    ssh = root / "isolated-ssh"
+    (ssh / "sshd_config.d").mkdir(parents=True)
+    (root / "isolated-run").mkdir()
+    (root / "isolated-root").mkdir()
+    (root / "user-data").write_text(user_data)
+    (ssh / "sshd_config").write_text("Include /etc/ssh/sshd_config.d/*.conf\n"
+                                    "HostKey /etc/ssh/ssh_host_ed25519_key\nUsePAM no\n")
+    vendor = ssh / "sshd_config.d" / "50-provider.conf"
+    vendor.write_text("PasswordAuthentication no\nPermitRootLogin prohibit-password\n")
+    systemctl = root / "bin" / "systemctl"
+    systemctl.write_text('#!/bin/bash\n[[ "$*" == "reload-or-restart ssh.service" ]] && /usr/sbin/sshd -t\n')
+    systemctl.chmod(0o700)
+    with socket.socket() as sock:
+        sock.bind((ADDRESS, 0))
+        port = sock.getsockname()[1]
+    env = dict(os.environ, PATH=str(root / "bin") + ":" + os.environ["PATH"])
+    process = subprocess.Popen(
+        ["unshare", "-Ur", "-m", "/usr/bin/python3", "-B", __file__, "--cloud-init-host", root, str(port)],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            if process.poll() is not None:
+                _, error = process.communicate(timeout=5)
+                detail = re.sub(r"(?i)[0-9a-f]{64}", "[redacted]", error.decode(errors="replace"))
+                raise AssertionError(f"Isolated cloud-init/sshd failed to start:\n{detail}")
+            try:
+                with socket.create_connection((ADDRESS, port), timeout=.2):
+                    break
+            except OSError:
+                assert time.monotonic() < deadline, "Isolated SSH listener did not become ready."
+                time.sleep(.05)
+        assert vendor.read_text() == "PasswordAuthentication no\nPermitRootLogin prohibit-password\n"
+        pin = subprocess.check_output(["ssh-keygen", "-lf", ssh / "ssh_host_ed25519_key.pub"], text=True).split()[1]
+        assert (ssh / "ssh_host_ed25519_key").stat().st_mode & 0o777 == 0o600
+        (root / "ssh-port").write_text(f"{port}\n")
+        return process, pin
+    except BaseException:
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=5)
+        raise
+
+
+def run(cli, root, lose_create_response, real_ssh):
     path = root / "bin"
     path.mkdir()
     for tool in ("stat", "id", "sync", "ssh-keygen", "cat", "sha256sum", "touch"):
         (path / tool).symlink_to(shutil.which(tool))
-    for key in ("user-key", "host-key"):
+    for key in ("host-key", "wrong-host-key"):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", root / key], check=True)
     public = (root / "host-key.pub").read_text().split()[1]
     pin = subprocess.check_output(["ssh-keygen", "-lf", root / "host-key.pub"], text=True).split()[1]
-    (path / "ssh-keyscan").write_text(f"#!/bin/bash\nprintf '%s\\n' '{ADDRESS} ssh-ed25519 {public}'\n")
+    (root / "scan").write_text(f"{ADDRESS} ssh-ed25519 {public}\n")
+    (path / "ssh-keyscan").write_text("""#!/bin/bash
+set -eu
+[[ "$1" != -h ]] || exit 1
+[[ "${@: -1}" == 127.0.0.1 ]]
+if [[ -f "$HOME/ssh-port" ]]; then
+    read -r port < "$HOME/ssh-port"
+    /usr/bin/ssh-keyscan -T 2 -t ed25519 -p "$port" 127.0.0.1 | while read -r address type blob; do
+        [[ "$address" != '#' ]] || continue
+        [[ "$address" == "[127.0.0.1]:$port" ]]
+        printf '127.0.0.1 %s %s\\n' "$type" "$blob"
+    done
+else
+    cat "$HOME/scan"
+fi
+""")
     (path / "ssh").write_text("""#!/bin/bash
 set -eu
 [[ "$1" != -V ]] || exit 0
 [[ " $* " == *' StrictHostKeyChecking=yes '* && " $* " == *' ForwardAgent=no '* ]]
+if [[ " $* " == *' PreferredAuthentications=none '* ]]; then
+    [[ " $* " == *' -N '* && " $* " != *' -i '* && -z "${SSH_AUTH_SOCK:-}" ]]
+    for option in IdentityAgent=none IdentityFile=none PubkeyAuthentication=no PasswordAuthentication=no \
+        KbdInteractiveAuthentication=no HostbasedAuthentication=no GSSAPIAuthentication=no ClearAllForwardings=yes; do
+        [[ " $* " == *" $option "* ]]
+    done
+    if [[ -f "$HOME/ssh-port" ]]; then
+        read -r port < "$HOME/ssh-port"
+        exec /usr/bin/ssh -p "$port" -o HostKeyAlias=127.0.0.1 "$@"
+    fi
+    if [[ -f "$HOME/wrong-proofs" ]]; then
+        { read -r wrong_seed; read -r wrong_key; } < "$HOME/wrong-proofs"
+        if [[ -f "$HOME/wrong-key-next" ]]; then line=$wrong_key; else line=$wrong_seed; fi
+        touch "$HOME/wrong-key-next"
+        printf '%s\\n' "$line" >&2
+    elif [[ -f "$HOME/proof" ]]; then
+        cat "$HOME/proof" >&2
+    fi
+    exit 255
+fi
+[[ -f "$HOME/local/target.json" ]]
+[[ ! -e "$HOME/local/ssh-enrollment.secret" ]]
 printf '%s\\n' ssh >> "$HOME/ssh-calls"
 case "${@: -1}" in
     *'bash -s -- '*) cat >/dev/null; touch "$HOME/prepared";;
@@ -284,6 +395,7 @@ esac
         try:
             env = {"HOME": str(root), "PATH": str(path), "TERM": "dumb", "LC_ALL": "C",
                    "SSL_CERT_FILE": str(root / "ca.pem"), "DOTNET_BUNDLE_EXTRACT_BASE_DIR": str(root / "native"),
+                   "SSH_AUTH_SOCK": str(root / "never-use-agent"),
                    "HTTPS_PROXY": f"http://127.0.0.1:{server.server_address[1]}"}
             info = subprocess.check_output([cli, "--version"], cwd=root, env=env, text=True)
             revision = info.strip().splitlines()[-1].removeprefix("source ")
@@ -293,8 +405,7 @@ esac
 
             choices = [("Provider (", "digitalocean"), ("Region ID", "fixture"), ("Server size ID", "fixture-size"),
                        ("Dashboard hostname", DOMAIN), ("Separate application DNS suffix", APP_DOMAIN),
-                       ("Server architecture", "linux/amd64"), ("owner-only OpenSSH private key", str(root / "user-key")),
-                       ("SSH agent", ""), ("credential (hidden): ", TOKEN)]
+                       ("Server architecture", "linux/amd64"), ("credential (hidden): ", TOKEN)]
 
             signed = root / "signed"
             output = dialogue(cli, root, env, signed, [("Server source:", "signed"),
@@ -311,7 +422,6 @@ esac
                 path.write_text('{"interrupted":')
             report = state / "reports" / "seed-report.json"
             approval = "type 'create'"
-            fingerprint = "Paste only its independent"
             credential = ("credential (hidden): ", TOKEN)
             local_choices = [("Server source:", "local"), *choices[:-1]]
             archive = state / "source.tar.gz"
@@ -338,9 +448,14 @@ esac
                 assert source.getmember("modules/api/Dockerfile").isfile()
             assert sha in output and revision in output and fixture.posts == []
             assert json.loads(report.read_text())["plan"]["releaseDigest"] == sha
+            assert not (state / "ssh-enrollment.secret").exists()
 
             session_bytes = session_file.read_bytes()
             session = json.loads(session_bytes)
+            identity_path = state / f"operator-{session['config']['seedId']}_ed25519"
+            assert session["keyPath"] == str(identity_path) and not session["useAgent"]
+            original_identity = identity_path.read_bytes()
+            assert identity_path.stat().st_mode & 0o777 == 0o600
             session["sourceSha256"] = hashlib.sha256(tampered).hexdigest()
             session_file.write_text(json.dumps(session))
             archive.write_bytes(tampered)
@@ -351,23 +466,52 @@ esac
             archive.write_bytes(original)
             session_file.write_bytes(session_bytes)
 
-            handoff = []
             if lose_create_response:
                 fixture.lose_response = True
                 dialogue(cli, root, env, state, [credential, (approval, "create")], 12)
                 output = dialogue(cli, root, env, state, [credential], 10)
                 assert "inventory absence never authorizes creation" in output
                 fixture.visible = True
-                handoff = [credential]
+                public_ipv4 = fixture.droplet["networks"]["v4"]
+                fixture.droplet["networks"]["v4"] = []
+                output = dialogue(cli, root, env, state, [credential], 10)
+                assert "public IPv4 is not ready" in output
+                assert json.loads((state / "resource.json").read_text())["id"] == "17"
+                fixture.droplet["networks"]["v4"] = public_ipv4
+                fixture.droplet["id"] = 18
+                output = dialogue(cli, root, env, state, [credential], 2)
+                assert "Provider resource does not match" in output and not (root / "ssh-calls").exists()
+                fixture.droplet["id"] = 17
+                # Even under the original secret, a different seed or host key cannot enroll.
+                secret = (state / "ssh-enrollment.secret").read_bytes()
+                wrong_public = (root / "wrong-host-key.pub").read_text().split()[1]
+                proofs = [hmac.new(secret, f"minicloud-seed-host-v1\n{seed}\nssh-ed25519 {key}".encode(),
+                                   hashlib.sha256).hexdigest()
+                          for seed, key in (("0" * 32, public), (session["config"]["seedId"], wrong_public))]
+                (root / "wrong-proofs").write_text("".join(f"minicloud-seed-host-v1 {mac}\n" for mac in proofs))
+                output = dialogue(cli, root, env, state, [credential], 10)
+                (root / "wrong-proofs").unlink()
             else:
-                dialogue(cli, root, env, state, [credential, (approval, "create"), (fingerprint, "")], 10)
-                assert json.loads((state / "resource.json").read_text())["address"] == ADDRESS
+                output = dialogue(cli, root, env, state, [credential, (approval, "create")], 10)
+            assert "No valid SSH enrollment proof received" in output and not (root / "ssh-calls").exists()
+            assert "ssh-keygen" not in output and "fingerprint" not in output
+            assert json.loads((state / "resource.json").read_text())["address"] == ADDRESS
             assert fixture.posts == ["/v2/account/keys", "/v2/droplets"]
-            output = dialogue(cli, root, env, state, [*handoff, (fingerprint, "SHA256:" + "A" * 43)], 12)
-            assert "differs from the independent console fingerprint" in output and not (root / "ssh-calls").exists()
             assert not (state / "target.json").exists()
+            assert identity_path.read_bytes() == original_identity
+            authorized = subprocess.check_output(["ssh-keygen", "-y", "-f", identity_path], text=True).split()[:2]
+            assert fixture.ssh_keys[0]["public_key"].split() == authorized
 
             saved = json.loads((state / "session.json").read_text())["config"]
+            secret_path = state / "ssh-enrollment.secret"
+            secret = secret_path.read_bytes()
+            assert len(secret) == 32 and secret_path.stat().st_mode & 0o777 == 0o600
+            assert re.search(r'bytes.fromhex\("([0-9A-F]{64})"\)', fixture.user_data)[1] == secret.hex().upper()
+            assert "PRIVATE KEY" not in fixture.user_data
+            if not real_ssh:
+                proof = hmac.new(secret, f"minicloud-seed-host-v1\n{saved['seedId']}\nssh-ed25519 {public}".encode(),
+                                 hashlib.sha256).hexdigest()
+                (root / "proof").write_text(f"minicloud-seed-host-v1 {proof}\n")
             config = {"consoleUrl": f"https://{DOMAIN}", "apiUrl": f"https://api.{DOMAIN}", "appDomain": APP_DOMAIN}
             identity = {"installationId": "4cacbcc7-c4d3-4f94-8848-fa700870238d", "operationId": "02f942fe-36f4-488f-9f35-4d508603d8de"}
             metadata = dict(identity, schemaVersion=1, product="minicloud", root="/opt/minicloud",
@@ -381,11 +525,38 @@ esac
             (root / "installed.json").write_text(json.dumps(observation))
             (root / "ready.json").write_text(json.dumps(dict(observation, progress="awaiting_operator", health="ready",
                                                              openBao="ready", browser="pending")))
-            output = dialogue(cli, root, env, state, [*handoff, (fingerprint, pin), ("Type 'install'", "install")], 10)
+            if real_ssh:
+                sshd, pin = boot_fixture(root, fixture.user_data)
+            try:
+                output = dialogue(cli, root, env, state, [("Type 'install'", "install")], 10)
+            except BaseException as error:
+                if real_ssh:
+                    sshd.terminate()
+                    _, diagnostics = sshd.communicate(timeout=5)
+                    error.add_note(re.sub(r"(?i)[0-9a-f]{64}", "[redacted]", diagnostics.decode(errors="replace")))
+                raise
+            finally:
+                if real_ssh and sshd.poll() is None:
+                    sshd.terminate()
+                    sshd.communicate(timeout=5)
+                if real_ssh:
+                    (root / "ssh-port").unlink()
+            assert not secret_path.exists() and "ssh-keygen" not in output and "Paste only" not in output
+            assert json.loads((state / "target.json").read_text())["hostFingerprint"] == pin
+            assert secret.hex().upper() not in output
             assert f"api.{DOMAIN}. A {ADDRESS}" in output and "Public HTTPS/readiness is not verified" in output
             assert (root / "uploaded-source").read_text().split()[0] == sha
             assert (root / "mutations").read_text().splitlines() == ["install"]
             assert len(fixture.posts) == 2  # No provider mutation on resume.
+            if real_ssh:
+                (root / "scan").write_text(f"{ADDRESS} ssh-ed25519 {(root / 'isolated-ssh' / 'ssh_host_ed25519_key.pub').read_text().split()[1]}\n")
+            correct_scan = (root / "scan").read_text()
+            wrong_public = (root / "wrong-host-key.pub").read_text().split()[1]
+            (root / "scan").write_text(f"{ADDRESS} ssh-ed25519 {wrong_public}\n")
+            calls = (root / "ssh-calls").read_bytes()
+            output = dialogue(cli, root, env, state, [], 12)
+            assert "differs from the independent console fingerprint" in output and (root / "ssh-calls").read_bytes() == calls
+            (root / "scan").write_text(correct_scan)
             (root / "https-ready").touch()
             output = dialogue(cli, root, env, state, [("Export private recovery", "y")], 10)
             assert f"https://{DOMAIN}/setup" in output and "Protected setup token file:" in output
@@ -398,6 +569,17 @@ esac
             assert fixture.posts == ["/v2/account/keys", "/v2/droplets"]
             assert all(path.read_text() == '{"interrupted":' for path in abandoned)
             assert all(TOKEN.encode() not in file.read_bytes() for file in state.glob("**/*.json"))
+            assert all(secret.hex().upper() not in file.read_text() for file in state.glob("**/*.json"))
+            legacy = root / "legacy"
+            shutil.copytree(state, legacy)
+            legacy_dispatch = legacy / "create-dispatched.json"
+            old = json.loads(legacy_dispatch.read_text())
+            del old["enrollSsh"]
+            legacy_dispatch.write_text(json.dumps(old))
+            dialogue(cli, root, env, legacy, [("Export private recovery", "")], 0)
+            (legacy / "target.json").unlink()
+            output = dialogue(cli, root, env, legacy, [("Paste only its independent", "")], 10)
+            assert "This older seed was created without automatic enrollment" in output
             check_hetzner_resume(cli, root, env, hetzner)
         finally:
             server.shutdown()
@@ -405,13 +587,15 @@ esac
 
 
 if __name__ == "__main__":
+    if sys.argv[1] == "--cloud-init-host":
+        cloud_init_host(Path(sys.argv[2]), sys.argv[3])
     executable = Path(sys.argv[1]).resolve(strict=True)
     artifacts = Path(sys.argv[2]).resolve(strict=True)
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="guided-fixture-", dir=artifacts) as directory:
         lose_response = "--lost-create" in sys.argv[3:]
-        run(executable, Path(directory), lose_response)
+        run(executable, Path(directory), lose_response, "--real-ssh" in sys.argv[3:])
     print("Guided seed passed: missing signed release, prepare/plan, "
           f"{'lost create' if lose_response else 'create'}, pinned resume, install, DNS and protected setup; "
           "embedded source verified after cancellation and on resume, "
-          "abandoned staging ignored, Unix SSH path expanded, and changed Hetzner token blocked.")
+          "managed identity retained, and changed Hetzner token blocked.")

@@ -7,7 +7,7 @@ namespace Minicloud.Cli.Commands;
 public sealed partial class CliApplication
 {
     private sealed record GuidedSeedInputs(SeedPortableConfig Config, string KeyFingerprint, string? Credential, bool Local,
-        string? HetznerCredentialScope, SeedVerifiedRelease? ExpectedRelease = null, Action<SeedPortableReport>? BeforeCreate = null,
+        string? HetznerCredentialScope, SeedVerifiedRelease? ExpectedRelease = null, Func<SeedPortableReport, string>? BeforeCreate = null,
         Action<SeedResource>? AfterCreate = null);
 
     private async Task<int> RunPortableSeedAsync(string[] args, CancellationToken ct, GuidedSeedInputs? guided = null)
@@ -245,7 +245,9 @@ public sealed partial class CliApplication
                     guided?.BeforeCreate is { } beforeCreate ? () => beforeCreate(report) : null);
                 guided?.AfterCreate?.Invoke(state.Server!);
                 SeedPortable.Observe(report, state, new("awaiting_trust", "awaiting_independent_ssh_trust"));
-                report.NextActions = ["Retain this resource ID in explicit target configuration. Obtain its host fingerprint independently through provider console, replan and continue; never repeat initial creation."];
+                report.NextActions = guided is null
+                    ? ["Retain this resource ID in explicit target configuration. Obtain its host fingerprint independently through provider console, replan and continue; never repeat initial creation."]
+                    : ["Rerun the same guided seed to verify the original server through first-boot SSH enrollment; never repeat initial creation."];
                 return 10;
             }
             // Host-only continuation needs no provider token or creation permissions.
