@@ -363,6 +363,13 @@ machine authentication: explicit bearer credentials take precedence, including
 invalid bearers. CLI approval still requires explicit human consent and
 organization API-key-write permission.
 
+For password changes, a successful settings submission rotates the current
+browser session and revokes older browser and Grafana sessions. If the password
+is rejected (`400 auth_password_rejected`), choose a different password and retry
+the form. For `410 auth_flow_expired`, start a new settings form. For
+`403 session_refresh_required`, log out, sign in again and start a new settings
+form; the API does not expose Kratos redirects or resume the previous submission.
+
 ### Session renewal
 
 A renewal reads the session, extends the upstream Kratos session if needed, and

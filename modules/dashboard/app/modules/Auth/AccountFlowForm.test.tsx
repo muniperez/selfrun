@@ -188,6 +188,63 @@ describe("account browser forms", () => {
     expect(fetcher.mock.calls[1][1].headers).toHaveProperty("X-Minicloud-CSRF", "synthetic-csrf");
   });
 
+  it("clears a rejected password, reloads the same form, and only submits again on explicit retry", async () => {
+    const flow = browserFlow("settings");
+    flow.ui.nodes = flow.ui.nodes.filter(node => node.name !== "identifier");
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ flow, session: null }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: "auth_password_rejected", message: "private diagnostic" } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ flow, session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }));
+    vi.stubGlobal("fetch", fetcher);
+    setCsrfToken("synthetic-csrf");
+    const auth = mount("settings");
+    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "rejected-password" } });
+    const save = screen.getByRole("button", { name: "Save password" });
+    fireEvent.click(save);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a different password");
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(fetcher.mock.calls[2][0]).toContain(`/api/account/flows/settings?id=${flow.id}`);
+    expect(fetcher.mock.calls.filter(call => call[1].method === "POST")).toHaveLength(1);
+    expect(auth.refreshSession).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "replacement-password" } });
+    fireEvent.click(save);
+    expect(await screen.findByText("Password updated.")).toBeInTheDocument();
+  });
+
+  it.each([
+    [410, "auth_flow_expired", "This form expired. Restart to try again."],
+    [403, "session_refresh_required", "Log out and sign in again before updating account settings."],
+    [503, "auth_unavailable", "Account service is unavailable. Retry when it is available."]
+  ])("shows an actionable settings error for %s without replaying the password", async (status, code, message) => {
+    const flow = browserFlow("settings");
+    flow.ui.nodes = flow.ui.nodes.filter(node => node.name !== "identifier");
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ flow, session: null }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code, message: "private diagnostic" } }, status))
+      .mockResolvedValueOnce(jsonResponse({ flow, session: null }));
+    const assign = vi.spyOn(browserNavigation, "assign").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetcher);
+    setCsrfToken("synthetic-csrf");
+    const auth = mount("settings");
+    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "synthetic-new-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save password" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Save password" })).toBeDisabled();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(auth.refreshSession).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    if (status === 410) {
+      fireEvent.click(screen.getByRole("button", { name: "Restart form" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Save password" })).toBeEnabled());
+      expect(fetcher.mock.calls[2][0]).toContain("/api/account/flows/settings/browser?");
+      expect(fetcher.mock.calls.filter(call => call[1].method === "POST")).toHaveLength(1);
+    }
+  });
+
   it("hides Google unless both runtime capabilities and the flow expose the provider", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ flow: googleFlow(), session: null })));
     mount("login", false, false);

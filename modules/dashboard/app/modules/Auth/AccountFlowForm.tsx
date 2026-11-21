@@ -160,7 +160,8 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
       form.reset();
       if (expiredLoginFlow(kind, submitError)) {
         refreshExpiredLogin();
-      } else if (submitError instanceof ApiError && submitError.code === "auth_flow_invalid") {
+      } else if (submitError instanceof ApiError &&
+        (submitError.code === "auth_flow_invalid" || submitError.code === "auth_password_rejected")) {
         setError(accountErrorMessage(submitError));
         try {
           const result = await getAccountFlow(kind, flow.id);
