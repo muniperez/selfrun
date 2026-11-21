@@ -885,10 +885,15 @@ class Linux:
         self.workspace = Path(config["workspace"])
         self.processes = processes or Procfs()
 
-    def probe_volume(self, claim):
+    @staticmethod
+    def volume_device(claim):
         device = Path(claim["device"])
-        require(str(device).startswith("/dev/disk/by-id/"), "Stable provider device path required")
+        require(device.parent == Path("/dev/disk/by-id"), "Stable provider device path required")
         require(device.name == claim["providerDeviceId"], "Provider volume/device identity mismatch")
+        return device
+
+    def probe_volume(self, claim):
+        device = self.volume_device(claim)
         require(stat.S_ISBLK(device.stat().st_mode), "Expected block device unavailable")
         require(run(["blkid", "-s", "TYPE", "-o", "value", str(device)]) == "ext4",
                 "Only existing ext4 is accepted; runtime never formats")
@@ -896,26 +901,48 @@ class Linux:
                 "Filesystem UUID mismatch")
         return str(device.resolve())
 
-    def mount(self, claim):
-        device = self.probe_volume(claim)
-        self.workspace.mkdir(mode=0o755, parents=True, exist_ok=True)
+    def mounted_source(self):
         result = subprocess.run(["findmnt", "-rn", "-M", str(self.workspace), "-o", "SOURCE,FSTYPE"],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, timeout=5)
         require(result.returncode in (0, 1), "Cannot inspect mount")
         if result.returncode == 0:
             source, fs = result.stdout.split()
-            require(str(Path(source).resolve()) == device and fs == "ext4", "Unexpected mount")
-        else:
+            require(fs == "ext4", "Unexpected mount filesystem")
+            return str(Path(source).resolve())
+        return None
+
+    def verify_workspace_mount(self):
+        claim = self.config["volume"]
+        source = self.mounted_source()
+        require(source is not None, "Retained volume is not mounted")
+        require(source == str(self.volume_device(claim).resolve(strict=True)), "Unexpected mount device")
+        self.verify_owner(claim)
+
+    def mount(self, claim):
+        device = self.probe_volume(claim)
+        self.workspace.mkdir(mode=0o755, parents=True, exist_ok=True)
+        require(self.workspace.is_dir() and not self.workspace.is_symlink(), "Invalid workspace mountpoint")
+        source = self.mounted_source()
+        if source is None:
             require(not any(self.workspace.iterdir()), "Refuse local workspace fallback")
             run(["mount", "-t", "ext4", "-o", "nodev,nosuid", device, str(self.workspace)])
-        marker = self.workspace / ".minicloud-volume.json"
-        if not marker.exists() and claim.get("initializeOwner") is True:
-            require(set(p.name for p in self.workspace.iterdir()) <= {"lost+found"} and
-                    (not (self.workspace / "lost+found").exists() or
-                     not any((self.workspace / "lost+found").iterdir())),
-                    "Ownership initialization requires an empty, separately provisioned volume")
-            atomic_json(marker, claim["owner"])
-        self.verify_owner(claim)
+        else:
+            require(source == device, "Unexpected mount device")
+        try:
+            if source is None:
+                require(self.mounted_source() == device, "Mounted device differs from the verified volume")
+            marker = self.workspace / ".minicloud-volume.json"
+            if not marker.exists() and claim.get("initializeOwner") is True:
+                require(set(p.name for p in self.workspace.iterdir()) <= {"lost+found"} and
+                        (not (self.workspace / "lost+found").exists() or
+                         not any((self.workspace / "lost+found").iterdir())),
+                        "Ownership initialization requires an empty, separately provisioned volume")
+                atomic_json(marker, claim["owner"])
+            self.verify_owner(claim)
+        except (Blocked, OSError, ValueError):
+            if source is None:
+                run(["umount", str(self.workspace)], timeout=10)
+            raise
 
     def verify_owner(self, claim):
         require(all(claim.get("owner", {}).get(key) for key in
@@ -927,7 +954,7 @@ class Linux:
         info = marker.stat()
         require(info.st_uid == 0 and not info.st_mode & 0o022, "Unsafe volume ownership claim")
         require(json.loads(marker.read_text()) == claim["owner"], "Unexpected volume owner claim")
-        require(run(["findmnt", "-rn", "-M", str(self.workspace), "-o", "UUID"]) ==
+        require(run(["findmnt", "-rn", "-M", str(self.workspace), "-o", "UUID"], timeout=5) ==
                 claim["filesystemUuid"], "Mount is not the expected filesystem")
 
     def ephemeral(self):
@@ -1316,6 +1343,13 @@ class Runtime:
         method = getattr(self.adapter, "scratch_" + step, None)
         return method() if method else None
 
+    def require_workspace(self):
+        if self.c["kind"] == "primary":
+            try:
+                self.adapter.verify_workspace_mount()
+            except (Blocked, OSError, ValueError, subprocess.SubprocessError) as error:
+                raise Blocked("Cannot verify the retained workspace mount", "StorageUnavailable") from error
+
     def receipt(self, receipt_type, operation, **extra):
         result = dict(schemaVersion=1, type=receipt_type, **self.identity(), operationId=operation,
                       revision=self.s["revision"] + 1, issuedAt=self.clock(), **extra)
@@ -1390,6 +1424,7 @@ class Runtime:
             require(self.s["phase"] == "Ready" and not self.s.get("fenceOperation") and
                     not self.s.get("freezeCompleted") and not self.s.get("filesystemReadOnly"),
                     "Folder jobs require a running dev environment that is not stopping")
+            self.require_workspace()
             self.prune_filesystem_jobs(directory)
             require(not any(self.adapter.filesystem_running(other["unit"])
                             for other in self.filesystem_records()), "Another folder job is running")
@@ -1456,6 +1491,11 @@ class Runtime:
                           activityAt=self.s["activityAt"], backup=self.backup_status(),
                           freezeCompleted=self.s.get("freezeCompleted", False),
                           filesystemReadOnly=self.s.get("filesystemReadOnly", False))
+            if result["phase"] == "Ready":
+                try:
+                    self.require_workspace()
+                except Blocked as error:
+                    return dict(result, phase=error.state, storageError=str(error))
             if request.get("includeWorkInventory") is True:
                 try:
                     require(not (self.root / "connect-operation.json").exists(),
@@ -1503,6 +1543,7 @@ class Runtime:
             return self.receipt("BootstrapReady", operation, toolchainReinstalled=False)
         if action == "task-start":
             require(self.s["phase"] == "Ready", "Admissions fenced")
+            self.require_workspace()
             task_id = request["taskId"]
             require(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", task_id), "Invalid task ID")
             require(task_id not in self.s["tasks"],
@@ -1833,6 +1874,7 @@ class Runtime:
     def restore_import(self, operation, stream):
         require(self.c["kind"] == "primary" and self.s["phase"] == "RestoreReady" and
                 self.s["restoreOperation"] == operation, "No authenticated restore admission")
+        self.require_workspace()
         source = self.s["restoreSource"]
         target = self.c["volume"]
         workspace = Path(self.c["workspace"])
@@ -2049,6 +2091,52 @@ def load_config(path):
     return json.loads(path.read_text())
 
 
+DEVICE_WAIT_SECONDS = 45
+
+
+def mount_for_services(config, state_dir):
+    if config["kind"] == "ephemeral":
+        return
+    require(config["kind"] == "primary" and config["workspace"] == "/workspace",
+            "Invalid configuration for retained mount recovery")
+    adapter = Linux(config)
+    state_dir = Path(state_dir)
+    identity = {key: config[key] for key in ("vmId", "generation", "kind")}
+
+    def state():
+        value = load_config(state_dir / "state.json")
+        require(value["identity"] == identity and value["configDigest"] == digest(config),
+                "Retained mount recovery requires the bootstrapped generation")
+        return value
+
+    def require_recovery_authority():
+        value = state()
+        require(value["phase"] == "Ready" and not any(value.get(key) for key in
+                    ("fenceOperation", "freezeCompleted", "filesystemReadOnly")),
+                "Retained mount recovery requires an unfenced ready generation")
+
+    if adapter.mounted_source() is not None:
+        # Explicit bootstrap and resume already mounted the volume. Never take the
+        # control lock here: resume can be waiting on systemctl start.
+        require(state()["phase"] in ("New", "Ready", "Fenced", "Resuming"),
+                "Cannot start services for a stopped workspace")
+        adapter.verify_workspace_mount()
+        return
+
+    require_recovery_authority()
+    claim = config["volume"]
+    device = adapter.volume_device(claim)
+    deadline = time.monotonic() + DEVICE_WAIT_SECONDS
+    while not device.exists():
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, f"Retained volume device did not appear within {DEVICE_WAIT_SECONDS} seconds")
+        time.sleep(min(0.5, remaining))
+    with (state_dir / "control.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        require_recovery_authority()
+        adapter.mount(dict(claim, initializeOwner=False))
+
+
 def serve(config, state_dir, socket_path):
     require(os.geteuid() == 0, "Agent requires root")
     sock = Path(socket_path)
@@ -2086,7 +2174,7 @@ def serve(config, state_dir, socket_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("serve", "call", "export-backup", "restore-import"))
+    parser.add_argument("mode", choices=("serve", "call", "export-backup", "restore-import", "mount-for-services"))
     parser.add_argument("--config", default="/etc/minicloud-workspace/runtime.json")
     parser.add_argument("--state-dir", default="/var/lib/minicloud-workspace")
     parser.add_argument("--socket", default="/run/minicloud-workspace/control.sock")
@@ -2094,7 +2182,14 @@ def main():
     parser.add_argument("--operation-id")
     args = parser.parse_args()
     os.umask(0o077)
-    if args.mode == "serve":
+    if args.mode == "mount-for-services":
+        try:
+            require(os.geteuid() == 0, "Mount guard requires root")
+            mount_for_services(load_config(args.config), args.state_dir)
+        except (Blocked, OSError, ValueError, subprocess.SubprocessError) as error:
+            print(failure_response(error)["reason"], file=sys.stderr)
+            sys.exit(1)
+    elif args.mode == "serve":
         Path(args.state_dir).mkdir(mode=0o700, parents=True, exist_ok=True)
         serve(load_config(args.config), args.state_dir, args.socket)
     elif args.mode == "call":

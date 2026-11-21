@@ -368,7 +368,7 @@ ignored files and local credentials are not retained by that flow.
 The image installs:
 
 * `/opt/minicloud-workspace/{runtime.py,bootstrap.py,issue-t3-session.py,git-credential.py,copilot_provider.py,storage_tiers.py,scratch.env}`
-* `/etc/systemd/system/minicloud{work.slice,-workspace.service,-t3.service}`
+* `/etc/systemd/system/minicloud{work.slice,-workspace.service,-workspace-mount.service,-t3.service}`
 * `/etc/tmpfiles.d/minicloud-scratch.conf` and `/etc/profile.d/minicloud-scratch.sh` (see
   [Storage tiers](#storage-tiers))
 * `/opt/minicloud-workspace/image-manifest.json`
@@ -423,6 +423,24 @@ ownership marker blocks; resume never initializes/rewrites claims or formats any
 are checked. Unexpected mounts/devices/filesystems/claims, missing devices or nonempty local
 fallback directories block. The worker must separately prove exclusive provider ownership
 and previous-generation compute absence before attach. There is no detach/force-detach API.
+
+After successful primary bootstrap, managed T3 is enabled on that VM. On reboot
+`minicloud-workspace-mount.service` must succeed before T3 or either scratch
+unit may start. It checks the persisted generation and reopens `/workspace`
+using the recorded provider by-id device and ext4 UUID, then verifies the
+existing owner marker. It never formats a device or initializes ownership.
+Only an unfenced `Ready` generation can automatically remount; a clean stop
+does not authorize reopening it. Ephemeral storage is unchanged.
+
+The mount guard waits up to 45 seconds for the provider device. If the device
+is missing or identity checks fail, see
+`journalctl -b -u minicloud-workspace-mount.service`. T3 and scratch stay
+stopped; `/workspace` is not used as local fallback storage. After the same
+registered device is available, starting `minicloud-t3.service` retries the
+mount. The runtime reports `StorageUnavailable` until the retained mount can
+be verified; on its next successful observation the worker blocks gateway
+admission until both the retained mount and T3 readiness are verified again.
+Existing VMs get this behavior only when started on a newly qualified image.
 
 An **ephemeral** configuration must omit `volume`, `backup`, `restore`, and export hooks:
 

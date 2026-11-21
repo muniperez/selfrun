@@ -130,6 +130,8 @@ CADDY_PREVIOUS="${APP_DIR}/shared/${APP_NAME}.caddy.previous"
 CADDY_NEXT="${APP_DIR}/shared/${APP_NAME}.caddy.next"
 INFRA_COMPOSE_FILE="${APP_DIR}/infra.compose.json"
 APP_COMPOSE_FILE="${APP_DIR}/app.compose.json"
+ROLLOUT_DIR="${APP_DIR}/.rollout.pending"
+ROLLOUT_ACTIVE=0
 OBSERVABILITY_COMPOSE_FILE="${APP_DIR}/observability.compose.json"
 OBSERVABILITY_CONFIG_DIR="${APP_DIR}/shared/observability"
 # Separate provider-backed observability volume. Never share an unbounded log
@@ -213,6 +215,10 @@ phase() {
 }
 
 compose() {
+  local -a command_prefix=()
+  if [ -n "${COMPOSE_TIMEOUT:-}" ]; then
+    command_prefix=(timeout --foreground --kill-after=5 "${COMPOSE_TIMEOUT}")
+  fi
   local args=(-p "minicloud-${APP_NAME}")
   if [ -f "${INFRA_COMPOSE_FILE}" ]; then
     args+=(-f "${INFRA_COMPOSE_FILE}")
@@ -221,7 +227,7 @@ compose() {
   if [ -f "${APP_DIR}/compose.database-access.json" ]; then
     args+=(-f "${APP_DIR}/compose.database-access.json")
   fi
-  docker compose "${args[@]}" "$@"
+  "${command_prefix[@]}" docker compose "${args[@]}" "$@"
 }
 
 compose_diagnostics() {
@@ -317,6 +323,135 @@ start_worker_lease_watchdog() {
 stop_worker_lease_watchdog() {
   [ -z "${LEASE_WATCHDOG_PID}" ] || kill "${LEASE_WATCHDOG_PID}" 2>/dev/null || true
   [ -z "${LEASE_WATCHDOG_PID}" ] || wait "${LEASE_WATCHDOG_PID}" 2>/dev/null || true
+}
+
+running_project_containers() {
+  timeout --foreground --kill-after=5 20 docker ps \
+    --filter "label=com.docker.compose.project=minicloud-${APP_NAME}" \
+    --format '{{.ID}} {{.Label "com.docker.compose.service"}}'
+}
+
+begin_app_rollout() {
+  phase "snapshot_app_rollout"
+  local stage="${ROLLOUT_DIR}.next" containers id service image images='{}'
+  rm -rf -- "${stage}"
+  mkdir -m 700 "${stage}"
+  jq -r '.[].name' <<< "${SERVICES_JSON}" > "${stage}/candidate-services"
+  : > "${stage}/previous-services"
+  if [ -f "${APP_COMPOSE_FILE}" ]; then
+    containers="$(running_project_containers)"
+    while read -r id service; do
+      [ -n "${id}" ] || continue
+      if jq -e --arg service "${service}" '.services | has($service)' "${APP_COMPOSE_FILE}" >/dev/null; then
+        image="$(timeout --foreground --kill-after=5 20 docker inspect --format '{{.Image}}' "${id}")"
+        # A pull may move the previous tag to a different image.
+        images="$(jq -c --arg service "${service}" --arg image "${image}" '. + {($service): $image}' <<< "${images}")"
+      fi
+    done <<< "${containers}"
+    jq -r 'keys[]' <<< "${images}" > "${stage}/previous-services"
+    jq --argjson images "${images}" '.services |= with_entries(
+      if $images[.key] then .value.image = $images[.key] else . end
+    )' "${APP_COMPOSE_FILE}" > "${stage}/app.compose.json"
+  fi
+  if [ -f "${INFRA_COMPOSE_FILE}" ]; then cp "${INFRA_COMPOSE_FILE}" "${stage}/infra.compose.json"; fi
+  if [ -f "${CADDY_APP}" ]; then cp "${CADDY_APP}" "${stage}/previous.caddy"; fi
+  ROLLOUT_ACTIVE=1
+  mv -T "${stage}" "${ROLLOUT_DIR}"
+}
+
+finish_app_rollout() {
+  # Retire the entire journal atomically, even if cleanup is interrupted.
+  rm -rf -- "${ROLLOUT_DIR}.done" || return 1
+  mv -T "${ROLLOUT_DIR}" "${ROLLOUT_DIR}.done" || return 1
+  ROLLOUT_ACTIVE=0
+  if ! rm -rf -- "${ROLLOUT_DIR}.done"; then
+    echo "WARNING: Could not remove the retired rollout journal." >&2
+  fi
+}
+
+restore_rollout_file() {
+  local saved="$1" live="$2"
+  if [ -f "${saved}" ]; then
+    cp "${saved}" "${live}.restore" && mv -fT "${live}.restore" "${live}"
+  else
+    rm -f -- "${live}"
+  fi
+}
+
+restore_app_rollout() {
+  local containers id service candidate previous_caddy="${ROLLOUT_DIR}/previous.caddy"
+  local -a candidate_services=() stop_ids=() previous_services=()
+  if [ -f "${ROLLOUT_DIR}/services-started" ]; then
+    mapfile -t candidate_services < "${ROLLOUT_DIR}/candidate-services" || return 1
+    containers="$(running_project_containers)" || return 1
+    while read -r id service; do
+      [ -n "${id}" ] || continue
+      for candidate in "${candidate_services[@]}"; do
+        if [ "${service}" = "${candidate}" ]; then
+          stop_ids+=("${id}")
+          break
+        fi
+      done
+    done <<< "${containers}"
+    # Stop candidate writers first. Don't remove containers, volumes or infrastructure.
+    if [ "${#stop_ids[@]}" -gt 0 ]; then
+      timeout --foreground --kill-after=5 20 docker stop --time 5 "${stop_ids[@]}" || return 1
+    fi
+  fi
+  restore_rollout_file "${ROLLOUT_DIR}/app.compose.json" "${APP_COMPOSE_FILE}" || return 1
+  restore_rollout_file "${ROLLOUT_DIR}/infra.compose.json" "${INFRA_COMPOSE_FILE}" || return 1
+  mapfile -t previous_services < "${ROLLOUT_DIR}/previous-services" || return 1
+  if [ -f "${ROLLOUT_DIR}/services-started" ] && [ "${#previous_services[@]}" -gt 0 ]; then
+    COMPOSE_TIMEOUT=75 compose up -d --no-deps --pull never --wait --wait-timeout 60 "${previous_services[@]}" || return 1
+  fi
+  if [ -f "${ROLLOUT_DIR}/caddy-started" ] ||
+    { [ -f "${previous_caddy}" ] && ! cmp -s "${previous_caddy}" "${CADDY_APP}"; } ||
+    { [ ! -f "${previous_caddy}" ] && [ -f "${CADDY_APP}" ]; }; then
+    : > "${ROLLOUT_DIR}/caddy-started" || return 1
+    if [ -f "${previous_caddy}" ]; then
+      sudo install -m 0644 "${previous_caddy}" "${CADDY_APP}" || return 1
+    else
+      sudo rm -f "${CADDY_APP}" || return 1
+    fi
+    reload_caddy || return 1
+  fi
+  finish_app_rollout
+}
+
+recover_app_rollout() {
+  local outcome=no_previous log="${APP_DIR}/shared/rollout-recovery.log"
+  [ -d "${ROLLOUT_DIR}" ] || return 0
+  if [ -s "${ROLLOUT_DIR}/previous-services" ]; then outcome=restored; fi
+  # Complete recovery independently of the SSH output stream. Retain the
+  # journal until all steps finish so an interrupted rollback can be replayed.
+  if restore_app_rollout > "${log}" 2>&1; then
+    if [ "${1:-}" = current ]; then
+      echo "__MINICLOUD_DEPLOY_ROLLBACK__=${outcome}"
+    else
+      echo "Recovered interrupted app rollout before starting deployment."
+    fi
+    if [ "${outcome}" = restored ]; then
+      echo "Rollback restored the previous app services and their routing."
+    else
+      echo "Rollback stopped any candidate services; no previous running revision was available."
+    fi
+  else
+    tail -n 20 "${log}" >&2 || true
+    echo "__MINICLOUD_DEPLOY_ROLLBACK__=failed"
+    echo "WARNING: Rollback did not complete. Inspect the target host and resolve the failure before redeploying." >&2
+    return 1
+  fi
+}
+
+on_deploy_exit() {
+  local status="$?"
+  trap - EXIT ERR
+  trap ':' TERM INT
+  stop_worker_lease_watchdog
+  if [ "${ROLLOUT_ACTIVE}" = 1 ]; then
+    recover_app_rollout current || status=1
+  fi
+  exit "${status}"
 }
 
 activate_caddy_with_lease_fence() {
@@ -2004,7 +2139,7 @@ verify_local_health() {
     if [ "${running}" -ge "${health_limit}" ]; then
       if ! reap_one_health_check; then
         stop_health_checks
-        trap - TERM INT
+        trap 'exit 143' TERM INT
         cat "${health_dir}"/*.failure 2>/dev/null || true
         rm -rf "${health_dir}"
         compose_diagnostics
@@ -2017,7 +2152,7 @@ verify_local_health() {
   while [ "${running}" -gt 0 ]; do
     if ! reap_one_health_check; then
       stop_health_checks
-      trap - TERM INT
+      trap 'exit 143' TERM INT
       cat "${health_dir}"/*.failure 2>/dev/null || true
       rm -rf "${health_dir}"
       compose_diagnostics
@@ -2025,7 +2160,7 @@ verify_local_health() {
     fi
     running=$((running - 1))
   done
-  trap - TERM INT
+  trap 'exit 143' TERM INT
   rm -rf "${health_dir}"
 }
 
@@ -2311,7 +2446,7 @@ install_runtime_agent() {
 main() {
   preflight
   start_worker_lease_watchdog
-  trap 'stop_worker_lease_watchdog' EXIT
+  trap on_deploy_exit EXIT
   acquire_lock
   install_runtime_maintenance
   if jq -e '.asset_publication != null' "${PAYLOAD_FILE}" >/dev/null; then
@@ -2331,6 +2466,7 @@ main() {
     echo "__MINICLOUD_DEPLOY_COMPLETE__=${GITHUB_SHA}"
     return
   fi
+  recover_app_rollout
   prepare_paths
   prepare_minicloud_registry
   verify_retained_images
@@ -2346,15 +2482,20 @@ main() {
     phase "storage_mounts"
     sudo python3 "$(dirname "${PAYLOAD_FILE}")/storage-volume.py" "${PAYLOAD_FILE}"
   fi
+  trap 'exit 143' TERM INT
+  begin_app_rollout
   render_next_configs
   validate_next_configs
   migrate_postgres_if_needed
   ensure_postgres_data_owner
   start_infra
   sync_postgres_password
+  : > "${ROLLOUT_DIR}/services-started"
   start_app_services
   verify_local_health
+  : > "${ROLLOUT_DIR}/caddy-started"
   activate_caddy_with_lease_fence
+  finish_app_rollout
   install_runtime_agent
   record_deploy
   deploy_observability_optional

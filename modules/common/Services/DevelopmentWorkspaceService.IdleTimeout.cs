@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Minicloud.Common.Models;
 
@@ -10,17 +11,24 @@ public sealed partial class DevelopmentWorkspaceService
 
     public Task<DevelopmentWorkspace> UpdateIdleTimeoutAsync(string workspaceId, string organizationId,
         int? idleTimeoutMinutes, CancellationToken ct) =>
-        UpdateIdleTimeoutAsync(workspaceId, organizationId, idleTimeoutMinutes, keepRunning: false, ct);
+        UpdateIdleTimeoutAsync(workspaceId, organizationId, idleTimeoutMinutes, keepRunning: false, actorId: null, ct);
 
     public Task<DevelopmentWorkspace> UpdateIdleTimeoutAsync(string workspaceId, string organizationId,
         int? idleTimeoutMinutes, bool keepRunning, CancellationToken ct) =>
+        UpdateIdleTimeoutAsync(workspaceId, organizationId, idleTimeoutMinutes, keepRunning, actorId: null, ct);
+
+    public Task<DevelopmentWorkspace> UpdateIdleTimeoutAsync(string workspaceId, string organizationId,
+        int? idleTimeoutMinutes, bool keepRunning, string actorId, CancellationToken ct) =>
         AtomicAsync(async () =>
         {
             ValidateIdleTimeout(idleTimeoutMinutes);
             var workspace = await FindAsync(workspaceId, organizationId, ct);
             var now = Now;
             var timeoutMinutes = EffectiveIdleTimeout(idleTimeoutMinutes, keepRunning);
-            var changed = workspace.IdleTimeoutMinutes != idleTimeoutMinutes || workspace.KeepRunning != keepRunning;
+            var previousIdleTimeoutMinutes = workspace.IdleTimeoutMinutes;
+            var previousKeepRunning = workspace.KeepRunning;
+            var policyChanged = previousIdleTimeoutMinutes != idleTimeoutMinutes || previousKeepRunning != keepRunning;
+            var changed = policyChanged;
             foreach (var vm in workspace.Vms)
             {
                 if (!CanCancelIdleStop(vm) || vm.ShutdownDeadline is null || HasIdleElapsed(vm, timeoutMinutes, now))
@@ -39,6 +47,21 @@ public sealed partial class DevelopmentWorkspaceService
                 workspace.KeepRunning = keepRunning;
                 Touch(workspace);
             }
+            if (policyChanged && actorId is not null)
+            {
+                ValidateText(actorId, 256);
+                db.AuditEvents.Add(new AuditEvent
+                {
+                    Id = ids.NewId("audit"), OrganizationId = workspace.OrganizationId, Actor = actorId, CreatedAt = now,
+                    Action = "development_workspace.idle_timeout_changed",
+                    Details = JsonSerializer.Serialize(new
+                    {
+                        workspaceId = workspace.Id,
+                        previousPolicy = new { idleTimeoutMinutes = previousIdleTimeoutMinutes, keepRunning = previousKeepRunning },
+                        newPolicy = new { idleTimeoutMinutes, keepRunning }
+                    })
+                });
+            }
             return workspace;
         }, ct);
 
@@ -53,7 +76,7 @@ public sealed partial class DevelopmentWorkspaceService
     private async Task<bool> IsIdleAsync(DevelopmentWorkspaceVm vm, int? timeoutMinutes, CancellationToken ct)
     {
         var now = Now;
-        return vm.DesiredState == "running" && vm.Phase == "ready" && HasIdleElapsed(vm, timeoutMinutes, now)
+        return vm.DesiredState == "running" && ReportedPhase(vm) == "ready" && HasIdleElapsed(vm, timeoutMinutes, now)
             && HasFreshHeartbeat(vm, now) && !await HasUnresolvedTasksAsync(vm, ct);
     }
 

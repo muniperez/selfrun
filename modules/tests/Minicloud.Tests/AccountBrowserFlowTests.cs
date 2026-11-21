@@ -151,16 +151,24 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     public async Task SettingsRequiresBrowserSessionCsrfAndRotatesAllLocalSessions()
     {
         var (cookie, csrf) = await Login();
-        using (var invalid = Submit("settings", LoginFields(), cookie))
+        using (var invalid = Submit("settings", PasswordChangeFields(), cookie))
         {
             var response = await _client.SendAsync(invalid);
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
-        using var request = Submit("settings", LoginFields(), cookie);
+        using var request = Submit("settings", PasswordChangeFields(), cookie + "; csrf_token_test=settings-csrf-cookie");
         request.Headers.Add("X-Minicloud-CSRF", csrf);
         var changed = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+        Assert.NotEmpty((await changed.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.CsrfToken);
         Assert.NotEqual(cookie, LocalCookie(changed));
+        var upstream = Assert.Single(_factory.Upstream.Requests, x => x.Uri.AbsolutePath == "/self-service/settings");
+        Assert.Equal($"http://kratos:4433/self-service/settings?flow={FlowId}", upstream.Uri.AbsoluteUri);
+        Assert.Equal(Dashboard, upstream.Origin);
+        Assert.Equal("application/json", upstream.Accept);
+        Assert.Contains("ory_kratos_session=synthetic-ory-session", upstream.Cookie);
+        Assert.Contains("csrf_token_test=settings-csrf-cookie", upstream.Cookie);
+        Assert.DoesNotContain(cookie, upstream.Cookie);
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
         var sessions = await db.BrowserSessions.AsNoTracking().ToListAsync();
@@ -169,6 +177,53 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         using var stale = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
         stale.Headers.Add("Cookie", cookie);
         Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(stale)).StatusCode);
+    }
+
+    [Fact]
+    public async Task SettingsPasswordCanCompleteAfterKratosBreachLookupRetries()
+    {
+        var (cookie, csrf) = await Login();
+        _factory.Upstream.SettingsPasswordDelay = TimeSpan.FromSeconds(11);
+        using var request = Submit("settings", PasswordChangeFields(), cookie);
+        request.Headers.Add("X-Minicloud-CSRF", csrf);
+
+        var changed = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+        Assert.NotEqual(cookie, LocalCookie(changed));
+    }
+
+    [Theory]
+    [InlineData(400, """{"id":"11111111-2222-4333-8444-555555555555","type":"browser","state":"show_form","ui":{"nodes":[{"group":"password","attributes":{"name":"password","type":"password","value":"synthetic-new-password"},"messages":[{"id":4000032,"type":"error","text":"private upstream diagnostic"}]}]}}""", "auth_password_rejected")]
+    [InlineData(400, """{"error":{"code":400,"reason":"private upstream diagnostic"}}""", "auth_flow_invalid")]
+    [InlineData(403, """{"error":{"id":"session_refresh_required","code":403,"reason":"private upstream diagnostic"},"redirect_browser_to":"http://kratos:4433/self-service/login/browser?refresh=true"}""", "session_refresh_required")]
+    [InlineData(403, """{"error":{"id":"security_csrf_violation","code":403}}""", "csrf_invalid")]
+    [InlineData(410, """{"error":{"id":"self_service_flow_expired","code":410},"redirect_browser_to":"http://kratos:4433/self-service/settings/browser","use_flow_id":"22222222-2222-4333-8444-555555555555"}""", "auth_flow_expired")]
+    [InlineData(422, """{"error":{"id":"browser_location_change_required","code":422},"redirect_browser_to":"http://kratos:4433/self-service/login/browser"}""", "auth_flow_invalid")]
+    [InlineData(503, """{"error":{"code":503,"reason":"private upstream diagnostic"}}""", "auth_unavailable")]
+    public async Task SettingsPasswordErrorsAreActionableAndDoNotRotateTheSession(int upstreamStatus, string body, string code)
+    {
+        var (cookie, csrf) = await Login();
+        _factory.Upstream.Requests.Clear();
+        _factory.Upstream.SettingsPasswordError = (upstreamStatus, body);
+        using var request = Submit("settings", PasswordChangeFields(), cookie);
+        request.Headers.Add("X-Minicloud-CSRF", csrf);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(upstreamStatus == 422 ? 400 : upstreamStatus, (int)response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Equal(code, JsonDocument.Parse(content).RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.DoesNotContain("private upstream diagnostic", content);
+        Assert.DoesNotContain("synthetic-new-password", content);
+        Assert.DoesNotContain("http://kratos:", content);
+        Assert.Null(response.Headers.Location);
+        Assert.False(response.Headers.Contains("Set-Cookie"));
+        Assert.Equal("no-store", response.Headers.CacheControl!.ToString());
+        Assert.Equal("/self-service/settings", Assert.Single(_factory.Upstream.Requests).Uri.AbsolutePath);
+        using var session = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+        session.Headers.Add("Cookie", cookie);
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(session)).StatusCode);
     }
 
     [Fact]
@@ -890,6 +945,9 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     private static object LoginFields() =>
         new { csrf_token = "synthetic-flow-csrf", identifier = "operator@example.test", password = "synthetic-password", method = "password" };
 
+    private static object PasswordChangeFields() =>
+        new { csrf_token = "synthetic-flow-csrf", password = "synthetic-new-password", method = "password" };
+
     private static HttpRequestMessage Submit(string kind, object fields, string? cookie = null, bool? keepSignedIn = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/account/flows/{kind}?flow={FlowId}" +
@@ -978,6 +1036,8 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         public List<(Uri Uri, string Cookie, string Origin, string Body, string Accept)> Requests { get; } = [];
         public string Identity { get; set; } = IdentityId;
         public int Status { get; set; } = 200;
+        public TimeSpan SettingsPasswordDelay { get; set; }
+        public (int Status, string Body)? SettingsPasswordError { get; set; }
         public bool Google { get; set; }
         public string ProviderRedirect { get; set; } = GoogleUrl;
         public int ProviderStatus { get; set; } = 422;
@@ -987,6 +1047,28 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             Requests.Add((request.RequestUri!, request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single() : "",
                 request.Headers.TryGetValues("Origin", out var origin) ? origin.Single() : "", body, request.Headers.Accept.ToString()));
+            if (request.RequestUri!.AbsolutePath == "/self-service/settings" && request.Method == HttpMethod.Post &&
+                body.Contains("\"method\":\"password\"", StringComparison.Ordinal))
+            {
+                if (SettingsPasswordDelay > TimeSpan.Zero)
+                    await Task.Delay(SettingsPasswordDelay, cancellationToken);
+                if (SettingsPasswordError is { } error)
+                {
+                    var rejected = new HttpResponseMessage((HttpStatusCode)error.Status)
+                    {
+                        Content = new StringContent(error.Body, Encoding.UTF8, "application/json")
+                    };
+                    if (error.Status == 403)
+                        rejected.Headers.Add("Set-Cookie", "ory_kratos_continuity=synthetic-continuity; Path=/; HttpOnly");
+                    return rejected;
+                }
+                var accepted = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { id = FlowId, type = "browser", state = "success", identity = new { id = Identity } })
+                };
+                accepted.Headers.Add("Set-Cookie", "ory_kratos_session=updated-ory-session; Path=/; HttpOnly");
+                return accepted;
+            }
             return Respond(request, body);
         }
 

@@ -1,6 +1,7 @@
 [Unit]
 Description=Bind git-ignored build outputs in /workspace/repos onto local scratch
-After=minicloud-workspace.service
+After=minicloud-workspace.service minicloud-workspace-mount.service
+Requires=minicloud-workspace-mount.service
 Before=minicloud-t3.service minicloud-scratch-watch.service
 ConditionPathIsDirectory=/workspace/repos
 

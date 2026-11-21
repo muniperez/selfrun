@@ -35,9 +35,9 @@ class CopilotProviderTests(unittest.TestCase):
         credentials.write_bytes(b"synthetic-private-login")
         threads = self.settings.parent / "statev2.sqlite"
         threads.write_bytes(b"synthetic-existing-thread")
-        first = provider.configure(self.settings)
+        first = provider.configure(self.settings, agents=[])
         written = self.settings.read_bytes()
-        second = provider.configure(self.settings)
+        second = provider.configure(self.settings, agents=[])
         self.assertEqual(first["instanceId"], second["instanceId"])
         self.assertEqual(second["state"], "AlreadyConfigured")
         self.assertEqual(written, self.settings.read_bytes())
@@ -54,14 +54,14 @@ class CopilotProviderTests(unittest.TestCase):
             driver="acpRegistry", enabled=False, environment=[{"name": "HOME", "value": "/custom"}],
             config=dict(source="local", commandPath="copilot", commandArgs=["--acp"]))}})
         before = self.settings.read_bytes()
-        self.assertEqual(provider.configure(self.settings)["instanceId"], "my-copilot")
+        self.assertEqual(provider.configure(self.settings, agents=[])["instanceId"], "my-copilot")
         self.assertEqual(before, self.settings.read_bytes())
 
     def test_existing_stdio_argument_order_and_extra_options_do_not_duplicate(self):
         self.write_settings({"providerInstances": {"mine": dict(
             driver="acpRegistry", config=dict(source="local", commandPath="/custom/copilot",
                                               commandArgs=["--stdio", "--acp", "--model", "custom"]))}})
-        self.assertEqual(provider.configure(self.settings)["instanceId"], "mine")
+        self.assertEqual(provider.configure(self.settings, agents=[])["instanceId"], "mine")
         self.assertEqual(len(json.loads(self.settings.read_text())["providerInstances"]), 1)
 
     def test_installed_agents_are_seeded_once_and_user_choices_are_kept(self):
@@ -106,12 +106,12 @@ class CopilotProviderTests(unittest.TestCase):
                 self.settings.parent.mkdir(parents=True, exist_ok=True)
                 self.settings.write_text(content)
                 with self.assertRaises(Blocked):
-                    provider.configure(self.settings)
+                    provider.configure(self.settings, agents=[])
                 self.assertEqual(content, self.settings.read_text())
         link = self.root / "linked-settings"
         link.symlink_to(self.settings)
         with self.assertRaisesRegex(Blocked, "symlink"):
-            provider.configure(link)
+            provider.configure(link, agents=[])
 
     def executable(self, response):
         executable = self.root / "copilot"

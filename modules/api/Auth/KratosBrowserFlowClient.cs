@@ -41,6 +41,9 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
     private const string UpstreamGoogleCallbackPath = "/self-service/methods/oidc/callback/google";
     private const int ProviderValueLimit = 4096;
     private static readonly HashSet<string> GoogleAuthorizationHosts = new(StringComparer.OrdinalIgnoreCase) { "accounts.google.com" };
+    private static readonly TimeSpan FlowTimeout = TimeSpan.FromSeconds(10);
+    // Kratos v1.3.1 can spend about 20 seconds retrying an unreachable breach lookup before falling back.
+    private static readonly TimeSpan PasswordChangeTimeout = TimeSpan.FromSeconds(30);
     private readonly KratosOptions _options = options.Value;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly HashSet<string> Fields = new(StringComparer.Ordinal)
@@ -102,21 +105,21 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         {
             request.Content = new StringContent(SerializeFields(fields), Encoding.UTF8, "application/json");
         }
+        var changesPassword = kind == "settings" && operation == "submit" && fields is { } body &&
+            body.TryGetProperty("method", out var method) && method.ValueEquals("password");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        timeout.CancelAfter(changesPassword ? PasswordChangeTimeout : FlowTimeout);
         var upstreamToken = timeout.Token;
         try
         {
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, upstreamToken);
-            var updatedCookies = ReadCookies(response);
-            foreach (var cookie in updatedCookies)
-            {
-                if (cookie.Value.Length == 0) cookieJar.Remove(cookie.Key);
-                else cookieJar[cookie.Key] = cookie.Value;
-            }
             if (response.StatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound) throw ExpiredFlow();
             if (response.StatusCode == HttpStatusCode.Unauthorized)
                 throw new AccountFlowException("unauthenticated", 401, "Authentication was rejected.");
+            if (kind == "settings" &&
+                (response.StatusCode == HttpStatusCode.Forbidden || changesPassword && response.StatusCode == HttpStatusCode.BadRequest) &&
+                await ReadSettingsErrorAsync(response, id, upstreamToken) is { } settingsError)
+                throw settingsError;
             if (response.StatusCode == HttpStatusCode.Forbidden)
                 throw new AccountFlowException("csrf_invalid", 403, "The account form is invalid.");
             if ((int)response.StatusCode >= 500) throw new KratosUnavailableException();
@@ -126,6 +129,12 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
                 if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity)
                     throw InvalidFlow();
                 throw new KratosUnavailableException();
+            }
+            var updatedCookies = ReadCookies(response);
+            foreach (var cookie in updatedCookies)
+            {
+                if (cookie.Value.Length == 0) cookieJar.Remove(cookie.Key);
+                else cookieJar[cookie.Key] = cookie.Value;
             }
             var payload = await ReadJsonAsync(response, upstreamToken);
             var verified = operation == "submit" &&
@@ -205,7 +214,7 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         AddCookies(request, FlowCookies(cookies));
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        timeout.CancelAfter(FlowTimeout);
         try
         {
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
@@ -258,7 +267,7 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         var cookieJar = FlowCookies(cookies);
         AddCookies(request, cookieJar);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        timeout.CancelAfter(FlowTimeout);
         try
         {
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
@@ -436,6 +445,39 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         }
         using var document = JsonDocument.Parse(buffer.ToArray(), new JsonDocumentOptions { MaxDepth = 32 });
         return document.RootElement.Clone();
+    }
+
+    private static async Task<AccountFlowException?> ReadSettingsErrorAsync(
+        HttpResponseMessage response, Guid? id, CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentType?.MediaType != "application/json")
+            return null;
+        try
+        {
+            var payload = await ReadJsonAsync(response, cancellationToken);
+            if (payload.ValueKind != JsonValueKind.Object)
+                return null;
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                // The redirect and continuity cookie belong to Kratos. Require a fresh Minicloud sign-in and form instead.
+                if (payload.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object &&
+                    error.TryGetProperty("id", out var errorId) && errorId.ValueKind == JsonValueKind.String &&
+                    errorId.ValueEquals("session_refresh_required"))
+                    return new AccountFlowException("session_refresh_required", 403, "Log out and sign in again before updating account settings.");
+            }
+            else if (payload.Deserialize<UpstreamFlow>(JsonOptions) is { Type: "browser", Ui.Nodes: { } nodes } flow &&
+                Guid.TryParse(flow.Id, out var returnedId) && returnedId == id &&
+                nodes.Any(node => node is { Group: "password", Attributes.Name: "password" } &&
+                    node.Messages.Any(message => message?.Type == "error")))
+            {
+                return new AccountFlowException("auth_password_rejected", 400, "The password was rejected. Choose a different password and try again.");
+            }
+        }
+        catch (JsonException)
+        {
+            // Unrecognized error bodies still use the sanitized status-based rejection below.
+        }
+        return null;
     }
 
     private static AccountFlowMessage[] SanitizeMessages(UpstreamMessage[] messages) =>

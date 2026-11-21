@@ -24,6 +24,7 @@ namespace Minicloud.Worker.Pipeline.Steps;
 /// </summary>
 public sealed partial class SshDeployStep : IPipelineStep
 {
+    internal const string RollbackMarker = "__MINICLOUD_DEPLOY_ROLLBACK__=";
     public const string FailureCode = "docker_build_failed";
 
     public string Name => "ssh-deploy";
@@ -187,8 +188,9 @@ public sealed partial class SshDeployStep : IPipelineStep
             var failureSummary = string.IsNullOrWhiteSpace(failureLine)
                 ? string.Empty
                 : $" Runtime error: {failureLine}";
+            var rollbackSummary = ResolveRollbackSummary(result.OutputLines, failureCode);
             throw new PipelineStepException(failureCode,
-                $"remote-deploy.sh failed (exit {result.ExitCode}, completion marker {(result.CompletionMarkerFound ? "found" : "missing")}).{failureSummary} Last output:\n{excerpt}");
+                $"remote-deploy.sh failed (exit {result.ExitCode}, completion marker {(result.CompletionMarkerFound ? "found" : "missing")}).{failureSummary}{rollbackSummary} Last output:\n{excerpt}");
         }
 
         var observed = result.OutputLines.LastOrDefault(x => x.StartsWith("__MINICLOUD_BUILD_PLATFORM__=", StringComparison.Ordinal))?.Split('=', 2).Last();
@@ -245,6 +247,20 @@ public sealed partial class SshDeployStep : IPipelineStep
             char.IsAsciiLetterOrDigit(character) || character is '_' or '-')
             ? failureCode
             : FailureCode;
+    }
+
+    private static string ResolveRollbackSummary(IReadOnlyList<string> outputLines, string failureCode)
+    {
+        var marker = outputLines.LastOrDefault(line => line.StartsWith(RollbackMarker, StringComparison.Ordinal));
+        return (marker is null ? null : marker[RollbackMarker.Length..].Trim()) switch
+        {
+            "restored" => " Rollback restored the previous app services and their routing.",
+            "no_previous" => " No previous running revision was available; the failed candidate was stopped.",
+            "failed" => " Rollback did not complete. Inspect the target host and resolve the failure before redeploying.",
+            _ when failureCode == HealthCheckFinalizeStep.FailureCode =>
+                " The runtime did not confirm rollback. Inspect the target host before redeploying.",
+            _ => string.Empty,
+        };
     }
 
     private async Task VerifyRetainedImagesAsync(

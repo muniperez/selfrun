@@ -98,6 +98,8 @@ public sealed partial class DevelopmentWorkspaceApiTests : IAsyncLifetime
             new DevelopmentWorkspaceDiscardRequest(0, true, true))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await other.PutAsJsonAsync($"{prefix}/vms/{vm.Id}/tasks/task/lease?organizationId=org",
             new DevelopmentWorkspaceGenerationRequest(0))).StatusCode);
+        await using var auditScope = factory.Services.CreateAsyncScope();
+        Assert.Empty(await auditScope.ServiceProvider.GetRequiredService<MinicloudDbContext>().AuditEvents.ToListAsync());
         await AssertNoCompute();
     }
 

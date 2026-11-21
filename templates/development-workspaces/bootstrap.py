@@ -111,6 +111,8 @@ def bootstrap(config_path, enrollment_path, state_dir):
                 time.sleep(1)
         require(t3_descriptor_matches(descriptor, t3), "Qualified T3 version or protocol is not ready")
         if c["kind"] == "primary":
+            # Only a successfully bootstrapped primary should start T3 automatically on this VM.
+            run(["systemctl", "enable", "minicloud-t3.service"])
             try:
                 run(["systemctl", "start", "minicloud-t3-connect.service"], timeout=15)
             except Blocked:

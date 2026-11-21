@@ -745,6 +745,16 @@ the deployment failure code and message. Secret-store outages report
 readiness timeout. CLI 2.0.1 requires the updated control API's
 `POST /api/deployments/validate-secrets` endpoint for remote secret checks.
 
+If an app revision fails its health check on the server, the deployment stays
+failed with `health_check_failed`. Minicloud stops the candidate and restores the
+previous running revision when available. The public URL may briefly reach the
+candidate or be unavailable during the update. Named volumes are reused, not
+reverted: writes made by the candidate before the failure remain. If there was no
+previous running revision, the failed candidate is stopped and no new route is
+activated. If recovery does not complete, check the deployment logs and resolve
+the reported problem on the target host before redeploying. A later deployment
+attempts recovery once before starting another rollout.
+
 ## Local build visibility
 
 CLI 2.0.2 creates a **Waiting for build** deployment before building local images.
