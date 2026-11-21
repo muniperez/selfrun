@@ -2448,7 +2448,6 @@ main() {
   start_worker_lease_watchdog
   trap on_deploy_exit EXIT
   acquire_lock
-  recover_app_rollout
   install_runtime_maintenance
   if jq -e '.asset_publication != null' "${PAYLOAD_FILE}" >/dev/null; then
     mkdir -p "${APP_DIR}"
@@ -2467,6 +2466,7 @@ main() {
     echo "__MINICLOUD_DEPLOY_COMPLETE__=${GITHUB_SHA}"
     return
   fi
+  recover_app_rollout
   prepare_paths
   prepare_minicloud_registry
   verify_retained_images

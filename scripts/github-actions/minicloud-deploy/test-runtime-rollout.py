@@ -15,8 +15,12 @@ FOOTER = '\nif [ "${2:-}" = "--observability" ]; then'
 STUBS = r'''
 preflight() { :; }
 acquire_lock() { :; }
-install_runtime_maintenance() { [ "${RECOVER_ONLY}" = 0 ] || exit 12; }
-prepare_paths() { mkdir -p "$APP_DIR/shared"; touch "$ENV_FILE"; }
+install_runtime_maintenance() { :; }
+prepare_paths() {
+  [ "${RECOVER_ONLY}" = 0 ] || exit 12
+  mkdir -p "$APP_DIR/shared"
+  touch "$ENV_FILE"
+}
 verify_retained_images() { :; }
 build_artifacts() { :; }
 verify_image_asset_requirements() { :; }

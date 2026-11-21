@@ -83,6 +83,8 @@ if port == os.environ.get('FAIL_PORT'):
     update(-1)
     print(f'failed {port}', file=sys.stderr)
     raise SystemExit(22)
+if os.environ.get('FAIL_PORT') or os.environ['CANCEL_PROBES'] == '1':
+    time.sleep(30)
 time.sleep(3)
 with (state / 'events').open('a') as events: events.write(f'end:{port}\n')
 update(-1)
@@ -123,13 +125,15 @@ def run_case(limit, fail_port=None, cancel=False):
         sudo.write_text('#!/bin/sh\n[ "$*" = "-n cloud-init status --wait" ]\n')
         sudo.chmod(0o755)
         env = {**os.environ, 'PATH': f'{bindir}:{os.environ["PATH"]}',
-               'STATE': str(state), 'CALLS': str(calls), 'FAIL_PORT': str(fail_port or '')}
+               'STATE': str(state), 'CALLS': str(calls), 'FAIL_PORT': str(fail_port or ''),
+               'CANCEL_PROBES': str(int(cancel))}
         started = time.monotonic()
         process = subprocess.Popen(['bash', str(script), str(payload)], env=env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if cancel or fail_port:
             deadline = time.monotonic() + 10
-            ready = lambda: (state / 'events').read_text().strip() if cancel else (state / 'terminal_failure').exists()
+            ready = lambda: (len((state / 'events').read_text().splitlines()) == limit
+                             if cancel else (state / 'terminal_failure').exists())
             while not ready():
                 assert time.monotonic() < deadline, 'probe cancellation boundary was not reached'
                 if process.poll() is not None:
