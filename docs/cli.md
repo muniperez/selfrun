@@ -780,6 +780,12 @@ The default is 2 and the supported range is 1 to 10. Use
 All selected local builds finish before any uploads start. The CLI stages
 images in the local Docker image store and uploads up to two at a time.
 
+## Publish versioned assets
+
+Define a build under `assets.<name>` in `minicloud.yml` with its `sourcePath`, `dockerfile`, and `outputPath`. Run `minicloud assets publish <name>` from the project. The CLI uploads the source for a server build, follows the deployment, and prints the release ID. With multiple environments, pass `--environment <name>`.
+
+A service can consume the asset through `assetMounts.<name>`. Unpinned mounts pick up a published release without restarting the service. Set the mount's `releaseId` to keep using a specific version.
+
 ## Durable app storage
 
 Hetzner apps can declare named writable volumes under each service’s `storage` mapping. See [configuration, retention and growth](durable-storage.md). Storage changes participate in deployment change detection.
