@@ -3,10 +3,122 @@
 Issue #90 supersedes the required laptop journal and hidden bootstrap identity.
 This is source functionality, **not publication or live-provider qualification**.
 The [seed release/qualification gate](seed.md) still applies: an exact signed,
-compatible server release is mandatory in the default mode. Never bypass compatibility, publish
+compatible server release is mandatory in signed mode. Never bypass compatibility, publish
 artifacts, or substitute an unqualified release just to make seed proceed.
 
+## Guided installation
+
+Both paths below lead to the same `seed` wizard. No JSON, Python, or helper
+script is needed on the workstation. Use a terminal, OpenSSH client tools,
+and an existing user-owned Ed25519 or RSA (at least 3072-bit) OpenSSH private
+key. Enter its absolute path (`~/` also works on Unix). If it is encrypted,
+unlock it in your own SSH agent and opt in when
+prompted. Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
+See [provider permissions and host requirements](seed.md#before-starting).
+
+### Download a candidate
+
+Open the [CLI seed review Actions runs](https://github.com/muniventures/minicloud/actions?query=workflow%3A%22CLI+seed+review%22).
+Choose a successful run for the commit you reviewed, then download
+**minicloud-seed-linux-arm64** from its summary or Artifacts section. GitHub
+requires sign-in for artifact downloads and retains this artifact for 30 days.
+This unsigned review build is for ARM64 glibc Linux, not a published CLI or
+signed server release. Check the source revision and SHA256 in the run
+summary; a checksum alone does not establish provenance. Unzip the downloaded
+Actions artifact in a directory you own, then run:
+
+```sh
+sha256sum --check checksums.txt
+tar -xzf minicloud-seed-linux-arm64.tar.gz
+./minicloud help seed
+./minicloud seed
+```
+
+`help seed` reports `Embedded TEST source:` with the exact revision when
+`local` is available. The review candidate and future CLI archives built
+by the updated CLI release workflow carry it. Existing releases, ordinary
+`dotnet publish` without the `Seed` profile, and the ordinary source-mode CLI
+installers do not gain it. Even in a signed CLI archive, choosing `local`
+does not select a signed **server** release.
+
+### Publish from a clone
+
+Install Git and the .NET 10 SDK. From a clone, check out a reviewed commit
+that contains the `Seed` publish profile. A locally committed revision works
+without pushing; uncommitted changes are refused. On Linux:
+
+```sh
+git clone https://github.com/muniventures/minicloud.git
+cd minicloud
+git checkout --detach <reviewed-commit-containing-guided-seed>
+dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
+.local/artifacts/seed-cli/Minicloud.Cli seed
+```
+
+The profile builds a standalone executable for your SDK's platform and picks
+up the checked-out Git revision automatically. It embeds only tracked files
+from that commit, not your working files or credentials. The executable
+prepares the archive and shows its SHA256 and revision on the plan; no
+checkout is required to run it afterward. The VPS builds the selected source
+natively using the existing installer (see the
+[local-source limitations](#explicit-local-source-alternative) below).
+
+### Review, install, and resume
+
+1. Choose **`local`** to use the executable's matching committed source for a
+   **test installation**. Only choose **`signed`** if you have an actual
+   compatible published `server-v…` tag and independently installed Cosign
+   2.6.5. No compatible signed server release is currently available. Missing
+   assets or incompatibility stop that operation; they never fall back to source.
+2. Select your provider, exact region and size IDs, architecture, dashboard
+   hostname and separate application suffix. Supply your user-owned SSH key and
+   use the hidden provider-credential prompt. Verify the provider account,
+   selected source, quote, and exclusions. Typing `create` approves the exact
+   displayed plan only, and asserts you are the sole authorized creator with
+   no unresolved request. Nothing is allocated until then. Billing continues
+   through pauses, DNS propagation, and install failures.
+3. Confirm the original server ID in your authenticated provider console. Run
+   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` **in that console**, and
+   paste its `SHA256:...` fingerprint into the wizard. Never use a fingerprint
+   obtained just by scanning the public IP. Review the separate pinned-host
+   plan and type `install` to approve it.
+4. Set the two printed A records for the dashboard and API and remove conflicting
+   records. Do not point the application wildcard at the control-plane VPS.
+   When HTTPS is verified, use the protected recovery export and enter the
+   one-time token manually at the printed `/setup` URL. Keep an independent
+   encrypted copy of the recovery material. Then sign in or run the printed
+   `minicloud instance add` and `minicloud login` commands.
+
+Rerun `minicloud seed` in the same terminal environment to resume with the same
+state and executable. The default protected directory is
+`$XDG_CONFIG_HOME/minicloud/seed-guided` (normally `~/.config/minicloud/seed-guided`).
+`minicloud seed --state-dir PATH` selects a separate owner-only state directory
+for an independent installation; do **not** use it to bypass an unresolved
+create. Preserve the seed ID, source archive, key and state. No provider token
+is saved. If the create response was lost or the address was not yet visible,
+resume may prompt for the token for a read-only inventory lookup. Empty
+inventory is not evidence that a create failed: reconcile with the provider,
+never delete the state or try another create. After the target is known and
+its fingerprint is verified, SSH continuation does not require the token.
+Keep guided state on a protected local filesystem (with hard links on Unix).
+Abandoned staging files do not block resume or authorize creation; a published
+dispatch marker always prevents another create.
+
+For a TEST install, the wizard checks the archive against the executable's
+embedded source before planning and on resume. Canceling the initial credential
+prompt leaves no session or provider request; rerun the wizard to reuse the
+verified archive. A mismatched archive is never overwritten or used.
+
+Hetzner has no project-identity API. Guided seed stores only a seed-specific
+fingerprint of the original token in protected state, not the token or its
+fingerprint in the report. Use that same token when resuming a paused plan
+or reconciling an uncertain create. A matching project label does not let a
+different token make provider requests for this seed.
+
 ## Explicit local source alternative
+
+The following lower-level interface remains available for scripted callers
+that already manage their own explicit material inputs.
 
 For operator-controlled TEST deployments without publishing to GitHub or GHCR,
 package a **clean, locally committed** source revision:

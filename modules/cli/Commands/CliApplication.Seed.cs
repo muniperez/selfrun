@@ -19,6 +19,8 @@ public sealed partial class CliApplication
 
     private async Task<int> RunSeedAsync(string[] args, CancellationToken ct)
     {
+        if (args.Length == 0 || args is ["--state-dir", _])
+            return await RunGuidedSeedAsync(args.ElementAtOrDefault(1), ct);
         if (args.Contains("--config") || args.FirstOrDefault() is "plan" or "apply" or "check" or "generate-id" or "new-id")
             return await RunPortableSeedAsync(args, ct);
         string? operation = null;
@@ -258,6 +260,10 @@ public sealed partial class CliApplication
 
     private void PrintSeedHelp()
     {
+        _console.WriteLine("minicloud seed [--state-dir PROTECTED_DIR]  Guided first install or resume in a terminal; no JSON to write.");
+        _console.WriteLine("Choose an exact signed server release or explicitly choose a local-source TEST install when available.");
+        _console.WriteLine(SeedLocalSource.EmbeddedTag is { } tag ? $"Embedded TEST source: {tag}"
+            : "No embedded TEST source in this build. See docs/stateless-seed.md for builds that carry it.");
         _console.WriteLine("Stateless seed: minicloud seed new-id (generate once; retain the caller-owned seedId).");
         _console.WriteLine("minicloud seed plan|apply|check --config PROTECTED_JSON --report NONSECRET_JSON [--ssh-key USER_PRIVATE_KEY] [--use-ssh-agent] [--credential-file PATH]");
         _console.WriteLine("Initial creation only: plan/apply --new-seed plus explicit config initialCreationIntent; apply --approve EXACT_DIGEST. Never repeat an uncertain create.");

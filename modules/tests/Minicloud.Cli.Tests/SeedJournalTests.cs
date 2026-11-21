@@ -34,6 +34,23 @@ public sealed class SeedJournalTests : IDisposable
     }
 
     [Fact]
+    public void Publishing_guided_state_never_replaces_a_committed_dispatch_marker()
+    {
+        SeedFiles.Directory(home);
+        var dispatch = Path.Combine(home, "create-dispatched.json");
+        var first = dispatch + ".pending-original";
+        var later = dispatch + ".pending-later";
+        SeedFiles.WriteNew(first, "original dispatch"u8.ToArray());
+        SeedJournal.PublishDurably(first, dispatch, overwrite: false);
+        SeedFiles.WriteNew(later, "later dispatch"u8.ToArray());
+
+        Assert.Throws<CliCommandException>(() => SeedJournal.PublishDurably(later, dispatch, overwrite: false));
+        SeedFiles.Check(dispatch);
+        Assert.Equal("original dispatch", File.ReadAllText(dispatch));
+        Assert.Equal("later dispatch", File.ReadAllText(later));
+    }
+
+    [Fact]
     public void Credential_input_rejects_links_and_public_permissions()
     {
         if (OperatingSystem.IsWindows()) return;

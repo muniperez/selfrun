@@ -5,6 +5,7 @@ namespace Minicloud.Cli;
 public interface IConsole
 {
     bool SupportsAnsi { get; }
+    bool IsInputRedirected => false;
     int WindowWidth => 80;
     int WindowHeight => 24;
     void Write(string message);
@@ -16,6 +17,8 @@ public interface IConsole
 
 public sealed class SystemConsole : IConsole
 {
+    public bool IsInputRedirected => Console.IsInputRedirected;
+
     public int WindowHeight
     {
         get

@@ -120,7 +120,7 @@ internal static class SeedFiles
         }
         else
         {
-            SeedGuard.Require(!Console.IsInputRedirected, "Noninteractive seed requires --credential-file <owner-only path>.");
+            SeedGuard.Require(!console.IsInputRedirected, "Noninteractive seed requires --credential-file <owner-only path>.");
             console.Write("Provider API credential (hidden): ");
             var secret = new StringBuilder();
             while (true)
@@ -144,6 +144,10 @@ internal sealed class SeedJournal : IDisposable
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static extern bool MoveFileEx(string source, string destination, uint flags);
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", CharSet = System.Runtime.InteropServices.CharSet.Ansi, SetLastError = true)]
+    private static extern int LinkUnix(string source, string destination);
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libSystem.B.dylib", EntryPoint = "link", CharSet = System.Runtime.InteropServices.CharSet.Ansi, SetLastError = true)]
+    private static extern int LinkMacOS(string source, string destination);
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true,
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow };
     public string DirectoryPath { get; }
@@ -208,14 +212,27 @@ internal sealed class SeedJournal : IDisposable
         var pending = Path.Combine(DirectoryPath, "operation.pending");
         SeedGuard.Require(!File.Exists(pending), "An interrupted journal write remains. Preserve it and reconcile operation.json before resuming.");
         SeedFiles.WriteNew(pending, JsonSerializer.SerializeToUtf8Bytes(state, Json));
+        PublishDurably(pending, path, overwrite: true);
+    }
+
+    internal static void PublishDurably(string pending, string path, bool overwrite)
+    {
         if (OperatingSystem.IsWindows())
-            SeedGuard.Require(MoveFileEx(pending, path, 0x1 | 0x8), "Atomic write-through journal replacement failed. Preserve operation.pending; no mutation is safe.");
-        else File.Move(pending, path, true);
-        // Flush the rename on Unix before allowing any provider mutation.
+            SeedGuard.Require(MoveFileEx(pending, path, (overwrite ? 0x1u : 0u) | 0x8), "Atomic write-through seed state update failed. Preserve pending state; no mutation is safe.");
+        else if (overwrite) File.Move(pending, path, overwrite: true);
+        else
+        {
+            // File.Move can race a destination check or fall back to a visible copy on Unix.
+            var linked = OperatingSystem.IsMacOS() ? LinkMacOS(pending, path) : LinkUnix(pending, path);
+            SeedGuard.Require(linked == 0,
+                $"Could not atomically publish new seed state (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()}). Preserve existing files and use a local filesystem supporting hard links.");
+            File.Delete(pending);
+        }
+        // Flush the published directory entry on Unix before allowing any provider mutation.
         if (!OperatingSystem.IsWindows())
         {
-            var result = SeedProcess.RunAsync("sync", OperatingSystem.IsLinux() ? ["-f", DirectoryPath] : [], null, default).GetAwaiter().GetResult();
-            SeedGuard.Require(result.ExitCode == 0, "Could not durably flush seed journal; no provider mutation is safe.");
+            var result = SeedProcess.RunAsync("sync", OperatingSystem.IsLinux() ? ["-f", Path.GetDirectoryName(path)!] : [], null, default).GetAwaiter().GetResult();
+            SeedGuard.Require(result.ExitCode == 0, "Could not durably flush seed state; no provider mutation is safe.");
         }
     }
     public void Dispose() => operationLock.Dispose();
