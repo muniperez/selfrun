@@ -2,7 +2,6 @@
   color-scheme: light;
   --paper: #fafafa;
   --ink: #171717;
-  --muted: #4d4d4d;
   --line: #c7c7c7;
   --panel: #f0f0f0;
   background: var(--paper);
@@ -87,8 +86,6 @@ h3 {
   margin-top: 1.25rem;
   font-size: clamp(1.1rem, 2.3vw, 1.45rem);
 }
-
-.hero .release-note { color: var(--muted); font-size: 1rem; }
 
 .actions { margin-top: 1.5rem; }
 .actions a {
