@@ -227,7 +227,7 @@ export function CollectionToolbar({
           <PopoverTrigger asChild>
             <Button variant="outline" className="shrink-0">
               <SlidersHorizontal className="h-4 w-4" />
-              <span className="hidden sm:inline">Filter &amp; sort</span>
+              <span className="sr-only sm:not-sr-only">Filter &amp; sort</span>
               {active ? (
                 <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
                   {active}

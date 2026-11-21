@@ -137,7 +137,7 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       onRefreshStatus={checkStatus} refreshing={loading} /> : undefined}>
     {!workspaceId && <>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0 flex-1"><CollectionToolbar label="dev environments" query={query}
+        <div className="w-full min-w-0 lg:w-auto lg:grow lg:basis-80"><CollectionToolbar label="dev environments" query={query}
           onChange={next => setQuery({ ...next, view: "table" })} onRefresh={() => refresh()} loading={loading}
           count={filtered.length} filters={[
             { id: "primary", label: "Primary VM state", options: [
