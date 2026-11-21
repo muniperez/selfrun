@@ -19,6 +19,15 @@ Outputs: ignored `.local/artifacts/issue110/runtime/`. Fixtures use two real ind
 clones and a local bare remote; injected process/mount/encryption/transport adapters test
 failure handling. This is not a real ext4, systemd-freezer, age, or live restore qualification.
 
+### Safe native qualification diagnostics
+
+If a disposable native qualification stops at `T3_RESTART_LEFT_UNKNOWN_WORK`, retain only
+the probe/source identity and the short allowlisted work-inventory reason code. Do not retain
+runtime logs, process arguments, executable or cgroup paths, SQL, usernames, or secrets.
+The native probe polls only this advisory signal for a bounded interval and rechecks VM,
+T3, retained-volume, and Ready identities on every observation. Repeat a clean native
+qualification before capturing an image.
+
 Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
 primary VM and managed T3 unit, a private memory-only approval page on loopback
 774, and a distinct root-only management credential. Normal gateway scopes do

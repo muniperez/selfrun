@@ -29,6 +29,127 @@ native = load("generic_native_qualification", "native.py")
 
 
 class ImageTests(unittest.TestCase):
+    def recovery_probe(self, inventories, status_changes=None):
+        probe = native.Native.__new__(native.Native)
+        probe.client = Mock()
+        probe.directory = Path("/synthetic-native-only")
+        probe.t3_project_id = "synthetic-project"
+        probe.environment_id = "synthetic-environment"
+        probe.snapshot = 7
+        probe.run_id = "synthetic-run"
+        probe.config = {"volume": {"filesystemUuid": "synthetic-filesystem"}}
+        probe.expires = native.dt.datetime.now(native.dt.timezone.utc) + native.dt.timedelta(minutes=1)
+        status = dict(vmId=probe.run_id, generation=1, phase="Ready")
+        statuses = status_changes or [status] * len(inventories)
+        probe.control = Mock(side_effect=lambda *args, **kwargs:
+            statuses[min(probe.control.call_count - 1, len(statuses) - 1)] | {
+                "workInventory": inventories[min(probe.control.call_count - 1, len(inventories) - 1)]})
+        probe.client.call.return_value = dict(
+            environmentId=probe.environment_id, realTicketWebSocketOpened=True, snapshotSequence=7)
+        clock = [0]
+        def advance(seconds):
+            self.assertGreater(seconds, 0)
+            self.assertLessEqual(seconds, 0.2)
+            clock[0] += 10
+        patches = (
+            patch.object(probe, "t3_ready"),
+            patch.object(probe, "wait"),
+            patch.object(native, "T3Client", return_value=probe.client),
+            patch.object(native, "command", return_value="synthetic-filesystem"),
+            patch.object(native.http.client, "HTTPConnection"),
+            patch.object(native.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(native.time, "sleep", side_effect=advance),
+        )
+        mocks = [item.start() for item in patches]
+        for item in patches:
+            self.addCleanup(item.stop)
+        response = mocks[4].return_value.getresponse.return_value
+        response.status = 200
+        response.read.return_value = json.dumps({"environmentId": probe.environment_id}).encode()
+        return probe, mocks, clock
+
+    def test_native_inventory_reason_mapping_never_leaks_unknown_values(self):
+        for value in (None, {}, ["sentinel"], "sentinel"):
+            self.assertEqual({"reasonCode": "other_idle_blocker"},
+                             native.work_inventory_evidence({"workInventory": {"reason": value}}))
+        self.assertEqual(
+            {"reasonCode": "unregistered_coding_process"},
+            native.work_inventory_evidence({"workInventory": {
+                "reason": "Unregistered live coding process; terminal input observation is not qualified"}}))
+
+    def test_common_t3_recovery_polls_transient_busy_until_idle(self):
+        inventories = [
+            dict(state="BusyOrUnknown", reason="Coding process inventory changed during inspection"),
+            dict(state="BusyOrUnknown", reason="Unregistered live coding process; terminal input observation is not qualified"),
+            dict(state="IdleCandidate"),
+        ]
+        probe, mocks, _ = self.recovery_probe(inventories)
+        self.assertIsNone(probe.t3_recovered(100))
+        self.assertEqual(3, probe.control.call_count)
+        self.assertEqual(3, mocks[3].call_count)
+        self.assertEqual(3, mocks[4].call_count)
+        probe.client.call.assert_called_once()
+        self.assertEqual(2, mocks[6].call_count)
+
+    def test_common_t3_recovery_times_out_busy_or_malformed_inventory(self):
+        for inventory in (dict(state="BusyOrUnknown", reason="Coding process inventory changed during inspection"),
+                          dict(state="BusyOrUnknown", reason="secret-sentinel"),
+                          {"state": "BusyOrUnknown"}, None, "secret-sentinel",
+                          {"state": ["IdleCandidate"], "reason": object()}):
+            with self.subTest(inventory=inventory):
+                probe, mocks, clock = self.recovery_probe([inventory])
+                with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_LEFT_UNKNOWN_WORK") as caught:
+                    probe.t3_recovered(100)
+                self.assertEqual(30, clock[0])
+                self.assertEqual(3, probe.control.call_count)
+                self.assertEqual(3, mocks[6].call_count)
+                self.assertNotIn("secret-sentinel", json.dumps(caught.exception.evidence))
+                if isinstance(inventory, dict) and inventory.get("reason") == \
+                        "Coding process inventory changed during inspection":
+                    self.assertEqual({"reasonCode": "inventory_changed"}, caught.exception.evidence)
+
+    def test_common_t3_recovery_fails_immediately_on_identity_drift(self):
+        for change in (dict(vmId="changed"), dict(generation=2), dict(phase="StorageUnavailable")):
+            with self.subTest(change=change):
+                status = dict(vmId="synthetic-run", generation=1, phase="Ready")
+                probe, mocks, _ = self.recovery_probe(
+                    [{"state": "BusyOrUnknown"}, {"state": "IdleCandidate"}, {"state": "IdleCandidate"}],
+                    [status, status | change, status])
+                with self.assertRaisesRegex(native.ProbeError, "VM_GENERATION_CHANGED_DURING_T3_RECOVERY"):
+                    probe.t3_recovered(100)
+                self.assertEqual(2, probe.control.call_count)
+                self.assertEqual(1, mocks[6].call_count)
+
+    def test_common_t3_recovery_rechecks_t3_and_mount_identity(self):
+        probe, mocks, _ = self.recovery_probe([
+            {"state": "BusyOrUnknown"}, {"state": "IdleCandidate"}])
+        mocks[4].return_value.getresponse.return_value.read.side_effect = [
+            json.dumps({"environmentId": probe.environment_id}).encode(),
+            json.dumps({"environmentId": "changed"}).encode(),
+        ]
+        with self.assertRaisesRegex(native.ProbeError, "T3_ENVIRONMENT_IDENTITY_CHANGED"):
+            probe.t3_recovered(100)
+        self.assertEqual(2, probe.control.call_count)
+        self.assertEqual(1, mocks[6].call_count)
+        probe, mocks, _ = self.recovery_probe([
+            {"state": "BusyOrUnknown"}, {"state": "IdleCandidate"}])
+        mocks[3].side_effect = ["synthetic-filesystem", "changed"]
+        with self.assertRaisesRegex(native.ProbeError, "RETAINED_VOLUME_CHANGED_DURING_T3_RECOVERY"):
+            probe.t3_recovered(100)
+        self.assertEqual(2, probe.control.call_count)
+        self.assertEqual(1, mocks[6].call_count)
+
+    def test_common_t3_recovery_does_not_accept_idle_after_deadline(self):
+        probe, mocks, clock = self.recovery_probe([{"state": "IdleCandidate"}])
+        def late_status(*args, **kwargs):
+            clock[0] = 31
+            return dict(vmId=probe.run_id, generation=1, phase="Ready",
+                        workInventory={"state": "IdleCandidate"})
+        probe.control.side_effect = late_status
+        with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_LEFT_UNKNOWN_WORK"):
+            probe.t3_recovered(100)
+        mocks[6].assert_not_called()
+
     def test_t3_restart_timer_is_distinct_from_a_start_job(self):
         probe = native.Native.__new__(native.Native)
         delay = dict(ActiveState="activating", SubState="auto-restart", Result="signal",
