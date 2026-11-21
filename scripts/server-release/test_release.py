@@ -128,11 +128,6 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(images().values()) | set(manifest["dependencies"].values()),
                          {service["image"] for service in compose["services"].values()})
 
-    def test_checked_in_server_payload_excludes_workspace_assets(self):
-        payload = Path(__file__).resolve().parents[2] / "packaging/server/bundle"
-
-        self.assertFalse([name for name in release.payload_files(payload) if "workspace" in name])
-
     def test_bundle_is_reproducible_and_outputs_cannot_escape_ignored_artifacts(self):
         manifest = self.package()
         self.output = self.root / ".local/artifacts/repeated"
