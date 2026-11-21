@@ -77,7 +77,8 @@ public sealed class DevelopmentWorkspacesController(
     [HttpPut("{id}/idle-timeout")]
     public Task<IResult> UpdateIdleTimeout(string id, [FromQuery] string organizationId,
         [FromBody] UpdateDevelopmentWorkspaceIdleTimeoutRequest request, CancellationToken ct) =>
-        MutateAsync(organizationId, () => workspaces.UpdateIdleTimeoutAsync(id, organizationId, request.IdleTimeoutMinutes, request.KeepRunning, ct), ct);
+        MutateAsync(organizationId, () => workspaces.UpdateIdleTimeoutAsync(
+            id, organizationId, request.IdleTimeoutMinutes, request.KeepRunning, ActorId(), ct), ct);
 
     [HttpPost("{id}/start")]
     public Task<IResult> Start(string id, [FromQuery] string organizationId, CancellationToken ct) =>
