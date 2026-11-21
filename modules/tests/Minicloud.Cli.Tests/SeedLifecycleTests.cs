@@ -102,7 +102,8 @@ public sealed class SeedLifecycleTests : IDisposable
         state.ServerCreateStarted = true;
         state.SshKeyId = "7";
         if (responseRecorded) state.Server = new("server", state.Id, "region", "size", "42", "203.0.113.1");
-        fixture.Bodies["account"] = new { account = new { uuid = "synthetic-account", status = "active", email_verified = true, droplet_limit = quotaExhausted ? 1 : 5 } };
+        fixture.Bodies["account"] = new { account = new { uuid = "synthetic-user", team = new { uuid = "synthetic-team" },
+            status = "active", email_verified = true, droplet_limit = quotaExhausted ? 1 : 5 } };
         fixture.Bodies["droplets"] = new { droplets = new[] { fixture.Server(true) } };
         if (!quotaExhausted)
         {

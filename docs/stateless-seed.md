@@ -199,7 +199,7 @@ Configuration is JSON schema version 1:
   "schemaVersion": 1,
   "seedId": "0123456789abcdef0123456789abcdef",
   "provider": "digitalocean",
-  "providerAccount": "DigitalOcean account YOUR-ACCOUNT-UUID",
+  "providerAccount": "DigitalOcean team YOUR-TEAM-UUID",
   "region": "nyc3",
   "size": "s-2vcpu-2gb",
   "domain": "cloud.yourdomain.com",
@@ -211,7 +211,14 @@ Configuration is JSON schema version 1:
 
 Replace example account, selection, domains and release with your reviewed
 values. `providerAccount` is the stable authorized account scope, never a token
-or token hash: DigitalOcean uses `DigitalOcean account <uuid>`; Vultr uses
+or token hash: DigitalOcean uses `DigitalOcean team <account.team.uuid>` when
+the [official Account API](https://docs.digitalocean.com/reference/api/reference/account/)
+returns team context. `account.uuid` identifies the individual user, not the team.
+Only when `team` is absent does it use `DigitalOcean account <account.uuid>`;
+present but missing/invalid team identity blocks credential-backed operations,
+without falling back to the user. Team IDs are API strings, not necessarily
+hyphenated GUIDs. A different authorized user or rotated credential for the same
+team preserves the stateless account binding and approval. Vultr uses
 `Vultr account <lowercase SHA256 of account email>`. Hetzner exposes no stable
 project-identity endpoint: use `hetzner-project:<your independently verified
 project identifier>`. That label is a caller assertion, **not** API proof of
@@ -219,6 +226,31 @@ project identity. Independently verify the project in its authenticated console,
 especially for initial creation or rotated tokens. Existing resources must also
 match API-visible ID/labels/region/size/image and independently pinned SSH identity.
 Tags aid lookup; possessing a seed ID or resource ID is never authorization.
+
+### Historical DigitalOcean account bindings
+
+Old configs, approvals and protected host metadata can contain
+`DigitalOcean account <user uuid>` even when the original credential selected a
+team. A current team response does not prove which team that historical approval
+authorized. Credential-backed use of such a config returns
+`reconciliation_required` before inventory or mutation; it never silently
+converts user scope to team scope.
+
+Before explicitly changing a pre-host config to `DigitalOcean team <team uuid>`,
+independently establish the originally approved team, resource/key ownership,
+and any unresolved creation through authenticated console/support and retained
+records. Preserve seed ID, resource IDs and SSH trust; review a fresh plan and
+approval. A same-user match or a matching seed tag alone is insufficient. If the
+historical team cannot be established, stop credential-backed continuation.
+
+For an existing host, changing only the config does **not** migrate the original
+protected host account binding: it remains an immutable identity conflict and
+requires read-only reconciliation. No host metadata migration is implemented.
+Keep legitimate host-only check/export/continuation with the original config,
+explicit target and independently pinned SSH identity, without supplying a
+provider credential. Genuinely individual-only old configs remain valid when
+the API omits `team`. Legacy journal commands retain their original credential
+requirement and do not silently rewrite historical approvals.
 
 `architecture` defaults to `linux/amd64`; `linux/arm64` is supported when the
 selected image/plan actually matches. SSH user is currently `root` only.

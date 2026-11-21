@@ -145,6 +145,75 @@ public sealed class SeedPortableTests : IDisposable
         Assert.NotEqual(approval, Digest(config, state));
     }
 
+    [Theory]
+    [InlineData("DigitalOcean team synthetic-team", "DigitalOcean team synthetic-team", true)]
+    [InlineData("DigitalOcean account synthetic-user", "DigitalOcean account synthetic-user", true)]
+    [InlineData("DigitalOcean account synthetic-user", "DigitalOcean team synthetic-team", false)]
+    [InlineData("DigitalOcean team original-team", "DigitalOcean team different-team", false)]
+    [InlineData("DigitalOcean team original-team", "DigitalOcean account synthetic-user", false)]
+    public async Task Creation_rechecks_the_explicit_scope_before_inventory_or_mutation(string approved, string observed, bool matches)
+    {
+        var config = Config() with { ProviderAccount = approved };
+        var state = config.State();
+        state.Plan = State().Plan with { Quote = State().Plan.Quote with { Account = approved } };
+        var provider = new Provider { Account = observed };
+        var approval = SeedPortable.Approval(config, state, "new_seed", "public-key", true);
+        if (matches)
+        {
+            await SeedPortable.CreateAsync(config, state, provider, "public-key", true, approval, "new_seed", default);
+            Assert.Equal(1, provider.Creates);
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<CliCommandException>(() =>
+                SeedPortable.CreateAsync(config, state, provider, "public-key", true, approval, "new_seed", default));
+            if (approved.StartsWith("DigitalOcean account ", StringComparison.Ordinal))
+                Assert.Contains("Historical DigitalOcean user-only scope", error.Message);
+            Assert.Equal(0, provider.InventoryReads + provider.Creates + provider.KeyCreates);
+            Assert.False(state.ServerCreateStarted);
+        }
+        Assert.Equal(approved, config.ProviderAccount);
+        Assert.Equal(approved, state.Plan.Quote.Account);
+    }
+
+    [Theory]
+    [InlineData("DigitalOcean account synthetic-user", "DigitalOcean account synthetic-user", "preparing")]
+    [InlineData("DigitalOcean account synthetic-user", "DigitalOcean team synthetic-team", "reconciliation_required")]
+    [InlineData("DigitalOcean team synthetic-team", "DigitalOcean account synthetic-user", "reconciliation_required")]
+    [InlineData("DigitalOcean team synthetic-team", "DigitalOcean team synthetic-team", "preparing")]
+    public async Task Host_only_inspection_preserves_original_binding_and_refuses_implicit_migration(
+        string configured, string historical, string expected)
+    {
+        var config = Config() with { ProviderAccount = configured };
+        var state = config.State();
+        state.Plan = State().Plan with { Quote = State().Plan.Quote with { Account = configured } };
+        state.Server = new("original", state.Id, "region", "size", "42", "203.0.113.1");
+        var calls = 0;
+        var host = new SeedHost("explicit-user-key", false, (executable, arguments, input, ct, agent) =>
+        {
+            calls++;
+            Assert.Equal("ssh", executable);
+            Assert.Null(input);
+            return Task.FromResult(new SeedProcessResult(0, JsonSerializer.Serialize(new
+            {
+                state = "preparing", progress = "pending",
+                identity = new { provider = "digitalocean", providerAccount = historical, serverId = "original",
+                    region = "region", size = "size", architecture = "linux/amd64", image = "42" }
+            })));
+        });
+        var result = await host.InspectAsync(state, home, default);
+        Assert.Equal(expected, result.State);
+        Assert.Equal(1, calls);
+        Assert.Equal(configured, state.ProviderAccountId);
+        Assert.False(Directory.Exists(home));
+        if (expected == "reconciliation_required")
+        {
+            var continuation = new Host();
+            await SeedPortable.ContinueAsync(state, home, continuation, continuation, result, default);
+            Assert.Empty(continuation.Calls);
+        }
+    }
+
     [Fact]
     public async Task Lost_create_response_never_retries_and_existing_operation_key_blocks_even_with_zero_inventory()
     {
@@ -544,18 +613,20 @@ public sealed class SeedPortableTests : IDisposable
 
     private sealed class Provider : ISeedProvider
     {
-        public int Creates, KeyCreates, Deletes;
+        public int Creates, KeyCreates, Deletes, InventoryReads;
         public bool LoseResponse;
+        public string Account = Config().ProviderAccount;
         public string? UploadedKey;
         public string? ExistingUserKey;
         public string CredentialScope(string operation) => throw new InvalidOperationException("Never bind ownership to credential bytes.");
-        public Task<string> GetAccountIdentityAsync(CancellationToken ct) => Task.FromResult(Config().ProviderAccount);
+        public Task<string> GetAccountIdentityAsync(CancellationToken ct) => Task.FromResult(Account);
         public Task<SeedQuote> QuoteAsync(SeedSelection s, string operation, CancellationToken ct) => Task.FromResult(State().Plan.Quote);
         public Task<string?> FindKeyAsync(string operation, string key, CancellationToken ct) => Task.FromResult(UploadedKey is null ? null : "key-id");
         public Task<string?> FindUserKeyAsync(string key, CancellationToken ct) => Task.FromResult(ExistingUserKey);
         public Task<string> CreateKeyAsync(string operation, string key, CancellationToken ct)
         { KeyCreates++; UploadedKey = key; return Task.FromResult("key-id"); }
-        public Task<SeedResource?> FindServerAsync(string operation, CancellationToken ct) => Task.FromResult<SeedResource?>(null);
+        public Task<SeedResource?> FindServerAsync(string operation, CancellationToken ct)
+        { InventoryReads++; return Task.FromResult<SeedResource?>(null); }
         public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct)
         {
             Creates++;
