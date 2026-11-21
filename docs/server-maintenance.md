@@ -117,6 +117,9 @@ A backup runs in this order:
      containers. OpenBao is paused (not stopped, so it stays unsealed) while
      its file storage is copied.
    - `installation.json` and `secrets/`.
+     The stock empty `secrets/ssh/host-pins` file is preserved byte-for-byte
+     before any deployment host has been pinned; no other regular installation
+     member may be empty.
    - The independent OpenBao recovery material.
    - An encrypted manifest with the release, authority epoch and component
      digests.
