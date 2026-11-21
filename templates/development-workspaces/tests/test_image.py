@@ -39,6 +39,9 @@ class ImageTests(unittest.TestCase):
         probe.run_id = "synthetic-run"
         probe.config = {"volume": {"filesystemUuid": "synthetic-filesystem"}}
         probe.expires = native.dt.datetime.now(native.dt.timezone.utc) + native.dt.timedelta(minutes=1)
+        service = dict(ActiveState="active", SubState="running", Job="", MainPID=123,
+                       ControlPID=0, NRestarts=0)
+        probe.t3_unit = Mock(return_value=service)
         status = dict(vmId=probe.run_id, generation=1, phase="Ready")
         statuses = status_changes or [status] * len(inventories)
         probe.control = Mock(side_effect=lambda *args, **kwargs:
@@ -52,13 +55,16 @@ class ImageTests(unittest.TestCase):
             self.assertLessEqual(seconds, 0.2)
             clock[0] += 10
         patches = (
-            patch.object(probe, "t3_ready"),
+            patch.object(probe, "t3_ready", return_value=service),
             patch.object(probe, "wait"),
             patch.object(native, "T3Client", return_value=probe.client),
             patch.object(native, "command", return_value="synthetic-filesystem"),
             patch.object(native.http.client, "HTTPConnection"),
             patch.object(native.time, "monotonic", side_effect=lambda: clock[0]),
             patch.object(native.time, "sleep", side_effect=advance),
+            patch.object(probe, "check_t3_pid"),
+            patch.object(probe, "t3_diagnostic_evidence",
+                         return_value={"cgroupPopulated": True, "directProcessCount": 2}),
         )
         mocks = [item.start() for item in patches]
         for item in patches:
@@ -106,7 +112,7 @@ class ImageTests(unittest.TestCase):
                 self.assertNotIn("secret-sentinel", json.dumps(caught.exception.evidence))
                 if isinstance(inventory, dict) and inventory.get("reason") == \
                         "Coding process inventory changed during inspection":
-                    self.assertEqual({"reasonCode": "inventory_changed"}, caught.exception.evidence)
+                    self.assertEqual("inventory_changed", caught.exception.evidence["reasonCode"])
 
     def test_common_t3_recovery_fails_immediately_on_identity_drift(self):
         for change in (dict(vmId="changed"), dict(generation=2), dict(phase="StorageUnavailable")):
@@ -150,6 +156,111 @@ class ImageTests(unittest.TestCase):
             probe.t3_recovered(100)
         mocks[6].assert_not_called()
 
+    def test_isolated_case_waits_for_startup_children_before_injecting_crash(self):
+        busy = dict(state="BusyOrUnknown",
+                    reason="Unregistered live coding process; terminal input observation is not qualified")
+        for settles in (True, False):
+            with self.subTest(settles=settles):
+                inventories = [busy, busy, {"state": "IdleCandidate"}] if settles else [busy]
+                probe, mocks, clock = self.recovery_probe(inventories)
+                probe.config["vmId"] = probe.run_id
+                probe.owns_runtime = True
+                adapter = Mock()
+                with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "check_t3_freezer"), \
+                        patch.object(probe, "qualify_t3_restart_policy"), \
+                        patch.object(probe, "t3_stays_stopped"), \
+                        patch.object(probe, "signal_t3_main") as crash:
+                    if settles:
+                        before = probe.t3_case_start(adapter)
+                        probe.signal_t3_main(native.signal.SIGKILL)
+                        self.assertEqual(before["idlePrecondition"]["idleObservations"], 3)
+                        self.assertTrue(before["idlePrecondition"]["idleObserved"])
+                        self.assertEqual(clock[0], 20)
+                        crash.assert_called_once_with(native.signal.SIGKILL)
+                    else:
+                        with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_LEFT_UNKNOWN_WORK") as caught:
+                            probe.t3_case_start(adapter)
+                            probe.signal_t3_main(native.signal.SIGKILL)
+                        self.assertEqual(clock[0], 30)
+                        self.assertEqual(caught.exception.evidence["reasonCode"], "unregistered_coding_process")
+                        crash.assert_not_called()
+                self.assertEqual(probe.control.call_count, 3)
+                probe.client.call.assert_not_called()
+                adapter.stop_services.assert_called_once()
+                adapter.start_services.assert_called_once()
+                adapter.thaw.assert_called_once()
+                adapter.freeze.assert_not_called()
+                # Only the completed boundary resets; idle polling never stops/restarts or signals.
+                mocks[3].assert_any_call(["systemctl", "reset-failed", native.T3_UNIT])
+                self.assertEqual(sum(call.args[0][0] == "systemctl"
+                                     for call in mocks[3].call_args_list), 1)
+
+    def test_positive_idle_precondition_rejects_service_drift_and_late_idle(self):
+        for change in ({"MainPID": 456}, {"NRestarts": 1}, {"ControlPID": 456},
+                       {"Job": "42"}, {"SubState": "auto-restart"}):
+            with self.subTest(change=change):
+                probe, _, _ = self.recovery_probe([{"state": "IdleCandidate"}])
+                before = probe.t3_unit.return_value
+                probe.t3_unit.return_value = before | change
+                with self.assertRaisesRegex(native.ProbeError, "T3_IDLE_SERVICE_IDENTITY_CHANGED"):
+                    probe.t3_idle(before)
+        for late in (29, 30, 31):
+            with self.subTest(late=late):
+                probe, _, clock = self.recovery_probe([{"state": "IdleCandidate"}])
+                before = probe.t3_unit.return_value
+                def slow_inventory(*args, **kwargs):
+                    clock[0] = late
+                    return dict(vmId=probe.run_id, generation=1, phase="Ready",
+                                workInventory={"state": "IdleCandidate"})
+                probe.control.side_effect = slow_inventory
+                if late < 30:
+                    self.assertTrue(probe.t3_idle(before)["idleObserved"])
+                else:
+                    with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_LEFT_UNKNOWN_WORK"):
+                        probe.t3_idle(before)
+
+    def test_t3_stop_failure_reports_counts_without_hiding_survivors(self):
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="native-stop-evidence-", dir=ARTIFACTS) as directory:
+            cgroup = Path(directory)
+            (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+            (cgroup / "cgroup.procs").write_text("123\n456\n789\n")
+            probe = native.Native.__new__(native.Native)
+            probe.rt = Mock()
+            probe.rt.Linux.t3_cgroup_empty.return_value = False
+            stopped = dict(ActiveState="inactive", SubState="dead", Result="signal",
+                           Job="", MainPID=0, ControlPID=0)
+            with patch.object(native, "T3_CGROUP", cgroup), \
+                    patch.object(probe, "t3_unit", return_value=stopped), \
+                    patch.object(native, "command") as command, \
+                    self.assertRaisesRegex(native.ProbeError, "T3_DID_NOT_REMAIN_STOPPED") as caught:
+                probe.t3_stays_stopped(after_crash=True)
+            evidence = caught.exception.evidence
+            self.assertEqual(evidence["ActiveState"], "inactive")
+            self.assertEqual(evidence["SubState"], "dead")
+            self.assertTrue(evidence["cgroupPopulated"])
+            self.assertEqual(evidence["directProcessCount"], 3)
+            self.assertEqual(evidence["cgroupReadState"], "observed")
+            self.assertFalse(evidence["mainPresent"] or evidence["controlPresent"] or evidence["jobPresent"])
+            command.assert_not_called()
+            self.assertNotIn("123", json.dumps(evidence))
+            (cgroup / "cgroup.events").write_text("secret-args-sentinel\n")
+            with patch.object(native, "T3_CGROUP", cgroup):
+                evidence = native.Native.t3_diagnostic_evidence(stopped | {
+                    "ActiveState": "secret-args-sentinel", "Job": "secret-args-sentinel"})
+                self.assertEqual(evidence["cgroupReadState"], "malformed")
+                self.assertNotIn("secret-args-sentinel", json.dumps(evidence))
+                (cgroup / "cgroup.events").write_text("populated 1\n")
+                (cgroup / "cgroup.procs").write_text("1\n" * 4097)
+                self.assertEqual(native.Native.t3_diagnostic_evidence(stopped)["cgroupReadState"],
+                                 "malformed-or-count-limit")
+                (cgroup / "cgroup.procs").write_text("1" * 65537)
+                self.assertEqual(native.Native.t3_diagnostic_evidence(stopped)["cgroupReadState"], "read-limit")
+                (cgroup / "cgroup.procs").unlink()
+                self.assertEqual(native.Native.t3_diagnostic_evidence(stopped)["cgroupReadState"],
+                                 "absent-or-removed")
+
     def test_t3_restart_timer_is_distinct_from_a_start_job(self):
         probe = native.Native.__new__(native.Native)
         delay = dict(ActiveState="activating", SubState="auto-restart", Result="signal",
@@ -176,6 +287,8 @@ class ImageTests(unittest.TestCase):
                 patch.object(probe, "check_t3_freezer"), \
                 patch.object(probe, "check_t3_pid"), \
                 patch.object(probe, "t3_ready", return_value=before), \
+                patch.object(probe, "t3_idle",
+                             side_effect=lambda state: events.append("idle") or {"idleObserved": True}), \
                 patch.object(probe, "t3_stays_stopped",
                              side_effect=lambda **kw: events.append("drained")), \
                 patch.object(native, "command") as command:
@@ -190,8 +303,10 @@ class ImageTests(unittest.TestCase):
             command.side_effect = run
             # Each independent fixture gets slot one even after earlier cases consumed starts.
             for _ in range(3):
-                self.assertEqual(probe.t3_case_start(adapter), before)
-            self.assertEqual(events, (["qualify"] * 7 + ["stop", "thaw", "drained", "reset", "start"]) * 3)
+                self.assertEqual(probe.t3_case_start(adapter),
+                                 before | {"idlePrecondition": {"idleObserved": True}})
+            self.assertEqual(events,
+                             (["qualify"] * 7 + ["stop", "thaw", "drained", "reset", "start", "idle"]) * 3)
 
     def test_native_case_refuses_reset_with_unowned_frozen_undrained_or_changed_policy(self):
         for failure in ("ownership", "frozen", "policy", "drain", "counter"):
@@ -232,7 +347,8 @@ class ImageTests(unittest.TestCase):
                 failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
                               ControlPID=0, NRestarts=5, Result="signal")
                 with patch.object(probe, "t3_case_start", return_value=start) as setup, \
-                        patch.object(probe, "t3_ready"), \
+                        patch.object(probe, "t3_ready", side_effect=starts[1:]) as ready, \
+                        patch.object(probe, "t3_idle") as idle, \
                         patch.object(probe, "signal_t3_main", side_effect=range(100, 105)) as kill, \
                         patch.object(probe, "t3_restart_delay",
                                      side_effect=[{"NRestarts": n} for n in range(5)]), \
@@ -254,6 +370,8 @@ class ImageTests(unittest.TestCase):
                         result = probe.t3_retry_budget(adapter)
                         self.assertEqual(result["retryBudgetSuccessfulStarts"], starts)
                         self.assertEqual(kill.call_count, 5)
+                        self.assertEqual([call.args[0] for call in idle.call_args_list], starts[1:])
+                        self.assertEqual(ready.call_count, 4)
                         self.assertEqual(events, [
                             ("exhausted", {"failed": True}),
                             ("command", ["systemctl", "reset-failed", native.T3_UNIT])])
@@ -265,7 +383,7 @@ class ImageTests(unittest.TestCase):
         probe.config = {}
         probe.rt = Mock()
         events = []
-        before = {"MainPID": 123, "NRestarts": 0}
+        before = {"MainPID": 123, "NRestarts": 0, "idlePrecondition": {"idleObserved": True}}
         limit = Mock()
         limit.read_text.return_value = "max"
         with patch.object(probe, "t3_case_start",
@@ -290,6 +408,22 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(events, ["setup", "signal", "setup", "setup", "signal",
                                   "setup", "before-freeze", "setup", "auto-restart",
                                   "setup", "start-pre", "setup", "signal", "separate-budget"])
+
+    def test_retry_budget_does_not_crash_busy_automatic_restart_or_reset_it(self):
+        probe, _, _ = self.recovery_probe([{"state": "BusyOrUnknown"}])
+        before = probe.t3_unit.return_value
+        start = before | {"MainPID": 100}
+        adapter = Mock()
+        with patch.object(probe, "t3_case_start", return_value=start), \
+                patch.object(probe, "signal_t3_main", return_value=100) as crash, \
+                patch.object(probe, "t3_restart_delay", return_value={"NRestarts": 0}), \
+                patch.object(probe, "wait_t3", return_value=before | {"NRestarts": 1}), \
+                patch.object(probe, "t3_recovered") as recovered, \
+                self.assertRaisesRegex(native.ProbeError, "T3_RESTART_LEFT_UNKNOWN_WORK"):
+            probe.t3_retry_budget(adapter)
+        crash.assert_called_once_with(native.signal.SIGKILL)
+        adapter.start_services.assert_not_called()
+        recovered.assert_not_called()
 
     def frozen_signal_probe(self, empty=True, kill_error=True):
         probe = native.Native.__new__(native.Native)

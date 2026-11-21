@@ -1052,15 +1052,59 @@ class Native:
                     primaryGenerationChecked=True, trustedListenerAdmission=True,
                     noT3AccountApprovalRequested=True)
 
-    def t3_unit(self):
+    def t3_unit(self, *, timeout=120):
         properties = ["ActiveState", "SubState", "Result", "Job", "MainPID", "ControlPID", "NRestarts",
                       "ExecMainPID", "ExecMainCode", "ExecMainStatus"]
         values = dict(line.split("=", 1) for line in command(
-            ["systemctl", "show", T3_UNIT, "-p", ",".join(properties)]).splitlines() if "=" in line)
+            ["systemctl", "show", T3_UNIT, "-p", ",".join(properties)],
+            timeout=timeout).splitlines() if "=" in line)
         check(values.keys() == set(properties), "T3_UNIT_PROPERTIES_MISSING")
         for key in ("MainPID", "ControlPID", "NRestarts", "ExecMainPID", "ExecMainCode", "ExecMainStatus"):
             values[key] = int(values[key])
         return values
+
+    @staticmethod
+    def t3_diagnostic_evidence(state):
+        allowed = {
+            "ActiveState": {"active", "activating", "deactivating", "inactive", "failed"},
+            "SubState": {"running", "dead", "failed", "auto-restart", "auto-restart-queued",
+                         "start-pre", "start", "start-post", "stop", "stop-sigterm",
+                         "stop-sigkill", "stop-post", "final-sigterm", "final-sigkill"},
+            "Result": {"success", "signal", "oom-kill", "exit-code", "timeout",
+                       "start-limit-hit", "resources", "core-dump", "watchdog", "protocol"},
+        }
+        evidence = {key: state.get(key) if isinstance(state.get(key), str) and
+                    state[key] in values else "unknown" for key, values in allowed.items()}
+        evidence.update(jobPresent=bool(state.get("Job")),
+                        mainPresent=isinstance(state.get("MainPID"), int) and state["MainPID"] > 0,
+                        controlPresent=isinstance(state.get("ControlPID"), int) and state["ControlPID"] > 0,
+                        cgroupPopulated=None, directProcessCount=None, cgroupReadState="unavailable")
+        for name in ("cgroup.events", "cgroup.procs"):
+            try:
+                with (T3_CGROUP / name).open() as stream:
+                    data = stream.read(65537)
+            except FileNotFoundError:
+                evidence["cgroupReadState"] = "absent-or-removed"
+                return evidence
+            except OSError:
+                return evidence
+            if len(data) > 65536:
+                evidence["cgroupReadState"] = "read-limit"
+                return evidence
+            if name == "cgroup.events":
+                populated = [line for line in data.splitlines() if line.startswith("populated ")]
+                if populated not in (["populated 0"], ["populated 1"]):
+                    evidence["cgroupReadState"] = "malformed"
+                    return evidence
+                evidence["cgroupPopulated"] = populated == ["populated 1"]
+            else:
+                pids = data.splitlines()
+                if len(pids) > 4096 or not all(pid.isdecimal() for pid in pids):
+                    evidence["cgroupReadState"] = "malformed-or-count-limit"
+                    return evidence
+                evidence["directProcessCount"] = len(pids)
+        evidence["cgroupReadState"] = "observed"
+        return evidence
 
     def signal_t3_main(self, sig):
         pid = self.t3_unit()["MainPID"]
@@ -1105,9 +1149,10 @@ class Native:
             results += ("signal",)
         while True:
             state = self.t3_unit()
-            check((state["ActiveState"], state["SubState"]) == expected and state["Result"] in results and
-                  state["Job"] == "" and state["MainPID"] == state["ControlPID"] == 0 and
-                  self.rt.Linux.t3_cgroup_empty(), "T3_DID_NOT_REMAIN_STOPPED")
+            if not ((state["ActiveState"], state["SubState"]) == expected and state["Result"] in results and
+                    state["Job"] == "" and state["MainPID"] == state["ControlPID"] == 0 and
+                    self.rt.Linux.t3_cgroup_empty()):
+                raise ProbeError("T3_DID_NOT_REMAIN_STOPPED", self.t3_diagnostic_evidence(state))
             self.check_t3_freezer(frozen)
             if time.monotonic() >= deadline:
                 return state
@@ -1126,7 +1171,7 @@ class Native:
         return self.wait_t3(ready, seconds=90)
 
     def t3_recovered(self, previous_pid):
-        self.t3_ready(previous_pid)
+        before = self.t3_ready(previous_pid)
         self.wait(lambda: command(["systemctl", "is-active", "minicloud-t3-connect.service"]) == "active")
         if self.client is not None:
             self.client.close()
@@ -1138,12 +1183,20 @@ class Native:
         check(result.get("realTicketWebSocketOpened") is True and
               result.get("snapshotSequence", -1) >= self.snapshot,
               "T3_STATE_NOT_RETAINED_AFTER_RESTART")
-        deadline = time.monotonic() + 30
+        self.t3_idle(before)
+
+    def t3_idle(self, before):
+        started = time.monotonic()
+        deadline = started + 30
         evidence = {"reasonCode": "other_idle_blocker"}
+        seen = dict(before)
+        observations = 0
         def remaining():
             seconds = deadline - time.monotonic()
             if seconds <= 0:
-                raise ProbeError("T3_RESTART_LEFT_UNKNOWN_WORK", evidence)
+                raise ProbeError("T3_RESTART_LEFT_UNKNOWN_WORK",
+                                 evidence | self.t3_diagnostic_evidence(seen) |
+                                 {"idleObservations": observations})
             return seconds
 
         while True:
@@ -1166,10 +1219,20 @@ class Native:
                           timeout=min(5, remaining())) ==
                   self.config["volume"]["filesystemUuid"],
                   "RETAINED_VOLUME_CHANGED_DURING_T3_RECOVERY")
+            seen = self.t3_unit(timeout=min(5, remaining()))
+            if not (seen["ActiveState"] == "active" and seen["SubState"] == "running" and
+                    seen["Job"] == "" and seen["ControlPID"] == 0 and
+                    seen["MainPID"] == before["MainPID"] and
+                    seen["NRestarts"] == before["NRestarts"]):
+                raise ProbeError("T3_IDLE_SERVICE_IDENTITY_CHANGED", self.t3_diagnostic_evidence(seen))
+            self.check_t3_pid(seen["MainPID"])
+            observations += 1
             inventory = status.get("workInventory")
             seconds = remaining()
             if isinstance(inventory, dict) and inventory.get("state") == "IdleCandidate":
-                return
+                return dict(idleObserved=True, idleObservations=observations,
+                            idleWaitSeconds=round(30 - seconds, 2),
+                            **self.t3_diagnostic_evidence(seen))
             time.sleep(min(0.2, seconds))
 
     def signal_frozen_t3_cgroup(self, before):
@@ -1281,14 +1344,16 @@ class Native:
         check(before["NRestarts"] == 0, "T3_CASE_RETRY_COUNTER_NOT_RESET")
         self.check_t3_pid(before["MainPID"])
         self.check_t3_freezer(False)
-        return before
+        return before | {"idlePrecondition": self.t3_idle(before)}
 
     def t3_retry_budget(self, adapter):
         budget_started = time.monotonic()
         before = self.t3_case_start(adapter)
         starts = [before]
         for kills in range(1, 6):
-            self.t3_ready()
+            if kills > 1:
+                ready = self.t3_ready()
+                self.t3_idle(ready)
             pid = self.signal_t3_main(signal.SIGKILL)
             delayed = self.t3_restart_delay("signal")
             check(delayed["NRestarts"] == kills - 1, "T3_RETRY_COUNTER_UNEXPECTED")
@@ -1317,8 +1382,12 @@ class Native:
     def t3_recovery(self):
         unit = T3_UNIT
         adapter = self.rt.Linux(self.config)
-        evidence = {}
-        before = self.t3_case_start(adapter)
+        evidence = {"idleCaseStarts": []}
+        def case_start():
+            before = self.t3_case_start(adapter)
+            evidence["idleCaseStarts"].append(before["idlePrecondition"])
+            return before
+        before = case_start()
         pid = self.signal_t3_main(signal.SIGKILL)
         evidence["sigkillRestartDelay"] = self.t3_restart_delay("signal")
         self.check_t3_freezer(False)
@@ -1327,7 +1396,7 @@ class Native:
         evidence["sigkillAutomaticallyRestartedWithSameIdentityAndProject"] = True
 
         # A real kernel cgroup OOM kill, as in the incident, rather than a synthetic signal.
-        before = self.t3_case_start(adapter)
+        before = case_start()
         limit, swap = T3_CGROUP / "memory.max", T3_CGROUP / "memory.swap.max"
         check(limit.read_text().strip() == "max", "T3_MEMORY_LIMIT_UNAVAILABLE")
         limits = {path: path.read_text().strip() for path in (limit, swap) if path.is_file()}
@@ -1347,7 +1416,7 @@ class Native:
         check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_OOM_NOT_AUTOMATICALLY_RESTARTED")
         evidence["oomKillAutomaticallyRestarted"] = True
 
-        self.t3_case_start(adapter)
+        case_start()
         self.signal_t3_main(signal.SIGKILL)
         self.t3_restart_delay("signal")
         self.check_t3_freezer(False)
@@ -1357,11 +1426,11 @@ class Native:
 
         frozen = {}
         for stop_at in ("before-freeze", "auto-restart", "start-pre"):
-            self.t3_case_start(adapter)
+            case_start()
             frozen[stop_at] = self.t3_frozen_stop(adapter, stop_at)
         evidence.update(frozenCrashThenRuntimeStopStaysStopped=True, frozenStopStages=frozen)
 
-        self.t3_case_start(adapter)
+        case_start()
         self.signal_t3_main(signal.SIGINT)
         exited = self.wait_t3(lambda s: s["ActiveState"] == "inactive")
         check(exited["ExecMainCode"] == 1 and exited["ExecMainStatus"] == 130,
