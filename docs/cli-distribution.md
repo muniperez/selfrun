@@ -97,7 +97,7 @@ select a merged source revision containing seed to obtain the new command.
 Source builds are self-contained/untrimmed single files with version/SHA
 metadata and version/help checks before atomic executable replacement.
 No SDK is installed for the user. This installer does not embed TEST server
-source; use the [seed-specific publish command](stateless-seed.md#publish-from-a-clone)
+source; use the [Seed publish profile](stateless-seed.md#publish-from-a-clone)
 to build a CLI that does.
 
 The reusable source-built customer deployment workflow and its inputs/default

@@ -72,10 +72,7 @@ jobs:
           for rid in linux-x64 linux-arm64 osx-arm64 win-x64; do
             output="$PAYLOAD/$rid"
             dotnet publish modules/cli/Minicloud.Cli.csproj --configuration Release \
-              --runtime "$rid" --self-contained true --output "$output" \
-              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-              -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false \
-              -p:EmbedSeedSource=true \
+              --runtime "$rid" --output "$output" -p:PublishProfile=Seed \
               -p:Version="${RELEASE_TAG#v}" -p:SourceRevisionId="$SOURCE_REVISION" \
               -p:IncludeSourceRevisionInInformationalVersion=false \
               -p:InformationalVersion="${RELEASE_TAG#v}+sha.$SOURCE_REVISION"

@@ -34,35 +34,30 @@ tar -xzf path/to/downloaded-linux-arm64.tar.gz
 `help seed` reports `Embedded TEST source:` with the exact revision when
 `local` is available. The review candidate and future CLI archives built
 by the updated CLI release workflow carry it. Existing releases, ordinary
-`dotnet publish` without `EmbedSeedSource`, and the ordinary source-mode CLI
+`dotnet publish` without the `Seed` profile, and the ordinary source-mode CLI
 installers do not gain it. Even in a signed CLI archive, choosing `local`
 does not select a signed **server** release.
 
 ### Publish from a clone
 
 Install Git and the .NET 10 SDK. From a clone, check out a reviewed commit
-that contains this feature. A locally committed revision works without
-pushing; uncommitted changes are refused. On Linux set `rid=linux-x64` for
-x86-64 or `rid=linux-arm64` for AArch64:
+that contains the `Seed` publish profile. A locally committed revision works
+without pushing; uncommitted changes are refused. On Linux:
 
 ```sh
 git clone https://github.com/muniventures/minicloud.git
 cd minicloud
 git checkout --detach <reviewed-commit-containing-guided-seed>
-rid=linux-arm64
-dotnet publish modules/cli/Minicloud.Cli.csproj --configuration Release \
-  --runtime "$rid" --self-contained \
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-  -p:EmbedSeedSource=true -p:SourceRevisionId="$(git rev-parse HEAD)" \
-  --artifacts-path .local/artifacts/seed-build \
-  --output .local/artifacts/seed-cli
+dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
 .local/artifacts/seed-cli/Minicloud.Cli seed
 ```
 
-The publish embeds only tracked files from that exact commit, not your working
-files or credentials. The executable prepares the archive and shows its SHA256
-and revision on the plan; no checkout is required to run it afterward. The VPS
-builds the selected source natively, using the existing installer (see the
+The profile builds a standalone executable for your SDK's platform and picks
+up the checked-out Git revision automatically. It embeds only tracked files
+from that commit, not your working files or credentials. The executable
+prepares the archive and shows its SHA256 and revision on the plan; no
+checkout is required to run it afterward. The VPS builds the selected source
+natively using the existing installer (see the
 [local-source limitations](#explicit-local-source-alternative) below).
 
 ### Review, install, and resume
