@@ -12,6 +12,7 @@ public sealed class DeploymentLogWriterTests(WorkerSqliteTestHarness harness) : 
     [InlineData("TIMING phase=sftp_transfer outcome=succeeded")]
     [InlineData("ERROR: health_check_failed")]
     [InlineData("__MINICLOUD_DEPLOY_FAILURE__=health_check_failed")]
+    [InlineData("__MINICLOUD_DEPLOY_ROLLBACK__=restored")]
     public async Task PhaseBoundaryPersistsSparseOutput(string boundary)
     {
         var id = await SeedAsync();

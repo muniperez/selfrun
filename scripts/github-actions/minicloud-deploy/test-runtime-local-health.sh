@@ -34,6 +34,7 @@ ensure_postgres_data_owner() { :; }
 start_infra() { :; }
 sync_postgres_password() { :; }
 start_app_services() { :; }
+running_project_containers() { :; }
 activate_caddy() { echo activate_caddy >> "$CALLS"; }
 record_deploy() { :; }
 deploy_observability_optional() { :; }
@@ -118,6 +119,9 @@ def run_case(limit, fail_port=None, cancel=False):
         curl = bindir / 'curl'
         curl.write_text(fake_curl)
         curl.chmod(0o755)
+        sudo = bindir / 'sudo'
+        sudo.write_text('#!/bin/sh\n[ "$*" = "-n cloud-init status --wait" ]\n')
+        sudo.chmod(0o755)
         env = {**os.environ, 'PATH': f'{bindir}:{os.environ["PATH"]}',
                'STATE': str(state), 'CALLS': str(calls), 'FAIL_PORT': str(fail_port or '')}
         started = time.monotonic()
