@@ -1,121 +1,75 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Run browser-based coding workspaces and host applications on your own servers with MiniCloud.">
-    <title>MiniCloud | Self-hosted coding and app hosting</title>
-    <link rel="icon" href="./mark.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="./styles.css">
-  </head>
-  <body>
-    <a class="skip-link" href="#main">Skip to content</a>
-    <header class="site-header frame" id="top">
-      <a class="wordmark" href="#top">
-        <img src="./mark.svg" width="30" height="30" alt="">
-        MiniCloud
-      </a>
-      <nav class="site-nav" aria-label="Main">
-        <a href="#workflows">Features</a>
-        <a href="#get-started">Get started</a>
-        <a href="https://github.com/muniventures/minicloud">GitHub <span aria-hidden="true">&nearr;</span></a>
-      </nav>
-    </header>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Self-hosted agentic coding and app hosting. Start Linux VMs for coding agents and deploy Docker services in your cloud account.">
+  <title>MiniCloud | Self-hosted agentic coding and app hosting</title>
+  <link rel="icon" href="./mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="frame header">
+    <a class="brand" href="./"><img src="./mark.svg" alt="" width="30" height="30">MiniCloud</a>
+    <nav aria-label="Main">
+      <a href="#coding">Coding VMs</a>
+      <a href="#deployments">Deployments</a>
+      <a href="#setup">Setup</a>
+      <a href="https://github.com/muniventures/minicloud">GitHub</a>
+    </nav>
+  </header>
 
-    <main class="frame" id="main" tabindex="-1">
-      <section class="hero" aria-labelledby="headline">
-        <h1 id="headline">Self-hosted coding<br class="hero-break"> and app hosting</h1>
-        <p class="hero-copy">Use coding agents in your browser and deploy Docker services on your own servers.</p>
-        <div class="actions">
-          <a class="button button-primary" href="#get-started">Get started <span aria-hidden="true">&darr;</span></a>
-          <a class="button" href="https://github.com/muniventures/minicloud">View on GitHub <span aria-hidden="true">&nearr;</span></a>
-        </div>
-      </section>
+  <main class="frame" id="main">
+    <section class="hero" aria-labelledby="headline">
+      <h1 id="headline">Self-hosted agentic coding and app hosting</h1>
+      <p>A MiniCloud instance is a dashboard, API, registry, and worker you install on one VPS. It provisions separate servers in your Hetzner, DigitalOcean, or Vultr account for Docker apps and optional coding VMs.</p>
+      <p class="release-note">The current install builds a test server from source.</p>
+      <div class="actions">
+        <a class="primary" href="#setup">Set up MiniCloud</a>
+        <a class="secondary" href="https://github.com/muniventures/minicloud">View source on GitHub</a>
+      </div>
+    </section>
 
-      <section class="section" id="workflows" aria-labelledby="workflows-title">
-        <h2 id="workflows-title">Workspaces and apps</h2>
-        <div class="workflow-grid">
-          <article>
-            <h3>Browser workspaces</h3>
-            <p>Use T3 Code to work with a coding agent and terminal in your browser. The dashboard opens app previews. You can stop the primary VM and resume with your files and sessions intact.</p>
-            <a class="text-link" href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">First workspace guide <span aria-hidden="true">&nearr;</span></a>
-            <a class="product-media" href="./media/coding-workspace.png">
-              <img src="./media/coding-workspace.png" alt="A running coding workspace with T3 and preview controls and a CPU history chart" width="1679" height="1020" loading="lazy">
-            </a>
-          </article>
-          <article>
-            <h3>Application hosting</h3>
-            <p>Deploy a web app, private API, and worker together or update them separately. Add HTTPS domains to public services and check deployment status and service logs.</p>
-            <a class="text-link" href="https://github.com/muniventures/minicloud#deploy-your-first-app">First deployment guide <span aria-hidden="true">&nearr;</span></a>
-            <a class="product-media" href="./media/services.png">
-              <img src="./media/services.png" alt="Application services with public and private access, addresses and runtime status" width="1679" height="850" loading="lazy">
-            </a>
-          </article>
-        </div>
-      </section>
+    <section class="feature" id="coding" aria-labelledby="coding-title">
+      <div>
+        <h2 id="coding-title">Run coding agents on a Linux VM</h2>
+        <p>Enable <strong>Dev Environments</strong> to start coding VMs. Open T3 Code, the browser interface for the agent and terminal running on the VM. Clone a repo and run your tests. VM images can include Codex, Claude Code, or GitHub Copilot CLI. Use your own account to sign in to the agent.</p>
+        <p>Stop the VM and resume later with your repo and T3 sessions on its disk. To open a development preview in your browser, ask your administrator to register the service and its port in the workspace configuration.</p>
+        <a href="#first-workspace">Start a coding VM</a>
+      </div>
+      <figure>
+        <a href="./media/coding-workspace.png"><img src="./media/coding-workspace.png" width="1679" height="1020" alt="MiniCloud dashboard showing a running VM, the Connect to T3 and Open preview buttons, and CPU usage" loading="lazy"></a>
+      </figure>
+    </section>
 
-      <section class="section architecture" aria-labelledby="architecture-title">
-        <div>
-          <h2 id="architecture-title">Control plane and servers</h2>
-          <p>The dashboard, API, and deployment worker run on a dedicated VPS. MiniCloud provisions separate machines in your Hetzner, DigitalOcean, or Vultr account to run app services and coding workspaces. The workspace gateway connects your browser to the coding VM.</p>
-        </div>
-        <div class="architecture-media">
-          <a class="product-media" href="./media/minicloud-architecture.svg">
-              <img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI connect to the control plane, which deploys app services and provisions coding workspace VMs" width="1120" height="480" loading="lazy">
-            </a>
-          <ul class="projects" aria-label="Open-source components">
-            <li><a href="https://wiki.postgresql.org/wiki/Logo"><img src="./media/postgresql.svg" alt="" width="34" height="34"> PostgreSQL</a></li>
-            <li><a href="https://openbao.org/docs/policies/brand/"><img src="./media/openbao.svg" alt="" width="34" height="34"> OpenBao</a></li>
-            <li><a href="https://opentelemetry.io/"><img src="./media/opentelemetry.svg" alt="" width="34" height="34"> OpenTelemetry</a></li>
-          </ul>
-        </div>
-      </section>
+    <section class="feature" id="deployments" aria-labelledby="deployments-title">
+      <div>
+        <h2 id="deployments-title">Deploy Docker services</h2>
+        <p>Run <code>minicloud init</code> in an app repo and select the services to deploy. By default, <code>minicloud deploy</code> builds images with Docker Buildx, publishes them to MiniCloud's registry, and deploys the selected services.</p>
+        <p>One app can have a public frontend, a private API, and a worker. Update them separately, give staging its own environment, and attach an HTTPS domain to a public service. The dashboard shows deployment history and which services are running.</p>
+        <a href="#first-deploy">Deploy an app</a>
+      </div>
+      <figure>
+        <a href="./media/services.png"><img src="./media/services.png" width="1679" height="850" alt="MiniCloud dashboard showing public and private services, their addresses, and whether they are running" loading="lazy"></a>
+      </figure>
+    </section>
 
-      <section class="section" id="get-started" aria-labelledby="get-started-title">
-        <h2 id="get-started-title">Set up MiniCloud</h2>
-        <p class="setup-note">If you have a MiniCloud instance, start by connecting the CLI. If you need an instance, <a href="#self-host">install a test server</a>.</p>
+    <section class="section" id="setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">Set up MiniCloud</h2>
+      <p class="intro">A <strong>MiniCloud instance</strong> is the dashboard, API, and deployment worker you install on one VPS. It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for coding and app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
+      <p class="intro">If someone already runs MiniCloud for your team, get the dashboard address and sign-in details from them and <a href="#cli-login">sign in from your terminal</a>.</p>
 
-        <article class="setup-step" id="connect">
-          <h3>Connect to an instance</h3>
-          <p>Get the dashboard hostname and the <code>sourceRevision</code> from your operator or your instance’s <code>/api/instance</code> response. Install the matching CLI with Git and the .NET 10 SDK. If you built the CLI during server setup, start with <code>minicloud instance add</code>. Complete <code>minicloud login</code> in your browser.</p>
-          <pre tabindex="0"><code>instance_sha='REPLACE_WITH_INSTANCE_SOURCE_SHA'
-curl -fsSL https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh |
-  MINICLOUD_INSTALL_MODE=source MINICLOUD_VERSION="$instance_sha" \
-  MINICLOUD_INSTALL_DIR="$HOME/.local/bin" sh
-
-export PATH="$HOME/.local/bin:$PATH"
-minicloud instance add personal cloud.example.com
-minicloud login</code></pre>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md">CLI installation, including Windows</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#instances">Instance and login commands</a></p>
-        </article>
-
-        <article class="setup-step" id="first-workspace">
-          <h3>Open a coding workspace</h3>
-          <p>Dev Environments require a configured workspace gateway, an approved VM image, and a plan. If you're the operator, <a href="https://github.com/muniventures/minicloud/blob/main/packaging/server/bundle/development-workspaces.md">enable Dev Environments</a> and <a href="https://github.com/muniventures/minicloud/blob/main/templates/development-workspaces/README.md#prepared-image">prepare a workspace image</a> first.</p>
-          <ol class="setup-instructions">
-            <li>Go to <strong>Dev Environments → Create dev environment</strong>. Name it, choose a size, location, and storage, then review the estimate and create it. This starts the primary VM.</li>
-            <li>When the VM is <strong>Running</strong>, select <strong>Connect to T3 → Open T3</strong>. In T3, open <strong>Settings → Providers</strong> and sign in to your coding provider. Open a project or clone a repository in the terminal.</li>
-            <li>Stop the VM when you're done. Files on the primary volume are retained, and storage charges continue while the VM is stopped.</li>
-          </ol>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">Workspace guide, previews, and idle settings</a></p>
-        </article>
-
-        <article class="setup-step" id="first-deploy">
-          <h3>Deploy an app</h3>
-          <p>From your app's Git checkout, run <code>minicloud init</code>. Select or create the app, pick a plan if prompted, and choose the service directories. The CLI saves your choices in <code>minicloud.yml</code>. Start Docker with Buildx for the default local build.</p>
-          <pre tabindex="0"><code>minicloud init
-minicloud deploy</code></pre>
-          <p>Use <code>minicloud deploy --build-mode source</code> for a server-side build, or add <code>--environment staging</code> to select an existing staging environment. Open the service URL printed by the CLI. In the dashboard, use <strong>Deployments</strong> to check the result and <strong>Apps → your app → Domains</strong> to add a custom hostname.</p>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#create-a-deployment-config">Configure services</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#deploy">Build and deploy options</a></p>
-        </article>
-
-        <article class="setup-step" id="self-host">
-          <h3>Install a test server</h3>
-          <p>The server installer builds from source. You need Git, Python 3.11 or newer, the .NET 10 SDK, OpenSSH, a VPS provider account, and DNS access. The commands use a Unix shell and a DigitalOcean account. A signed production installer is pending.</p>
-          <ol class="setup-instructions">
-            <li>
-              <strong>Build the server archive and matching CLI.</strong> Start with a clean checkout. Save the SHA-256 printed by the packaging command.
-              <pre tabindex="0"><code>git clone https://github.com/muniventures/minicloud.git
+      <ol class="setup-list">
+        <li id="self-host">
+          <h3>Install MiniCloud on a VPS</h3>
+          <p>The current installer is for testing from source. On your computer, install Git, Python 3.11 or later, the .NET 10 SDK, and OpenSSH. You also need a VPS provider account, an SSH key, and DNS access. After installation, export the one-time setup token and use it at the dashboard’s <code>/setup</code> page to create the first account.</p>
+          <details>
+            <summary>Build and install a test server</summary>
+            <ol class="install-list">
+              <li>
+                <p><strong>Build the server archive and CLI from the same checkout.</strong> Save the archive SHA-256 printed by the packaging command.</p>
+                <pre tabindex="0"><code>git clone https://github.com/muniventures/minicloud.git
 cd minicloud
 umask 077
 seed_dir="$PWD/.local/artifacts/local-seed"
@@ -127,12 +81,20 @@ python3 -B scripts/self-hosting/local_source.py package \
 dotnet publish modules/cli/Minicloud.Cli.csproj -c Release \
   --artifacts-path "$seed_dir/cli-build" --output "$seed_dir/cli" \
   -p:SourceRevisionId="$(git rev-parse HEAD)"
-minicloud() { dotnet "$seed_dir/cli/Minicloud.Cli.dll" "$@"; }
+cat &gt; "$seed_dir/cli/minicloud" &lt;&lt;'SH'
+#!/bin/sh
+cli_dir=$(CDPATH= cd "$(dirname "$0")" &amp;&amp; pwd)
+exec dotnet "$cli_dir/Minicloud.Cli.dll" "$@"
+SH
+chmod 700 "$seed_dir/cli/minicloud"
+export PATH="$seed_dir/cli:$PATH"
+printf '%s\n' "$seed_dir/cli"
 minicloud seed new-id</code></pre>
-            </li>
-            <li>
-              <strong>Configure the server.</strong> Save this example as <code>$seed_dir/seed-config.json</code> with mode <code>0600</code>. Fill in your seed ID, provider account, region, size, and domains. Keep the same seed ID for retries. Put the provider token in <code>$seed_dir/provider-token</code> with mode <code>0600</code>. Use an existing SSH private key. If it has a passphrase, unlock it with <code>ssh-add</code> and add <code>--use-ssh-agent</code> to the seed commands.
-              <pre tabindex="0"><code>{
+                <p>Add the printed CLI directory to your shell’s startup <code>PATH</code> to use it in new terminals. To resume the server setup in a new shell, return to the MiniCloud checkout, set <code>seed_dir="$PWD/.local/artifacts/local-seed"</code>, add <code>$seed_dir/cli</code> to <code>PATH</code>, and restore the variables and <code>seed_local</code> function in the VPS creation step. Run only the commands for the step you are resuming.</p>
+              </li>
+              <li>
+                <p><strong>Set the provider and domains.</strong> Save this DigitalOcean example to <code>$seed_dir/seed-config.json</code>. Set <code>providerAccount</code> to <code>DigitalOcean account </code> followed by <code>account.uuid</code> from your provider’s authenticated <code>GET /v2/account</code> response. Fill in the seed ID, region, size, and domains. Keep the seed ID if you need to resume. Put the provider token in <code>$seed_dir/provider-token</code>. Both files need mode <code>0600</code>. <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#protected-configuration-and-user-owned-key">Hetzner and Vultr account formats</a> are in the seed guide.</p>
+                <pre tabindex="0"><code>{
   "schemaVersion": 1,
   "seedId": "REPLACE_WITH_SEED_ID",
   "provider": "digitalocean",
@@ -145,45 +107,139 @@ minicloud seed new-id</code></pre>
   "architecture": "linux/amd64",
   "initialCreationIntent": "one-authorized-creator-no-unresolved-create"
 }</code></pre>
-            </li>
-            <li>
-              <strong>Review the plan and create the VPS.</strong> Set the archive hash, key path, and token file path before running the commands. Check the account, size, region, and cost in the plan. Substitute its approval digest before running <code>apply</code>. Use <code>--new-seed</code> only for the initial creation. If the create result is uncertain, check the provider console before retrying.
-              <pre tabindex="0"><code>source_sha256='REPLACE_WITH_ARCHIVE_SHA256'
+              </li>
+              <li>
+                <p><strong>Review the cost and create the VPS.</strong> Set the archive hash and SSH key path. If your key has a passphrase, use <code>ssh-add</code> and add <code>--use-ssh-agent</code> to the seed commands. The plan shows the account, region, size, and cost. Copy its approval digest into the apply command. If the create request times out, check the provider before retrying.</p>
+                <pre tabindex="0"><code>archive_hash='REPLACE_WITH_ARCHIVE_SHA256'
 ssh_key="$HOME/.ssh/id_ed25519"
-credential_file="$seed_dir/provider-token"
+provider_token="$seed_dir/provider-token"
 
 seed_local() {
   minicloud seed "$@" --config "$seed_dir/seed-config.json" \
     --report "$seed_dir/reports/seed-report.json" --ssh-key "$ssh_key" \
-    --local-source "$seed_dir/source.tar.gz" --source-sha256 "$source_sha256"
+    --local-source "$seed_dir/source.tar.gz" --source-sha256 "$archive_hash"
 }
 
-seed_local plan --credential-file "$credential_file" --new-seed
-seed_local apply --credential-file "$credential_file" --new-seed \
+seed_local plan --credential-file "$provider_token" --new-seed
+seed_local apply --credential-file "$provider_token" --new-seed \
   --approve REVIEWED_CREATION_DIGEST</code></pre>
-            </li>
-            <li>
-              <strong>Verify the server and finish installation.</strong> Check the VPS in the provider console and obtain its SSH host key fingerprint there. Add a <code>target</code> object with <code>serverId</code>, <code>ipv4</code>, and <code>hostFingerprint</code> to the config. Remove <code>initialCreationIntent</code>, then review and approve a new plan without <code>--new-seed</code>.
-              <pre tabindex="0"><code>seed_local plan --credential-file "$credential_file"
-seed_local apply --credential-file "$credential_file" \
+              </li>
+              <li>
+                <p><strong>Verify the VPS and finish the install.</strong> Get the VPS's ed25519 SSH host fingerprint independently through the provider console. In the same config, remove <code>initialCreationIntent</code> and add <code>target</code> with the server ID and IPv4 from the create report and the verified fingerprint. Use the new plan's digest to continue on that VPS.</p>
+                <pre tabindex="0"><code>"target": {
+  "serverId": "REPLACE_WITH_SERVER_ID",
+  "ipv4": "203.0.113.10",
+  "hostFingerprint": "SHA256:REPLACE_WITH_VERIFIED_ED25519_FINGERPRINT"
+}</code></pre>
+                <pre tabindex="0"><code>seed_local plan --credential-file "$provider_token"
+seed_local apply --credential-file "$provider_token" \
   --approve REVIEWED_CONTINUATION_DIGEST</code></pre>
-            </li>
-            <li>
-              <strong>Set up DNS and claim the instance.</strong> Point <code>cloud.example.com</code> and <code>api.cloud.example.com</code> at the control-plane VPS using the report's DNS instructions. Once both respond over HTTPS, export the recovery files and setup token. Open <code>https://cloud.example.com/setup</code>, enter the token, and create your operator account. Sign in normally. Keep the recovery files encrypted and off the VPS.
-              <pre tabindex="0"><code>minicloud seed export --config "$seed_dir/seed-config.json" \
+              </li>
+              <li>
+                <p><strong>Open the dashboard.</strong> Follow the report's DNS instructions for <code>cloud.example.com</code> and <code>api.cloud.example.com</code>. Confirm both respond over HTTPS. Export the recovery files and setup token, then open <code>https://cloud.example.com/setup</code>. Enter the token, create your account, and sign in. Keep the recovery files encrypted off the VPS.</p>
+                <pre tabindex="0"><code>minicloud seed export --config "$seed_dir/seed-config.json" \
   --report "$seed_dir/reports/seed-report.json" --ssh-key "$ssh_key" \
   --recovery-dir "$seed_dir/private-recovery" --setup-token</code></pre>
-            </li>
-            <li><strong>Add a provider and a plan.</strong> In the dashboard, open <strong>Plans</strong>, connect a provider account, and create a plan with a region and server size for your apps.</li>
-          </ol>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md">Server setup, provider configuration, and recovery</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/operator-setup.md">Operator setup</a></p>
-        </article>
-      </section>
-    </main>
+              </li>
+            </ol>
+            <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md">Source installation and recovery guide</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/operator-setup.md">First operator account</a></p>
+          </details>
+          <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
+        </li>
 
-    <footer class="site-footer frame">
-      <p>MiniCloud</p>
-      <a href="https://github.com/muniventures/minicloud">GitHub repository <span aria-hidden="true">&nearr;</span></a>
-    </footer>
-  </body>
+        <li id="cli-login">
+          <h3>Sign in from your terminal</h3>
+          <p>The <code>minicloud</code> command needs to know which dashboard to use. Replace <code>cloud.example.com</code> with your dashboard hostname. If you just built MiniCloud, use the CLI you built with it. For a team server, use the CLI your team provides or install a compatible version below.</p>
+          <details>
+            <summary>Install the CLI for an existing server</summary>
+            <p>Use Linux (x64 or ARM64) or Apple Silicon macOS with Git, jq, and the .NET 10 SDK. The server advertises the CLI builds it accepts. This command selects and prints a compatible build after you enter the dashboard hostname.</p>
+            <pre tabindex="0"><code>dashboard=cloud.example.com
+revision=$(curl -fsS "https://api.$dashboard/api/instance" |
+  jq -er 'first(.cliCompatibility.sourceRevisions[]? |
+    strings | select(test("^[0-9a-f]{40}$"))) //
+    error("No compatible CLI commit listed")')
+printf '%s\n' "$revision"</code></pre>
+            <p>Install the build selected above. If the server lists no compatible build or uses private source, ask the person who runs it for the CLI.</p>
+            <pre tabindex="0"><code>(
+  set -e
+  : "${revision:?Run the previous block first}"
+  installer=$(mktemp)
+  trap 'rm -f "$installer"' EXIT
+  url=https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh
+  curl -fsSL "$url" -o "$installer"
+  MINICLOUD_INSTALL_MODE=source MINICLOUD_VERSION="$revision" \
+    MINICLOUD_INSTALL_DIR="$HOME/.local/bin" sh "$installer"
+)
+export PATH="$HOME/.local/bin:$PATH"</code></pre>
+            <p>Add <code>$HOME/.local/bin</code> to your shell’s startup <code>PATH</code> to keep using <code>minicloud</code> in new terminals.</p>
+            <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md#explicit-exact-source-mode">CLI installation and Windows instructions</a></p>
+          </details>
+          <pre tabindex="0"><code>minicloud instance add work cloud.example.com
+minicloud login</code></pre>
+          <p><code>work</code> is a name for this server on your computer. Complete sign-in in the browser, then return to your terminal.</p>
+        </li>
+
+        <li id="first-deploy">
+          <h3>Deploy your first app</h3>
+          <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>minicloud init</code> to select or create an app, choose the folders and plan, and write <code>minicloud.yml</code>. Your first deployment can create a billable VPS under that plan.</p>
+          <pre tabindex="0"><code>minicloud init</code></pre>
+          <p>Before deploying, review <code>minicloud.yml</code>. Keep the app ID that <code>init</code> wrote and check each service’s folder, Dockerfile, port, and public access. Here is an example <code>services</code> section for a public frontend and a private API:</p>
+          <pre tabindex="0"><code>services:
+  web:
+    sourcePath: web
+    dockerfile: web/Dockerfile
+    port: 3000
+    public: true
+  api:
+    sourcePath: api
+    dockerfile: api/Dockerfile
+    port: 8080
+    public: false</code></pre>
+          <p>Deploy the configured services:</p>
+          <pre tabindex="0"><code>minicloud deploy</code></pre>
+          <p>For a public service, use the hostname under your configured app domain. With Cloudflare DNS management enabled, MiniCloud creates the record. Otherwise open the run in <strong>Deployments</strong> and follow its DNS message: create an A record for the printed hostname pointing to the app VPS IP. After DNS resolves and deployment completes, open the public URL.</p>
+          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#create-a-deployment-config">Configure service folders, ports, and Dockerfiles</a></p>
+        </li>
+
+        <li id="manage">
+          <h3>Check and update your app</h3>
+          <ul class="manage-list">
+            <li><strong>Deployments</strong> shows whether a deploy is queued, running, or finished. Open a deployment to see its progress and logs.</li>
+            <li><strong>Apps → your app → Services</strong> shows which services are running and their addresses. Choose the environment first if you have more than one.</li>
+            <li><strong>Apps → your app → Logs</strong> shows runtime output when log collection is enabled. Set regular variables in <code>minicloud.yml</code> with <code>env</code>. Store secret values under <strong>Secrets</strong> and reference them with <code>secretEnv</code>.</li>
+            <li><strong>Apps → your app → Domains</strong> is where you add a hostname, verify it with DNS, and attach it to a public service.</li>
+            <li><strong>App settings</strong> has controls to delete an app or environment. Back up data before deleting it and confirm the VPS is gone in your provider console. Retained volumes can still incur charges.</li>
+          </ul>
+          <p>After changing code or configuration, run <code>minicloud deploy</code> again to update the changed services. Use <code>minicloud status --watch</code> to follow a deploy and <code>minicloud logs my-app</code> for runtime logs when log collection is enabled.</p>
+          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#status-logs-and-apps">Deployment status and runtime logs</a></p>
+        </li>
+
+        <li id="first-workspace">
+          <h3>Start a coding VM</h3>
+          <p>The person who runs MiniCloud must <a href="https://github.com/muniventures/minicloud/blob/main/packaging/server/bundle/development-workspaces.md">enable Dev Environments</a> and configure a qualified provider image, a plan, and the workspace gateway. Then open <strong>Dev Environments → Create dev environment</strong>, choose a size and location, and create it.</p>
+          <p>When the VM is running, choose <strong>Connect to T3 → Open T3</strong>. In T3, sign in to your agent under <strong>Settings → Providers</strong> and open a project. Stop the VM from the dashboard when you're done. Retained disks still incur storage charges.</p>
+          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">Create a workspace, open a preview, and set idle shutdown</a></p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="section" id="architecture" aria-labelledby="architecture-title">
+      <h2 id="architecture-title">What runs on each server</h2>
+      <p class="intro">The instance VPS hosts the dashboard, API, registry, and worker. PostgreSQL stores control-plane state, and OpenBao stores secrets. An app VPS runs your containers. A separate coding VM runs T3 Code and the agents on its image. The workspace gateway routes browser sessions to that VM. OpenTelemetry log ingestion is optional.</p>
+      <figure class="diagram">
+        <a href="./media/minicloud-architecture.svg"><img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI call the MiniCloud API on the control plane. The worker deploys Docker services to app servers and provisions coding VMs, which developers reach through the workspace gateway." width="1120" height="480" loading="lazy"></a>
+      </figure>
+      <ul class="projects" aria-label="Open-source components">
+        <li><a href="https://www.postgresql.org/"><img src="./media/postgresql.svg" alt="" width="28" height="28">PostgreSQL</a></li>
+        <li><a href="https://openbao.org/"><img src="./media/openbao.svg" alt="" width="28" height="28">OpenBao</a></li>
+        <li><a href="https://opentelemetry.io/"><img src="./media/opentelemetry.svg" alt="" width="28" height="28">OpenTelemetry</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="frame footer">
+    <span>MiniCloud</span>
+    <a href="https://github.com/muniventures/minicloud">Source and documentation</a>
+  </footer>
+</body>
 </html>
