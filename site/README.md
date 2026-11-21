@@ -20,5 +20,5 @@ build. The project marks come from the artwork sources credited in the
 ## Publish
 
 Set **Settings → Pages → Source** to **GitHub Actions**, then run
-**Publish landing page** on `main` from the Actions tab. The site is deployed to
+**Publish landing page** on `main` from the Actions tab. The workflow builds and smoke-tests the CLI on each supported platform and stages its archive under `downloads/`. The local HTML preview omits these archives. The site is deployed to
 <https://muniventures.github.io/minicloud/>.

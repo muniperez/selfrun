@@ -10,7 +10,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cli:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cli-seed-review.yml
+
   package:
+    needs: cli
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -21,6 +28,24 @@ jobs:
           persist-credentials: false
       - name: Stage the landing page and approved documentation assets
         run: site/build.sh "$RUNNER_TEMP/minicloud-pages"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: minicloud-seed-*
+          path: ${{ runner.temp }}/cli-builds
+      - name: Stage the four CLI downloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          destination="$RUNNER_TEMP/minicloud-pages/downloads"
+          mkdir "$destination"
+          for rid in linux-x64 linux-arm64 osx-arm64 win-x64; do
+            name="minicloud-seed-$rid"
+            extension=tar.gz
+            if [[ "$rid" == win-x64 ]]; then extension=zip; fi
+            cd "$RUNNER_TEMP/cli-builds/$name"
+            sha256sum --check --strict checksums.txt
+            install -m 644 "$name.$extension" "$destination/"
+          done
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/minicloud-pages
