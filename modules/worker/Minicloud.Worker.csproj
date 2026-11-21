@@ -9,11 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="..\..\templates\development-workspaces\**\*"
-             Exclude="..\..\templates\development-workspaces\image\**;..\..\templates\development-workspaces\tests\**;..\..\templates\development-workspaces\README.md;..\..\templates\development-workspaces\test.sh;..\..\templates\development-workspaces\**\__pycache__\**"
-             Link="development-workspaces\%(RecursiveDir)%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\scripts\database-platform\*.py" Exclude="..\..\scripts\database-platform\test*.py" Link="scripts\database-platform\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.21.0" />

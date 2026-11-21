@@ -8,7 +8,6 @@ using Minicloud.Common.Data;
 using Minicloud.Common.Extensions;
 using Minicloud.Common.Services;
 using Minicloud.Worker;
-using Minicloud.Worker.DevelopmentWorkspaces;
 using Minicloud.Worker.Pipeline;
 using Minicloud.Worker.Pipeline.Steps;
 using Minicloud.Common.Providers;
@@ -26,11 +25,6 @@ using WorkerDiagnostics = Minicloud.Worker.Diagnostics.OperatorDiagnostics;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-worker");
-builder.Configuration.AddDevelopmentWorkspaceConfiguration();
-builder.Services.Configure<DevelopmentWorkspaceOptions>(
-    builder.Configuration.GetSection(DevelopmentWorkspaceOptions.SectionName));
-builder.Services.AddScoped<DevelopmentWorkspaceService>();
-builder.Services.AddDevelopmentWorkspaceWorker(builder.Configuration);
 
 // Configure Worker Options
 builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection(WorkerOptions.SectionName));

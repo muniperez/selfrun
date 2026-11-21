@@ -128,21 +128,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(images().values()) | set(manifest["dependencies"].values()),
                          {service["image"] for service in compose["services"].values()})
 
-    def test_optional_workspace_assets_are_included_and_hashed_without_changing_default_images(self):
-        source = Path(__file__).resolve().parents[2] / "packaging/server/bundle"
-        names = ("compose.workspaces.yml", "Caddyfile.workspaces",
-                 "development-workspaces.example.json", "development-workspaces.md")
-        for name in names:
-            (self.payload / name).write_bytes((source / name).read_bytes())
+    def test_checked_in_server_payload_excludes_workspace_assets(self):
+        payload = Path(__file__).resolve().parents[2] / "packaging/server/bundle"
 
-        manifest = self.package()
-
-        with tarfile.open(self.output / manifest["bundle"]["name"]) as archive:
-            for name in names:
-                data = archive.extractfile(name).read()
-                self.assertEqual((source / name).read_bytes(), data)
-                self.assertEqual(release.sha256(data), manifest["files"][name])
-        self.assertEqual(set(release.COMPONENTS), set(manifest["images"]))
+        self.assertFalse([name for name in release.payload_files(payload) if "workspace" in name])
 
     def test_bundle_is_reproducible_and_outputs_cannot_escape_ignored_artifacts(self):
         manifest = self.package()

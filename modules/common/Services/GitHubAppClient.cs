@@ -19,7 +19,7 @@ public sealed record GitHubAppCredentials(long AppId, string Slug, long OwnerId,
     string OwnerType, string Pem, string WebhookSecret, string ClientId, string ClientSecret);
 public sealed record VerifiedGitHubInstallation(long Id, bool Suspended, IReadOnlyList<GitHubRepository> Repositories);
 
-public sealed partial class GitHubAppClient(HttpClient client, TimeProvider clock)
+public sealed class GitHubAppClient(HttpClient client, TimeProvider clock)
 {
     public async Task<GitHubAppCredentials> ConvertAsync(string code, CancellationToken ct)
     {
