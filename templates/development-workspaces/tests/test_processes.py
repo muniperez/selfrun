@@ -227,18 +227,26 @@ class IdleTerminalTests(unittest.TestCase):
                 self.inspect()
 
     def test_c_commands_scripts_background_and_stopped_jobs_cannot_be_classified_idle(self):
-        for argv in (["/bin/bash", "-c", "read"], ["/bin/bash", "-ic", "read"],
-                     ["/bin/bash", "script.sh"], ["/bin/bash", "--rcfile", "custom"]):
-            with self.subTest(argv=argv):
-                self.write(110, argv=argv)
-                with self.assertRaisesRegex(rt.Blocked, "invocation"):
-                    self.inspect()
-        self.write(110, argv=["/bin/bash", "-i"])
-        for state, uid in (("S", 2000), ("T", 2000), ("Z", 2000), ("S", 1001)):
-            with self.subTest(state=state, uid=uid):
-                self.write(120, ppid=110, state=state, uid=uid)
-                with self.assertRaisesRegex(rt.Blocked, "children"):
-                    self.inspect()
+        inventory = self.reader.inventory
+        for child_first in (False, True):
+            with self.subTest(child_first=child_first), \
+                    patch.object(self.reader, "inventory", side_effect=lambda: dict(
+                        sorted(inventory().items(), reverse=child_first))):
+                for argv in (["/bin/bash", "-c", "read"], ["/bin/bash", "-ic", "read"],
+                             ["/bin/bash", "script.sh"], ["/bin/bash", "--rcfile", "custom"]):
+                    with self.subTest(argv=argv):
+                        self.write(110, argv=argv)
+                        with self.assertRaisesRegex(rt.Blocked, "invocation"):
+                            self.inspect()
+                self.write(110, argv=["/bin/bash", "-i"])
+                self.inspect()
+                for state, uid in (("S", 2000), ("T", 2000), ("Z", 2000), ("S", 1001)):
+                    with self.subTest(state=state, uid=uid):
+                        self.write(120, ppid=110, state=state, uid=uid)
+                        # Either the parent-child guard or the child's state guard can reject first.
+                        with self.assertRaises(rt.Blocked):
+                            self.inspect()
+                shutil.rmtree(self.root / "120")
 
     def test_kernel_children_file_blocks_jobs_missing_from_first_inventory(self):
         self.write(110, children="120 ")
