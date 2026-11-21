@@ -7,7 +7,7 @@ namespace Minicloud.Cli.Commands;
 public sealed partial class CliApplication
 {
     private sealed record GuidedSession(SeedPortableConfig Config, string KeyPath, bool UseAgent,
-        string KeyFingerprint, string? SourceSha256);
+        string KeyFingerprint, string? SourceSha256, string? HetznerCredentialScope);
     private sealed record GuidedDispatch(string Image, SeedVerifiedRelease Release);
 
     private async Task<int> RunGuidedSeedAsync(string? stateDirectory, CancellationToken ct)
@@ -63,17 +63,19 @@ public sealed partial class CliApplication
                     project = SeedAnswer("Hetzner project identifier you independently verified in the provider console: ");
                 var digest = mode == "local" ? SeedLocalSource.PrepareEmbedded(archive, tag) : null;
                 credential = SeedFiles.Credential(null, _console);
+                var seedId = Guid.NewGuid().ToString("N");
                 using var provider = new SeedProvider(selection.Provider, credential);
+                var scope = selection.Provider == "hetzner" ? provider.CredentialScope(seedId) : null;
                 var account = await provider.GetAccountIdentityAsync(ct);
                 var config = new SeedPortableConfig
                 {
-                    SchemaVersion = 1, SeedId = Guid.NewGuid().ToString("N"), Provider = selection.Provider,
+                    SchemaVersion = 1, SeedId = seedId, Provider = selection.Provider,
                     ProviderAccount = project is not null ? "hetzner-project:" + project : account,
                     Region = selection.Region, Size = selection.Size, Domain = selection.Domain, AppDomain = selection.AppDomain,
                     ServerVersion = tag, Architecture = architecture
                 };
                 config.Validate();
-                session = new(config, key, useAgent, keyFingerprint, digest);
+                session = new(config, key, useAgent, keyFingerprint, digest, scope);
                 SeedGuard.Require(!JsonSerializer.Serialize(session, SeedJournal.Json).Contains(credential, StringComparison.Ordinal),
                     "A configuration value contains the supplied credential. Never enter a credential in another prompt.");
                 WriteGuided(sessionPath, session);
@@ -108,7 +110,7 @@ public sealed partial class CliApplication
                 if (setupToken) args.Add("--setup-token");
                 var config = initial ? configForRun with { InitialCreationIntent = SeedPortableConfig.CreationIntent } : configForRun;
                 return await RunPortableSeedAsync(args.ToArray(), ct, new(config, saved.KeyFingerprint,
-                    initial ? credential : null, localSource, dispatch?.Release,
+                    initial ? credential : null, localSource, saved.HetznerCredentialScope, dispatch?.Release,
                     initial ? plan =>
                     {
                         var approved = plan.Plan!;
@@ -145,6 +147,7 @@ public sealed partial class CliApplication
                     _console.WriteLine("Creation was dispatched or interrupted. Reconcile the original operation in your authenticated provider console. No creation will be retried.");
                     credential ??= SeedFiles.Credential(null, _console);
                     using var provider = new SeedProvider(configForRun.Provider, credential);
+                    RequireGuidedCredentialScope(configForRun, provider, saved.HetznerCredentialScope);
                     var account = await provider.GetAccountIdentityAsync(ct);
                     SeedGuard.Require(configForRun.Provider == "hetzner" || account == configForRun.ProviderAccount,
                         "Authorized provider account differs from the original account.");
@@ -226,6 +229,15 @@ public sealed partial class CliApplication
             _console.WriteError("Could not read, lock or write protected seed state or input. Preserve the state and reconcile any dispatched creation; no diagnostics containing inputs were logged.");
         }
         return CliExitCodes.ValidationError;
+    }
+
+    private static void RequireGuidedCredentialScope(SeedPortableConfig config, SeedProvider provider, string? expectedScope)
+    {
+        if (config.Provider != "hetzner") return;
+        SeedGuard.Require(expectedScope is not null,
+            "This guided state has no original Hetzner credential binding. Preserve it and reconcile with the provider; never retry an uncertain create.");
+        SeedGuard.Require(provider.CredentialScope(config.SeedId) == expectedScope,
+            "Hetzner credential differs from the original guided seed. Use the original token; no request was sent to Hetzner.");
     }
 
     private string SeedAnswer(string prompt, bool allowEmpty = false)

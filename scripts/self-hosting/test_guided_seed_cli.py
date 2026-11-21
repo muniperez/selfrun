@@ -23,14 +23,18 @@ import time
 
 
 TOKEN = "fixture-token-not-for-any-real-provider"
+CHANGED_TOKEN = "different-fixture-token-not-for-any-real-provider"
+TOKENS = (TOKEN, CHANGED_TOKEN)
 ADDRESS = "203.0.113.1"
 DOMAIN = "cloud.example.com"
 APP_DOMAIN = "apps.example.com"
 PROVIDER = "api.digitalocean.com"
+HETZNER = "api.hetzner.cloud"
 
 
 class Fixture:
     def __init__(self):
+        self.requests = []
         self.posts = []
         self.ssh_keys = []
         self.droplet = None
@@ -63,10 +67,38 @@ class Fixture:
         }[path]
 
 
-def proxy(root, fixture):
+class HetznerFixture:
+    def __init__(self):
+        self.requests = []
+
+    def api(self, path, body):
+        if body is not None:
+            if path == "/v1/ssh_keys":
+                return {"ssh_key": {"id": 7}}
+            assert path == "/v1/servers" and body["ssh_keys"] == [7]
+            return None  # The create request arrived, but the client never receives a response.
+        price = {"location": "fixture", "price_monthly": {"net": "11"}, "price_hourly": {"net": "0.02"},
+                 "included_traffic": 1000000000, "price_per_tb_traffic": {"net": "1"}}
+        return {
+            "/v1/servers": {"servers": []},
+            "/v1/ssh_keys": {"ssh_keys": []},
+            "/v1/locations": {"locations": [{"id": 1, "name": "fixture"}]},
+            "/v1/server_types": {"server_types": [{"id": 1, "name": "fixture-size", "architecture": "x86",
+                                                    "cores": 2, "memory": 2, "disk": 40,
+                                                    "locations": [{"name": "fixture", "available": True}]}]},
+            "/v1/images": {"images": [{"id": 42, "os_flavor": "ubuntu", "os_version": "24.04", "architecture": "x86",
+                                       "type": "system", "status": "available", "disk_size": 10}]},
+            "/v1/pricing": {"pricing": {"currency": "USD", "server_types": [{"id": 1, "prices": [price]}],
+                                        "primary_ips": [{"type": "ipv4", "prices": [price]}]}},
+        }[path]
+
+
+def proxy(root, fixtures):
     cert, key = root / "ca.pem", root / "tls-key.pem"
+    origins = ("github.com", *fixtures)
+    names = ",".join(f"DNS:{origin}" for origin in origins)
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", "/CN=seed-only-fixture", "-addext", f"subjectAltName=DNS:{PROVIDER},DNS:github.com",
+                    "-subj", "/CN=seed-only-fixture", "-addext", f"subjectAltName={names}",
                     "-keyout", key, "-out", cert], check=True, capture_output=True)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(cert, key)
@@ -92,12 +124,15 @@ def proxy(root, fixture):
                 raw = b"".join(chunks)
             else:
                 raw = self.rfile.read(int(self.headers["Content-Length"]))
-            assert TOKEN.encode() not in raw
+            assert all(token.encode() not in raw for token in TOKENS)
             self.respond(json.loads(raw))
 
         def respond(self, body):
-            assert self.headers["Host"] == PROVIDER and self.headers["Authorization"] == f"Bearer {TOKEN}"
-            value = fixture.api(self.path.split("?")[0], body)
+            fixture = fixtures[self.headers["Host"]]
+            assert self.headers["Authorization"] in {f"Bearer {token}" for token in TOKENS}
+            path = self.path.split("?")[0]
+            fixture.requests.append((self.command, path))
+            value = fixture.api(path, body)
             if value is not None:
                 data = json.dumps(value).encode()
                 self.send_response(200)
@@ -109,7 +144,7 @@ def proxy(root, fixture):
     class Connect(socketserver.StreamRequestHandler):
         def handle(self):
             method, authority, _ = self.rfile.readline().decode().split()
-            assert method == "CONNECT" and authority in {PROVIDER + ":443", "github.com:443"}
+            assert method == "CONNECT" and authority in {origin + ":443" for origin in origins}
             while line := self.rfile.readline():
                 if line == b"\r\n":
                     break
@@ -148,7 +183,7 @@ def dialogue(cli, root, env, state, turns, code):
                 while (index := output.find(marker, pos)) == -1:
                     assert read(), output.decode(errors="replace")
                 pos = index + len(marker)
-                if answer == TOKEN:
+                if answer in TOKENS:
                     while termios.tcgetattr(slave)[3] & termios.ECHO:
                         assert time.monotonic() < deadline, "Credential prompt did not hide input."
                         time.sleep(.01)
@@ -159,7 +194,7 @@ def dialogue(cli, root, env, state, turns, code):
                 pass
             text = output.decode(errors="replace")
             assert process.wait(timeout=5) == code, text
-            assert TOKEN not in text, "Fixture credential echoed to terminal."
+            assert all(token not in text for token in TOKENS), "Fixture credential echoed to terminal."
             return text
         finally:
             os.close(master)
@@ -167,6 +202,41 @@ def dialogue(cli, root, env, state, turns, code):
                 os.close(slave)
             if process.poll() is None:
                 process.kill()
+
+
+def check_hetzner_resume(cli, root, env, fixture):
+    state = root / "hetzner"
+    approval = "type 'create'"
+    credential = ("credential (hidden): ", TOKEN)
+    changed = ("credential (hidden): ", CHANGED_TOKEN)
+    dialogue(cli, root, env, state, [
+        ("Server source:", "local"), ("Provider (", "hetzner"), ("Region ID", "fixture"),
+        ("Server size ID", "fixture-size"), ("Dashboard hostname", DOMAIN), ("Separate application DNS suffix", APP_DOMAIN),
+        ("Server architecture", "linux/amd64"), ("owner-only OpenSSH private key", str(root / "user-key")),
+        ("SSH agent", ""), ("Hetzner project identifier", "fixture-project"), credential, (approval, ""),
+    ], 10)
+    session_file = state / "session.json"
+    session = json.loads(session_file.read_text())
+    scope = session["hetznerCredentialScope"]
+    seed_id = session["config"]["seedId"]
+    assert scope == hashlib.sha256(f"minicloud-seed-scope:{seed_id}:{TOKEN}".encode()).hexdigest()
+    report_file = state / "reports" / "seed-report.json"
+    assert scope not in report_file.read_text()
+    mismatch = "Hetzner credential differs from the original guided seed"
+    before_pause = fixture.requests[:]
+    assert before_pause and all(method == "GET" for method, _ in before_pause)
+    assert mismatch in dialogue(cli, root, env, state, [changed], 12)
+    assert fixture.requests == before_pause and not (state / "create-dispatched.json").exists()
+    dialogue(cli, root, env, state, [credential, (approval, "create")], 12)
+    assert [path for method, path in fixture.requests if method == "POST"] == ["/v1/ssh_keys", "/v1/servers"]
+    before_recovery = fixture.requests[:]
+    assert (state / "create-dispatched.json").exists()
+    assert mismatch in dialogue(cli, root, env, state, [changed], 2)
+    assert fixture.requests == before_recovery
+    result = dialogue(cli, root, env, state, [credential], 10)
+    assert "inventory absence never authorizes creation" in result
+    assert fixture.requests[len(before_recovery):] == [("GET", "/v1/servers"), ("GET", "/v1/servers")]
+    assert all(token not in file.read_text() for token in TOKENS for file in state.glob("**/*.json"))
 
 
 def run(cli, root, lose_create_response):
@@ -206,7 +276,8 @@ esac
         (path / script).chmod(0o700)
 
     fixture = Fixture()
-    with proxy(root, fixture) as server:
+    hetzner = HetznerFixture()
+    with proxy(root, {PROVIDER: fixture, HETZNER: hetzner}) as server:
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         try:
@@ -290,6 +361,7 @@ esac
             dialogue(cli, root, env, state, [("Export private recovery", "")], 0)
             assert (root / "mutations").read_text().splitlines() == ["install"]
             assert all(TOKEN.encode() not in file.read_bytes() for file in state.glob("**/*.json"))
+            check_hetzner_resume(cli, root, env, hetzner)
         finally:
             server.shutdown()
             worker.join()
@@ -303,4 +375,5 @@ if __name__ == "__main__":
         lose_response = "--lost-create" in sys.argv[3:]
         run(executable, Path(directory), lose_response)
     print("Guided seed passed: missing signed release, prepare/plan, "
-          f"{'lost create' if lose_response else 'create'}, pinned resume, install, DNS and protected setup.")
+          f"{'lost create' if lose_response else 'create'}, pinned resume, install, DNS and protected setup; "
+          "changed Hetzner token blocked before planning or reconciliation requests.")

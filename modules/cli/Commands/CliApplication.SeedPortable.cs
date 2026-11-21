@@ -7,7 +7,7 @@ namespace Minicloud.Cli.Commands;
 public sealed partial class CliApplication
 {
     private sealed record GuidedSeedInputs(SeedPortableConfig Config, string KeyFingerprint, string? Credential, bool Local,
-        SeedVerifiedRelease? ExpectedRelease = null, Action<SeedPortableReport>? BeforeCreate = null,
+        string? HetznerCredentialScope, SeedVerifiedRelease? ExpectedRelease = null, Action<SeedPortableReport>? BeforeCreate = null,
         Action<SeedResource>? AfterCreate = null);
 
     private async Task<int> RunPortableSeedAsync(string[] args, CancellationToken ct, GuidedSeedInputs? guided = null)
@@ -113,6 +113,7 @@ public sealed partial class CliApplication
             using var provider = string.IsNullOrEmpty(credential) ? null : new SeedProvider(config.Selection.Provider, credential);
             if (provider is not null)
             {
+                if (guided is not null) RequireGuidedCredentialScope(config, provider, guided.HetznerCredentialScope);
                 var account = await provider.GetAccountIdentityAsync(ct);
                 SeedGuard.Require(config.Selection.Provider == "hetzner"
                     ? config.ProviderAccount.StartsWith("hetzner-project:", StringComparison.Ordinal)
@@ -199,7 +200,8 @@ public sealed partial class CliApplication
                 : state.Plan.Quote;
             if (state.Server is null)
                 SeedGuard.Require(quote.Architecture == config.Architecture, "Approved architecture differs from provider image.");
-            quote = quote with { Account = config.ProviderAccount, CredentialScope = "authorized-account-access" };
+            var boundScope = provider is not null && config.Provider == "hetzner" ? guided?.HetznerCredentialScope : null;
+            quote = quote with { Account = config.ProviderAccount, CredentialScope = boundScope ?? "authorized-account-access" };
             state.Plan = new(config.Selection, quote, release.Digest, release.Source)
             {
                 OperatorPublicKeys = config.OperatorPublicKeys,
@@ -210,11 +212,12 @@ public sealed partial class CliApplication
             if (observation.State == "installed" && observation.Release == config.Selection.ServerVersion)
                 SeedGuard.Require(observation.Source == release.Source || refresh,
                     "Installed source differs from exact selected source; reconcile or explicitly review a pre-initialization local refresh.");
-            report.Plan = state.Plan;
+            report.Plan = boundScope is null ? state.Plan
+                : state.Plan with { Quote = quote with { CredentialScope = "original-hetzner-credential-bound" } };
             var newSeed = options.ContainsKey("--new-seed");
             report.Approval = SeedPortable.Approval(config, state, report.Classification, publicKey, newSeed);
             _console.WriteLine("Classification: " + report.Classification);
-            var displayedPlan = JsonSerializer.Serialize(state.Plan, SeedJournal.Json);
+            var displayedPlan = JsonSerializer.Serialize(report.Plan, SeedJournal.Json);
             SeedGuard.Require(string.IsNullOrEmpty(credential) || !displayedPlan.Contains(credential, StringComparison.Ordinal),
                 "Plan withheld because it contained supplied secret material.");
             SeedGuard.Require(string.IsNullOrEmpty(embeddedCredential) || !displayedPlan.Contains(embeddedCredential, StringComparison.Ordinal),

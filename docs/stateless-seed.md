@@ -98,6 +98,12 @@ inventory is not evidence that a create failed: reconcile with the provider,
 never delete the state or try another create. After the target is known and
 its fingerprint is verified, SSH continuation does not require the token.
 
+Hetzner has no project-identity API. Guided seed stores only a seed-specific
+fingerprint of the original token in protected state, not the token or its
+fingerprint in the report. Use that same token when resuming a paused plan
+or reconciling an uncertain create. A matching project label does not let a
+different token make provider requests for this seed.
+
 ## Explicit local source alternative
 
 The following lower-level interface remains available for scripted callers
