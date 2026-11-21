@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="MiniCloud is a self-hosted platform for agentic coding workspaces and multi-service app hosting on your own servers.">
+    <title>MiniCloud | Self-hosted coding and app deployment</title>
+    <link rel="icon" href="./mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header frame" id="top">
+      <a class="wordmark" href="#top">
+        <img src="./mark.svg" width="30" height="30" alt="">
+        MiniCloud
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="#workflows">Workflows</a>
+        <a href="#get-started">Get started</a>
+        <a href="https://github.com/muniventures/minicloud">GitHub <span aria-hidden="true">&nearr;</span></a>
+      </nav>
+    </header>
+
+    <main class="frame" id="main" tabindex="-1">
+      <section class="hero" aria-labelledby="headline">
+        <p class="eyebrow"><span class="marker" aria-hidden="true"></span> Self-hosted platform</p>
+        <h1 id="headline">Code and deploy<br class="hero-break"> on your own servers.</h1>
+        <p class="hero-copy">MiniCloud brings agentic coding workspaces and multi-service app hosting to infrastructure you control.</p>
+        <div class="actions">
+          <a class="button button-primary" href="#get-started">Self-host MiniCloud <span aria-hidden="true">&darr;</span></a>
+          <a class="button" href="https://github.com/muniventures/minicloud">View on GitHub <span aria-hidden="true">&nearr;</span></a>
+        </div>
+      </section>
+
+      <section class="section" id="workflows" aria-labelledby="workflows-title">
+        <p class="eyebrow">Workflows</p>
+        <h2 id="workflows-title">From a repository to running services.</h2>
+        <div class="workflow-grid">
+          <article>
+            <h3>Code in a browser workspace.</h3>
+            <p>Open T3 Code to work on a repository with your coding agent and a terminal. Open a development preview from the dashboard, or stop compute and resume later with your project and session data on retained storage.</p>
+            <a class="text-link" href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">First workspace guide <span aria-hidden="true">&nearr;</span></a>
+            <a class="product-media" href="./media/coding-workspace.png">
+              <img src="./media/coding-workspace.png" alt="A running coding workspace with T3 and preview controls and a CPU history chart" width="1679" height="1020" loading="lazy">
+            </a>
+          </article>
+          <article>
+            <h3>Deploy and operate an app.</h3>
+            <p>Deploy a public web app, a private API, and a worker together, or update each service on its own. Give public services HTTPS domains, follow deployment progress, and inspect logs for individual services.</p>
+            <a class="text-link" href="https://github.com/muniventures/minicloud#deploy-your-first-app">First deployment guide <span aria-hidden="true">&nearr;</span></a>
+            <a class="product-media" href="./media/services.png">
+              <img src="./media/services.png" alt="Application services with public and private access, addresses and runtime status" width="1679" height="850" loading="lazy">
+            </a>
+          </article>
+        </div>
+      </section>
+
+      <section class="section architecture" aria-labelledby="architecture-title">
+        <div>
+          <p class="eyebrow">How it works</p>
+          <h2 id="architecture-title">Your instance. Your provider.</h2>
+          <p>Run the MiniCloud dashboard and API on a dedicated VPS. You and your agents use the CLI to manage projects, and MiniCloud provisions machines in your Hetzner, DigitalOcean, or Vultr account. The deployment worker rolls out Docker services, and the workspace gateway connects your browser to the coding VM.</p>
+        </div>
+        <div class="architecture-media">
+          <a class="product-media" href="./media/minicloud-architecture.svg">
+              <img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI connect to the control plane, which deploys app services and provisions coding workspace VMs" width="1120" height="480" loading="lazy">
+            </a>
+          <ul class="projects" aria-label="Open-source components">
+            <li><a href="https://wiki.postgresql.org/wiki/Logo"><img src="./media/postgresql.svg" alt="" width="34" height="34"> PostgreSQL</a></li>
+            <li><a href="https://openbao.org/docs/policies/brand/"><img src="./media/openbao.svg" alt="" width="34" height="34"> OpenBao</a></li>
+            <li><a href="https://opentelemetry.io/"><img src="./media/opentelemetry.svg" alt="" width="34" height="34"> OpenTelemetry</a></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section" id="get-started" aria-labelledby="get-started-title">
+        <p class="eyebrow">Get started</p>
+        <h2 id="get-started-title">Run MiniCloud yourself.</h2>
+        <p class="setup-note">The available install is a test installation built from source. A signed production server release and a migration path are still pending.</p>
+        <ol class="guide-list">
+          <li><a href="https://github.com/muniventures/minicloud#self-host-minicloud">Self-hosting instructions <span aria-hidden="true">&nearr;</span></a></li>
+          <li><a href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">Open your first workspace <span aria-hidden="true">&nearr;</span></a></li>
+          <li><a href="https://github.com/muniventures/minicloud#deploy-your-first-app">Deploy your first app <span aria-hidden="true">&nearr;</span></a></li>
+        </ol>
+      </section>
+    </main>
+
+    <footer class="site-footer frame">
+      <p>MiniCloud</p>
+      <a href="https://github.com/muniventures/minicloud">GitHub repository <span aria-hidden="true">&nearr;</span></a>
+    </footer>
+  </body>
+</html>
