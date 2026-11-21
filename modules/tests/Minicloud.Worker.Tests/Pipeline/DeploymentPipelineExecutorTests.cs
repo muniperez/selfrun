@@ -306,6 +306,8 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
     public async Task RecordsSshFailureWithoutOverwritingRuntimeHealthRecovery(string? rollbackOutcome, string failureCode, string? failureSummary)
     {
         var fixture = "piperoll-" + (rollbackOutcome ?? "build");
+        // Theory cases share one database, so each needs its own server identity and route.
+        var caseIndex = Array.IndexOf(["build", "restored", "no_previous", "failed", "missing-marker"], rollbackOutcome ?? "build");
         var (org, app) = await _harness.SeedOrgAndAppAsync(fixture);
         var now = DateTimeOffset.UtcNow;
 
@@ -318,8 +320,8 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 OrganizationId = org.Id,
                 AppId = app.Id,
                 Provider = "hetzner",
-                ProviderServerId = "prov-pipe-roll",
-                IpAddress = "192.0.2.89",
+                ProviderServerId = "prov-" + fixture,
+                IpAddress = $"192.0.2.{89 + caseIndex}",
                 Region = "nbg1",
                 Status = "active",
                 BootstrapStatus = "ready",
@@ -336,7 +338,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 WorkerId = "test-worker",
                 OwnershipToken = "owner-pipe-roll",
                 OwnershipAcquiredAt = now,
-                Domain = "app-roll.example.com",
+                Domain = fixture + ".example.com",
                 Database = DatabaseMode.None,
                 CreatedAt = now,
                 UpdatedAt = now
