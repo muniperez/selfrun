@@ -281,11 +281,25 @@ access logging is not a forbidden mutation.
 For a DigitalOcean target, seed observation and preparation accept only the
 verified vendor-agent layout under `/opt/digitalocean`, not arbitrary provider
 software or a populated `/opt`. Installed `do-agent` and `droplet-agent` package
-ownership and integrity must establish the ordinary agent files. The stock
-monitoring package can have UID 1000, group `nogroup`, mode 0755 files; requiring
-every vendor file to be root-owned would reject the observed stock image.
-This exception does not authorize group/world-writable files or unknown entries.
-Other providers do not gain this exception.
+status, `dpkg-query` ownership/checksum coverage and `dpkg --verify` integrity
+must establish the ordinary agent files:
+
+| Package | Admitted files under `/opt/digitalocean` |
+| --- | --- |
+| `do-agent` | `bin/do-agent`, `do-agent/scripts/update.sh` |
+| `droplet-agent` | `bin/droplet-agent`, `droplet-agent/scripts/update.sh` |
+
+Only their required directories are admitted, with mode 0755 for directories
+and regular files. Each present agent requires its complete layout. The stock
+monitoring package and shared directories can have UID 1000, group `nogroup`
+(GID 65534), or root:root ownership; console-only entries require root:root.
+Requiring every vendor file to be root-owned would reject the observed stock
+image. Other providers do not gain this exception.
+
+The observed monitoring package has an unrelated missing legacy Upstart
+conffile, `/etc/init/do-agent.conf`. Only that specific `do-agent` missing
+conffile diagnostic is allowed; it does not excuse changed or missing agent
+payload, other package-verification failures, unsafe modes or unknown entries.
 
 Seed neither runs the vendor update scripts nor changes, removes, or repairs
 installed vendor files. Unknown package/layout contents, failed verification,
@@ -295,9 +309,9 @@ agents, rewrite package records, or weaken permissions to make seed proceed.
 The existing empty `/opt/containerd/bin` and `/opt/containerd/lib` exception
 remains separate.
 
-This support has synthetic fixture verification only; #289 records the stock
-DigitalOcean Ubuntu 24.04 observation, not qualification of a corrected signed
-CLI/server pair on a live host. There is no change to exact-source compatibility,
+Local validation uses synthetic fixtures; #289 records independent read-only
+stock DigitalOcean Ubuntu 24.04 evidence, not qualification of corrected signed
+CLI/server preparation on a live host. There is no change to exact-source compatibility,
 signed-release trust or immutable production/maintenance fences. The standalone
 signed installer's preflight checks its installation root, tools, resources,
 workloads and ports without requiring unrelated `/opt` siblings to be absent;
