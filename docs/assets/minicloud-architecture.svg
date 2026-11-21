@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="480" viewBox="0 0 1120 480" role="img" aria-labelledby="title description">
+  <title id="title">MiniCloud components and workflows</title>
+  <desc id="description">Operators and agents use the dashboard or CLI to reach the self-hosted control plane. The worker deploys app services to runtime servers and provisions separate coding VMs. Service users connect through HTTPS and developers connect through the Workspace Gateway.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#51637d"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: system-ui, sans-serif; fill: #152135; }
+    .heading { font-size: 22px; font-weight: 650; }
+    .label { font-size: 16px; }
+    .small { font-size: 15px; fill: #40536c; }
+    .boundary { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1.5; }
+    .card { fill: #fff; stroke: #d2dbe8; stroke-width: 1.5; }
+    .connector { fill: none; stroke: #51637d; stroke-width: 1.5; marker-end: url(#arrow); }
+  </style>
+  <rect x="1" y="1" width="1118" height="478" rx="19" fill="#fff" stroke="#d2dbe8" stroke-width="2"/>
+  <rect x="40" y="29" width="222" height="124" rx="11" class="card"/>
+  <text x="60" y="65" class="heading">Operator or agent</text>
+  <text x="60" y="99" class="label">Browser dashboard</text>
+  <text x="60" y="125" class="label">MiniCloud CLI</text>
+
+  <rect x="315" y="29" width="765" height="172" rx="11" class="boundary"/>
+  <text x="337" y="62" class="heading">Control plane VPS</text>
+  <text x="337" y="87" class="small">Caddy terminates HTTPS for the dashboard and API</text>
+  <rect x="337" y="107" width="219" height="72" rx="8" class="card"/>
+  <text x="353" y="137" class="label">API + deployment worker</text>
+  <text x="353" y="161" class="small">Jobs, status and provisioning</text>
+  <rect x="570" y="107" width="235" height="72" rx="8" class="card"/>
+  <text x="586" y="137" class="label">PostgreSQL + OpenBao</text>
+  <text x="586" y="161" class="small">State and secrets</text>
+  <rect x="819" y="107" width="239" height="72" rx="8" class="card"/>
+  <text x="835" y="137" class="label">Ory Kratos</text>
+  <text x="835" y="161" class="small">Operator identity</text>
+  <path d="M263 92H313" class="connector"/>
+
+  <path d="M446 201V233H265V263" class="connector"/>
+  <path d="M446 201V233H834V263" class="connector"/>
+  <rect x="287" y="219" width="125" height="28" rx="5" fill="#fff"/>
+  <text x="299" y="239" class="small">Deploy services</text>
+  <rect x="601" y="219" width="162" height="28" rx="5" fill="#fff"/>
+  <text x="613" y="239" class="small">Provision workspace</text>
+
+  <rect x="40" y="265" width="490" height="125" rx="11" class="boundary"/>
+  <text x="61" y="302" class="heading">Application runtime VPS</text>
+  <text x="61" y="333" class="label">Docker runs public and private services</text>
+  <text x="61" y="360" class="small">Caddy routes public service domains over HTTPS</text>
+
+  <rect x="590" y="265" width="490" height="125" rx="11" class="boundary"/>
+  <text x="611" y="302" class="heading">Coding workspace VM</text>
+  <text x="611" y="333" class="label">T3 Code, terminal and coding agents</text>
+  <text x="611" y="360" class="small">Retained primary workspace volume</text>
+
+  <path d="M265 423V392" class="connector"/>
+  <path d="M834 423V392" class="connector"/>
+  <text x="265" y="449" class="label" text-anchor="middle">App visitors connect over HTTPS</text>
+  <text x="834" y="449" class="label" text-anchor="middle">Developers connect through the Workspace Gateway</text>
+</svg>
