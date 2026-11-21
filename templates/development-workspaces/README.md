@@ -124,6 +124,22 @@ Focused offline verification:
 `python3 -B -m unittest discover -s templates/development-workspaces/tests -p test_image.py`.
 The broader affected checks are available through `templates/development-workspaces/test.sh`.
 
+Immediately before quiescence, after other Codex invocations have exited, the workspace
+batch runs normal `codex --version` as coding UID 2000 without credentials, with the
+image's scratch environment and retained `CODEX_HOME`. In pinned
+[Codex 0.169.0](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/arg0/src/lib.rs),
+the three absolute helper symlinks live under `CODEX_HOME/tmp/arg0-linux/codex-arg0*`,
+not `TMPDIR`, and remain after this command exits. The batch requires fresh complete
+helper evidence on the actual retained filesystem without intermediate symlink aliases,
+then verifies those same links are encrypted and restored as metadata, never target
+contents. It never copies helpers or redirects `CODEX_HOME` to scratch.
+Encrypted restore verifies every retained regular file's hash, all retained symlink
+metadata, and source directories, rather than only selected representative files.
+Scratch cache targets and nested scratch mounts remain outside the archive; root
+filesystem metadata remains excluded and the independent target's metadata is preserved.
+This is synthetic local writer/age/import evidence, not backend off-host backup or
+provider-volume recovery qualification.
+
 Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
 primary VM and managed T3 unit, a private memory-only approval page on loopback
 774, and a distinct root-only management credential. Normal gateway scopes do
@@ -718,9 +734,19 @@ volume, so environment identity, projects, threads, and sign-ins persist. Interr
 agent turns are not resumed. Exit 130, T3's graceful stop code, is a success and does not
 restart. `StartLimitIntervalSec=300` and `StartLimitBurst=5` bound the retries, including
 explicit starts: a fresh start followed by five SIGKILLs within the window ends in
-`failed` (`Result=signal` on Ubuntu systemd `255.4-1ubuntu8.10`). To recover from
-exhaustion without a lifecycle stop, run `systemctl reset-failed minicloud-t3.service`
-and start it again.
+`failed` (`Result=signal` on Ubuntu systemd `255.4-1ubuntu8.10`). The scratch watcher
+has its own five-start budget; `PartOf` restart propagation can exhaust it in the same
+burst. Resetting T3 alone does not restore an exhausted watcher. For explicit recovery
+on an authorized disposable qualification fixture, first preserve the exhausted T3
+and watcher observations and verify both drained, with no jobs or control processes.
+Only a watcher with the shipping policy, `failed/failed`, `Result=start-limit-hit`,
+zero watcher-owned automatic retries (`NRestarts=0`), and a clean previous exit
+(`ExecMainCode=1`, `ExecMainStatus=0`) following the observed five T3 starts qualifies
+as synchronized dependency exhaustion. After an owned stop and another drained-state
+check, run `systemctl reset-failed minicloud-t3.service minicloud-scratch-watch.service`
+and `systemctl start minicloud-t3.service`; positively verify both services and retained
+identity. Other watcher faults or unknown history require investigation, not a reset.
+This does not add automatic recovery or grant authority on a hosted workspace.
 
 `systemctl stop` cancels a pending restart. While a dependency keeps the stopped unit loaded,
 `inactive/dead` can retain the previous `Result=signal` even with no job or processes.
@@ -756,7 +782,7 @@ The scratch watcher is `PartOf=minicloud-t3.service` and independently ships the
 five-start/300-second accounting (with `RestartSec=10`). Independent cases therefore
 inspect its failure/policy/identity **before stop**, positively verify it stopped and
 drained after the owned stop, then reset accounting for **both** units at that boundary.
-A failed/pending watcher is never cleared to obtain a pass. No reset occurs between
+An independently failed or pending watcher is never cleared to obtain a pass. No reset occurs between
 automatic starts or during the uninterrupted retry-budget assertion; only after
 exhaustion has remained visible through the complete stopped-window assertion does
 the next explicit owned case boundary reestablish the fixture. Normally recovered
@@ -764,9 +790,13 @@ cases and automatic budget starts must have the real root watcher active in its
 owned service cgroup with the shipping policy, as must the later scratch-bind probe
 before and after its work. Recovery receipts retain those verified watcher observations
 for each case start, SIGKILL/OOM recovery, automatic budget start and explicit post-budget
-recovery. `PartOf` restart propagation can consume watcher slots:
-if supported product restarts genuinely exhaust it or leave it failed/inactive,
-qualification blocks rather than silently repairing the service. These changes do
+recovery. The explicit post-budget boundary alone accepts the synchronized dependency
+exhaustion described above, after all five starts had healthy watcher observations
+with no watcher-owned automatic retries. It rechecks the exhausted T3 state before
+stop, retains the failed watcher evidence in the receipt, checks the watcher drained
+again after stop, and then uses the existing named two-unit reset. Missing exit evidence,
+independent retries, unrelated results, policy/identity mismatches, jobs, or remaining
+processes still block recovery before reset. These changes do
 not relax either shipping unit's limits or change runtime lifecycle gates; native
 execution remains necessary to establish the actual product restart consequences.
 For the frozen prestart fixture, systemd `255.4-1ubuntu8.10` can send SIGKILL

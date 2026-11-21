@@ -3,8 +3,10 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -27,6 +29,7 @@ def load(name, filename):
 
 builder = load("generic_image_builder", "build.py")
 native = load("generic_native_qualification", "native.py")
+restore_runtime = load("native_restore_runtime", "../runtime.py")
 
 
 class ImageTests(unittest.TestCase):
@@ -354,14 +357,22 @@ class ImageTests(unittest.TestCase):
                 probe = native.Native.__new__(native.Native)
                 adapter = Mock()
                 events = []
-                start = dict(ActiveState="active", SubState="running", Job="", MainPID=100, NRestarts=0)
+                healthy_watcher = {"active": True, "mainPid": 456, "automaticRestartsAbsent": True}
+                exhausted_watcher = {"active": False, "failureAbsent": False,
+                                     "automaticRestartsAbsent": True,
+                                     "dependencyBudgetExhaustion": {"watcherResult": "start-limit-hit"}}
+                start = dict(ActiveState="active", SubState="running", Job="", MainPID=100,
+                             NRestarts=0, scratchWatcher=healthy_watcher)
                 starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(5)]
                 failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
                               ControlPID=0, NRestarts=5, Result="signal")
                 with patch.object(probe, "t3_case_start",
-                                  side_effect=lambda adapter: events.append(("boundary", {})) or start) as setup, \
+                                  side_effect=lambda adapter, **kw:
+                                  events.append(("boundary", kw)) or start |
+                                  ({"scratchWatcherBeforeExplicitRecovery": exhausted_watcher}
+                                   if kw else {})) as setup, \
                         patch.object(probe, "watcher_state",
-                                     return_value={"active": True, "mainPid": 456}) as watcher, \
+                                     side_effect=[healthy_watcher] * 4 + [exhausted_watcher]) as watcher, \
                         patch.object(probe, "t3_ready", side_effect=starts[1:]) as ready, \
                         patch.object(probe, "t3_idle") as idle, \
                         patch.object(probe, "signal_t3_main", side_effect=range(100, 105)) as kill, \
@@ -386,14 +397,19 @@ class ImageTests(unittest.TestCase):
                         result = probe.t3_retry_budget(adapter)
                         self.assertEqual(result["retryBudgetSuccessfulStarts"], starts)
                         self.assertEqual([state["scratchWatcher"] for state in starts[1:]],
-                                         [watcher.return_value] * 4)
+                                         [healthy_watcher] * 4)
+                        self.assertEqual(result["scratchWatcherBeforeExplicitRecovery"], exhausted_watcher)
+                        self.assertEqual(watcher.call_args_list,
+                                         [unittest.mock.call(active=True)] * 4 +
+                                         [unittest.mock.call(dependency_exhausted=True)])
                         self.assertEqual(kill.call_count, 5)
                         self.assertEqual([call.args[0] for call in idle.call_args_list], starts[1:])
                         self.assertEqual(ready.call_count, 4)
                         self.assertEqual(events, [("boundary", {}), ("exhausted", {"failed": True}),
-                                                  ("boundary", {})])
+                                                  ("boundary", {"retry_budget": failed})])
                         self.assertEqual(setup.call_args_list,
-                                         [unittest.mock.call(adapter)] * 2)
+                                         [unittest.mock.call(adapter),
+                                          unittest.mock.call(adapter, retry_budget=failed)])
                     if early:
                         setup.assert_called_once_with(adapter)
 
@@ -436,7 +452,8 @@ class ImageTests(unittest.TestCase):
     def test_retry_budget_does_not_crash_busy_automatic_restart_or_reset_it(self):
         probe, _, _ = self.recovery_probe([{"state": "BusyOrUnknown"}])
         before = probe.t3_unit.return_value
-        start = before | {"MainPID": 100}
+        start = before | {"MainPID": 100,
+                          "scratchWatcher": {"active": True, "automaticRestartsAbsent": True}}
         adapter = Mock()
         with patch.object(probe, "t3_case_start", return_value=start), \
                 patch.object(probe, "signal_t3_main", return_value=100) as crash, \
@@ -994,7 +1011,8 @@ class NativeBatchTests(unittest.TestCase):
         properties = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
                           MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
                           Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
-                          StartLimitIntervalUSec="5min")
+                          StartLimitIntervalUSec="5min", NRestarts="0",
+                          ExecMainCode="1", ExecMainStatus="0")
         with patch.object(probe, "fresh_authorization"), \
                 patch.object(probe, "check_t3_freezer"), \
                 patch.object(probe, "qualify_t3_restart_policy"), \
@@ -1010,6 +1028,7 @@ class NativeBatchTests(unittest.TestCase):
         probe = native.Native.__new__(native.Native)
         adapter = Mock()
         start = dict(ActiveState="active", SubState="running", Job="", MainPID=100, NRestarts=0)
+        start["scratchWatcher"] = {"active": True, "automaticRestartsAbsent": True}
         starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(1, 5)]
         failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
                       ControlPID=0, NRestarts=5, Result="signal")
@@ -1018,7 +1037,8 @@ class NativeBatchTests(unittest.TestCase):
         with patch.object(probe, "t3_case_start", side_effect=[start, failure]), \
                 patch.object(probe, "t3_ready", side_effect=starts), \
                 patch.object(probe, "t3_idle"), \
-                patch.object(probe, "watcher_state"), \
+                patch.object(probe, "watcher_state",
+                             return_value={"active": True, "automaticRestartsAbsent": True}), \
                 patch.object(probe, "signal_t3_main", side_effect=range(100, 105)), \
                 patch.object(probe, "t3_restart_delay",
                              side_effect=[{"NRestarts": n} for n in range(5)]), \
@@ -1034,7 +1054,146 @@ class NativeBatchTests(unittest.TestCase):
         command.assert_not_called()
         recovered.assert_not_called()
         self.assertTrue(caught.exception.evidence["retryBudget"]["exhaustedFailureStayedVisible"])
+        self.assertTrue(caught.exception.evidence["retryBudget"][
+            "scratchWatcherBeforeExplicitRecovery"]["automaticRestartsAbsent"])
         self.assertEqual(caught.exception.evidence["recoveryFailure"]["watcherResult"], "start-limit-hit")
+
+    def test_explicit_dependency_budget_recovery_requires_clean_drained_watcher_without_own_retries(self):
+        exhausted = dict(ActiveState="failed", SubState="failed", Result="signal", Job="",
+                         MainPID=0, ControlPID=0, NRestarts=5)
+        watcher = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
+                       MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
+                       Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
+                       StartLimitIntervalUSec="5min", NRestarts="0",
+                       ExecMainCode="1", ExecMainStatus="0")
+        changes = ({}, {"Result": "exit-code"}, {"Result": "signal"}, {"Result": "timeout"},
+                   {"Result": "oom-kill"}, {"Job": "42"}, {"ControlPID": "123"},
+                   {"MainPID": "123"}, {"ControlGroup": "/unowned"}, {"NRestarts": "1"},
+                   {"NRestarts": "invalid"}, {"ExecMainCode": "2"}, {"ExecMainStatus": "1"},
+                   {"PartOf": ""}, {"StartLimitBurst": "10"})
+        for change in changes:
+            with self.subTest(change=change):
+                probe = native.Native.__new__(native.Native)
+                probe.run_id = "synthetic"
+                probe.config = {"vmId": probe.run_id}
+                probe.owns_runtime = True
+                events = []
+                adapter = Mock()
+                adapter.stop_services.side_effect = lambda: events.append("stop")
+                adapter.thaw.side_effect = lambda: events.append("thaw")
+                adapter.start_services.side_effect = lambda: events.append("start")
+                reset = False
+                def command(argv):
+                    nonlocal reset
+                    if argv[1] == "reset-failed":
+                        self.assertEqual(argv, ["systemctl", "reset-failed",
+                                                native.T3_UNIT, native.WATCH_UNIT])
+                        events.append("reset")
+                        reset = True
+                        return ""
+                    self.assertEqual(argv[1:3], ["show", native.WATCH_UNIT])
+                    events.append("watcher")
+                    state = watcher | change
+                    if reset:
+                        state = watcher | dict(ActiveState="active", SubState="running",
+                                               Result="success", MainPID="456",
+                                               ControlGroup="/system.slice/" + native.WATCH_UNIT)
+                    return "\n".join(f"{key}={value}" for key, value in state.items())
+                proc = Mock()
+                proc.exists.return_value = False
+                proc.stat.return_value.st_uid = 0
+                proc.joinpath.return_value.read_text.return_value = "0::/system.slice/" + native.WATCH_UNIT
+                with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "check_t3_freezer"), \
+                        patch.object(probe, "qualify_t3_restart_policy"), \
+                        patch.object(probe, "check_t3_pid"), \
+                        patch.object(probe, "t3_unit", return_value=exhausted), \
+                        patch.object(probe, "t3_stays_stopped",
+                                     side_effect=lambda **kw: events.append("drained")), \
+                        patch.object(probe, "t3_ready", return_value={"MainPID": 123, "NRestarts": 0}), \
+                        patch.object(probe, "t3_idle", return_value={"idleObserved": True}), \
+                        patch.object(native, "command", side_effect=command), \
+                        patch.object(native, "Path", return_value=proc):
+                    if change:
+                        with self.assertRaises(native.ProbeError):
+                            probe.t3_case_start(adapter, retry_budget=exhausted)
+                        self.assertEqual(events, ["watcher"])
+                        adapter.stop_services.assert_not_called()
+                    else:
+                        result = probe.t3_case_start(adapter, retry_budget=exhausted)
+                        self.assertEqual(events, ["watcher", "stop", "thaw", "drained",
+                                                  "watcher", "reset", "start", "watcher"])
+                        prior = result["scratchWatcherBeforeExplicitRecovery"]
+                        self.assertFalse(prior["failureAbsent"])
+                        self.assertEqual(prior["dependencyBudgetExhaustion"]["watcherResult"],
+                                         "start-limit-hit")
+                        self.assertTrue(prior["dependencyBudgetExhaustion"]["cleanExitObserved"])
+                        self.assertTrue(result["scratchWatcher"]["active"])
+                        self.assertTrue(result["scratchWatcher"]["failureAbsent"])
+                    self.assertEqual(reset, not bool(change))
+
+    def test_dependency_budget_recovery_rechecks_t3_and_watcher_before_reset(self):
+        probe = native.Native.__new__(native.Native)
+        probe.run_id = "synthetic"
+        probe.config = {"vmId": probe.run_id}
+        probe.owns_runtime = True
+        exhausted = dict(ActiveState="failed", SubState="failed", Result="signal", Job="",
+                         MainPID=0, ControlPID=0, NRestarts=5)
+        for fault in ("t3-changed", "watcher-retried", "watcher-after-stop", "watcher-populated"):
+            with self.subTest(fault=fault):
+                adapter = Mock()
+                good = {"automaticRestartsAbsent": True}
+                with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "check_t3_freezer"), \
+                        patch.object(probe, "qualify_t3_restart_policy"), \
+                        patch.object(probe, "t3_unit", return_value=exhausted |
+                                     ({"Job": "42"} if fault == "t3-changed" else {})), \
+                        patch.object(probe, "watcher_state", side_effect=[
+                            native.ProbeError("WATCHER_NOT_DRAINED") if fault == "watcher-populated" else
+                            {"automaticRestartsAbsent": False} if fault == "watcher-retried" else good,
+                            native.ProbeError("WATCHER_FAILED_OR_PENDING_PRESERVE_EVIDENCE")]), \
+                        patch.object(probe, "t3_stays_stopped"), \
+                        patch.object(native, "command") as command:
+                    with self.assertRaises(native.ProbeError):
+                        probe.t3_case_start(adapter, retry_budget=exhausted)
+                    command.assert_not_called()
+                    adapter.start_services.assert_not_called()
+                    self.assertEqual(adapter.stop_services.call_count,
+                                     int(fault == "watcher-after-stop"))
+
+    def test_dependency_exhausted_watcher_requires_empty_cgroup(self):
+        probe = native.Native.__new__(native.Native)
+        state = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
+                     MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
+                     Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
+                     StartLimitIntervalUSec="5min", NRestarts="0",
+                     ExecMainCode="1", ExecMainStatus="0")
+        for contents in ("populated 1\n", "unknown\n", "populated 0\n"):
+            with self.subTest(contents=contents), \
+                    patch.object(native, "command", return_value="\n".join(
+                        f"{key}={value}" for key, value in state.items())), \
+                    patch.object(native.Path, "exists", return_value=True), \
+                    patch.object(native.Path, "read_text", return_value=contents):
+                if contents == "populated 0\n":
+                    self.assertFalse(probe.watcher_state(dependency_exhausted=True)["failureAbsent"])
+                else:
+                    with self.assertRaisesRegex(native.ProbeError, "WATCHER_NOT_DRAINED"):
+                        probe.watcher_state(dependency_exhausted=True)
+
+    def test_retry_budget_rejects_independent_watcher_restart_before_next_crash(self):
+        probe = native.Native.__new__(native.Native)
+        adapter = Mock()
+        watcher = {"active": True, "automaticRestartsAbsent": False}
+        with patch.object(probe, "t3_case_start",
+                          return_value={"scratchWatcher": watcher}) as setup, \
+                patch.object(probe, "signal_t3_main") as kill, \
+                patch.object(native, "command") as command:
+            with self.assertRaisesRegex(native.ProbeError, "WATCHER_INDEPENDENT_RESTART") as caught:
+                probe.t3_retry_budget(adapter)
+        setup.assert_called_once_with(adapter)
+        kill.assert_not_called()
+        command.assert_not_called()
+        self.assertEqual(caught.exception.evidence, watcher)
 
     def test_receipt_read_permissions_and_symlink_rejection(self):
         path = Mock()
@@ -1067,7 +1226,8 @@ class NativeBatchTests(unittest.TestCase):
         good = dict(ActiveState="inactive", SubState="dead", Result="success", Job="",
                     MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
                     Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
-                    StartLimitIntervalUSec="5min")
+                    StartLimitIntervalUSec="5min", NRestarts="0",
+                    ExecMainCode="1", ExecMainStatus="0")
         for change in ({}, {"MainPID": "123"}, {"Job": "42"}, {"PartOf": ""},
                        {"StartLimitBurst": "10"}, {"Result": "signal"}):
             state = good | change
@@ -1106,6 +1266,205 @@ class NativeRestoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="native-restore-", dir=ARTIFACTS)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+
+    def test_version_helpers_remain_on_retained_tree_and_roundtrip_as_metadata(self):
+        workspace = self.root / "workspace"
+        (workspace / "home/.codex").mkdir(parents=True)
+        binary = self.root / "vendor/codex"
+        binary.parent.mkdir()
+        binary.write_bytes(b"vendor target must not enter archive")
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        environment = {"TMPDIR": str(scratch), "XDG_CACHE_HOME": str(scratch)}
+        real_stat, real_lstat = Path.stat, Path.lstat
+
+        def scratch_stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            if path == scratch:
+                values = list(info)
+                values[stat.ST_DEV] += 1
+                return os.stat_result(values)
+            return info
+
+        def coding_lstat(path):
+            values = list(real_lstat(path))
+            values[stat.ST_UID] = values[stat.ST_GID] = 2000
+            return os.stat_result(values)
+
+        def version(argv, **kwargs):
+            self.assertEqual(argv[:6], ["setpriv", "--reuid=2000", "--regid=2000",
+                                       "--clear-groups", "env", "-i"])
+            self.assertEqual(argv[-2:], ["codex", "--version"])
+            self.assertIn("CODEX_HOME=" + str(workspace / "home/.codex"), argv)
+            self.assertIn("TMPDIR=" + str(scratch), argv)
+            self.assertEqual(kwargs["cwd"], workspace)
+            group = workspace / "home/.codex/tmp/arg0-linux/codex-arg0synthetic"
+            group.mkdir(parents=True)
+            for name in ("codex-linux-sandbox", "apply_patch", "applypatch"):
+                (group / name).symlink_to(binary)
+            return "codex-cli 0.169.0"
+
+        with patch.object(native, "native_codex_binary", return_value=binary), \
+                patch.object(native, "command", side_effect=version) as command, \
+                patch.object(Path, "stat", autospec=True, side_effect=scratch_stat), \
+                patch.object(Path, "lstat", autospec=True, side_effect=coding_lstat):
+            evidence = native.codex_version_helpers(workspace, environment)
+        command.assert_called_once()
+        self.assertTrue(evidence["remainedAfterCleanCliExit"])
+        self.assertFalse(evidence["observedWhileCliRunning"])
+        self.assertFalse(evidence["removedOnCleanCliExit"])
+        expected, links, directories = native.retained_manifest(restore_runtime, workspace)
+        self.assertEqual(expected, {})
+        self.assertEqual(len(links), 3)
+        output = io.BytesIO()
+        restore_runtime.write_backup_archive(workspace, output)
+        with tarfile.open(fileobj=io.BytesIO(output.getvalue())) as archive:
+            for name, target in links.items():
+                member = archive.getmember("data/" + name)
+                self.assertTrue(member.issym())
+                self.assertEqual((member.linkname, member.size), (target, 0))
+        target = self.root / "restored"
+        target.mkdir()
+        config = dict(vmId="synthetic-helpers", generation=1, kind="primary", uid=2000, gid=2000,
+                      workspace=str(target), volume={"providerVolumeId": "synthetic-target"})
+        runtime = restore_runtime.Runtime(config, self.root / "state", Mock(), Mock())
+        runtime.s.update(phase="RestoreReady", restoreOperation="synthetic-import",
+                         restoreSource=dict(receiptId="synthetic-local-import", representativeHashes=expected))
+        with patch.object(restore_runtime.os, "chown"), patch.object(restore_runtime.os, "sync"):
+            runtime.restore_import("synthetic-import", io.BytesIO(output.getvalue()))
+        self.assertEqual(native.retained_manifest(restore_runtime, target), (expected, links, directories))
+
+    def test_retained_codex_path_detects_intermediate_alias_omitted_by_source_walk(self):
+        workspace = self.root / "workspace"
+        (workspace / "home/.codex").mkdir(parents=True)
+        scratch = self.root / "scratch"
+        group = scratch / "arg0-linux/codex-arg0synthetic"
+        group.mkdir(parents=True)
+        (group / "apply_patch").symlink_to("/synthetic/vendor/codex")
+        (workspace / "home/.codex/tmp").symlink_to(scratch, target_is_directory=True)
+        _, links, _ = native.retained_manifest(restore_runtime, workspace)
+        self.assertEqual(links, {"home/.codex/tmp": str(scratch)})
+        with self.assertRaisesRegex(native.ProbeError, "CODEX_HELPER_PATH_ALIASED"):
+            native.retained_codex_temporary(workspace)
+
+    def test_normal_codex_initialization_observes_helpers_before_clean_exit_with_scratch_environment(self):
+        binary = Mock()
+        binary.is_file.return_value = True
+        binary.is_symlink.return_value = False
+        binary.stat.return_value = Mock(st_uid=0, st_mode=0o755)
+        process = Mock(returncode=0)
+        process.stdin = io.StringIO()
+        process.stdout = io.StringIO('{"id":1,"result":{}}\n')
+        process.poll.return_value = 0
+        environment = {"TMPDIR": str(self.root / "scratch/tmp"), "XDG_CACHE_HOME": str(self.root / "scratch/cache")}
+
+        def observe(executable):
+            self.assertIs(executable, binary)
+            self.assertFalse(process.stdin.closed)
+            process.wait.assert_not_called()
+            return {"actualHelpersObserved": True}
+
+        with patch.object(native.Path, "glob", return_value=[binary]), \
+                patch.object(native.subprocess, "Popen", return_value=process) as launch, \
+                patch.object(native.select, "select", return_value=([process.stdout], [], [])):
+            result = native.initialize_codex_without_credentials(
+                self.root, self.root / "home", environment=environment, observe=observe)
+        self.assertEqual(result, {"actualHelpersObserved": True})
+        args, kwargs = launch.call_args
+        self.assertEqual(args[0][-4:], ["codex", "app-server", "--listen", "stdio://"])
+        self.assertEqual(kwargs["env"]["TMPDIR"], environment["TMPDIR"])
+        self.assertEqual(kwargs["env"]["CODEX_HOME"], str(self.root / "home/.codex"))
+        process.wait.assert_called_once_with(timeout=15)
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+
+    def test_actual_helper_observation_requires_fresh_complete_pinned_retained_group(self):
+        temporary = self.root / "home/.codex/tmp/arg0-linux"
+        group = temporary / "codex-arg0synthetic"
+        group.mkdir(parents=True)
+        binary = self.root / "image/codex"
+        binary.parent.mkdir()
+        binary.write_bytes(b"synthetic executable, not run")
+        links = [group / name for name in ("codex-linux-sandbox", "apply_patch", "applypatch")]
+        for path in links:
+            path.symlink_to(binary)
+        real_lstat = Path.lstat
+
+        def coding_lstat(path):
+            values = list(real_lstat(path))
+            values[stat.ST_UID] = values[stat.ST_GID] = 2000
+            return os.stat_result(values)
+
+        with patch.object(Path, "lstat", autospec=True, side_effect=coding_lstat):
+            evidence = native.codex_helper_artifacts(temporary, set(), binary)
+            self.assertEqual(evidence["tier"], "retained")
+            self.assertEqual(evidence["symlinkCount"], 3)
+            self.assertTrue(evidence["observedWhileCliRunning"])
+            with self.assertRaisesRegex(native.ProbeError, "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING"):
+                native.codex_helper_artifacts(temporary, set(links), binary)
+            links[-1].unlink()
+            with self.assertRaisesRegex(native.ProbeError, "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING"):
+                native.codex_helper_artifacts(temporary, set(), binary)
+
+    def test_complete_retained_manifest_and_import_cover_files_beyond_representative_limit(self):
+        source = self.root / "source"
+        source.mkdir()
+        (source / "lost+found").mkdir()
+        (source / ".minicloud-volume.json").write_text("source ownership")
+        files = {f"transcripts/session-{index:03}.txt": f"retained session {index}\n".encode()
+                 for index in range(70)}
+        files["home/.codex/config.toml"] = b'model = "synthetic"\n'
+        files["config/lost+found/.minicloud-volume.json"] = b"ordinary nested user file\n"
+        for name, value in files.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(value)
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        (scratch / "cache-entry").write_bytes(b"regenerable cache, not retained")
+        (source / "home/.cache").symlink_to(scratch, target_is_directory=True)
+        (source / "config/current").symlink_to("lost+found/.minicloud-volume.json")
+        expected, links, directories = native.retained_manifest(restore_runtime, source)
+        self.assertEqual(set(expected), set(files))
+        self.assertGreater(len(expected), 64)
+        self.assertEqual(len(restore_runtime.representative_hashes(source)), 64)
+        output = io.BytesIO()
+        restore_runtime.write_backup_archive(source, output)
+        with tarfile.open(fileobj=io.BytesIO(output.getvalue())) as archive:
+            self.assertNotIn("data/home/.cache/cache-entry", archive.getnames())
+            self.assertNotIn("data/.minicloud-volume.json", archive.getnames())
+
+        for missing in (False, True):
+            with self.subTest(missing_last_ordinary_file=missing):
+                target = self.root / ("missing-target" if missing else "complete-target")
+                target.mkdir()
+                (target / ".minicloud-volume.json").write_text("target ownership")
+                (target / "lost+found").mkdir()
+                config = dict(vmId="synthetic-restore", generation=1, kind="primary", uid=2000, gid=2000,
+                              workspace=str(target), volume={"providerVolumeId": "synthetic-target"})
+                runtime = restore_runtime.Runtime(config, self.root / (target.name + "-state"), Mock(), Mock())
+                runtime.s.update(phase="RestoreReady", restoreOperation="synthetic-import",
+                                 restoreSource=dict(receiptId="synthetic-local-import", representativeHashes=expected))
+                content = io.BytesIO(output.getvalue())
+                if missing:
+                    content = io.BytesIO()
+                    with tarfile.open(fileobj=content, mode="w") as filtered, \
+                            tarfile.open(fileobj=io.BytesIO(output.getvalue())) as original:
+                        for member in original:
+                            if member.name != "data/transcripts/session-069.txt":
+                                filtered.addfile(member, original.extractfile(member) if member.isfile() else None)
+                    content.seek(0)
+                    with self.assertRaises(FileNotFoundError), patch.object(restore_runtime.os, "sync"):
+                        runtime.restore_import("synthetic-import", content)
+                    self.assertEqual(runtime.s["phase"], "RestoreFailed")
+                else:
+                    with patch.object(restore_runtime.os, "chown"), patch.object(restore_runtime.os, "sync"):
+                        result = runtime.restore_import("synthetic-import", content)
+                    self.assertEqual(result["type"], "PrimaryRestored")
+                    self.assertEqual(native.retained_manifest(restore_runtime, target),
+                                     (expected, links, directories))
+                    self.assertEqual((target / ".minicloud-volume.json").read_text(), "target ownership")
+                    self.assertFalse(any((target / "lost+found").iterdir()))
 
     def archive(self, files, link=False):
         output = io.BytesIO()
