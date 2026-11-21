@@ -34,6 +34,7 @@ EXPECTED_RUNTIME_SHA256 = None
 ACK = "RUN-NATIVE-QUALIFICATION-ON-DISPOSABLE-IMAGE-BUILDER"
 SCOPES = ["orchestration:read", "orchestration:operate", "terminal:read", "terminal:operate"]
 T3_UNIT = "minicloud-t3.service"
+WATCH_UNIT = "minicloud-scratch-watch.service"
 MOUNT_UNIT = "minicloud-workspace-mount.service"
 WORK_CGROUP = Path("/sys/fs/cgroup/minicloudwork.slice")
 T3_CGROUP = WORK_CGROUP / T3_UNIT
@@ -71,6 +72,149 @@ REQUIRED_PROBES = {
     "scratch-build-output-bind-mounts",
     "retained-volume-service-remount",
 }
+BATCH_SETUP = (
+    ("target-and-toolchain-guard", "guard"),
+    ("pristine-tools-only-no-default-apps", "pristine"),
+)
+WORKSPACE_SETUP = BATCH_SETUP + (
+    ("loop-ext4-root-bootstrap", "prepare"),
+    ("native-http-scopes-tickets-websocket", "start_services"),
+)
+BATCHES = {
+    "tooling": BATCH_SETUP + (("codex-empty-git-probes-save-and-reject-data", "codex_git"),),
+    "recovery": WORKSPACE_SETUP + (
+        ("retained-volume-service-remount", "retained_volume_remount"),
+        ("connect-management-rejects-routine-t3-token", "connect_management"),
+        ("t3-oom-crash-restart-stop-race-and-retry-budget", "t3_recovery"),
+    ),
+    "workspace": WORKSPACE_SETUP + (
+        ("copilot-stdio-provider-setup", "copilot_provider"),
+        ("scratch-tier-environment-and-cache-migration", "scratch_tier"),
+        ("authenticated-generation-task-and-activity-hooks", "root_hooks"),
+        ("real-terminal-input-and-passive-root-hook", "terminals"),
+        ("source-control-cli-service-terminal-and-discovery", "source_control"),
+        ("t3-terminal-scratch-environment", "terminal_scratch"),
+        ("scratch-build-output-bind-mounts", "scratch_mounts"),
+        ("actual-pinned-t3-sqlite-idle", "sqlite"),
+        ("actual-schema-copy-wal-and-fail-closed", "sqlite_negatives"),
+        ("actual-kernel-frozen-readonly-t3-sqlite", "frozen_sqlite"),
+        ("real-active-foreground-and-unexpected-child", "active_work"),
+        ("unfrozen-real-pty-blocked-stdin-proof", "shell_proof"),
+        ("frozen-real-pty-blocked-stdin-proof", "freeze_shell"),
+        ("root-quiesce-controlled-thaw-stop-refreeze-unmount", "quiesce"),
+        ("loop-readback-user-files", "readback"),
+        ("encrypted-user-file-restore", "encrypted_restore"),
+    ),
+}
+
+
+def artifact_root():
+    owner = next((path for path in HERE.parents if (path / ".git").exists()), HERE)
+    return owner / ".local" / "artifacts" / "native"
+
+
+def harness_sources(*, verify_ownership=False):
+    sources = {}
+    for name in ("native.py", "native-t3-probe.mjs", "manifest.lock.json"):
+        path = HERE / name
+        if verify_ownership:
+            info = path.lstat()
+            check(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+                  "ROOT_OWNED_HARNESS_SOURCE_REQUIRED")
+        sources[name] = sha(path)
+    return sources
+
+
+def exact_probes(probes, names):
+    return ([item.get("name") for item in probes] == list(names) and
+            all(item.get("state") == "passed" and
+                isinstance(item.get("evidence"), dict) and
+                item.get("requiredForNativeCandidate") is True for item in probes))
+
+
+def protected_json(path):
+    path = Path(path)
+    check(not path.is_symlink() and path.is_file(), "PROTECTED_RECEIPT_REQUIRED")
+    info = path.stat()
+    check(info.st_uid == 0 and not info.st_mode & 0o077, "RECEIPT_MUST_BE_ROOT_0600")
+    for parent in path.parents:
+        info = parent.stat()
+        check(not parent.is_symlink() and info.st_uid == 0 and not info.st_mode & 0o022,
+              "ROOT_OWNED_RECEIPT_PATH_REQUIRED")
+    return json.loads(path.read_text())
+
+
+def receipt_time(value):
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise ProbeError("BAD_RECEIPT_TIME") from None
+    check(parsed.utcoffset() is not None, "RECEIPT_TIMEZONE_REQUIRED")
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def aggregate_receipts(expected, receipts):
+    """Validate explicitly selected receipts; never discover runs or issue authorization."""
+    check(set(expected.get("batches", {})) == set(BATCHES) and set(receipts) == set(BATCHES),
+          "EXACT_BATCH_MAPPING_REQUIRED")
+    identity_keys = ("machineIdSha256", "runtimeSha256", "installedImageManifestSha256",
+                     "installedImmutableInputs", "harnessSources")
+    for key in identity_keys:
+        check(bool(expected.get(key)), "EXPECTED_SOURCE_AND_TARGET_REQUIRED")
+    for key in identity_keys[:3]:
+        check(re.fullmatch(r"[a-f0-9]{64}", expected[key]), "EXACT_IDENTITY_HASH_REQUIRED")
+    for key in identity_keys[3:]:
+        check(isinstance(expected[key], dict) and bool(expected[key]) and
+              all(isinstance(name, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                  for name, digest in expected[key].items()), "EXACT_SOURCE_HASHES_REQUIRED")
+    check(expected["runtimeSha256"] == EXPECTED_RUNTIME_SHA256 and
+          expected["harnessSources"] == harness_sources(), "WRONG_AGGREGATION_SOURCE")
+    seen = set()
+    covered = set()
+    spans = []
+    for batch, steps in BATCHES.items():
+        mapping, receipt = expected["batches"][batch], receipts[batch]
+        run_id = mapping.get("runId", "")
+        check(re.fullmatch(r"native-[a-f0-9]{32}", run_id) and run_id not in seen,
+              "DUPLICATE_OR_INVALID_BATCH_RUN")
+        seen.add(run_id)
+        check(receipt.get("runId") == run_id and receipt.get("batchId") == batch and
+              receipt.get("type") == "NativeWorkspaceQualification" and
+              receipt.get("schemaVersion") == 2, "WRONG_BATCH_RUN")
+        check(all(receipt.get(key) == expected[key] for key in identity_keys),
+              "MISMATCHED_BATCH_SOURCE_OR_TARGET")
+        names = [name for name, _ in steps]
+        check(exact_probes(receipt.get("probes", []), names), "FAILED_MISSING_OR_DUPLICATE_PROBES")
+        check(receipt.get("cleanup") == "complete" and receipt.get("batchPassed") is True and
+              receipt.get("nativeCandidatePassed") is False and
+              receipt.get("runtimeQualifiedNative") is False, "INCOMPLETE_OR_FALSE_BATCH_CLAIM")
+        auth = receipt.get("authorization", {})
+        check(auth.get("runId") == run_id, "WRONG_BATCH_AUTHORIZATION")
+        times = [receipt_time(receipt.get("startedAt"))] + [
+            receipt_time(probe.get("completedAt")) for probe in receipt["probes"]] + [
+                receipt_time(receipt.get("finishedAt"))]
+        validate_authorization(auth, times[0], expected["machineIdSha256"])
+        check(auth.get("batchId") == batch and
+              all(auth.get(key) == expected[key] for key in identity_keys[2:]),
+              "WRONG_BATCH_AUTHORIZATION")
+        for completed in times[1:-1]:
+            validate_authorization(auth, completed, expected["machineIdSha256"])
+        check(all(first <= second for first, second in zip(times, times[1:])),
+              "INVALID_RECEIPT_TIME_ORDER")
+        covered.update(names)
+        spans.append((times[0], times[-1]))
+    check(bool(covered) and covered == REQUIRED_PROBES, "INCOMPLETE_NATIVE_COVERAGE")
+    return dict(schemaVersion=2, type="NativeWorkspaceAggregateQualification",
+                **{key: expected[key] for key in identity_keys},
+                startedAt=min(start for start, _ in spans).isoformat(),
+                finishedAt=max(finish for _, finish in spans).isoformat(),
+                batches=expected["batches"], requiredProbes=sorted(covered),
+                nativeCandidatePassed=True, runtimeQualifiedNative=True,
+                terminalInputObservedNative=True, terminalIdleKernelQualifiedNative=True,
+                runtimeQualified=False, providerPersistenceQualified=False,
+                encryptedOffHostBackupQualified=False, browserQualified=False,
+                productionGatewayUsefulActivityQualified=False,
+                sourceControlUserSignInQualified=False, cleanup="complete")
 
 
 class ProbeError(Exception):
@@ -191,6 +335,11 @@ def validate_authorization(value, now, machine_hash):
     check(value.get("syntheticWorkspaceMayBeErased") is True, "SYNTHETIC_DATA_ACK_REQUIRED")
 
 
+def validate_execution_scope(value, batch):
+    check(value.get("batchId") == batch and (batch is None or batch in BATCHES),
+          "WRONG_AUTHORIZED_EXECUTION_SCOPE")
+
+
 def guarded_loop(device, backing):
     check(re.fullmatch(r"/dev/loop[0-9]+", device), "REFUSE_NON_LOOP_DEVICE")
     actual = Path(command(["losetup", "-n", "-O", "BACK-FILE", device])).resolve()
@@ -280,16 +429,21 @@ def bootstrap_with_local_enrollment(config, directory):
         enrollment.unlink(missing_ok=True)
 
 
-def initialize_codex_without_credentials(workspace, home):
+def native_codex_binary():
     binaries = list(Path("/opt/minicloud-tools/node_modules/@openai").glob("codex*/vendor/*/bin/codex"))
     check(len(binaries) == 1, "NATIVE_CODEX_EXECUTABLE_AMBIGUOUS")
     binary = binaries[0]
     check(binary.is_file() and not binary.is_symlink() and binary.stat().st_uid == 0 and
           not binary.stat().st_mode & 0o022, "UNTRUSTED_NATIVE_CODEX_EXECUTABLE")
+    return binary
+
+
+def initialize_codex_without_credentials(workspace, home, *, environment=None, observe=None):
+    binary = native_codex_binary()
     process = subprocess.Popen(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
-        str(binary), "app-server", "--listen", "stdio://"], cwd=workspace, text=True,
+        "codex", "app-server", "--listen", "stdio://"], cwd=workspace, text=True,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        env={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        env={**(environment or {}), "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
              "HOME": str(home), "CODEX_HOME": str(home / ".codex")})
     try:
         process.stdin.write(json.dumps(dict(id=1, method="initialize", params=dict(
@@ -300,9 +454,11 @@ def initialize_codex_without_credentials(workspace, home):
         check(bool(ready), "CODEX_NATIVE_INITIALIZE_TIMEOUT")
         response = json.loads(process.stdout.readline(65537))
         check(response.get("id") == 1 and "result" in response, "CODEX_NATIVE_INITIALIZE_REJECTED")
+        evidence = observe(binary) if observe is not None else None
         process.stdin.close()
         process.wait(timeout=15)
         check(process.returncode == 0, "CODEX_NATIVE_INITIALIZE_EXIT_FAILED")
+        return evidence
     finally:
         if process.poll() is None:
             process.terminate()
@@ -314,6 +470,79 @@ def initialize_codex_without_credentials(workspace, home):
         if not process.stdin.closed:
             process.stdin.close()
         process.stdout.close()
+
+
+def codex_helper_artifacts(temporary, previous, binary):
+    links = {str(path.relative_to(temporary)): os.readlink(path)
+             for path in temporary.rglob("*") if path.is_symlink() and path not in previous}
+    groups = {}
+    for name, target in links.items():
+        parts = Path(name).parts
+        if (len(parts) == 2 and parts[0].startswith("codex-arg0") and
+                parts[1] in ("codex-linux-sandbox", "apply_patch", "applypatch")):
+            groups.setdefault(Path(name).parent, {})[name] = target
+    complete = {name: target for group in groups.values()
+                if {Path(name).name for name in group} ==
+                {"codex-linux-sandbox", "apply_patch", "applypatch"}
+                for name, target in group.items()}
+    check(complete and all(os.path.isabs(target) and target == str(binary.resolve())
+                           for target in complete.values()),
+          "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING")
+    check(all((temporary / name).lstat().st_uid == (temporary / name).lstat().st_gid == 2000
+              for name in complete), "ACTUAL_CODEX_SYMLINK_OWNER_MISMATCH")
+    return {"tier": "retained", "temporaryRoot": str(temporary),
+            "observedWhileCliRunning": True, "normalCliEntrypoint": True,
+            "symlinkCount": len(complete),
+            "symlinks": [{"relativePath": name, "target": target}
+                         for name, target in sorted(complete.items())],
+            "temporaryHelpersRestored": False}
+
+
+def retained_manifest(runtime, root):
+    files, links, directories = {}, {}, set()
+    for path, info in runtime.backup_paths(root):
+        name = path.relative_to(root).as_posix()
+        if stat.S_ISREG(info.st_mode):
+            files[name] = sha(path)
+        elif stat.S_ISLNK(info.st_mode):
+            links[name] = os.readlink(path)
+        elif stat.S_ISDIR(info.st_mode) and name != ".":
+            directories.add(name)
+    return files, links, directories
+
+
+def retained_codex_temporary(workspace):
+    temporary = workspace / "home/.codex/tmp/arg0-linux"
+    check(not any(path.is_symlink() for path in (temporary, *temporary.parents)
+                  if path.is_relative_to(workspace)), "CODEX_HELPER_PATH_ALIASED")
+    if temporary.exists():
+        check(temporary.is_dir() and temporary.stat().st_dev == workspace.stat().st_dev,
+              "CODEX_HELPERS_NOT_ON_RETAINED_VOLUME")
+    return temporary
+
+
+def codex_version_helpers(workspace, environment):
+    binary = native_codex_binary()
+    temporary = retained_codex_temporary(workspace)
+    check(Path(environment["TMPDIR"]).stat().st_dev != workspace.stat().st_dev,
+          "CODEX_SCRATCH_TMPDIR_ON_RETAINED_VOLUME")
+    previous = {path for path in temporary.rglob("*") if path.is_symlink()}
+    home = workspace / "home"
+    result = command(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
+                      "env", "-i", *[name + "=" + value for name, value in environment.items()],
+                      "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                      "HOME=" + str(home), "CODEX_HOME=" + str(home / ".codex"),
+                      "codex", "--version"], cwd=workspace, timeout=30)
+    check(re.search(r"(?:^|\s)0\.169\.0(?:$|\s)", result), "CODEX_HELPER_VERSION_FAILED")
+    retained_codex_temporary(workspace)
+    evidence = codex_helper_artifacts(temporary, previous, binary)
+    check(all((temporary / item["relativePath"]).lstat().st_dev == workspace.stat().st_dev
+              for item in evidence["symlinks"]), "CODEX_HELPERS_NOT_ON_RETAINED_VOLUME")
+    evidence.update(observedWhileCliRunning=False, removedOnCleanCliExit=False,
+                    remainedAfterCleanCliExit=True, scratchTmpdir=environment["TMPDIR"],
+                    creationTrigger="codex --version", pinnedVendorBinary=str(binary.resolve()),
+                    retainedFilesystemVerified=True, intermediateSymlinksAbsent=True)
+    return evidence
 
 
 def source_control_versions(path, lock):
@@ -328,11 +557,15 @@ def source_control_versions(path, lock):
 
 
 class Report:
-    def __init__(self, path, run_id, authorize=None):
+    def __init__(self, path, run_id, authorize=None, batch=None):
         self.path = path
         self.authorize = authorize
+        self.batch = batch
         self.value = {
-            "schemaVersion": 1, "type": "NativeWorkspaceQualification", "runId": run_id,
+            "schemaVersion": 2 if batch is not None else 1,
+            "type": "NativeWorkspaceQualification", "runId": run_id,
+            "batchId": batch, "batchPassed": False,
+            "harnessSources": harness_sources(),
             "runtimeSha256": EXPECTED_RUNTIME_SHA256, "startedAt": None,
             "clockSource": "pending-native-target-guard", "operatorWallClockTrusted": False,
             "storageMedium": "temporary-loop-backed-ext4-NOT-provider-persistence",
@@ -364,7 +597,10 @@ class Report:
             if self.authorize is not None:
                 self.authorize()
             evidence = function()
-            entry.update(state="passed", evidence=evidence if evidence is not None else {})
+            if self.authorize is not None:
+                self.authorize()
+            entry.update(state="passed", evidence=evidence if evidence is not None else {},
+                         completedAt=dt.datetime.now(dt.timezone.utc).isoformat())
             passed = True
         except Exception as error:
             # Never serialize str(error), tracebacks, command lines, WS payloads or DB rows.
@@ -387,13 +623,19 @@ class Report:
         self.value["finishedAt"] = (dt.datetime.now(dt.timezone.utc).isoformat()
                                     if self.value["startedAt"] is not None else None)
         self.value["nativeCandidatePassed"] = (
+            self.batch is None and len(self.value["probes"]) == len(REQUIRED_PROBES) and
             {item["name"] for item in self.value["probes"]} == REQUIRED_PROBES and
             all(item["state"] == "passed" for item in self.value["probes"]
                 if item["requiredForNativeCandidate"]) and self.value["cleanup"] == "complete")
         passed = {item["name"] for item in self.value["probes"] if item["state"] == "passed"}
         pty = {"unfrozen-real-pty-blocked-stdin-proof", "frozen-real-pty-blocked-stdin-proof"}
         self.value["runtimeQualifiedNative"] = (
-            REQUIRED_PROBES - pty <= passed and self.value["cleanup"] == "complete")
+            self.batch is None and REQUIRED_PROBES - pty <= passed and
+            self.value["cleanup"] == "complete")
+        if self.batch is not None:
+            self.value["batchPassed"] = (
+                exact_probes(self.value["probes"], [name for name, _ in BATCHES[self.batch]]) and
+                self.value["cleanup"] == "complete")
         self.value["terminalInputObservedNative"] = "real-terminal-input-and-passive-root-hook" in passed
         self.value["terminalIdleKernelQualifiedNative"] = pty <= passed
         self.save()
@@ -429,12 +671,27 @@ class T3Client:
 
 
 class Native:
-    def __init__(self, authorization):
+    def __init__(self, authorization, batch=None):
         self.authorization = authorization
         self.run_id = authorization["runId"]
-        self.directory = HERE / "runs" / self.run_id
+        self.batch = batch
+        self.directory = artifact_root() / self.run_id
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-        self.report = Report(self.directory / "report.json", self.run_id, self.fresh_authorization)
+        for path in (self.directory, *self.directory.parents):
+            info = path.stat()
+            check(not path.is_symlink() and info.st_uid == 0 and not info.st_mode & 0o022,
+                  "ROOT_OWNED_ARTIFACT_PATH_REQUIRED")
+        self.report = Report(self.directory / "report.json", self.run_id, self.fresh_authorization, batch)
+        self.report.value["authorization"] = {
+            key: authorization[key] for key in (
+                "runId", "acknowledgement", "machineIdSha256", "runtimeSha256", "clockSource",
+                "issuedAt", "expiresAt", "loopBackedExt4Only", "syntheticWorkspaceMayBeErased")
+        }
+        if batch is not None:
+            self.report.value["authorization"].update({
+                key: authorization.get(key) for key in (
+                    "batchId", "installedImageManifestSha256", "installedImmutableInputs", "harnessSources")
+            })
         self.device = None
         self.alias = None
         self.client = None
@@ -448,6 +705,7 @@ class Native:
         self.frozen_by_harness = False
         self.git_fixture_cleanup = "not-started"
         self.restore_fixture_cleanup = "not-started"
+        self.codex_artifacts = None
         self.scratch_mounted = None
         self.original_workspace_exists = Path("/workspace").exists()
         self.expires = dt.datetime.fromisoformat(authorization["expiresAt"].replace("Z", "+00:00"))
@@ -458,6 +716,7 @@ class Native:
 
     def guard(self):
         check(os.geteuid() == 0 and os.uname().machine == "x86_64", "ROOT_NATIVE_AMD64_ONLY")
+        validate_execution_scope(self.authorization, self.batch)
         validate_authorization(self.authorization, dt.datetime.now(dt.timezone.utc),
                                sha("/etc/machine-id"))
         check('VERSION_ID="24.04"' in Path("/etc/os-release").read_text(), "UBUNTU_2404_ONLY")
@@ -503,6 +762,13 @@ class Native:
         check(manifest["os"]["cloudImageSerial"] == "20251001", "WRONG_MANIFEST_SERIAL")
         inputs = manifest.get("provenance", {}).get("installedImmutableInputs", {}).get("files")
         check(isinstance(inputs, dict) and bool(inputs), "EXPLICIT_IMMUTABLE_INPUTS_REQUIRED")
+        if self.batch is not None:
+            check(self.authorization.get("batchId") == self.batch and
+                  self.authorization.get("installedImmutableInputs") == inputs and
+                  self.authorization.get("installedImageManifestSha256") ==
+                  sha("/opt/minicloud-workspace/image-manifest.json") and
+                  self.authorization.get("harnessSources") == harness_sources(verify_ownership=True),
+                  "WRONG_AUTHORIZED_BATCH_SOURCE")
         for name, digest in inputs.items():
             path = Path(name)
             check(path.is_absolute() and path.resolve() == path and path.is_file()
@@ -523,6 +789,7 @@ class Native:
               "PREEXISTING_CODING_PROCESSES")
         self.report.value.update(clockSource="native-vm-utc",
                                  startedAt=dt.datetime.now(dt.timezone.utc).isoformat(),
+                                 machineIdSha256=sha("/etc/machine-id"),
                                  installedImmutableInputs=inputs,
                                  installedImageManifestSha256=sha("/opt/minicloud-workspace/image-manifest.json"))
         return {"architecture": "x86_64", "ubuntuSerial": "20251001",
@@ -816,6 +1083,9 @@ class Native:
             os.chown(path.parent, 2000, 2000)
             path.write_text(value)
             os.chown(path, 2000, 2000)
+        link = Path("/workspace/config/native-user-current.json")
+        link.symlink_to("native-user.json")
+        os.chown(link, 2000, 2000, follow_symlinks=False)
         return {"type": result["type"], "filesystemUuid": fs_uuid,
                 "formattedOnlyVerifiedNewLoopDevice": True, "providerPersistenceProof": False,
                 "noApplicationInstalledOrRegistered": True,
@@ -1191,6 +1461,7 @@ class Native:
               result.get("snapshotSequence", -1) >= self.snapshot,
               "T3_STATE_NOT_RETAINED_AFTER_RESTART")
         self.t3_idle(before)
+        return self.watcher_state(active=True)
 
     def t3_idle(self, before):
         started = time.monotonic()
@@ -1333,25 +1604,102 @@ class Native:
             check(command(["systemctl", "show", T3_UNIT, "-p", prop, "--value"]) == expected,
                   "UNQUALIFIED_T3_RESTART_POLICY")
 
-    def t3_case_start(self, adapter):
+    def watcher_state(self, *, active=False, stopped=False, dependency_exhausted=False):
+        properties = ("ActiveState", "SubState", "Result", "Job", "MainPID", "ControlPID",
+                      "ControlGroup", "PartOf", "Restart", "RestartUSec", "StartLimitBurst",
+                      "StartLimitIntervalUSec", "NRestarts", "ExecMainCode", "ExecMainStatus")
+        state = dict(line.split("=", 1) for line in command(
+            ["systemctl", "show", WATCH_UNIT, "-p", ",".join(properties)]).splitlines()
+                     if "=" in line)
+        check(state.keys() == set(properties), "WATCHER_PROPERTIES_MISSING")
+        check(state["PartOf"] == T3_UNIT and state["Restart"] == "on-failure" and
+              state["RestartUSec"] == "10s" and state["StartLimitBurst"] == "5" and
+              state["StartLimitIntervalUSec"] == "5min", "UNQUALIFIED_WATCHER_RESTART_POLICY")
+        evidence = {
+            "watcherActiveState": state["ActiveState"] if state["ActiveState"] in (
+                "active", "inactive", "failed", "activating", "deactivating") else "unknown",
+            "watcherSubState": state["SubState"] if state["SubState"] in (
+                "running", "dead", "failed", "auto-restart", "start", "stop") else "unknown",
+            "watcherResult": state["Result"] if state["Result"] in (
+                "success", "signal", "exit-code", "start-limit-hit", "timeout", "oom-kill") else "unknown",
+            "jobPresent": bool(state["Job"]), "controlPresent": state["ControlPID"] != "0",
+            "mainPresent": state["MainPID"] != "0",
+            "automaticRestartsAbsent": state["NRestarts"] == "0",
+            "cleanExitObserved": state["ExecMainCode"] == str(os.CLD_EXITED) and
+                                 state["ExecMainStatus"] == "0",
+        }
+        exhausted = (dependency_exhausted and not active and
+                     state["ActiveState"] == state["SubState"] == "failed" and
+                     state["Result"] == "start-limit-hit" and
+                     evidence["automaticRestartsAbsent"] and evidence["cleanExitObserved"])
+        if ((state["Result"] != "success" and not exhausted) or
+                state["Job"] != "" or state["ControlPID"] != "0"):
+            raise ProbeError("WATCHER_FAILED_OR_PENDING_PRESERVE_EVIDENCE", evidence)
+        running = state["ActiveState"] == "active" and state["SubState"] == "running"
+        dead = state["ActiveState"] == "inactive" and state["SubState"] == "dead"
+        if not ((running or dead or exhausted) and (not active or running) and
+                (not stopped or dead or exhausted)):
+            raise ProbeError("WATCHER_REQUIRED_STATE_NOT_OBSERVED", evidence)
+        cgroup = "/system.slice/" + WATCH_UNIT
+        if running:
+            check(state["MainPID"].isdecimal() and int(state["MainPID"]) > 0 and
+                  state["ControlGroup"] == cgroup, "WATCHER_IDENTITY_MISMATCH")
+            proc = Path("/proc", state["MainPID"])
+            check(proc.stat().st_uid == 0 and proc.joinpath("cgroup").read_text().strip() ==
+                  "0::" + cgroup, "WATCHER_IDENTITY_MISMATCH")
+        else:
+            check(state["MainPID"] == "0" and state["ControlGroup"] in ("", cgroup),
+                  "WATCHER_NOT_DRAINED")
+            events = Path("/sys/fs/cgroup" + cgroup, "cgroup.events")
+            check(not events.exists() or "populated 0" in events.read_text().splitlines(),
+                  "WATCHER_NOT_DRAINED")
+        return {"active": running, "mainPid": int(state["MainPID"]),
+                "policyMatched": True, "failureAbsent": not exhausted,
+                "automaticRestartsAbsent": evidence["automaticRestartsAbsent"],
+                **({"dependencyBudgetExhaustion": evidence} if exhausted else {})}
+
+    def t3_case_start(self, adapter, *, retry_budget=None):
         self.fresh_authorization()
         check(self.owns_runtime and self.config["vmId"] == self.run_id,
               "T3_CASE_REQUIRES_SYNTHETIC_RUNTIME")
         self.check_t3_freezer(False)
         self.qualify_t3_restart_policy()
+        # Only the uninterrupted, verified dependency burst permits a failed watcher.
+        if retry_budget is not None:
+            check(self.t3_unit() == retry_budget and
+                  retry_budget["ActiveState"] == retry_budget["SubState"] == "failed" and
+                  retry_budget["Result"] == "signal" and retry_budget["NRestarts"] == 5 and
+                  retry_budget["Job"] == "" and
+                  retry_budget["MainPID"] == retry_budget["ControlPID"] == 0,
+                  "T3_RETRY_EXHAUSTION_CHANGED_BEFORE_RECOVERY")
+        watcher_before = self.watcher_state(dependency_exhausted=True) if retry_budget is not None \
+            else self.watcher_state()
+        if retry_budget is not None and not watcher_before["automaticRestartsAbsent"]:
+            raise ProbeError("WATCHER_INDEPENDENT_RESTART_PRESERVE_EVIDENCE", watcher_before)
         try:
             adapter.stop_services()
         finally:
             adapter.thaw()
         self.t3_stays_stopped(after_crash=True)
+        if retry_budget is not None:
+            watcher_after = self.watcher_state(stopped=True, dependency_exhausted=True)
+            if not watcher_after["automaticRestartsAbsent"]:
+                raise ProbeError("WATCHER_INDEPENDENT_RESTART_PRESERVE_EVIDENCE", watcher_after)
+        else:
+            self.watcher_state(stopped=True)
+        self.check_t3_freezer(False)
+        self.fresh_authorization()
         # Only between completed cases: the next explicit start consumes slot one.
-        command(["systemctl", "reset-failed", T3_UNIT])
+        command(["systemctl", "reset-failed", T3_UNIT, WATCH_UNIT])
         adapter.start_services()
         before = self.t3_ready()
         check(before["NRestarts"] == 0, "T3_CASE_RETRY_COUNTER_NOT_RESET")
         self.check_t3_pid(before["MainPID"])
         self.check_t3_freezer(False)
-        return before | {"idlePrecondition": self.t3_idle(before)}
+        watcher = self.watcher_state(active=True)
+        return before | {"idlePrecondition": self.t3_idle(before), "scratchWatcher": watcher,
+                         **({"scratchWatcherBeforeExplicitRecovery": watcher_before}
+                            if retry_budget is not None else {})}
 
     def t3_retry_budget(self, adapter):
         budget_started = time.monotonic()
@@ -1361,6 +1709,10 @@ class Native:
             if kills > 1:
                 ready = self.t3_ready()
                 self.t3_idle(ready)
+                starts[-1]["scratchWatcher"] = self.watcher_state(active=True)
+            if not starts[-1]["scratchWatcher"]["automaticRestartsAbsent"]:
+                raise ProbeError("WATCHER_INDEPENDENT_RESTART_PRESERVE_EVIDENCE",
+                                 starts[-1]["scratchWatcher"])
             pid = self.signal_t3_main(signal.SIGKILL)
             delayed = self.t3_restart_delay("signal")
             check(delayed["NRestarts"] == kills - 1, "T3_RETRY_COUNTER_UNEXPECTED")
@@ -1379,26 +1731,35 @@ class Native:
         check(exhausted["NRestarts"] == 5, "T3_RETRY_COUNTER_UNEXPECTED")
         # All five real starts and the rejected sixth have now been observed,
         # including a full RestartSec window with the failure still visible.
-        command(["systemctl", "reset-failed", T3_UNIT])
-        adapter.start_services()
-        self.t3_recovered(pid)
-        return dict(retryBudgetExhaustedResult=exhausted["Result"], crashesUntilBudgetExhausted=kills,
-                    retryBudgetExhaustedInSeconds=round(budget_seconds, 2),
-                    retryBudgetSuccessfulStarts=starts, exhaustedFailureStayedVisible=True)
+        evidence = dict(retryBudgetExhaustedResult=exhausted["Result"], crashesUntilBudgetExhausted=kills,
+                        retryBudgetExhaustedInSeconds=round(budget_seconds, 2),
+                        retryBudgetSuccessfulStarts=starts, exhaustedFailureStayedVisible=True)
+        try:
+            evidence["scratchWatcherBeforeExplicitRecovery"] = self.watcher_state(
+                dependency_exhausted=True)
+            recovered = self.t3_case_start(adapter, retry_budget=exhausted)
+            evidence["scratchWatcherBeforeExplicitRecovery"] = recovered[
+                "scratchWatcherBeforeExplicitRecovery"]
+            evidence["explicitRecoveryScratchWatcher"] = self.t3_recovered(pid)
+        except ProbeError as error:
+            raise ProbeError(str(error), {"retryBudget": evidence,
+                                         "recoveryFailure": error.evidence}) from None
+        return evidence
 
     def t3_recovery(self):
         unit = T3_UNIT
         adapter = self.rt.Linux(self.config)
-        evidence = {"idleCaseStarts": []}
+        evidence = {"idleCaseStarts": [], "caseScratchWatchers": []}
         def case_start():
             before = self.t3_case_start(adapter)
             evidence["idleCaseStarts"].append(before["idlePrecondition"])
+            evidence["caseScratchWatchers"].append(before["scratchWatcher"])
             return before
         before = case_start()
         pid = self.signal_t3_main(signal.SIGKILL)
         evidence["sigkillRestartDelay"] = self.t3_restart_delay("signal")
         self.check_t3_freezer(False)
-        self.t3_recovered(pid)
+        evidence["sigkillScratchWatcher"] = self.t3_recovered(pid)
         check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_CRASH_NOT_AUTOMATICALLY_RESTARTED")
         evidence["sigkillAutomaticallyRestartedWithSameIdentityAndProject"] = True
 
@@ -1419,7 +1780,7 @@ class Native:
                     pass  # The killed unit's cgroup was reaped.
         evidence["oomRestartDelay"] = self.t3_restart_delay("oom-kill")
         self.check_t3_freezer(False)
-        self.t3_recovered(before["MainPID"])
+        evidence["oomScratchWatcher"] = self.t3_recovered(before["MainPID"])
         check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_OOM_NOT_AUTOMATICALLY_RESTARTED")
         evidence["oomKillAutomaticallyRestarted"] = True
 
@@ -1522,6 +1883,7 @@ class Native:
         return points
 
     def scratch_mounts(self):
+        self.watcher_state(active=True)
         spec = importlib.util.spec_from_file_location("native_scratch_mounts", SCRATCH_HELPER)
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
@@ -1597,6 +1959,7 @@ class Native:
               "TERMINAL_WRITE_NOT_CODING_OWNED")
         status = json.loads(command(["/usr/bin/python3", "-I", "-B", str(SCRATCH_HELPER), "status"]))
         check(status.get("state") == "active", "SCRATCH_STATUS_NOT_ACTIVE")
+        self.watcher_state(active=True)
         self.scratch_mounted = len(SCRATCH_OUTPUTS)
         return {"boundOutputs": list(SCRATCH_OUTPUTS), "visibleInT3AndTerminalMountNamespace": True,
                 "terminalWriteLandedOnScratch": True, "trackedBuildDirectoryUntouched": True,
@@ -1856,6 +2219,8 @@ class Native:
         # isolated attestation must never be reused for a live gateway/application.
         time.sleep(75)
         snapshot = self.http_snapshot_without_retaining_token()
+        # Generate retained helpers after all other Codex invocations, immediately before backup quiescence.
+        self.codex_artifacts = codex_version_helpers(Path("/workspace"), self.storage_tiers().load_environment())
         result = self.control("quiesce", operation="native-quiesce", gatewayAdmissionsFenced=True,
                               unobservableToolsAbsent=True, t3SnapshotSequence=snapshot)
         check(result["type"] == "PrimaryQuiesced", "NO_REAL_QUIESCENCE_RECEIPT")
@@ -1879,6 +2244,7 @@ class Native:
         return {"receiptType": result["type"], "receiptId": result["receiptId"],
                 "receiptBinding": {key: result[key] for key in ("vmId", "generation", "operationId", "revision")},
                 "actualStopAndUnmount": True, "postStopFrozen": True,
+                "actualCodexTemporaryArtifacts": self.codex_artifacts,
                 "productionGatewayAdmissionProof": False}
 
     def http_snapshot_without_retaining_token(self):
@@ -1932,16 +2298,26 @@ class Native:
             source_owner = (mounted / ".minicloud-volume.json").read_bytes()
             check(json.loads(source_owner) == self.config["volume"]["owner"],
                   "SOURCE_RESTORE_FIXTURE_OWNER_CHANGED")
-            expected = {name: sha(mounted / name) for name in names}
-            source_links = {str(path.relative_to(mounted)): os.readlink(path)
-                            for path in mounted.rglob("*") if path.is_symlink()}
+            check(isinstance(self.codex_artifacts, dict) and
+                  self.codex_artifacts["tier"] == "retained" and
+                  self.codex_artifacts["symlinkCount"] >= 3 and
+                  self.codex_artifacts["remainedAfterCleanCliExit"] and
+                  self.codex_artifacts["retainedFilesystemVerified"],
+                  "ACTUAL_CODEX_HELPER_LIFECYCLE_EVIDENCE_MISSING")
+            temporary = retained_codex_temporary(mounted)
+            self.rt.validate_backup_tree(mounted)
+            expected, source_links, source_directories = retained_manifest(self.rt, mounted)
             codex_links = {name: target for name, target in source_links.items()
                            if name.startswith("home/.codex/tmp/arg0-linux/")}
+            observed_links = {(temporary / item["relativePath"]).relative_to(mounted).as_posix(): item["target"]
+                              for item in self.codex_artifacts["symlinks"]}
             check({Path(name).name for name in codex_links} >=
                   {"codex-linux-sandbox", "apply_patch", "applypatch"} and
-                  all(os.path.isabs(target) for target in codex_links.values()),
+                  all(os.path.isabs(target) and target == self.codex_artifacts["pinnedVendorBinary"]
+                      for target in codex_links.values()) and
+                  observed_links.items() <= codex_links.items(),
                   "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING")
-            self.rt.validate_backup_tree(mounted)
+            check(set(names) <= expected.keys(), "RETAINED_USER_FIXTURE_MISSING")
             command(["age-keygen", "--output", str(key)])
             recipient = command(["age-keygen", "-y", str(key)])
             check(recipient.startswith("age1"), "INVALID_SYNTHETIC_AGE_RECIPIENT")
@@ -1973,6 +2349,9 @@ class Native:
             check(not {"data/lost+found", "data/.minicloud-volume.json"} & members,
                   "PRODUCTION_WRITER_INCLUDED_ROOT_FILESYSTEM_METADATA")
             check(all("data/" + name in members for name in names), "NESTED_USER_DATA_OMITTED")
+            check(all("data/" + name in members for name in
+                      expected.keys() | source_links.keys() | source_directories),
+                  "RETAINED_USER_DATA_OMITTED")
             check(archived_links == source_links, "SOURCE_SYMLINK_METADATA_NOT_ARCHIVED")
             with backing.open("xb") as stream:
                 stream.truncate(512 * 1024**2)
@@ -2050,6 +2429,10 @@ class Native:
                   "PRODUCTION_RESTORE_IMPORT_RECEIPT_MISSING")
             check(all(sha(restored / name) == digest for name, digest in expected.items()),
                   "RESTORED_REPRESENTATIVE_USER_HASH_MISMATCH")
+            restored_files, restored_links, restored_directories = retained_manifest(self.rt, restored)
+            check(restored_files == expected and restored_links == source_links and
+                  source_directories <= restored_directories,
+                  "RESTORED_COMPLETE_RETAINED_TREE_MISMATCH")
             check(all((restored / name).stat().st_uid == (restored / name).stat().st_gid == 2000
                       for name in expected), "RESTORED_USER_FILE_OWNERSHIP_MISMATCH")
             for name, target in source_links.items():
@@ -2065,6 +2448,7 @@ class Native:
                   (lost.stat().st_ino, lost.stat().st_uid, lost.stat().st_gid,
                    stat.S_IMODE(lost.stat().st_mode)) == lost_identity, "TARGET_LOST_FOUND_REPLACED")
             runtime.adapter.verify_owner(target_claim)
+            self.codex_artifacts["temporaryHelpersRestored"] = True
             return {"filesRestored": len(expected), "allSha256Matched": True,
                     "encryptedWithAge": True, "productionArchiveWriterUsed": True,
                     "actualRuntimeRestoreImport": True, "restoreReceiptType": result["type"],
@@ -2075,7 +2459,12 @@ class Native:
                     "allWorkspaceSymlinkMetadataRestored": True,
                     "actualCodexSymlinkCount": len(codex_links),
                     "actualCodexSymlinkMetadataRestored": True,
+                    "completeRetainedUserFilesVerified": True,
+                    "retainedSymlinkCount": len(source_links),
+                    "retainedDirectoryCount": len(source_directories),
+                    "actualCodexTemporaryArtifacts": self.codex_artifacts,
                     "symlinkTargetBytesNotArchived": True, "symlinkUidsAllCoding": True,
+                    "retainedUserFilesAllCodingOwned": True,
                     "representativeUserFilesAllCodingOwned": True,
                     "actualCodexSymlinkEvidence": [
                         {"relativePath": name, "target": target,
@@ -2120,13 +2509,17 @@ class Native:
                 self.report.value["restoreFixtureCleanup"] = self.restore_fixture_cleanup
 
     def cleanup(self):
+        # Expiry forbids new probes, not bounded teardown of this run's positively owned fixtures.
         check(self.git_fixture_cleanup in ("not-started", "complete"), "CODEX_GIT_FIXTURE_CLEANUP_INCOMPLETE")
         check(self.restore_fixture_cleanup in ("not-started", "complete"), "RESTORE_FIXTURE_CLEANUP_INCOMPLETE")
         if self.client:
             try:
                 if self.shell_pid:
-                    self.wait(lambda: not any(p["ppid"] == self.shell_pid
-                                              for p in self.rt.Procfs().inventory().values()), seconds=15)
+                    deadline = time.monotonic() + 15
+                    while any(p["ppid"] == self.shell_pid
+                              for p in self.rt.Procfs().inventory().values()):
+                        check(time.monotonic() < deadline, "CLEANUP_CHILDREN_DID_NOT_DRAIN")
+                        time.sleep(0.2)
                 self.client.call("close")
             except Exception:
                 pass
@@ -2246,6 +2639,24 @@ class Native:
                 self.report.value["cleanup"] = "not-needed-no-native-mutation"
             self.report.finish()
 
+    def run_batch(self):
+        guarded = False
+        try:
+            for name, method in BATCHES[self.batch]:
+                if not self.report.probe(name, getattr(self, method)):
+                    return
+                if method == "guard":
+                    guarded = True
+        finally:
+            if guarded:
+                try:
+                    self.cleanup()
+                except Exception:
+                    self.report.value["cleanup"] = "blocked-preserve-loop-and-data-inspect-before-generalize"
+            else:
+                self.report.value["cleanup"] = "not-needed-no-native-mutation"
+            self.report.finish()
+
 
 def synthetic_row(connection, table, overrides):
     check(re.fullmatch(r"[a-z0-9_]+", table), "INVALID_SYNTHETIC_TABLE")
@@ -2266,8 +2677,11 @@ def synthetic_row(connection, table, overrides):
 def main():
     global EXPECTED_RUNTIME_SHA256
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "plan"))
+    parser.add_argument("action", choices=("run", "plan", "batch", "aggregate"))
     parser.add_argument("--authorization", type=Path)
+    parser.add_argument("--batch", choices=tuple(BATCHES))
+    parser.add_argument("--expected", type=Path, help="root-0600 exact identities and batch/run/report mapping")
+    parser.add_argument("--output", type=Path, help="new aggregate receipt under .local/artifacts/native")
     parser.add_argument("--expected-runtime-sha256", required=True)
     args = parser.parse_args()
     check(re.fullmatch(r"[a-f0-9]{64}", args.expected_runtime_sha256), "EXACT_RUNTIME_SHA256_REQUIRED")
@@ -2276,11 +2690,35 @@ def main():
         print(json.dumps({"type": "NativeHarnessPlan", "nativeExecutionPerformed": False,
                           "expectedRuntimeSha256": EXPECTED_RUNTIME_SHA256,
                           "requiredScopes": SCOPES, "requiredProbes": sorted(REQUIRED_PROBES),
+                          "batches": {key: [name for name, _ in steps] for key, steps in BATCHES.items()},
+                          "harnessSources": harness_sources(),
                           "authorizationMaxTtlSeconds": 300,
                           "authorizationClockSources": ["native-vm-utc", "provider-https-date"],
                           "operatorWallClockTrusted": False,
                           "defaultApplicationsInstalled": False,
                           "runtimeQualified": False, "authorizationRequired": ACK}, indent=2))
+        return
+    if args.action == "aggregate":
+        check(args.expected is not None and args.output is not None, "EXPECTED_MAPPING_AND_OUTPUT_REQUIRED")
+        expected = protected_json(args.expected)
+        check(set(expected.get("batches", {})) == set(BATCHES), "EXACT_BATCH_MAPPING_REQUIRED")
+        receipts = {}
+        for batch, mapping in expected["batches"].items():
+            path = Path(mapping["reportPath"])
+            receipts[batch] = protected_json(path)
+            check(sha(path) == mapping.get("reportSha256"), "REPORT_HASH_MISMATCH")
+        value = aggregate_receipts(expected, receipts)
+        check(args.output.resolve().is_relative_to(artifact_root().resolve()) and
+              not args.output.is_symlink(), "ARTIFACT_OUTPUT_REQUIRED")
+        check(os.geteuid() == 0, "ROOT_AGGREGATION_REQUIRED")
+        args.output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for path in (args.output.parent, *args.output.parent.parents):
+            info = path.stat()
+            check(not path.is_symlink() and info.st_uid == 0 and not info.st_mode & 0o022,
+                  "ROOT_OWNED_ARTIFACT_PATH_REQUIRED")
+        write_json(args.output, value)
+        print(json.dumps({"report": str(args.output), "nativeCandidatePassed": True,
+                          "runtimeQualified": False}))
         return
     check(args.authorization is not None, "AUTHORIZATION_FILE_REQUIRED")
     info = args.authorization.stat()
@@ -2289,12 +2727,17 @@ def main():
     authorization = json.loads(args.authorization.read_text())
     validate_authorization(authorization, dt.datetime.now(dt.timezone.utc), sha("/etc/machine-id"))
     os.umask(0o077)
-    instance = Native(authorization)
-    instance.run()
+    check(args.action != "batch" or args.batch is not None, "EXPLICIT_BATCH_REQUIRED")
+    check(args.action != "run" or args.batch is None, "LEGACY_RUN_HAS_NO_BATCH")
+    validate_execution_scope(authorization, args.batch)
+    instance = Native(authorization, args.batch)
+    instance.run_batch() if args.action == "batch" else instance.run()
+    passed = instance.report.value["batchPassed" if args.action == "batch" else "nativeCandidatePassed"]
     print(json.dumps({"report": str(instance.report.path),
+                      "batchPassed": instance.report.value["batchPassed"],
                       "nativeCandidatePassed": instance.report.value["nativeCandidatePassed"],
                       "runtimeQualified": False}))
-    raise SystemExit(0 if instance.report.value["nativeCandidatePassed"] else 1)
+    raise SystemExit(0 if passed else 1)
 
 
 if __name__ == "__main__":
