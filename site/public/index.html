@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="MiniCloud provides self-hosted agentic coding workspaces and app hosting.">
+    <meta name="description" content="Run coding agents on Linux VMs in your cloud account and deploy Docker services with the MiniCloud CLI.">
     <title>MiniCloud | Self-hosted agentic coding and app hosting</title>
     <link rel="icon" href="./mark.svg" type="image/svg+xml">
     <link rel="stylesheet" href="./styles.css">
@@ -16,7 +16,7 @@
         MiniCloud
       </a>
       <nav class="site-nav" aria-label="Main">
-        <a href="#workflows">Features</a>
+        <a href="#workflows">Coding VMs and deployments</a>
         <a href="#get-started">Get started</a>
         <a href="https://github.com/muniventures/minicloud">GitHub <span aria-hidden="true">&nearr;</span></a>
       </nav>
@@ -25,7 +25,7 @@
     <main class="frame" id="main" tabindex="-1">
       <section class="hero" aria-labelledby="headline">
         <h1 id="headline">Self-hosted agentic coding<br class="hero-break"> and app hosting</h1>
-        <p class="hero-copy">Use coding agents in your browser and deploy Docker services on your own servers.</p>
+        <p class="hero-copy">Run Codex, Claude Code, or GitHub Copilot CLI on a Linux VM in your cloud account. Deploy web apps, APIs, and workers with <code>minicloud deploy</code>.</p>
         <div class="actions">
           <a class="button button-primary" href="#get-started">Get started <span aria-hidden="true">&darr;</span></a>
           <a class="button" href="https://github.com/muniventures/minicloud">View on GitHub <span aria-hidden="true">&nearr;</span></a>
@@ -33,19 +33,19 @@
       </section>
 
       <section class="section" id="workflows" aria-labelledby="workflows-title">
-        <h2 id="workflows-title">Workspaces and apps</h2>
+        <h2 id="workflows-title">Coding VMs and deployments</h2>
         <div class="workflow-grid">
           <article>
-            <h3>Browser workspaces</h3>
-            <p>Use T3 Code to work with a coding agent and terminal in your browser. The dashboard opens app previews. You can stop the primary VM and resume with your files and sessions intact.</p>
+            <h3>Run a coding agent on a VM</h3>
+            <p>Start a VM in <strong>Dev Environments</strong> and open T3 Code in your browser. Use its terminal to clone a repo and run tests. The VM image determines which agents are installed. Open an app preview from the dashboard. When you stop the primary VM, its disk keeps your files and T3 sessions.</p>
             <a class="text-link" href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">First workspace guide <span aria-hidden="true">&nearr;</span></a>
             <a class="product-media" href="./media/coding-workspace.png">
               <img src="./media/coding-workspace.png" alt="A running coding workspace with T3 and preview controls and a CPU history chart" width="1679" height="1020" loading="lazy">
             </a>
           </article>
           <article>
-            <h3>Application hosting</h3>
-            <p>Deploy a web app, private API, and worker together or update them separately. Add HTTPS domains to public services and check deployment status and service logs.</p>
+            <h3>Deploy Docker services</h3>
+            <p>Run <code>minicloud init</code> in an app repository and select the services to deploy. <code>minicloud deploy</code> builds the images and rolls the services out to an app server. Public services get HTTPS URLs. Set a custom domain, check deployment progress, and read service logs in the dashboard.</p>
             <a class="text-link" href="https://github.com/muniventures/minicloud#deploy-your-first-app">First deployment guide <span aria-hidden="true">&nearr;</span></a>
             <a class="product-media" href="./media/services.png">
               <img src="./media/services.png" alt="Application services with public and private access, addresses and runtime status" width="1679" height="850" loading="lazy">
@@ -56,8 +56,8 @@
 
       <section class="section architecture" aria-labelledby="architecture-title">
         <div>
-          <h2 id="architecture-title">Control plane and servers</h2>
-          <p>The dashboard, API, and deployment worker run on a dedicated VPS. MiniCloud provisions separate machines in your Hetzner, DigitalOcean, or Vultr account to run app services and coding workspaces. The workspace gateway connects your browser to the coding VM.</p>
+          <h2 id="architecture-title">What runs on each server</h2>
+          <p>Install the MiniCloud dashboard, API, and worker on one VPS. The worker provisions separate coding VMs and app servers in your Hetzner, DigitalOcean, or Vultr account. App visitors reach public services over HTTPS. You connect to a coding VM through the workspace gateway.</p>
         </div>
         <div class="architecture-media">
           <a class="product-media" href="./media/minicloud-architecture.svg">
