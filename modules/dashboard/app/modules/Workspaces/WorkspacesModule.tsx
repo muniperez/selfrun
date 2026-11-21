@@ -136,24 +136,22 @@ function OrganizationWorkspaces({ organizationId, workspaceId, canManage }: {
       refreshAfterMutation={refreshAfterMutation} canManage={canManage && !permanentDeletion(item)}
       onRefreshStatus={checkStatus} refreshing={loading} /> : undefined}>
     {!workspaceId && <>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0 flex-1"><CollectionToolbar label="dev environments" query={query}
-          onChange={next => setQuery({ ...next, view: "table" })} onRefresh={() => refresh()} loading={loading}
-          count={filtered.length} filters={[
-            { id: "primary", label: "Primary VM state", options: [
-              { value: "ready", label: "Running" }, { value: "stopped", label: "Stopped" },
-              { value: "starting", label: "Starting" }, { value: "stopping", label: "Stopping" },
-              { value: "attention", label: "Needs attention" }, { value: "unavailable", label: "Unavailable" },
-            ] },
-            { id: "ephemeral", label: "Temporary VMs", options: [
-              { value: "attention", label: "Needs attention" }, { value: "running", label: "Running" },
-              { value: "transitioning", label: "Starting or stopping" }, { value: "stopped", label: "Stopped" },
-              { value: "none", label: "None" }, { value: "unavailable", label: "Unavailable" },
-            ] },
-          ]} sorts={[{ value: "name", label: "Name" }, { value: "activity", label: "Last activity" }]} /></div>
-        <CreateWorkspaceDialog organizationId={organizationId} canManage={canManage}
-          onCreated={workspace => navigate(`/workspaces/${encodeURIComponent(workspace.id)}`)} />
-      </div>
+      <CollectionToolbar label="dev environments" compact query={query}
+        onChange={next => setQuery({ ...next, view: "table" })} onRefresh={() => refresh()} loading={loading}
+        count={filtered.length} filters={[
+          { id: "primary", label: "Primary VM state", options: [
+            { value: "ready", label: "Running" }, { value: "stopped", label: "Stopped" },
+            { value: "starting", label: "Starting" }, { value: "stopping", label: "Stopping" },
+            { value: "attention", label: "Needs attention" }, { value: "unavailable", label: "Unavailable" },
+          ] },
+          { id: "ephemeral", label: "Temporary VMs", options: [
+            { value: "attention", label: "Needs attention" }, { value: "running", label: "Running" },
+            { value: "transitioning", label: "Starting or stopping" }, { value: "stopped", label: "Stopped" },
+            { value: "none", label: "None" }, { value: "unavailable", label: "Unavailable" },
+          ] },
+        ]} sorts={[{ value: "name", label: "Name" }, { value: "activity", label: "Last activity" }]}
+        trailingAction={<CreateWorkspaceDialog organizationId={organizationId} canManage={canManage}
+          onCreated={workspace => navigate(`/workspaces/${encodeURIComponent(workspace.id)}`)} />} />
       <p className="text-sm text-muted-foreground">{filtered.length} of {items.length} dev environments</p>
     </>}
     {error && <div role="alert" className="space-y-2 text-sm text-destructive">

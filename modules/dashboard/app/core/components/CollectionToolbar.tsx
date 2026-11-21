@@ -149,6 +149,8 @@ export function CollectionActions({
 }
 type Props = {
   label: string;
+  compact?: boolean;
+  trailingAction?: ReactNode;
   searchSupported?: boolean;
   query: CollectionQuery;
   onChange: (query: CollectionQuery) => void;
@@ -165,6 +167,8 @@ type Props = {
 };
 export function CollectionToolbar({
   label,
+  compact = false,
+  trailingAction,
   searchSupported = true,
   countLabel,
   query,
@@ -203,6 +207,7 @@ export function CollectionToolbar({
         <Button
           variant="outline"
           size="icon"
+          className={compact ? "shrink-0 max-lg:size-11" : undefined}
           aria-label={`Refresh ${label}`}
           disabled={busy}
           onClick={() => void refresh()}
@@ -214,7 +219,7 @@ export function CollectionToolbar({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               aria-label={`Search ${label}`}
-              placeholder={`Search ${label}`}
+              placeholder={compact ? "Search" : `Search ${label}`}
               className="pl-9"
               value={query.search}
               onChange={(event) =>
@@ -225,11 +230,11 @@ export function CollectionToolbar({
         ) : null}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="shrink-0">
+            <Button variant="outline" className={compact ? "shrink-0 max-sm:size-11 max-sm:gap-0.5 max-sm:p-0" : "shrink-0"}>
               <SlidersHorizontal className="h-4 w-4" />
-              <span className="hidden sm:inline">Filter &amp; sort</span>
+              <span className="sr-only sm:not-sr-only">Filter &amp; sort</span>
               {active ? (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                <span className={`flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs text-primary-foreground ${compact ? "max-sm:h-4 max-sm:min-w-4 max-sm:px-0" : ""}`}>
                   {active}
                 </span>
               ) : null}
@@ -364,6 +369,7 @@ export function CollectionToolbar({
             </div>
           </TooltipProvider>
         ) : null}
+        {trailingAction}
       </div>
       <CollectionActions primary={primary} secondary={secondary} more={more} />
       {count === 0 && (query.search || active > 0) ? (
