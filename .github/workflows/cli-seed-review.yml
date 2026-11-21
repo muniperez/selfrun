@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: MPL-2.0
+name: CLI seed review
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cli-seed-review.yml
+      - modules/cli/**
+      - docs/stateless-seed.md
+
+permissions:
+  contents: read
+
+jobs:
+  linux-arm64:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+      REVIEW_DIR: .local/artifacts/cli-seed-review
+      ARCHIVE: minicloud-seed-linux-arm64.tar.gz
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.404'
+      - name: Build, package, and verify unsigned ARM64 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
+          git check-ignore "$REVIEW_DIR/probe"
+          dotnet publish modules/cli/Minicloud.Cli.csproj --runtime linux-arm64 \
+            -p:PublishProfile=Seed -o "$REVIEW_DIR/payload"
+          test "$(find "$REVIEW_DIR/payload" -mindepth 1 | wc -l)" = 1
+          mv "$REVIEW_DIR/payload/Minicloud.Cli" "$REVIEW_DIR/payload/minicloud"
+          python3 -B scripts/package-cli-notices.py "$REVIEW_DIR/payload" "$GITHUB_REPOSITORY" "$SOURCE_REVISION"
+          tar -czf "$REVIEW_DIR/$ARCHIVE" -C "$REVIEW_DIR/payload" minicloud LICENSE.txt SOURCE.txt licenses
+          cd "$REVIEW_DIR"
+          sha256sum "$ARCHIVE" > checksums.txt
+          sha256sum --check --strict checksums.txt
+          mkdir extracted
+          tar -xzf "$ARCHIVE" -C extracted
+          ./extracted/minicloud --version | grep -Fx "source $SOURCE_REVISION"
+          ./extracted/minicloud help seed | grep -Fx "Embedded TEST source: server-v0.0.1-local.$SOURCE_REVISION"
+      - name: Upload review artifact
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: minicloud-seed-linux-arm64
+          path: |
+            ${{ env.REVIEW_DIR }}/${{ env.ARCHIVE }}
+            ${{ env.REVIEW_DIR }}/checksums.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Write candidate handoff
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        shell: bash
+        run: |
+          {
+            printf '[Download unsigned Linux ARM64 review candidate](%s) (30-day retention)\n\n' "$ARTIFACT_URL"
+            printf 'Source commit: `%s`\n\n' "$SOURCE_REVISION"
+            printf '```text\n'
+            cat "$REVIEW_DIR/checksums.txt"
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"

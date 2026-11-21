@@ -18,16 +18,18 @@ See [provider permissions and host requirements](seed.md#before-starting).
 
 ### Download a candidate
 
-Use the Linux archive from the candidate handoff linked on
-[#280](https://github.com/muniventures/minicloud/issues/280) when available.
-This is a review build, not a published CLI or signed server release. Review
-its source revision and archive SHA256 from the handoff before running it;
-a checksum alone does not establish provenance. Use the archive for your CPU
-and a supported glibc Linux distribution. In a directory you own, substitute
-your downloaded archive's filename:
+Open the [CLI seed review Actions runs](https://github.com/muniventures/minicloud/actions?query=workflow%3A%22CLI+seed+review%22).
+Choose a successful run for the commit you reviewed, then download
+**minicloud-seed-linux-arm64** from its summary or Artifacts section. GitHub
+requires sign-in for artifact downloads and retains this artifact for 30 days.
+This unsigned review build is for ARM64 glibc Linux, not a published CLI or
+signed server release. Check the source revision and SHA256 in the run
+summary; a checksum alone does not establish provenance. Unzip the downloaded
+Actions artifact in a directory you own, then run:
 
 ```sh
-tar -xzf path/to/downloaded-linux-arm64.tar.gz
+sha256sum --check checksums.txt
+tar -xzf minicloud-seed-linux-arm64.tar.gz
 ./minicloud help seed
 ./minicloud seed
 ```
