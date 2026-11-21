@@ -55,6 +55,9 @@ class FakeLinux:
         self.events.append("ephemeral")
         rt.require(not self.mounted, "Ephemeral cannot mount primary")
 
+    def verify_workspace_mount(self):
+        rt.require(self.mounted, "Retained volume is not mounted")
+
     def layout(self):
         self.events.append("layout")
 
@@ -763,6 +766,24 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(receipt["unmounted"])
         self.assertLess(self.adapter.events.index("stop-services"), self.adapter.events.index("unmount"))
         self.assertEqual(receipt, self.request("quiesce"))
+
+    def test_ready_primary_with_missing_mount_blocks_status_and_new_task_until_recovery(self):
+        self.runtime = self.primary()
+        self.request("bootstrap")
+        self.adapter.mounted = False  # A fresh kernel has not yet mounted the retained device.
+        runtime = rt.Runtime(self.runtime.c, self.runtime.root, self.adapter, self.g)
+        self.runtime = runtime
+        status = self.request("status", includeWorkInventory=True)
+        self.assertEqual("StorageUnavailable", status["phase"])
+        self.assertNotIn("workInventory", status)
+        with self.assertRaisesRegex(rt.Blocked, "Cannot verify the retained workspace mount"):
+            self.request("task-start", taskId="new", argv=["true"])
+        self.assertEqual({}, runtime.s["tasks"])
+        self.assertEqual(0, self.adapter.launches)
+
+        # Mount recovery is independent of one-shot enrollment and never rewrites phase or tasks.
+        self.adapter.mounted = True
+        self.assertEqual("Ready", self.request("status")["phase"])
 
     def test_scratch_mounts_stop_before_idle_evidence_and_detach_before_readonly_and_unmount(self):
         self.runtime = self.primary()

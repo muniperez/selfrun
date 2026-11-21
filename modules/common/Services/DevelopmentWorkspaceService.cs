@@ -193,7 +193,7 @@ public sealed partial class DevelopmentWorkspaceService(
             ValidateText(taskId, 128);
             var workspace = await FindAsync(workspaceId, organizationId, ct);
             var vm = Vm(workspace, vmId, generation);
-            if (vm.Phase != "ready" || vm.DesiredState != "running")
+            if (ReportedPhase(vm) != "ready" || vm.DesiredState != "running")
                 throw Conflict("workspace_not_ready", "Tasks require a ready VM with open admission.");
             var lease = await db.DevelopmentWorkspaceTaskLeases.SingleOrDefaultAsync(
                 x => x.VmId == vm.Id && x.Generation == generation && x.TaskId == taskId, ct);
@@ -319,22 +319,32 @@ public sealed partial class DevelopmentWorkspaceService(
         };
     }
 
+    public const string RetainedStorageUnavailable = "workspace_storage_unavailable";
+
+    private static bool IsRetainedStorageUnavailable(DevelopmentWorkspaceVm vm) =>
+        vm.Kind == DevelopmentWorkspaceVmKinds.Primary && vm.Phase == "ready" &&
+        vm.ErrorCode == RetainedStorageUnavailable;
+
+    private static string ReportedPhase(DevelopmentWorkspaceVm vm) =>
+        IsRetainedStorageUnavailable(vm) ? "blocked" : vm.Phase;
+
     public DevelopmentWorkspaceResponse ToResponse(DevelopmentWorkspace workspace)
     {
         var primary = workspace.Vms.Single(x => x.Id == workspace.PrimaryVmId && x.Kind == DevelopmentWorkspaceVmKinds.Primary);
         return new(workspace.Id, workspace.OrganizationId, workspace.Name, primary.ImageId, primary.Profile,
             primary.PlanId, workspace.ProviderAccountId, workspace.Region, primary.Sku, workspace.VolumeSizeGb,
-            primary.DesiredState, primary.Phase, primary.Generation, primary.ProviderServerId, workspace.ProviderVolumeId,
+            primary.DesiredState, ReportedPhase(primary), primary.Generation, primary.ProviderServerId, workspace.ProviderVolumeId,
             primary.ErrorCode, primary.ErrorMessage, primary.LastActivityAt, primary.ShutdownDeadline, primary.LastReadyAt,
             workspace.Vms.Where(x => x.ComputeReserved).Sum(x => x.ComputeHourlyRate * 720m), workspace.StorageMonthlyRate,
             workspace.Currency, workspace.PricingUpdatedAt, workspace.Revision, workspace.CreatedAt, workspace.UpdatedAt,
-            workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId, workspace.VolumeStatus,
+            workspace.Vms.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Select(ToVmResponse).ToArray(), workspace.PrimaryVmId,
+            IsRetainedStorageUnavailable(primary) ? "unavailable" : workspace.VolumeStatus,
             workspace.CreatedBy, workspace.IdleTimeoutMinutes, EffectiveIdleTimeout(workspace), workspace.KeepRunning,
             ImageAgents(Policy.Images.GetValueOrDefault(primary.ImageId)));
     }
 
     public DevelopmentWorkspaceVmResponse ToVmResponse(DevelopmentWorkspaceVm vm) =>
-        new(vm.Id, vm.Kind, vm.Generation, vm.DesiredState, vm.Phase, vm.ImageId, vm.Profile, vm.PlanId,
+        new(vm.Id, vm.Kind, vm.Generation, vm.DesiredState, ReportedPhase(vm), vm.ImageId, vm.Profile, vm.PlanId,
             vm.ProviderAccountId, vm.Region, vm.Sku, vm.ProviderServerId, vm.ErrorCode, vm.ErrorMessage,
             vm.LastActivityAt, vm.ShutdownDeadline, vm.LastReadyAt, vm.Repository, vm.BaseRef, vm.BaseCommit, vm.WorkBranch,
             vm.PushAuthorized, vm.IgnoredDataAcknowledgedAt is not null, vm.GitStatus, vm.FinalHead, vm.VerifiedRemoteRef,

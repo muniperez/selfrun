@@ -277,10 +277,12 @@ def generalize():
     # Guard is applied by main before either install or this destructive operation.
     os.chdir("/")
     for unit in ("minicloud-scratch-watch.service", "minicloud-scratch-mounts.service",
+                 "minicloud-workspace-mount.service",
                  "minicloud-workspace.service", "minicloud-t3.service",
                  "minicloud-t3-connect.service", "minicloud-t3-connect-activate.service"):
         subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=120, check=False)
     require(not os.path.ismount("/workspace"), "Never erase an attached workspace")
+    run(["systemctl", "disable", "minicloud-t3.service"])
     # Build-output bind mounts must go first: erasing through one would empty scratch, not the image.
     if Path("/opt/minicloud-workspace/scratch_mounts.py").is_file():
         subprocess.run(["/usr/bin/python3", "-I", "-B", "/opt/minicloud-workspace/scratch_mounts.py",

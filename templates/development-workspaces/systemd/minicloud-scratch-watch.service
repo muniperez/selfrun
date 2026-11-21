@@ -1,6 +1,7 @@
 [Unit]
 Description=Watch /workspace/repos and keep build-output scratch bind mounts current
-After=minicloud-workspace.service minicloud-scratch-mounts.service
+After=minicloud-workspace.service minicloud-workspace-mount.service minicloud-scratch-mounts.service
+Requires=minicloud-workspace-mount.service
 PartOf=minicloud-t3.service
 ConditionPathIsDirectory=/workspace/repos
 StartLimitIntervalSec=300

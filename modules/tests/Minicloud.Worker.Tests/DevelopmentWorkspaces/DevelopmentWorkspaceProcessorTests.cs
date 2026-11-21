@@ -536,6 +536,49 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.NotNull((await CurrentVm(vm.Id)).ShutdownDeadline);
     }
 
+    [Fact]
+    public async Task MonitorBlocksAndRecoversSamePrimaryGenerationWhenRetainedStorageIsUnavailable()
+    {
+        var (workspace, vm, _) = await Seed("session");
+        vm.ProviderServerId = "server-owned"; vm.IpAddress = "198.51.100.10";
+        await db.SaveChangesAsync();
+        Assert.True(await Processor().ProcessNextAsync(default));
+        var ready = await CurrentVm(vm.Id);
+        Assert.True(ready.GatewayReady);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        runtime.Phase = "StorageUnavailable";
+        runtime.Actions.Clear();
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+
+        var unavailable = await CurrentVm(vm.Id);
+        Assert.Equal("ready", unavailable.Phase); // Still eligible for monitoring.
+        Assert.False(unavailable.GatewayReady);
+        Assert.Equal(ready.LastHeartbeatAt, unavailable.LastHeartbeatAt);
+        Assert.Null(unavailable.ShutdownDeadline);
+        Assert.Equal(new[] { "status" }, runtime.Actions);
+        var blocked = lifecycle.ToResponse((await lifecycle.GetAsync(workspace.Id, "org", default))!);
+        Assert.Equal("blocked", blocked.Phase);
+        Assert.Equal("unavailable", blocked.VolumeStatus);
+        Assert.Equal("workspace_storage_unavailable", blocked.ErrorCode);
+        Assert.Equal("blocked", Assert.Single(blocked.Vms!).Phase);
+
+        runtime.Phase = "Ready";
+        await Processor().MonitorVmAsync(await CurrentVm(vm.Id), default);
+
+        var recovered = await CurrentVm(vm.Id);
+        Assert.Equal(ready.Generation, recovered.Generation);
+        Assert.True(recovered.GatewayReady);
+        Assert.Equal(clock.GetUtcNow(), recovered.LastHeartbeatAt);
+        var response = lifecycle.ToResponse((await lifecycle.GetAsync(workspace.Id, "org", default))!);
+        Assert.Equal("ready", response.Phase);
+        Assert.Equal("mounted", response.VolumeStatus);
+        Assert.Null(response.ErrorCode);
+        Assert.Null((await db.DevelopmentWorkspaceGatewayRoutes.AsNoTracking().SingleAsync(x => x.Service == "t3")).RevokedAt);
+        Assert.Equal(0, cloud.Detaches);
+        Assert.Equal(0, cloud.Deletes);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
