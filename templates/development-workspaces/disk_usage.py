@@ -364,19 +364,60 @@ def bound(result):
     return result
 
 
-def delete(workspace, components, expect, budget=None):
+def mount_id(fd):
+    with open("/proc/self/fdinfo/" + str(fd)) as stream:
+        for line in stream:
+            if line.startswith("mnt_id:"):
+                return int(line.split()[1])
+    raise Refused("io_error")
+
+
+def pathname_chain(workspace, components):
+    fd = os.open("/", DIRECTORY)
+    fds = [fd]
+    try:
+        for name in workspace.strip("/").split("/") + components:
+            fd = os.open(name, DIRECTORY, dir_fd=fd)
+            fds.append(fd)
+        return [dict(dev=os.fstat(item).st_dev, ino=os.fstat(item).st_ino) for item in fds]
+    finally:
+        for item in fds:
+            os.close(item)
+
+
+def delete(workspace, components, expect, budget=None, chain=None):
     components = validate_path(components)
     if not deletable_path(components):
         raise Refused("protected_path")
     if not isinstance(expect, dict) or type(expect.get("dev")) is not int or type(expect.get("ino")) is not int:
         raise Refused("target_identity_required")
     budget = budget or Budget(DELETE_SECONDS, entries=sys.maxsize)
+    try:
+        initial_chain = pathname_chain(workspace, components)
+    except OSError as error:
+        raise Refused("target_changed" if isinstance(error, (FileNotFoundError, NotADirectoryError))
+                      else error_category(error)) from error
+    if chain is not None and initial_chain != chain:
+        raise Refused("target_changed")
+    target_path = os.path.join(workspace, *components)
+    # Preflight includes same-device and file bind mounts. Unreadable mountinfo fails closed.
+    with open(MOUNTINFO, encoding="utf-8", errors="surrogateescape") as stream:
+        for line in stream:
+            fields = line.split()
+            if len(fields) < 6:
+                raise Refused("io_error")
+            point = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+            if point == target_path or point.startswith(target_path.rstrip("/") + "/"):
+                raise Refused("separate_mount")
     root_fd, root = open_root(workspace)
     fds = [root_fd]
     removed = dict(entries=0, bytes=0)
     errors = {}
     try:
         fds = open_chain(root_fd, root.st_dev, components[:-1])
+        # systemd makes each allowed user-data root a writable bind in the job namespace.
+        if any(mount_id(parent) != mount_id(child) for parent, child in zip(fds[1:], fds[2:])):
+            raise Refused("separate_mount")
         parent, name = fds[-1], components[-1]
         try:
             info = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -395,11 +436,25 @@ def delete(workspace, components, expect, budget=None):
             opened = os.fstat(target)
             if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
                 raise Refused("target_changed")
-            _remove_contents(target, root.st_dev, budget, removed, errors, 0)
+            def guard(relative=(), identities=()):
+                if budget.exhausted():
+                    return False
+                try:
+                    current = pathname_chain(workspace, components + list(relative))
+                    if current != initial_chain + list(identities):
+                        errors["target_changed"] = errors.get("target_changed", 0) + 1
+                        return False
+                except OSError:
+                    errors["target_changed"] = errors.get("target_changed", 0) + 1
+                    return False
+                return True
+            if mount_id(parent) != mount_id(target):
+                raise Refused("separate_mount")
+            _remove_contents(target, root.st_dev, budget, removed, errors, 0, guard)
         finally:
             os.close(target)
         gone = False
-        if not errors and budget.limit is None:
+        if not errors and budget.limit is None and guard():
             try:
                 final = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 # rmdir only removes an empty directory; never one that replaced the target.
@@ -430,17 +485,19 @@ def delete(workspace, components, expect, budget=None):
             os.close(fd)
 
 
-def _remove_contents(fd, device, budget, removed, errors, depth):
+def _remove_contents(fd, device, budget, removed, errors, depth, guard=None, relative=(), identities=()):
     def note(category):
         errors[category] = errors.get(category, 0) + 1
     try:
         with os.scandir(fd) as entries:
             children = list(entries)
-    except OSError as error:
-        note(error_category(error))
+    except (OSError, Refused) as error:
+        note(error.code if isinstance(error, Refused) else error_category(error))
         return
     for entry in children:
         if budget.exhausted():
+            return
+        if guard is not None and not guard(relative, identities):
             return
         budget.entries += 1
         try:
@@ -449,6 +506,17 @@ def _remove_contents(fd, device, budget, removed, errors, depth):
             note(error_category(error))
             continue
         try:
+            check = os.open(entry.name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            try:
+                if mount_id(check) != mount_id(fd):
+                    note("separate_mount")
+                    return
+                checked = os.fstat(check)
+                if (checked.st_dev, checked.st_ino) != (info.st_dev, info.st_ino):
+                    note("target_changed")
+                    return
+            finally:
+                os.close(check)
             if stat.S_ISDIR(info.st_mode):
                 if info.st_dev != device:
                     note("separate_mount")
@@ -463,18 +531,28 @@ def _remove_contents(fd, device, budget, removed, errors, depth):
                         note("changed_during_scan")
                         continue
                     before = len(errors), sum(errors.values())
-                    _remove_contents(child, device, budget, removed, errors, depth + 1)
+                    child_identity = dict(dev=opened.st_dev, ino=opened.st_ino)
+                    _remove_contents(child, device, budget, removed, errors, depth + 1,
+                                     guard, relative + (entry.name,), identities + (child_identity,))
                     if (len(errors), sum(errors.values())) != before or budget.limit:
                         continue
                 finally:
                     os.close(child)
+                if guard is not None and not guard(relative, identities):
+                    return
+                final = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
+                if (final.st_dev, final.st_ino) != (info.st_dev, info.st_ino):
+                    note("target_changed")
+                    return
                 os.rmdir(entry.name, dir_fd=fd)
             else:
+                if guard is not None and not guard(relative, identities):
+                    return
                 os.unlink(entry.name, dir_fd=fd)
             removed["entries"] += 1
             removed["bytes"] += info.st_blocks * 512
-        except OSError as error:
-            note(error_category(error))
+        except (OSError, Refused) as error:
+            note(error.code if isinstance(error, Refused) else error_category(error))
 
 
 def run(request):
@@ -485,7 +563,7 @@ def run(request):
     if mode == "scan":
         return scan(workspace, request.get("path"), request.get("expect"))
     if mode == "delete":
-        return delete(workspace, request.get("path"), request.get("expect"))
+        return delete(workspace, request.get("path"), request.get("expect"), chain=request.get("chain"))
     raise Refused("unknown_mode")
 
 

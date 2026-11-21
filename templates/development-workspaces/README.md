@@ -877,8 +877,8 @@ no process has its cwd, root or an open file inside it (checked through `/proc`)
 
 After a crash, the next run finishes or rolls back each journal. Data is never lost:
 conflicting or unjournaled trash stays in place and is reported. Busy or changing
-directories are retried later. If `rm -rf node_modules` or `git clean -X` removes a mount
-point, the next pass recreates the directory and its mount.
+directories are retried later. If a mount point is removed after it is unmounted, the next
+pass can recreate the ignored output directory and its mount.
 
 **Mount propagation.** The helper units use no mount namespacing, so mounts are made in the
 host namespace. `minicloud-t3.service` (`ProtectSystem=strict`, `PrivateTmp=yes`), task units
@@ -903,7 +903,9 @@ nothing.
 **Backups and folder sizes.** Backups never enter nested mounts. Archiving, validation and
 representative hashes use a one-filesystem walk that records a mount point as an empty
 directory. Scratch is already unmounted before a backup is taken. `disk_usage.py` reports
-scratch mounts as `excluded` with `separate_mount` and never deletes across them. The
+scratch mounts as `excluded` with `separate_mount` and never deletes across them. Confirmed
+checkout deletion first releases only verified, owned scratch mounts inside its target,
+as described below; it does not traverse their scratch contents. The
 resource sampler counts them in `nestedMountsExcluded`. The trash directory stays in backups
 because it can hold user data mid-relocation. After a restore it belongs to the coding user,
 so the helper renames it to `.minicloud-scratch-trash.untrusted-*` without reading its
@@ -927,7 +929,9 @@ rejects unknown fields.
 * File watchers see the delete and recreate during a relocation. Run the dev server again if
   it does not recover.
 * `rm -rf node_modules` empties the mount, then reports `Device or resource busy` for the
-  directory itself, which stays mounted.
+  directory itself, which stays mounted. Ordinary coding-user `rm -rf <checkout>` can
+  likewise exit nonzero with `EBUSY` and leave a partly removed checkout. Watcher cleanup
+  does not change that original exit status; there is no shell alias or automatic retry.
 * `python -m venv .venv` fills a pre-created empty `.venv`. Tools that treat any existing
   `.venv` as an environment may need to be told to create it there.
 * Containers that bind-mount a checkout before relocation do not see the new mount.
@@ -935,11 +939,54 @@ rejects unknown fields.
 * A global gitignore is not honored. Only repository ignore rules decide.
 * After a checkout is renamed, its old mounts stay until the next unmount, and unused scratch
   is collected.
-* After a checkout is deleted, the next complete pass unmounts its leftover mount points
-  (retrying while they are busy), so the directory can be removed or cloned again.
+* After a raw-shell checkout removal leaves orphaned mounts, a later complete watcher pass
+  can unmount them (retrying while busy). Removal/reclone then requires another operation.
+  Release after 2 seconds and 9 seconds was observed in two disposable hosted-fixture removals
+  for #327; neither time is a deadline or a guarantee for another workspace.
 * Scratch is disposable: it survives a reboot on the same VM but is empty on a new VM, where
   outputs are rebuilt.
 * Limits: 512 mounts, depth 12 and 100,000 scanned directories per pass.
+
+### Confirmed checkout deletion
+
+The supported single-operation path for a checkout with scratch binds is the existing
+dashboard **Delete folder** operation, not raw `rm`. It requires a newly built and
+qualified image containing this implementation; existing hosted images are not patched:
+
+1. Finish builds/agents and close terminals, previews and other processes using the
+   checkout. Deletion does not stop them for you.
+2. On the running VM, select **Fetch disk usage**, open `/workspace/repos`, and select
+   **Delete folder...** on the checkout itself, not an excluded scratch output.
+3. Check the workspace, VM generation and exact folder in the dialog. Type its full
+   `/workspace/repos/...` path and acknowledge permanent loss, then select
+   **Delete folder permanently**.
+4. Wait for **Folder deleted** before cloning to that path again. If deletion fails,
+   is cancelled, partly completes or its result is unknown, scan again to inspect what
+   remains; do not treat it as success.
+
+The selection binds the workspace, VM generation, path and measured device/inode.
+The runtime serializes scratch remounts during the target operation, checks active use,
+and normally unmounts only verified helper-owned binds inside that exact checkout before
+bounded deletion as the coding user. It never lazily unmounts for this operation, traverses
+scratch contents, stops unrelated work, or removes another checkout's tracked files.
+Unrelated mounts, changed identity/path, active or unobservable use and unsupported image
+state refuse deletion; cancellation or a change after work starts can leave a partial
+result. A root-only, target-specific remount inhibition remains after interrupted or
+partly completed work. A fresh scan and confirmed retry can complete deletion when the
+same target and ancestors still match; only verified success releases that inhibition.
+Lost or changed identity stays inhibited rather than guessing. The inhibition is on
+`/run` and clears on VM reboot, after all old deletion processes have ended. This is not
+an atomic filesystem transaction or an undo mechanism.
+
+**Acceptance correction for #228 / #247.** Replace the requirement that ordinary `rm -rf`
+must succeed within one watcher pass with two distinct checks on a disposable checkout:
+record the raw shell's actual exit code and remaining mounts (including `EBUSY`), then
+verify the confirmed folder-delete job succeeds in one operation on an idle supported
+checkout with owned scratch binds, leaving no target mounts and permitting reclone.
+Also verify busy use, unrelated mounts, changed identity and cancellation are refused or
+reported partial, with another checkout's tracked files unchanged. Public synthetic tests
+do not qualify a hosted image; repeat these checks on the exact newly built image before
+claiming hosted acceptance or rollout. No hosted/provider changes are part of #327.
 
 ### JSON control protocol
 
@@ -1005,13 +1052,19 @@ Inspect `ok`, not only SSH exit status. Never log enrollment or T3 secret output
   never sleeps on the request path and does not change `revision`; a sampling failure
   reports `resources.unavailable` instead of failing status.
 * `fs-job-start`: `jobId`, `mode` `scan` or `delete`, `path` (component list under
-  `/workspace`) and, for delete, `expect:{dev,ino}` from the scan. The job record is
-  persisted before `systemd-run` launches `disk_usage.py` as the coding user with a
+  `/workspace`) and, for delete, `expect:{dev,ino}` from the scan. The job record,
+  including VM/generation identity, is persisted before launch. For deletion under `repos`,
+  root orchestration first verifies the checkout, inhibits target remounts and normally
+  unmounts only its owned scratch binds in the host namespace; preparation failure does
+  not launch recursive deletion. `systemd-run` then launches `disk_usage.py` as the coding user with a
   time and entry budget; a repeated `jobId` returns the same job and is never relaunched.
   One job runs at a time and jobs are refused while stopping. The helper opens each path
   component with `O_NOFOLLOW` relative to the parent descriptor, stays on one filesystem,
   and deletes only strict descendants of `repos`, `home` or `artifacts` owned by the
-  coding user whose device/inode still match the scan. Scratch bind mounts (sources under
+  coding user whose device/inode and full ancestor chain still match. A mounted target,
+  nested directory or file mount is refused, including same-device binds; the job's
+  systemd writable binds on the three user-data roots are not checkout mounts.
+  Scratch bind mounts (sources under
   `/var/lib/minicloud-scratch/repos`) are listed as excluded, non-selectable rows with
   `storage:"scratch"` and the `separate_mount` error, and are never walked or counted, even
   when scratch shares the workspace device.

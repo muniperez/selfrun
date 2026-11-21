@@ -20,11 +20,13 @@ public sealed partial class DevelopmentWorkspaceService
     public static readonly TimeSpan TargetSelectionLifetime = TimeSpan.FromMinutes(5);
     private static readonly string[] DeletableRoots = ["repos", "home", "artifacts"];
     private static readonly string[] ErrorCategories = ["permission_denied", "vanished", "separate_mount", "io_error",
-        "limit_reached", "name_not_supported", "changed_during_scan"];
+        "limit_reached", "name_not_supported", "changed_during_scan", "target_changed",
+        "checkout_in_use", "scratch_delete_unsupported", "mount_busy"];
     private static readonly string[] RefusalCodes = ["invalid_path", "protected_path", "target_identity_required",
         "symbolic_link", "not_a_directory", "not_found", "permission_denied", "separate_mount", "target_changed",
         "not_owned_by_coding_user", "invalid_workspace", "unknown_mode", "refuse_root", "invalid_request",
-        "vanished", "io_error", "changed_during_scan"];
+        "vanished", "io_error", "changed_during_scan", "checkout_in_use", "scratch_delete_unsupported", "mount_busy",
+        "cancelled"];
     private static readonly string[] UnavailableReasons = ["unreadable", "warming_up", "counters_reset",
         "no_elapsed_time", "probe_pending", "probe_timeout", "sampling_failed", "separate_device"];
     // Storage tiers (#202): which roles share a filesystem; the scratch tier holds caches and build outputs.
@@ -310,7 +312,8 @@ public sealed partial class DevelopmentWorkspaceService
                     if (result.TryGetProperty("refused", out var refused))
                     {
                         var code = refused.GetString();
-                        FinishJob(job, "failed", null, RefusalCodes.Contains(code) ? code : "refused");
+                        FinishJob(job, code == "cancelled" ? "cancelled" : "failed", null,
+                            RefusalCodes.Contains(code) ? code : "refused");
                     }
                     else if (delete) RecordDeletion(job, result);
                     else RecordScan(job, result);
@@ -400,7 +403,11 @@ public sealed partial class DevelopmentWorkspaceService
             var limit = Str(result, "limitReached");
             var stored = new StoredDeletion(outcome, Bytes(result, "removedEntries"), Bytes(result, "removedBytes"),
                 limit is "time" or "entries" or "cancelled" ? limit : null, errors);
-            FinishJob(job, outcome, JsonSerializer.Serialize(stored, StoredJson), outcome == "failed" ? "deletion_failed" : null);
+            var failure = outcome == "failed"
+                ? errors.Keys.FirstOrDefault(x => x is "target_changed" or "checkout_in_use" or "scratch_delete_unsupported" or "mount_busy")
+                    ?? "deletion_failed"
+                : null;
+            FinishJob(job, outcome, JsonSerializer.Serialize(stored, StoredJson), failure);
         }
         catch (Exception error) when (error is InvalidOperationException or KeyNotFoundException or FormatException
                                           or OverflowException or ArgumentException)
@@ -534,7 +541,10 @@ public sealed partial class DevelopmentWorkspaceService
         null => null,
         "cancelled" => "Cancelled.",
         "dev_environment_not_running" or "dev_environment_stopped" => "The dev environment stopped before the job could finish.",
-        "target_changed" => "The folder changed since it was measured, so nothing was deleted. Fetch folder sizes again.",
+        "target_changed" => "The folder path or identity changed since it was measured. Fetch folder sizes again to inspect what remains.",
+        "checkout_in_use" => "Close processes using this checkout before deleting it.",
+        "scratch_delete_unsupported" => "This image cannot safely prepare this checkout for deletion. No checkout files were deleted.",
+        "mount_busy" => "A checkout mount is busy. Finish work and fetch folder sizes again before retrying.",
         "protected_path" => "This folder is protected and cannot be deleted.",
         "not_owned_by_coding_user" => "This folder is not owned by the dev environment user, so it was not deleted.",
         "symbolic_link" or "separate_mount" => "Links and separately mounted folders are never opened or deleted.",

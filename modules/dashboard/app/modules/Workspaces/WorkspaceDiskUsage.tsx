@@ -177,6 +177,7 @@ function DiskUsagePanel({ workspaceId, workspaceName, organizationId, vm, ready,
       {active(deletion) ? <p>Deleting {deletion.path}…</p>
         : <p>{outcomes[deletion.deletion?.outcome ?? deletion.state] ?? "Folder deletion finished."}
           {deletion.deletion && ` Removed ${formatBytes(deletion.deletion.removedBytes)} in ${deletion.deletion.removedEntries.toLocaleString()} items.`}</p>}
+      {!active(deletion) && deletion.errorMessage && <p>{deletion.errorMessage}</p>}
       {active(deletion) && <Button variant="outline" disabled={deletion.cancelRequested} onClick={() => void cancel(deletion)}>
         {deletion.cancelRequested ? "Cancelling…" : "Cancel deletion"}</Button>}
     </div>}
@@ -241,7 +242,7 @@ function DiskUsagePanel({ workspaceId, workspaceName, organizationId, vm, ready,
             <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-4" />This cannot be undone.</p>
             <ul className="list-disc space-y-1 pl-5">
               <li>Ignored, untracked and unpushed files, agent settings and credentials in this folder are lost permanently.</li>
-              <li>Running agents and terminals are not stopped and may recreate files here.</li>
+              <li>Finish work and close processes using this checkout first. Running agents and terminals are not stopped; active use blocks checkout deletion.</li>
               <li>Backups are not an undo. Don't rely on them to bring these files back.</li>
             </ul>
           </div>

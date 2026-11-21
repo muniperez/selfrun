@@ -20,6 +20,14 @@ MiniCloud gives you an **agentic cloud coding environment**. Its primary VM runs
 
 The primary VM uses the workspace's retained storage for repositories, T3 state and your saved files. Idle shutdown removes VM compute but keeps this storage attached to the dev environment. Storage is billed separately, including while the VM is stopped.
 
+To remove a checkout containing scratch build-output mounts, finish work and close processes
+using it, then use **Fetch disk usage → repos → Delete folder...** on the checkout. Confirm
+the displayed workspace, VM generation and full path, acknowledge permanent loss, and wait
+for **Folder deleted** before recloning. Ordinary terminal `rm -rf` can return `EBUSY` and
+leave a partial checkout; later watcher cleanup does not make that command successful.
+See [confirmed checkout deletion](../templates/development-workspaces/README.md#confirmed-checkout-deletion)
+for refusals, partial outcomes and image qualification limits.
+
 To see an app running in a workspace, start a preview-enabled service and open **Open preview** on that VM. Enter the service's registered preview name, choose **Get preview link**, then open the link. If the service is not available, ask your administrator to register it for previews. Preview links are temporary; request a new link when one expires.
 
 ## Use a temporary VM

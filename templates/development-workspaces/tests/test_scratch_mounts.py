@@ -13,10 +13,13 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 import scratch_mounts as sm
+import disk_usage as du
+import runtime as rt
 
 ARTIFACTS = HERE.parents[1] / ".local/artifacts/scratch-mounts"
 ARTIFACTS.mkdir(parents=True, exist_ok=True)
@@ -199,6 +202,213 @@ class ScratchMountTests(unittest.TestCase):
                     Path(full).read_bytes() if os.path.isfile(full) else None
                 result[os.path.relpath(full, path)] = (info.st_mode, info.st_mtime_ns, content)
         return result
+
+    def deletion_request(self, path):
+        info = path.stat()
+        return dict(workspace=str(self.ws), path=["repos", *path.relative_to(self.repos).parts],
+                    expect=dict(dev=info.st_dev, ino=info.st_ino), jobId="checkout-delete-1",
+                    vmId="fixture-vm", generation=3)
+
+    def test_confirmed_checkout_delete_unmounts_only_owned_target_and_serializes_remounts(self):
+        app = self.repo("app", ["node_modules/"], files=["package.json"])
+        other = self.repo("other", ["node_modules/"], files=["package.json"],
+                          tracked=["src/keep.txt"])
+        self.apply()
+        other_mount = str(other / "node_modules")
+        request = self.deletion_request(app)
+        prepared = self.helper.prepare_delete(request)
+        self.assertTrue(prepared["ready"], prepared)
+        self.assertEqual(1, prepared["unmountedMounts"])
+        self.assertEqual([(str(app / "node_modules"), False)], self.sys.umounts)
+        self.apply(self.make_helper())
+        self.assertNotIn(str(app / "node_modules"), self.mounted())
+        self.assertIn(other_mount, self.mounted())
+        self.assertFalse(self.helper.finish_delete(request)["released"])
+        with patch.object(du, "CODING_UID", os.getuid()):
+            result = du.delete(str(self.ws), request["path"], request["expect"], chain=prepared["chain"])
+        self.assertEqual("succeeded", result["outcome"])
+        self.assertTrue(self.helper.finish_delete(request)["released"])
+        self.assertEqual("x", (other / "src/keep.txt").read_text())
+        self.assertIn(other_mount, self.mounted())
+        self.assertFalse(app.exists())
+
+    def test_checkout_delete_accepts_empty_trusted_trash_after_normal_relocation(self):
+        app = self.repo("app", ["node_modules/"], files=["package.json", "node_modules/cache.js"])
+        self.apply()
+        trash = self.ws / sm.TRASH
+        trash.mkdir(mode=0o700, exist_ok=True)
+        self.sys.own(trash)
+        request = self.deletion_request(app)
+        prepared = self.helper.prepare_delete(request)
+        self.assertTrue(prepared["ready"], prepared)
+        self.assertEqual([], list(trash.iterdir()))
+        with patch.object(du, "CODING_UID", os.getuid()):
+            result = du.delete(str(self.ws), request["path"], request["expect"], chain=prepared["chain"])
+        self.assertEqual("succeeded", result["outcome"])
+        self.assertTrue(self.helper.finish_delete(request)["released"])
+        self.assertTrue(trash.is_dir())
+
+    def test_checkout_delete_inspects_only_related_trusted_relocation_state(self):
+        app = self.repo("app", [], files=["package.json"])
+        other = self.repo("other", [], tracked=["keep.txt"])
+        self.apply()
+        trash = self.ws / sm.TRASH
+        trash.mkdir(mode=0o700)
+        self.sys.own(trash)
+        token = trash / ("r-" + "c" * 32)
+        token.mkdir(mode=0o700)
+        self.sys.own(token)
+        (token / "data").mkdir()
+        (token / "data/keep").write_text("unrelated volume copy")
+        journal = dict(phase="copying", repoId=sm.repo_id(("other",), other.stat().st_ino),
+                       target=["other", "node_modules"], leaf=["node_modules"],
+                       staging=".staging-" + "d" * 32)
+        request = self.deletion_request(app)
+        for phase in ("copying", "unsupported"):
+            journal["phase"] = phase
+            (token / "journal.json").write_text(json.dumps(journal))
+            self.sys.own(token / "journal.json")
+            before = self.tree(trash)
+            self.assertTrue(self.helper.prepare_delete(request)["ready"])
+            self.assertEqual(before, self.tree(trash))
+        journal.update(phase="copying", repoId=sm.repo_id(("app",), app.stat().st_ino),
+                       target=["app", "node_modules"])
+        (token / "journal.json").write_text(json.dumps(journal))
+        before = self.tree(trash)
+        self.assertEqual("scratch_delete_unsupported", self.helper.prepare_delete(request)["refused"])
+        self.assertEqual(before, self.tree(trash))
+        self.assertTrue((other / "keep.txt").exists())
+        self.assertTrue((app / "package.json").exists())
+
+    def test_ambiguous_checkout_launch_reconciles_marker_before_reporting_success(self):
+        for mismatched in (False, True):
+            with self.subTest(mismatched=mismatched):
+                app = self.repo("app-" + str(mismatched), ["node_modules/"], files=["package.json"])
+                self.apply()
+                request = self.deletion_request(app)
+                request["jobId"] += "-" + str(mismatched)
+
+                def launch(unit, payload, output):
+                    prepared = self.helper.prepare_delete(payload)
+                    self.assertTrue(prepared["ready"], prepared)
+                    with patch.object(du, "CODING_UID", os.getuid()):
+                        result = du.delete(str(self.ws), payload["path"], payload["expect"],
+                                           chain=prepared["chain"])
+                    Path(output).write_text(json.dumps(result))
+                    raise rt.Blocked("Synthetic lost launch acknowledgement")
+
+                def finish(record):
+                    reconciliation = dict(request)
+                    if mismatched:
+                        reconciliation["jobId"] = "different-job"
+                    return self.helper.finish_delete(reconciliation)
+
+                adapter = SimpleNamespace(filesystem_jobs_supported=lambda: True,
+                                          filesystem_launch=launch, filesystem_running=lambda unit: False,
+                                          filesystem_finish=finish)
+                config = dict(vmId=request["vmId"], generation=request["generation"], kind="ephemeral",
+                              uid=2000, gid=2000, workspace=str(self.ws), ignoredDataAcknowledged=True,
+                              repositories=[])
+                runtime = rt.Runtime(config, self.root / ("state-" + str(mismatched)), adapter=adapter,
+                                     git=rt.Git(allow_local=True, verification_dir=self.root / "verify"),
+                                     resources=SimpleNamespace(invalidate=lambda: None))
+                runtime.s["phase"] = "Ready"
+                result = runtime.handle(dict(request, action="fs-job-start", mode="delete",
+                                             operationId="fixture-delete"))["result"]
+                record = json.loads((runtime.root / "fsjobs" / (request["jobId"] + ".json")).read_text())
+                self.assertTrue(record["launchAmbiguous"])
+                self.assertNotIn("preparation", record)
+                self.assertEqual(mismatched, result["remountSuppressed"])
+                self.assertEqual("partially_deleted" if mismatched else "succeeded", result["outcome"])
+                self.assertEqual(mismatched, os.path.exists(self.helper.delete_marker(request)))
+                if not mismatched:
+                    fresh = self.repo(app.name, ["node_modules/"], files=["package.json"])
+                    self.apply()
+                    self.assertIn(str(fresh / "node_modules"), self.mounted())
+
+    def test_checkout_delete_preflight_denies_active_unreadable_busy_and_foreign_mounts(self):
+        app = self.repo("app", ["node_modules/"], files=["package.json"])
+        self.apply()
+        request = self.deletion_request(app)
+        for unreadable, procs in ((0, {str(app / "package.json")}), (1, set())):
+            self.sys.unreadable, self.sys.procs = unreadable, procs
+            self.assertEqual("checkout_in_use", self.helper.prepare_delete(request)["refused"])
+        self.sys.unreadable, self.sys.procs = 0, set()
+        self.sys.busy[str(app / "node_modules")] = 9
+        with patch.object(sm.time, "sleep"):
+            self.assertEqual("mount_busy", self.helper.prepare_delete(request)["refused"])
+        self.assertEqual([], self.sys.umounts)
+        self.sys.busy[str(app / "node_modules")] = 0
+        source = self.leaf(app / "node_modules")
+        self.sys.own(source, os.getuid() + 1)
+        self.assertEqual("scratch_delete_unsupported", self.helper.prepare_delete(request)["refused"])
+        self.sys.own(source, os.getuid())
+        self.sys.entries.append(dict(id=999, parent=2, device="0:2", root="/unrelated",
+                                     mountPoint=str(app / "foreign")))
+        self.assertEqual("separate_mount", self.helper.prepare_delete(request)["refused"])
+        self.assertTrue((app / "package.json").exists())
+        self.assertEqual([], self.sys.umounts)
+
+    def test_checkout_delete_cancellation_before_and_after_unmount_fails_closed(self):
+        app = self.repo("app", ["node_modules/", "dist/"], files=["package.json"])
+        (app / "dist").mkdir()
+        self.apply()
+        request = self.deletion_request(app)
+        stopping = self.make_helper(stop=lambda: True)
+        self.assertEqual("cancelled", stopping.prepare_delete(request)["refused"])
+        self.assertEqual([], self.sys.umounts)
+        interrupted = self.make_helper(stop=lambda: bool(self.sys.umounts))
+        result = interrupted.prepare_delete(request)
+        self.assertEqual(("cancelled", 0, 1, True),
+                         (result["outcome"], result["removedEntries"], result["unmountedMounts"],
+                          result["remountSuppressed"]))
+        count = len(self.sys.binds)
+        self.apply(self.make_helper())
+        self.assertEqual(count, len(self.sys.binds))
+        self.assertTrue((app / "package.json").exists())
+        self.assertFalse(self.helper.finish_delete(request)["released"])
+        shutil.rmtree(app / ".git")  # A cancelled coding job may already have removed Git metadata.
+        retry = dict(request, jobId="checkout-delete-retry")
+        prepared = self.helper.prepare_delete(retry)
+        self.assertTrue(prepared["ready"], prepared)
+        with patch.object(du, "CODING_UID", os.getuid()):
+            deleted = du.delete(str(self.ws), retry["path"], retry["expect"], chain=prepared["chain"])
+        self.assertEqual("succeeded", deleted["outcome"])
+        self.assertTrue(self.helper.finish_delete(retry)["released"])
+
+    def test_checkout_delete_identity_changes_keep_inhibition_and_preserve_moved_tree(self):
+        app = self.repo("app", ["node_modules/"], files=["package.json"])
+        self.apply()
+        request = self.deletion_request(app)
+        wrong = dict(request, expect=dict(dev=request["expect"]["dev"], ino=0))
+        self.assertEqual("target_changed", self.helper.prepare_delete(wrong)["refused"])
+        original = self.sys.umount
+
+        def move_after_unmount(*args, **kwargs):
+            original(*args, **kwargs)
+            app.rename(self.repos / "moved")
+            app.mkdir()
+            (app / "replacement").write_text("keep")
+
+        with patch.object(self.sys, "umount", side_effect=move_after_unmount):
+            result = self.helper.prepare_delete(request)
+        self.assertEqual("failed", result["outcome"])
+        self.assertEqual({"target_changed": 1}, result["errors"])
+        self.assertEqual(1, result["unmountedMounts"])
+        self.assertFalse(self.helper.finish_delete(request)["released"])
+        self.assertTrue((self.repos / "moved/package.json").exists())
+        self.assertEqual("keep", (app / "replacement").read_text())
+        binds = len(self.sys.binds)
+        self.apply(self.make_helper())
+        self.assertEqual(binds, len(self.sys.binds))
+        replacement = self.deletion_request(app)
+        self.assertEqual("target_changed", self.helper.prepare_delete(replacement)["refused"])
+        (app / "replacement").unlink()
+        app.rmdir()
+        (self.repos / "moved").rename(app)
+        for stale in (dict(request, generation=4), dict(request, vmId="other-vm")):
+            self.assertEqual("target_changed", self.helper.prepare_delete(stale)["refused"])
+        self.assertTrue((app / "package.json").exists())
 
     def test_ignored_outputs_mount_from_scratch_and_other_dirs_stay_untouched(self):
         app = self.repo("my app", ["node_modules/", "bin/", "obj/", "dist", "build/", "logs/"],

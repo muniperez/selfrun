@@ -124,7 +124,7 @@ it("requires the exact full path and acknowledgement, shows the warnings, and re
   expect(within(dialog).getByText("primary vm-1, generation 2")).toBeTruthy();
   expect(within(dialog).getByText(/About 4.0 KiB at .* \(estimate\)/)).toBeTruthy();
   expect(within(dialog).getByText(/agent settings and credentials/)).toBeTruthy();
-  expect(within(dialog).getByText(/not stopped and may recreate files/)).toBeTruthy();
+  expect(within(dialog).getByText(/not stopped; active use blocks checkout deletion/)).toBeTruthy();
   expect(within(dialog).getByText(/Backups are not an undo/)).toBeTruthy();
 
   const confirm = within(dialog).getByRole("button", { name: "Delete folder permanently" });
@@ -147,6 +147,24 @@ it("requires the exact full path and acknowledgement, shows the warnings, and re
   expect(await screen.findByText(/Folder partly deleted.*Removed 4.0 KiB in 12 items/)).toBeTruthy();
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("list", { name: "Folders in /workspace/repos" })).toBeNull();
+});
+
+it("shows a checkout deletion refusal without claiming success", async () => {
+  vi.mocked(startDirectoryDeletion).mockResolvedValue(scanJob("/workspace/repos/project", [], {
+    id: "delete-refused", kind: "directory_deletion", state: "failed", diskUsage: null,
+    errorCode: "checkout_in_use", errorMessage: "Close processes using this checkout before deleting it.",
+  }));
+  render(panel());
+  await openRepos();
+  fireEvent.click(screen.getByRole("button", { name: "Delete /workspace/repos/project…" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete folder" });
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: project.path } });
+  fireEvent.click(within(dialog).getByRole("checkbox"));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete folder permanently" }));
+  expect(await screen.findByText("Folder was not deleted.")).toBeTruthy();
+  expect(screen.getByText("Close processes using this checkout before deleting it.")).toBeTruthy();
+  expect(screen.queryByText("Folder deleted.")).toBeNull();
+  expect(getFilesystemJob).not.toHaveBeenCalled();
 });
 
 it("cancelling the dialog sends nothing", async () => {

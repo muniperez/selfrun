@@ -1441,6 +1441,41 @@ public sealed partial class DevelopmentWorkspaceProcessorTests : IAsyncLifetime
         Assert.Equal([deletion.Id], await db.DevelopmentWorkspaceFilesystemJobs.AsNoTracking().Select(x => x.Id).ToListAsync());
     }
 
+    [Theory]
+    [InlineData("checkout_in_use", "Close processes using this checkout before deleting it.", false)]
+    [InlineData("scratch_delete_unsupported", "This image cannot safely prepare this checkout for deletion. No checkout files were deleted.", false)]
+    [InlineData("mount_busy", "A checkout mount is busy. Finish work and fetch folder sizes again before retrying.", false)]
+    [InlineData("mount_busy", "A checkout mount is busy. Finish work and fetch folder sizes again before retrying.", true)]
+    [InlineData("cancelled", "Cancelled.", false)]
+    public async Task CheckoutPreparationRefusalsRemainActionableAndNeverReportDeletionSuccess(string code, string message, bool detailed)
+    {
+        var (workspace, vm) = await SeedFilesystemReady();
+        var root = await lifecycle.StartDiskUsageScanAsync(workspace.Id, "org", vm.Id, new(1, "scan-root-0001"), "actor", default);
+        runtime.FilesystemResult = ScanResult([], 11, 22, ("repos", 900L, true, false));
+        await Processor().FilesystemNextAsync(default);
+        var repos = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, root.Id, default))
+            .DiskUsage!.Entries.Single();
+        var nested = await lifecycle.StartDiskUsageScanAsync(workspace.Id, "org", vm.Id,
+            new(1, "scan-repos-0001", repos.TargetToken), "actor", default);
+        runtime.FilesystemResult = ScanResult(["repos"], 11, 33, ("project", 700L, true, true));
+        await Processor().FilesystemNextAsync(default);
+        var project = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, nested.Id, default))
+            .DiskUsage!.Entries.Single();
+        var deletion = await lifecycle.StartDirectoryDeletionAsync(workspace.Id, "org", vm.Id,
+            new(1, project.TargetToken!, project.Path, true, "delete-checkout-0001"), "actor", default);
+        runtime.FilesystemResult = detailed
+            ? new { schemaVersion = 1, mode = "delete", path = new[] { "repos", "project" }, outcome = "failed",
+                removedEntries = 0, removedBytes = 0, errors = new Dictionary<string, int> { [code] = 1 } }
+            : new { schemaVersion = 1, refused = code };
+        await Processor().FilesystemNextAsync(default);
+        var result = lifecycle.ToFilesystemJobResponse(await lifecycle.GetFilesystemJobAsync(workspace.Id, "org", vm.Id, deletion.Id, default));
+        Assert.Equal(code == "cancelled" ? "cancelled" : "failed", result.State);
+        Assert.Equal(code, result.ErrorCode);
+        Assert.Equal(message, result.ErrorMessage);
+        if (detailed) Assert.Equal(1, result.Deletion!.Errors[code]);
+        else Assert.Null(result.Deletion);
+    }
+
     [Fact]
     public async Task StoppingTheDevEnvironmentEndsRunningFolderJobsWithoutGuessingDeletionOutcomes()
     {

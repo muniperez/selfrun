@@ -357,6 +357,8 @@ class Helper:
         self.quiet = quiet
         self.deadline = None
         self.on_dir = None
+        self.inhibitions = []
+        self.inhibition_aliases = set()
 
     # ----- run-state: lock, suspension and status (tmpfs, cleared on reboot) -----
 
@@ -404,6 +406,264 @@ class Helper:
         with os.fdopen(fd, "w") as stream:
             json.dump(status, stream, sort_keys=True)
         os.replace(staging, path)
+
+    def load_inhibitions(self):
+        self.inhibitions = []
+        self.inhibition_aliases = set()
+        for name in os.listdir(self.ensure_run_dir()):
+            if name.startswith("delete-") and name.endswith(".json"):
+                with open(os.path.join(self.run_dir, name)) as stream:
+                    self.inhibitions.append(json.load(stream))
+
+    def inhibited(self, path):
+        return any(under(path, item["target"]) for item in self.inhibitions) or \
+            any(under(path, alias) for alias in self.inhibition_aliases)
+
+    def overlaps_inhibition(self, path):
+        return self.inhibited(path) or any(under(item["target"], path) for item in self.inhibitions) or \
+            any(under(alias, path) for alias in self.inhibition_aliases)
+
+    def delete_marker(self, request):
+        target = os.path.join(self.workspace, *request["path"])
+        return os.path.join(self.ensure_run_dir(), "delete-" +
+                            hashlib.sha256(os.fsencode(target)).hexdigest() + ".json")
+
+    def delete_chain(self, components):
+        """Snapshot every absolute ancestor, without keeping checkout descriptors open."""
+        fd = os.open("/", DIRECTORY)
+        chain = [dict(dev=os.fstat(fd).st_dev, ino=os.fstat(fd).st_ino)]
+        try:
+            for name in self.workspace.strip("/").split("/") + components:
+                child = self.open_dir(name, fd)
+                os.close(fd)
+                fd = child
+                info = os.fstat(fd)
+                chain.append(dict(dev=info.st_dev, ino=info.st_ino))
+            return chain
+        finally:
+            os.close(fd)
+
+    def verify_delete_sources(self, entries, identifier, target):
+        fd = os.open("/", PATH_DIR)
+        try:
+            for name in self.scratch.strip("/").split("/")[:-1]:
+                if not self.sys.trusted_dir(os.fstat(fd)):
+                    raise Unsafe("scratch_delete_unsupported")
+                child = self.open_dir(name, fd, PATH_DIR)
+                os.close(fd)
+                fd = child
+            if not self.sys.trusted_dir(os.fstat(fd)):
+                raise Unsafe("scratch_delete_unsupported")
+            for name in (self.scratch.strip("/").split("/")[-1], "repos", identifier):
+                child = self.open_dir(name, fd, PATH_DIR)
+                os.close(fd)
+                fd = child
+                info = os.fstat(fd)
+                if self.sys.uid(info) != 0 or info.st_mode & 0o022:
+                    raise Unsafe("scratch_delete_unsupported")
+            device = self.sys.dev(os.fstat(fd))
+            for entry in entries:
+                relative = os.path.relpath(entry["mountPoint"], target).split("/")
+                source = os.dup(fd)
+                try:
+                    for index, name in enumerate(relative):
+                        child = self.open_dir(name, source, PATH_DIR, device)
+                        os.close(source)
+                        source = child
+                        info = os.fstat(source)
+                        owner = self.uid if index == len(relative) - 1 else 0
+                        if self.sys.uid(info) != owner or \
+                                index < len(relative) - 1 and info.st_mode & 0o022:
+                            raise Unsafe("scratch_delete_unsupported")
+                finally:
+                    os.close(source)
+        finally:
+            os.close(fd)
+
+    def check_delete_journals(self, target, identifier):
+        """Inspect root-trusted relocation state without recovering or modifying any tree."""
+        workspace = os.open(self.workspace, DIRECTORY)
+        try:
+            self.ws_fd, self.ws_dev = workspace, self.sys.dev(os.fstat(workspace))
+            trash = self.open_trash(create=False)
+            if trash is None:
+                return
+            try:
+                info = os.fstat(trash)
+                if self.sys.uid(info) != 0 or info.st_mode & 0o077:
+                    raise Unsafe("scratch_delete_unsupported")
+                for token in os.listdir(trash):
+                    if not TOKEN.fullmatch(token):
+                        raise Unsafe("scratch_delete_unsupported")
+                    token_fd = self.open_dir(token, trash, dev=self.ws_dev)
+                    try:
+                        info = os.fstat(token_fd)
+                        if self.sys.uid(info) != 0 or info.st_mode & 0o077:
+                            raise Unsafe("scratch_delete_unsupported")
+                        names = set(os.listdir(token_fd))
+                        if not names:
+                            continue
+                        # Opaque eviction/unjournaled data cannot be proven unrelated.
+                        journal = self.read_journal_data(token_fd)
+                        scoped = journal.get("target")
+                        if not isinstance(scoped, list) or len(scoped) < 2 or \
+                                not all(valid_component(name) for name in scoped):
+                            raise Unsafe("scratch_delete_unsupported")
+                        path = self.repo_path(scoped)
+                        if journal.get("repoId") != identifier and \
+                                not under(path, target) and not under(target, path):
+                            continue
+                        self.validate_journal(journal)
+                        if journal["phase"] != "mounted" or \
+                                names != {"journal.json"} or \
+                                os.path.lexists(os.path.join(self.scratch_repos, journal["repoId"],
+                                                            journal["staging"])):
+                            raise Unsafe("scratch_delete_unsupported")
+                    finally:
+                        os.close(token_fd)
+            finally:
+                os.close(trash)
+        except (OSError, ValueError, Unsafe) as error:
+            raise Unsafe("scratch_delete_unsupported") from error
+        finally:
+            os.close(workspace)
+
+    def prepare_delete(self, request):
+        """Root-only preparation; the recursive remover always runs as coding, never root."""
+        lock = self.lock()
+        unmounted = 0
+        marker = None
+        existing_marker = False
+        marker_written = False
+        try:
+            components = request["path"]
+            if not isinstance(components, list) or len(components) < 2 or components[0] != "repos" or \
+                    not all(valid_component(name) for name in components):
+                raise Unsafe("protected_path")
+            if self.stop():
+                raise Deferred("cancelled")
+            chain = self.delete_chain(components)
+            if chain[-1] != request["expect"]:
+                raise Unsafe("target_changed")
+            target = os.path.join(self.workspace, *components)
+            self.load_inhibitions()
+            previous = next((item for item in self.inhibitions if item["target"] == target), None)
+            if previous is not None and (previous["chain"] != chain or
+                                         previous["vmId"] != request["vmId"] or
+                                         previous["generation"] != request["generation"]):
+                raise Unsafe("target_changed")
+            info = os.lstat(target)
+            if self.sys.uid(info) != self.uid:
+                raise Unsafe("not_owned_by_coding_user")
+            self.mount_view()
+            # No mounted ancestor, foreign bind, stacked mount, or mount masquerading as ours.
+            nested = [entry for entry in self.entries if under(entry["mountPoint"], target)]
+            if any(under(target, entry["mountPoint"]) and
+                   under(entry["mountPoint"], self.repos_path) for entry in self.entries):
+                raise Unsafe("separate_mount")
+            if any(entry["mountPoint"] not in self.mounts or
+                   sum(row["mountPoint"] == entry["mountPoint"] for row in self.entries) != 1
+                   for entry in nested):
+                raise Unsafe("separate_mount")
+            try:
+                git = os.lstat(os.path.join(target, ".git"))
+            except FileNotFoundError:
+                git = None
+            checkout = previous is not None or \
+                git is not None and (stat.S_ISDIR(git.st_mode) or stat.S_ISREG(git.st_mode))
+            if not checkout:
+                if nested:
+                    raise Unsafe("scratch_delete_unsupported")
+                return dict(ready=True, chain=chain)
+            identifier = repo_id(tuple(components[1:]), info.st_ino)
+            if any(self.mounts[row["mountPoint"]]["leaf"] !=
+                   (identifier, *os.path.relpath(row["mountPoint"], target).split("/"))
+                   for row in nested):
+                raise Unsafe("scratch_delete_unsupported")
+            if nested:
+                self.verify_delete_sources(nested, identifier, target)
+            self.check_delete_journals(target, identifier)
+            self.processes = None
+            if self.in_use(target):
+                raise Unsafe("checkout_in_use")
+            marker = self.delete_marker(request)
+            existing_marker = os.path.lexists(marker)
+            value = dict(target=target, repoId=identifier, chain=chain, jobId=request["jobId"],
+                         vmId=request["vmId"], generation=request["generation"])
+            fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC |
+                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                json.dump(value, stream)
+            marker_written = True
+            for row in sorted(nested, key=lambda item: -item["mountPoint"].count("/")):
+                if self.stop():
+                    raise Deferred("cancelled")
+                if self.delete_chain(components) != chain:
+                    raise Unsafe("target_changed")
+                self.processes = None
+                if self.in_use(target):
+                    raise Unsafe("checkout_in_use")
+                self.mount_view()
+                current = self.mounts.get(row["mountPoint"])
+                if current is None or current["id"] != row["id"]:
+                    raise Unsafe("target_changed")
+                def verify():
+                    if self.stop():
+                        raise Deferred("cancelled")
+                    if self.delete_chain(components) != chain:
+                        raise Unsafe("target_changed")
+                    self.processes = None
+                    if self.in_use(target):
+                        raise Unsafe("checkout_in_use")
+                self.unmount_entry(current, lazy_ok=False, verify=verify)
+                unmounted += 1
+            if self.stop():
+                raise Deferred("cancelled")
+            if self.delete_chain(components) != chain:
+                raise Unsafe("target_changed")
+            self.processes = None
+            if self.in_use(target):
+                raise Unsafe("checkout_in_use")
+            self.mount_view()
+            if any(under(entry["mountPoint"], target) for entry in self.entries):
+                raise Unsafe("separate_mount")
+            return dict(ready=True, chain=chain, inhibited=True, unmountedMounts=unmounted)
+        except (Unsafe, Deferred, OSError) as error:
+            code = getattr(error, "code", None) or getattr(error, "reason", None) or "io_error"
+            code = "mount_busy" if code == "busy" else code
+            if code in ("mount_changed", "symlink_or_not_directory"):
+                code = "target_changed"
+            if marker_written and not unmounted and not existing_marker:
+                os.unlink(marker)
+            if unmounted:
+                return dict(schemaVersion=1, mode="delete", path=request["path"],
+                            outcome="cancelled" if code == "cancelled" else "failed",
+                            removedEntries=0, removedBytes=0, unmountedMounts=unmounted,
+                            errors={code: 1}, remountSuppressed=True)
+            return dict(schemaVersion=1, refused=code)
+        finally:
+            os.close(lock)
+
+    def finish_delete(self, request):
+        """Only successful, stopped jobs with the original parent path may release inhibition."""
+        lock = self.lock()
+        try:
+            marker = self.delete_marker(request)
+            try:
+                with open(marker) as stream:
+                    value = json.load(stream)
+            except FileNotFoundError:
+                return dict(released=True)
+            if value["jobId"] != request["jobId"] or value["vmId"] != request["vmId"] or \
+                    value["generation"] != request["generation"] or \
+                    value["chain"][-1] != request["expect"] or \
+                    self.delete_chain(request["path"][:-1]) != value["chain"][:-1] or \
+                    os.path.lexists(value["target"]):
+                return dict(released=False)
+            os.unlink(marker)
+            return dict(released=True)
+        finally:
+            os.close(lock)
 
     # ----- descriptor helpers -----
 
@@ -566,6 +826,13 @@ class Helper:
         self.classify(repos_fd)
 
     def walk(self, fd, components, repo, inherited):
+        if self.inhibited(self.repo_path(components)):
+            return
+        info = os.fstat(fd)
+        if any(item["chain"][-1] == dict(dev=info.st_dev, ino=info.st_ino)
+               for item in self.inhibitions):
+            self.inhibition_aliases.add(self.repo_path(components))
+            return
         if self.dir_count >= MAX_DIRS or len(components) > MAX_DEPTH:
             self.truncated = True
             return
@@ -787,7 +1054,7 @@ class Helper:
         self.mount_count += 1
         return expected
 
-    def unmount_entry(self, entry, lazy_ok):
+    def unmount_entry(self, entry, lazy_ok, verify=None):
         """Unmounts one verified mount from its pinned parent. Returns 'unmounted' or 'lazy'."""
         parts = entry["mountPoint"].strip("/").split("/")
         root = os.open("/", PATH_DIR)
@@ -803,6 +1070,13 @@ class Helper:
             finally:
                 os.close(child)
             for attempt in range(5):
+                if verify is not None:
+                    verify()
+                    self.mount_view()
+                    current = self.mounts.get(entry["mountPoint"])
+                    if current is None or current["id"] != entry["id"] or \
+                            current["leaf"] != entry["leaf"]:
+                        raise Unsafe("mount_changed")
                 try:
                     self.sys.umount(parent, parts[-1])
                     return "unmounted"
@@ -864,7 +1138,7 @@ class Helper:
         os.replace("journal.pending", "journal.json", src_dir_fd=token_fd, dst_dir_fd=token_fd)
         os.fsync(token_fd)
 
-    def read_journal(self, token_fd):
+    def read_journal_data(self, token_fd):
         fd = os.open("journal.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=token_fd)
         try:
             info = os.fstat(fd)
@@ -873,6 +1147,12 @@ class Helper:
             journal = json.loads(os.read(fd, 65536))
         finally:
             os.close(fd)
+        if not isinstance(journal, dict):
+            raise Unsafe("journal_invalid")
+        return journal
+
+    @staticmethod
+    def validate_journal(journal):
         if not (journal.get("phase") in ("copying", "swapping", "mounted") and
                 REPO_ID.fullmatch(str(journal.get("repoId"))) and
                 valid_relative(journal.get("leaf")) and isinstance(journal.get("target"), list) and
@@ -880,6 +1160,9 @@ class Helper:
                 and re.fullmatch(r"\.staging-[0-9a-f]{32}", str(journal.get("staging")))):
             raise Unsafe("journal_invalid")
         return journal
+
+    def read_journal(self, token_fd):
+        return self.validate_journal(self.read_journal_data(token_fd))
 
     def finish_token(self, trash_fd, token):
         fd = self.open_dir(token, trash_fd)
@@ -933,6 +1216,9 @@ class Helper:
             self.finish_token(trash, token)
             return
         identifier, leaf, target = journal["repoId"], tuple(journal["leaf"]), tuple(journal["target"])
+        if self.overlaps_inhibition(self.repo_path(target)) or \
+                any(item["repoId"] == identifier for item in self.inhibitions):
+            raise Deferred("checkout_delete")
         try:
             fd = self.open_dir(identifier, self.scratch_fd, dev=self.scratch_dev)
             try:
@@ -1284,6 +1570,7 @@ class Helper:
         self.deadline = None if budget is None else self.monotonic() + budget
         self.processes = None
         self.mount_count = 0
+        self.load_inhibitions()
         if self.suspended():
             self.status["state"] = "suspended"
             return self.status
@@ -1355,6 +1642,8 @@ class Helper:
                 self.report("skipped", label, errno.errorcode.get(error.errno, "io_error"))
 
     def apply_one(self, repo, relative, candidate):
+        if self.overlaps_inhibition(os.path.join(self.repo_path(repo.components), *relative)):
+            raise Deferred("checkout_delete")
         parent = self.open_path(self.repos_fd, repo.components + relative[:-1], self.ws_dev)
         try:
             parent_info = os.fstat(parent)
@@ -1416,6 +1705,8 @@ class Helper:
         roots = [self.repo_path(repo.components) + "/" for repo in self.repos.values()]
         orphans = [point for point in self.mounts if not any(point.startswith(root) for root in roots)]
         for point in sorted(orphans, key=lambda item: (-item.count("/"), item)):
+            if self.inhibited(point):
+                continue
             label = os.path.relpath(point, self.repos_path)
             try:
                 self.unmount_entry(self.mounts[point], lazy_ok=False)
@@ -1433,6 +1724,8 @@ class Helper:
             return
         known = {repo.id: repo for repo in self.repos.values()}
         for identifier in sorted(os.listdir(self.scratch_fd)):
+            if any(item["repoId"] == identifier for item in self.inhibitions):
+                continue
             if not REPO_ID.fullmatch(identifier):
                 continue
             try:
@@ -1477,7 +1770,8 @@ class Helper:
         self.log("volume-pressure", usagePercent=round(percent, 1), thresholdPercent=self.pressure)
         victims = []
         for repo in self.repos.values():
-            if repo.git_failed or self.in_use(self.repo_path(repo.components)):
+            if repo.git_failed or self.overlaps_inhibition(self.repo_path(repo.components)) or \
+                    self.in_use(self.repo_path(repo.components)):
                 continue
             for relative, candidate in repo.candidates.items():
                 if candidate.mounted or repo.ignored.get(relative) is not True or \
@@ -1714,7 +2008,9 @@ def run_pass(helper, budget):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="minicloud-scratch-mounts")
-    parser.add_argument("command", choices=("apply", "watch", "suspend", "resume", "unmount-all", "status"))
+    parser.add_argument("command", choices=("apply", "watch", "suspend", "resume", "unmount-all", "status",
+                                          "prepare-delete", "finish-delete"))
+    parser.add_argument("--delete-request")
     parser.add_argument("--budget-seconds", type=int, default=None)
     parser.add_argument("--pressure-percent", type=int, default=PRESSURE_PERCENT)
     parser.add_argument("--quiet-seconds", type=int, default=QUIET_SECONDS)
@@ -1730,7 +2026,15 @@ def main(argv=None):
     signal.signal(signal.SIGINT, _stop)
     os.umask(0o077)
     helper = Helper(stop=lambda: STOP, pressure=args.pressure_percent, quiet=args.quiet_seconds)
-    if args.command == "apply":
+    if args.command in ("prepare-delete", "finish-delete"):
+        request = json.loads(args.delete_request)
+        helper.workspace = os.path.abspath(request["workspace"])
+        helper.repos_path = os.path.join(helper.workspace, "repos")
+        helper.uid, helper.gid = request["uid"], request["gid"]
+        result = helper.prepare_delete(request) if args.command == "prepare-delete" else \
+            helper.finish_delete(request)
+        print(json.dumps(result))
+    elif args.command == "apply":
         pending = run_pass(helper, budget=args.budget_seconds)
         print(json.dumps(dict(ok=True, deferred=pending)))
     elif args.command == "watch":

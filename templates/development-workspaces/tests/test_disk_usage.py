@@ -153,6 +153,75 @@ class DiskUsageTests(unittest.TestCase):
         self.assertTrue((self.workspace / "repos/small/new.txt").exists())
         self.assertTrue((self.workspace / "repos/moved/file.txt").exists())
 
+    def test_delete_rechecks_all_ancestors_and_never_walks_a_renamed_checkout(self):
+        target = self.workspace / "repos/big"
+        original = os.scandir
+        moved = False
+
+        def rename_parent(fd):
+            nonlocal moved
+            if not moved and isinstance(fd, int) and \
+                    os.readlink("/proc/self/fd/" + str(fd)) == str(target):
+                moved = True
+                (self.workspace / "repos").rename(self.workspace / "moved-repos")
+                (self.workspace / "repos").mkdir()
+            return original(fd)
+
+        with patch.object(du.os, "scandir", side_effect=rename_parent):
+            result = du.delete(str(self.workspace), ["repos", "big"], identity(target))
+        self.assertEqual(("failed", 0, {"target_changed": 1}),
+                         (result["outcome"], result["removedEntries"], result["errors"]))
+        self.assertTrue((self.workspace / "moved-repos/big/data.bin").exists())
+
+    def test_delete_refuses_same_device_nested_file_mount_before_removing_anything(self):
+        target = self.workspace / "repos/big"
+        mountinfo = self.root / "mountinfo"
+        mountinfo.write_text("1 0 0:1 / / rw - ext4 x rw\n2 1 0:1 /other " +
+                            str(target / "data.bin") + " rw - ext4 x rw\n")
+        with patch.object(du, "MOUNTINFO", str(mountinfo)):
+            with self.assertRaises(du.Refused) as error:
+                du.delete(str(self.workspace), ["repos", "big"], identity(target))
+        self.assertEqual("separate_mount", error.exception.code)
+        self.assertTrue((target / "data.bin").exists())
+        self.assertTrue((target / ".cache/blob.bin").exists())
+
+    def test_delete_allows_job_writable_root_bind_but_rejects_nested_bind(self):
+        target = self.workspace / "repos/small"
+
+        def sandbox_mount_id(fd):
+            path = os.readlink("/proc/self/fd/" + str(fd))
+            return 2 if path.startswith(str(self.workspace / "repos")) else 1
+
+        with patch.object(du, "mount_id", side_effect=sandbox_mount_id):
+            result = du.delete(str(self.workspace), ["repos", "small"], identity(target))
+        self.assertEqual("succeeded", result["outcome"])
+        target = self.workspace / "repos/big/.cache"
+
+        def nested_mount_id(fd):
+            path = os.readlink("/proc/self/fd/" + str(fd))
+            return 3 if path.startswith(str(self.workspace / "repos/big")) else sandbox_mount_id(fd)
+
+        with patch.object(du, "mount_id", side_effect=nested_mount_id):
+            with self.assertRaises(du.Refused) as error:
+                du.delete(str(self.workspace), ["repos", "big", ".cache"], identity(target))
+        self.assertEqual("separate_mount", error.exception.code)
+        self.assertTrue((target / "blob.bin").exists())
+
+    def test_cancelled_delete_after_file_removal_keeps_partial_target(self):
+        target = self.workspace / "repos/small"
+        original = os.unlink
+
+        def cancel_after_unlink(*args, **kwargs):
+            original(*args, **kwargs)
+            du._cancelled = True
+
+        with patch.object(du, "_cancelled", False), \
+                patch.object(du.os, "unlink", side_effect=cancel_after_unlink):
+            result = du.delete(str(self.workspace), ["repos", "small"], identity(target))
+        self.assertEqual(("cancelled", 1, "cancelled"),
+                         (result["outcome"], result["removedEntries"], result["limitReached"]))
+        self.assertTrue(target.is_dir())
+
     def test_folder_not_owned_by_coding_user_is_refused(self):
         with patch.object(du, "CODING_UID", os.getuid() + 1):
             self.assertFalse(any(row["deletable"] for row in self.scan("repos")["entries"]))
@@ -452,6 +521,67 @@ class RuntimeFilesystemJobTests(unittest.TestCase):
         self.runtime.s["fenceOperation"] = "stop-operation"
         with self.assertRaises(rt.Blocked):
             self.request("fs-job-start", jobId="job-scan-5", mode="scan", path=[])
+
+    def test_linux_prepares_host_mounts_before_creating_coding_job_namespace(self):
+        linux = rt.Linux(self.config)
+        payload = dict(mode="delete", workspace=str(self.workspace), path=["repos", "project"],
+                       expect=identity(self.workspace / "repos/project"), jobId="job-delete-native",
+                       vmId="vm-a", generation=3)
+        events = []
+        preparation = dict(ready=True, inhibited=True, chain=[payload["expect"]], unmountedMounts=1)
+
+        def prepare(command, request):
+            events.append((command, request))
+            return preparation
+
+        def launch(command):
+            events.append(("launch", command))
+
+        with patch.object(linux, "filesystem_scratch", side_effect=prepare), \
+                patch.object(rt, "run", side_effect=launch):
+            result = linux.filesystem_launch("fixture-unit", payload, self.root / "output")
+        self.assertEqual(preparation, result)
+        self.assertEqual(["prepare-delete", "launch"], [event[0] for event in events])
+        command = events[1][1]
+        self.assertIn("--uid=2000", command)
+        self.assertIn("--property=KillMode=control-group", command)
+        self.assertIn("--property=ProtectSystem=strict", command)
+        child = json.loads(command[-1])
+        self.assertEqual((3, "vm-a", preparation["chain"]),
+                         (child["generation"], child["vmId"], child["chain"]))
+        denied = dict(schemaVersion=1, refused="checkout_in_use")
+        with patch.object(linux, "filesystem_scratch", return_value=denied), \
+                patch.object(rt, "run") as no_launch:
+            linux.filesystem_launch("fixture-unit", payload, self.root / "denied")
+        no_launch.assert_not_called()
+        self.assertEqual(denied, json.loads((self.root / "denied").read_text()))
+
+    def test_runtime_retains_inhibition_on_cancel_partial_and_lost_jobs(self):
+        self.adapter.hold = True
+        self.adapter.filesystem_finish = lambda record: self.fail("Unsafe inhibition release")
+        original = self.adapter.filesystem_launch
+
+        def launch(*args):
+            original(*args)
+            return dict(ready=True, inhibited=True, unmountedMounts=1)
+
+        self.adapter.filesystem_launch = launch
+        job = "job-delete-cancel"
+        self.request("fs-job-start", jobId=job, mode="delete", path=["repos", "project"],
+                     expect=identity(self.workspace / "repos/project"))
+        self.assertEqual("lost", self.request("fs-job-cancel", jobId=job)["state"])
+        output = self.root / "state/fsjobs" / (job + ".out")
+        output.write_text(json.dumps(dict(mode="delete", outcome="partially_deleted",
+                                         removedEntries=1, errors={"permission_denied": 1})))
+        result = self.request("fs-job-status", jobId=job)["result"]
+        self.assertTrue(result["remountSuppressed"])
+        self.assertEqual(1, result["unmountedMounts"])
+        output.write_text(json.dumps(dict(schemaVersion=1, refused="target_changed")))
+        result = self.request("fs-job-status", jobId=job)["result"]
+        self.assertEqual(("failed", 0, {"target_changed": 1}),
+                         (result["outcome"], result["removedEntries"], result["errors"]))
+        self.assertNotIn("refused", result)
+        self.assertTrue(result["remountSuppressed"])
 
 
 if __name__ == "__main__":
