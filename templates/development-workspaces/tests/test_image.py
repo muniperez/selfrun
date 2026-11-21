@@ -161,6 +161,136 @@ class ImageTests(unittest.TestCase):
                 with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_DELAY_NOT_OBSERVED"):
                     probe.t3_restart_delay("signal")
 
+    def test_native_case_resets_accumulated_budget_only_after_qualified_drained_stop(self):
+        probe = native.Native.__new__(native.Native)
+        probe.run_id = "synthetic-run"
+        probe.config = {"vmId": probe.run_id}
+        probe.owns_runtime = True
+        events = []
+        adapter = Mock()
+        adapter.stop_services.side_effect = lambda: events.append("stop")
+        adapter.thaw.side_effect = lambda: events.append("thaw")
+        adapter.start_services.side_effect = lambda: events.append("start")
+        before = dict(MainPID=123, NRestarts=0)
+        with patch.object(probe, "fresh_authorization"), \
+                patch.object(probe, "check_t3_freezer"), \
+                patch.object(probe, "check_t3_pid"), \
+                patch.object(probe, "t3_ready", return_value=before), \
+                patch.object(probe, "t3_stays_stopped",
+                             side_effect=lambda **kw: events.append("drained")), \
+                patch.object(native, "command") as command:
+            def run(argv):
+                if argv[1] == "show":
+                    events.append("qualify")
+                    return {"Restart": "on-failure", "RestartUSec": "5s", "OOMPolicy": "stop",
+                            "StartLimitBurst": "5", "StartLimitIntervalUSec": "5min",
+                            "KillMode": "process", "SendSIGKILL": "no"}[argv[4]]
+                self.assertEqual(argv, ["systemctl", "reset-failed", native.T3_UNIT])
+                events.append("reset")
+            command.side_effect = run
+            # Each independent fixture gets slot one even after earlier cases consumed starts.
+            for _ in range(3):
+                self.assertEqual(probe.t3_case_start(adapter), before)
+            self.assertEqual(events, (["qualify"] * 7 + ["stop", "thaw", "drained", "reset", "start"]) * 3)
+
+    def test_native_case_refuses_reset_with_unowned_frozen_undrained_or_changed_policy(self):
+        for failure in ("ownership", "frozen", "policy", "drain", "counter"):
+            with self.subTest(failure=failure):
+                probe = native.Native.__new__(native.Native)
+                probe.run_id = "synthetic-run"
+                probe.config = {"vmId": probe.run_id}
+                probe.owns_runtime = failure != "ownership"
+                adapter = Mock()
+                with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "check_t3_freezer") as freezer, \
+                        patch.object(probe, "qualify_t3_restart_policy") as policy, \
+                        patch.object(probe, "t3_stays_stopped") as drained, \
+                        patch.object(probe, "t3_ready", return_value={"NRestarts": 1}), \
+                        patch.object(native, "command") as command:
+                    if failure == "frozen":
+                        freezer.side_effect = native.ProbeError("FROZEN")
+                    elif failure == "policy":
+                        policy.side_effect = native.ProbeError("UNQUALIFIED_T3_RESTART_POLICY")
+                    elif failure == "drain":
+                        drained.side_effect = native.ProbeError("T3_DID_NOT_REMAIN_STOPPED")
+                    with self.assertRaises(native.ProbeError):
+                        probe.t3_case_start(adapter)
+                    if failure == "counter":
+                        command.assert_called_once_with(["systemctl", "reset-failed", native.T3_UNIT])
+                    else:
+                        command.assert_not_called()
+                        adapter.start_services.assert_not_called()
+
+    def test_native_retry_budget_observes_five_real_starts_without_mid_assertion_reset(self):
+        for early in (False, True):
+            with self.subTest(early=early):
+                probe = native.Native.__new__(native.Native)
+                adapter = Mock()
+                events = []
+                start = dict(ActiveState="active", SubState="running", Job="", MainPID=100, NRestarts=0)
+                starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(5)]
+                failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
+                              ControlPID=0, NRestarts=5, Result="signal")
+                with patch.object(probe, "t3_case_start", return_value=start) as setup, \
+                        patch.object(probe, "t3_ready"), \
+                        patch.object(probe, "signal_t3_main", side_effect=range(100, 105)) as kill, \
+                        patch.object(probe, "t3_restart_delay",
+                                     side_effect=[{"NRestarts": n} for n in range(5)]), \
+                        patch.object(probe, "wait_t3",
+                                     side_effect=[failed] if early else starts[1:] + [failed]), \
+                        patch.object(probe, "check_t3_pid"), \
+                        patch.object(probe, "t3_stays_stopped",
+                                     side_effect=lambda **kw: events.append(("exhausted", kw)) or failed), \
+                        patch.object(probe, "t3_recovered"), \
+                        patch.object(native, "command",
+                                     side_effect=lambda argv: events.append(("command", argv))), \
+                        patch.object(native.time, "monotonic", side_effect=[0, 30]):
+                    if early:
+                        with self.assertRaisesRegex(native.ProbeError, "T3_RETRY_BUDGET_EXHAUSTED_EARLY"):
+                            probe.t3_retry_budget(adapter)
+                        self.assertEqual(events, [])
+                        adapter.start_services.assert_not_called()
+                    else:
+                        result = probe.t3_retry_budget(adapter)
+                        self.assertEqual(result["retryBudgetSuccessfulStarts"], starts)
+                        self.assertEqual(kill.call_count, 5)
+                        self.assertEqual(events, [
+                            ("exhausted", {"failed": True}),
+                            ("command", ["systemctl", "reset-failed", native.T3_UNIT])])
+                        adapter.start_services.assert_called_once()
+                    setup.assert_called_once_with(adapter)
+
+    def test_native_recovery_isolates_each_crash_and_frozen_stop_case(self):
+        probe = native.Native.__new__(native.Native)
+        probe.config = {}
+        probe.rt = Mock()
+        events = []
+        before = {"MainPID": 123, "NRestarts": 0}
+        limit = Mock()
+        limit.read_text.return_value = "max"
+        with patch.object(probe, "t3_case_start",
+                          side_effect=lambda adapter: events.append("setup") or before) as setup, \
+                patch.object(probe, "signal_t3_main",
+                             side_effect=lambda sig: events.append("signal") or 123), \
+                patch.object(probe, "t3_restart_delay"), \
+                patch.object(probe, "check_t3_freezer"), \
+                patch.object(probe, "t3_recovered"), \
+                patch.object(probe, "t3_unit", return_value={"NRestarts": 1}), \
+                patch.object(probe, "t3_stays_stopped"), \
+                patch.object(probe, "t3_frozen_stop",
+                             side_effect=lambda adapter, stage: events.append(stage) or {}), \
+                patch.object(probe, "wait_t3", return_value={"ExecMainCode": 1, "ExecMainStatus": 130}), \
+                patch.object(probe, "t3_retry_budget",
+                             side_effect=lambda adapter: events.append("separate-budget") or {}), \
+                patch.object(native, "T3_CGROUP") as cgroup, \
+                patch.object(native, "command"):
+            cgroup.__truediv__.return_value = limit
+            probe.t3_recovery()
+        self.assertEqual(setup.call_count, 7)
+        self.assertEqual(events, ["setup", "signal", "setup", "setup", "signal",
+                                  "setup", "before-freeze", "setup", "auto-restart",
+                                  "setup", "start-pre", "setup", "signal", "separate-budget"])
+
     def frozen_signal_probe(self, empty=True, kill_error=True):
         probe = native.Native.__new__(native.Native)
         probe.run_id = "synthetic-native-only"
