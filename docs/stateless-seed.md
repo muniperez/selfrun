@@ -22,12 +22,21 @@ Use the Linux archive from the candidate handoff linked on
 This is a review build, not a published CLI or signed server release. Review
 its source revision and archive SHA256 from the handoff before running it;
 a checksum alone does not establish provenance. Use the archive for your CPU
-and a supported glibc Linux distribution. Extract it to a directory you own:
+and a supported glibc Linux distribution. In a directory you own, substitute
+your downloaded archive's filename:
 
 ```sh
-tar -xzf minicloud-seed-candidate-linux-arm64.tar.gz
+tar -xzf path/to/downloaded-linux-arm64.tar.gz
+./minicloud help seed
 ./minicloud seed
 ```
+
+`help seed` reports `Embedded TEST source:` with the exact revision when
+`local` is available. The review candidate and future CLI archives built
+by the updated CLI release workflow carry it. Existing releases, ordinary
+`dotnet publish` without `EmbedSeedSource`, and the ordinary source-mode CLI
+installers do not gain it. Even in a signed CLI archive, choosing `local`
+does not select a signed **server** release.
 
 ### Publish from a clone
 

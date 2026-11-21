@@ -216,6 +216,8 @@ esac
             info = subprocess.check_output([cli, "--version"], cwd=root, env=env, text=True)
             revision = info.strip().splitlines()[-1].removeprefix("source ")
             assert len(revision) == 40, info
+            help_text = subprocess.check_output([cli, "help", "seed"], cwd=root, env=env, text=True)
+            assert f"Embedded TEST source: server-v0.0.1-local.{revision}" in help_text.splitlines()
 
             choices = [("Provider (", "digitalocean"), ("Region ID", "fixture"), ("Server size ID", "fixture-size"),
                        ("Dashboard hostname", DOMAIN), ("Separate application DNS suffix", APP_DOMAIN),

@@ -8,7 +8,10 @@ neither installer uses repository-wide `latest`.
 
 For guided server setup from a **review candidate**, or to publish your own
 CLI with matching committed server source, see the [two seed paths](stateless-seed.md#guided-installation).
-Those test builds are distinct from the versioned CLI release channel below.
+Future versioned CLI archives built by the updated release workflow also carry
+matching TEST source. `minicloud help seed` reports whether a particular build
+contains it. Selecting `local` is explicit and does not verify or install a
+signed server release, even when the CLI archive itself is signed.
 
 ## Binary installation
 
@@ -93,7 +96,9 @@ The historical exact source default
 select a merged source revision containing seed to obtain the new command.
 Source builds are self-contained/untrimmed single files with version/SHA
 metadata and version/help checks before atomic executable replacement.
-No SDK is installed for the user.
+No SDK is installed for the user. This installer does not embed TEST server
+source; use the [seed-specific publish command](stateless-seed.md#publish-from-a-clone)
+to build a CLI that does.
 
 The reusable source-built customer deployment workflow and its inputs/default
 source SHA are unchanged. Existing customer workflows need not switch channels.
@@ -106,7 +111,7 @@ future-binary prohibition when merged.
 Only canonical `main` commits selected by a new exact `vMAJOR.MINOR.PATCH`
 with optional prerelease can enter publication. Actions are SHA-pinned, SDK
 **10.0.404** and Cosign **2.6.5** are pinned. The workflow cross-publishes all
-four RIDs, packages MPL/.NET/YamlDotNet notices and source links, signs the
+four RIDs with matching committed TEST source, packages MPL/.NET/YamlDotNet notices and source links, signs the
 inventory with GitHub OIDC, verifies it, and publishes **new** assets only,
 with `make_latest=false`. The `cli-release` environment must have maintainer
 approvals/tag restrictions configured before authorized use; no protections

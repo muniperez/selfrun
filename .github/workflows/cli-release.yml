@@ -65,7 +65,7 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.404'
-      - name: Build four self-contained untrimmed single-file CLIs and notices
+      - name: Build four self-contained single-file CLIs with matching TEST source and notices
         shell: bash
         run: |
           set -euo pipefail
@@ -75,6 +75,7 @@ jobs:
               --runtime "$rid" --self-contained true --output "$output" \
               -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
               -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false \
+              -p:EmbedSeedSource=true \
               -p:Version="${RELEASE_TAG#v}" -p:SourceRevisionId="$SOURCE_REVISION" \
               -p:IncludeSourceRevisionInInformationalVersion=false \
               -p:InformationalVersion="${RELEASE_TAG#v}+sha.$SOURCE_REVISION"
@@ -90,7 +91,7 @@ jobs:
           set -euo pipefail
           "$PAYLOAD/linux-x64/minicloud" --version | grep -F -- "${RELEASE_TAG#v}"
           "$PAYLOAD/linux-x64/minicloud" --version | grep -F -- "$SOURCE_REVISION"
-          "$PAYLOAD/linux-x64/minicloud" --help | grep -F seed
+          "$PAYLOAD/linux-x64/minicloud" help seed | grep -Fx -- "Embedded TEST source: server-v0.0.1-local.$SOURCE_REVISION"
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         with:
           cosign-release: v2.6.5

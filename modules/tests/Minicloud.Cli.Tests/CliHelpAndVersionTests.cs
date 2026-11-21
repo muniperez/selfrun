@@ -131,6 +131,15 @@ public sealed class CliHelpAndVersionTests
     }
 
     [Fact]
+    public async Task Seed_help_explains_that_the_standard_build_does_not_carry_local_test_source()
+    {
+        var (app, console) = CreateApp();
+
+        Assert.Equal(CliExitCodes.Success, await app.RunAsync(["help", "seed"], CancellationToken.None));
+        Assert.Contains("No embedded TEST source in this build.", console.Output);
+    }
+
+    [Fact]
     public void GetVersion_returns_valid_version_string()
     {
         var version = CliApplication.GetVersion();
