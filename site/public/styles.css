@@ -14,7 +14,7 @@
 
 body, h1, h2, h3, p, figure { margin: 0; }
 a { color: inherit; text-underline-offset: .2em; }
-a:focus-visible, summary:focus-visible, pre:focus-visible {
+a:focus-visible, pre:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 4px;
 }
@@ -140,12 +140,7 @@ figure img { display: block; width: 100%; height: auto; border: 1px solid var(--
 .install-list, .manage-list { padding-left: 1.3rem; }
 .install-list > li + li, .manage-list > li + li { margin-top: .75rem; }
 
-details {
-  margin-top: .9rem;
-  padding: .75rem 1rem;
-  border: 1px solid var(--line);
-}
-summary { cursor: pointer; font-weight: 650; }
+.setup-list h4 { margin: 1.25rem 0 0; }
 
 pre {
   max-width: 100%;
