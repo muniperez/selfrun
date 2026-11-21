@@ -113,8 +113,16 @@ def artifact_root():
     return owner / ".local" / "artifacts" / "native"
 
 
-def harness_sources():
-    return {name: sha(HERE / name) for name in ("native.py", "native-t3-probe.mjs")}
+def harness_sources(*, verify_ownership=False):
+    sources = {}
+    for name in ("native.py", "native-t3-probe.mjs", "manifest.lock.json"):
+        path = HERE / name
+        if verify_ownership:
+            info = path.lstat()
+            check(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+                  "ROOT_OWNED_HARNESS_SOURCE_REQUIRED")
+        sources[name] = sha(path)
+    return sources
 
 
 def exact_probes(probes, names):
@@ -653,7 +661,7 @@ class Native:
                   self.authorization.get("installedImmutableInputs") == inputs and
                   self.authorization.get("installedImageManifestSha256") ==
                   sha("/opt/minicloud-workspace/image-manifest.json") and
-                  self.authorization.get("harnessSources") == harness_sources(),
+                  self.authorization.get("harnessSources") == harness_sources(verify_ownership=True),
                   "WRONG_AUTHORIZED_BATCH_SOURCE")
         for name, digest in inputs.items():
             path = Path(name)
@@ -1351,7 +1359,7 @@ class Native:
               result.get("snapshotSequence", -1) >= self.snapshot,
               "T3_STATE_NOT_RETAINED_AFTER_RESTART")
         self.t3_idle(before)
-        self.watcher_state(active=True)
+        return self.watcher_state(active=True)
 
     def t3_idle(self, before):
         started = time.monotonic()
@@ -1559,8 +1567,8 @@ class Native:
         check(before["NRestarts"] == 0, "T3_CASE_RETRY_COUNTER_NOT_RESET")
         self.check_t3_pid(before["MainPID"])
         self.check_t3_freezer(False)
-        self.watcher_state(active=True)
-        return before | {"idlePrecondition": self.t3_idle(before)}
+        watcher = self.watcher_state(active=True)
+        return before | {"idlePrecondition": self.t3_idle(before), "scratchWatcher": watcher}
 
     def t3_retry_budget(self, adapter):
         budget_started = time.monotonic()
@@ -1570,7 +1578,7 @@ class Native:
             if kills > 1:
                 ready = self.t3_ready()
                 self.t3_idle(ready)
-                self.watcher_state(active=True)
+                starts[-1]["scratchWatcher"] = self.watcher_state(active=True)
             pid = self.signal_t3_main(signal.SIGKILL)
             delayed = self.t3_restart_delay("signal")
             check(delayed["NRestarts"] == kills - 1, "T3_RETRY_COUNTER_UNEXPECTED")
@@ -1594,7 +1602,7 @@ class Native:
                         retryBudgetSuccessfulStarts=starts, exhaustedFailureStayedVisible=True)
         try:
             self.t3_case_start(adapter)
-            self.t3_recovered(pid)
+            evidence["explicitRecoveryScratchWatcher"] = self.t3_recovered(pid)
         except ProbeError as error:
             raise ProbeError(str(error), {"retryBudget": evidence,
                                          "recoveryFailure": error.evidence}) from None
@@ -1603,16 +1611,17 @@ class Native:
     def t3_recovery(self):
         unit = T3_UNIT
         adapter = self.rt.Linux(self.config)
-        evidence = {"idleCaseStarts": []}
+        evidence = {"idleCaseStarts": [], "caseScratchWatchers": []}
         def case_start():
             before = self.t3_case_start(adapter)
             evidence["idleCaseStarts"].append(before["idlePrecondition"])
+            evidence["caseScratchWatchers"].append(before["scratchWatcher"])
             return before
         before = case_start()
         pid = self.signal_t3_main(signal.SIGKILL)
         evidence["sigkillRestartDelay"] = self.t3_restart_delay("signal")
         self.check_t3_freezer(False)
-        self.t3_recovered(pid)
+        evidence["sigkillScratchWatcher"] = self.t3_recovered(pid)
         check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_CRASH_NOT_AUTOMATICALLY_RESTARTED")
         evidence["sigkillAutomaticallyRestartedWithSameIdentityAndProject"] = True
 
@@ -1633,7 +1642,7 @@ class Native:
                     pass  # The killed unit's cgroup was reaped.
         evidence["oomRestartDelay"] = self.t3_restart_delay("oom-kill")
         self.check_t3_freezer(False)
-        self.t3_recovered(before["MainPID"])
+        evidence["oomScratchWatcher"] = self.t3_recovered(before["MainPID"])
         check(self.t3_unit()["NRestarts"] == before["NRestarts"] + 1, "T3_OOM_NOT_AUTOMATICALLY_RESTARTED")
         evidence["oomKillAutomaticallyRestarted"] = True
 

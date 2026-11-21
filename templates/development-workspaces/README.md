@@ -72,8 +72,8 @@ The existing explicit ACK, exact machine/runtime hash, trusted issuance clock
 `native-<32 lowercase hex>` run ID, loop-only and synthetic-erasure acknowledgements
 remain mandatory. A batch authorization additionally binds `batchId`,
 `installedImageManifestSha256`, `installedImmutableInputs` (the manifest's exact
-absolute-path/hash map), and `harnessSources` (the `native.py` and
-`native-t3-probe.mjs` filename/hash map from `plan`). These must match the actual
+absolute-path/hash map), and `harnessSources` (the `native.py`, `native-t3-probe.mjs` and
+`manifest.lock.json` filename/hash map from `plan`). These must match the actual
 root-owned sources and installed inputs at guard entry. Private wrappers must
 obtain **independent explicit fresh approval for each batch**, retain these bindings,
 and use the batch exit status/`batchPassed`, not `nativeCandidatePassed`.
@@ -752,7 +752,9 @@ exhaustion has remained visible through the complete stopped-window assertion do
 the next explicit owned case boundary reestablish the fixture. Normally recovered
 cases and automatic budget starts must have the real root watcher active in its
 owned service cgroup with the shipping policy, as must the later scratch-bind probe
-before and after its work. `PartOf` restart propagation can consume watcher slots:
+before and after its work. Recovery receipts retain those verified watcher observations
+for each case start, SIGKILL/OOM recovery, automatic budget start and explicit post-budget
+recovery. `PartOf` restart propagation can consume watcher slots:
 if supported product restarts genuinely exhaust it or leave it failed/inactive,
 qualification blocks rather than silently repairing the service. These changes do
 not relax either shipping unit's limits or change runtime lifecycle gates; native

@@ -33,7 +33,7 @@ class ImageTests(unittest.TestCase):
     def recovery_probe(self, inventories, status_changes=None):
         probe = native.Native.__new__(native.Native)
         probe.client = Mock()
-        probe.watcher_state = Mock()
+        probe.watcher_state = Mock(return_value={"active": True, "mainPid": 456})
         probe.directory = Path("/synthetic-native-only")
         probe.t3_project_id = "synthetic-project"
         probe.environment_id = "synthetic-environment"
@@ -92,7 +92,8 @@ class ImageTests(unittest.TestCase):
             dict(state="IdleCandidate"),
         ]
         probe, mocks, _ = self.recovery_probe(inventories)
-        self.assertIsNone(probe.t3_recovered(100))
+        self.assertEqual(probe.t3_recovered(100), probe.watcher_state.return_value)
+        probe.watcher_state.assert_called_once_with(active=True)
         self.assertEqual(3, probe.control.call_count)
         self.assertEqual(3, mocks[3].call_count)
         self.assertEqual(3, mocks[4].call_count)
@@ -286,7 +287,9 @@ class ImageTests(unittest.TestCase):
         adapter.start_services.side_effect = lambda: events.append("start")
         before = dict(MainPID=123, NRestarts=0)
         with patch.object(probe, "fresh_authorization"), \
-                patch.object(probe, "watcher_state") as watcher, \
+                patch.object(probe, "watcher_state",
+                             return_value={"active": True, "policyMatched": True,
+                                           "failureAbsent": True, "mainPid": 456}) as watcher, \
                 patch.object(probe, "check_t3_freezer"), \
                 patch.object(probe, "check_t3_pid"), \
                 patch.object(probe, "t3_ready", return_value=before), \
@@ -307,7 +310,8 @@ class ImageTests(unittest.TestCase):
             # Each independent fixture gets slot one even after earlier cases consumed starts.
             for _ in range(3):
                 self.assertEqual(probe.t3_case_start(adapter),
-                                 before | {"idlePrecondition": {"idleObserved": True}})
+                                 before | {"idlePrecondition": {"idleObserved": True},
+                                           "scratchWatcher": watcher.return_value})
             self.assertEqual(events,
                              (["qualify"] * 7 + ["stop", "thaw", "drained", "reset", "start", "idle"]) * 3)
             self.assertEqual(watcher.call_args_list,
@@ -356,7 +360,8 @@ class ImageTests(unittest.TestCase):
                               ControlPID=0, NRestarts=5, Result="signal")
                 with patch.object(probe, "t3_case_start",
                                   side_effect=lambda adapter: events.append(("boundary", {})) or start) as setup, \
-                        patch.object(probe, "watcher_state"), \
+                        patch.object(probe, "watcher_state",
+                                     return_value={"active": True, "mainPid": 456}) as watcher, \
                         patch.object(probe, "t3_ready", side_effect=starts[1:]) as ready, \
                         patch.object(probe, "t3_idle") as idle, \
                         patch.object(probe, "signal_t3_main", side_effect=range(100, 105)) as kill, \
@@ -367,7 +372,8 @@ class ImageTests(unittest.TestCase):
                         patch.object(probe, "check_t3_pid"), \
                         patch.object(probe, "t3_stays_stopped",
                                      side_effect=lambda **kw: events.append(("exhausted", kw)) or failed), \
-                        patch.object(probe, "t3_recovered"), \
+                        patch.object(probe, "t3_recovered",
+                                     return_value={"active": True, "mainPid": 456}), \
                         patch.object(native, "command",
                                      side_effect=lambda argv: events.append(("command", argv))), \
                         patch.object(native.time, "monotonic", side_effect=[0, 30]):
@@ -379,6 +385,8 @@ class ImageTests(unittest.TestCase):
                     else:
                         result = probe.t3_retry_budget(adapter)
                         self.assertEqual(result["retryBudgetSuccessfulStarts"], starts)
+                        self.assertEqual([state["scratchWatcher"] for state in starts[1:]],
+                                         [watcher.return_value] * 4)
                         self.assertEqual(kill.call_count, 5)
                         self.assertEqual([call.args[0] for call in idle.call_args_list], starts[1:])
                         self.assertEqual(ready.call_count, 4)
@@ -394,7 +402,8 @@ class ImageTests(unittest.TestCase):
         probe.config = {}
         probe.rt = Mock()
         events = []
-        before = {"MainPID": 123, "NRestarts": 0, "idlePrecondition": {"idleObserved": True}}
+        before = {"MainPID": 123, "NRestarts": 0, "idlePrecondition": {"idleObserved": True},
+                  "scratchWatcher": {"active": True, "mainPid": 456}}
         limit = Mock()
         limit.read_text.return_value = "max"
         with patch.object(probe, "t3_case_start",
@@ -403,7 +412,8 @@ class ImageTests(unittest.TestCase):
                              side_effect=lambda sig: events.append("signal") or 123), \
                 patch.object(probe, "t3_restart_delay"), \
                 patch.object(probe, "check_t3_freezer"), \
-                patch.object(probe, "t3_recovered"), \
+                patch.object(probe, "t3_recovered",
+                             return_value=before["scratchWatcher"]), \
                 patch.object(probe, "t3_unit", return_value={"NRestarts": 1}), \
                 patch.object(probe, "t3_stays_stopped"), \
                 patch.object(probe, "t3_frozen_stop",
@@ -414,7 +424,10 @@ class ImageTests(unittest.TestCase):
                 patch.object(native, "T3_CGROUP") as cgroup, \
                 patch.object(native, "command"):
             cgroup.__truediv__.return_value = limit
-            probe.t3_recovery()
+            result = probe.t3_recovery()
+        self.assertEqual(result["caseScratchWatchers"], [before["scratchWatcher"]] * 7)
+        self.assertEqual(result["sigkillScratchWatcher"], before["scratchWatcher"])
+        self.assertEqual(result["oomScratchWatcher"], before["scratchWatcher"])
         self.assertEqual(setup.call_count, 7)
         self.assertEqual(events, ["setup", "signal", "setup", "setup", "signal",
                                   "setup", "before-freeze", "setup", "auto-restart",
@@ -793,6 +806,10 @@ class NativeBatchTests(unittest.TestCase):
             receipts["workspace"]["authorization"][key] = bad
             with self.subTest(authorization=key), self.assertRaises(native.ProbeError):
                 native.aggregate_receipts(self.expected, receipts)
+        receipts = copy.deepcopy(self.receipts)
+        receipts["workspace"]["harnessSources"]["manifest.lock.json"] = "e" * 64
+        with self.assertRaisesRegex(native.ProbeError, "MISMATCHED_BATCH_SOURCE_OR_TARGET"):
+            native.aggregate_receipts(self.expected, receipts)
         expected = copy.deepcopy(self.expected)
         expected["batches"]["workspace"]["runId"] = expected["batches"]["tooling"]["runId"]
         with self.assertRaisesRegex(native.ProbeError, "DUPLICATE_OR_INVALID_BATCH_RUN"):
@@ -972,6 +989,20 @@ class NativeBatchTests(unittest.TestCase):
             path.is_symlink.return_value = True
             with self.assertRaisesRegex(native.ProbeError, "PROTECTED_RECEIPT_REQUIRED"):
                 native.protected_json("/synthetic/receipt.json")
+
+    def test_harness_guard_rejects_writable_unowned_or_symlinked_source_inputs(self):
+        for mode, uid in ((0o100644, 0), (0o100664, 0), (0o100644, 2000), (0o120777, 0)):
+            with self.subTest(mode=mode, uid=uid), \
+                    patch.object(native.Path, "lstat",
+                                 return_value=Mock(st_mode=mode, st_uid=uid)), \
+                    patch.object(native, "sha", return_value="a" * 64) as digest:
+                if mode == 0o100644 and uid == 0:
+                    native.harness_sources(verify_ownership=True)
+                    self.assertEqual(digest.call_count, 3)
+                else:
+                    with self.assertRaisesRegex(native.ProbeError, "ROOT_OWNED_HARNESS_SOURCE_REQUIRED"):
+                        native.harness_sources(verify_ownership=True)
+                    digest.assert_not_called()
 
     def test_watcher_policy_identity_and_drained_state_are_positive_requirements(self):
         probe = native.Native.__new__(native.Native)
