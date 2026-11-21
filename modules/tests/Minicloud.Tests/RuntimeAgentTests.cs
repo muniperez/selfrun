@@ -24,6 +24,35 @@ public sealed class RuntimeAgentTests
         Assert.Equal("second line", records[1].Message);
     }
 
+    [Theory]
+    [InlineData("2026-05-04T12:00:01+02:00 stderr \tfirst\r\n\r\nlast \t", "stderr", true, "first", "", "last")]
+    [InlineData("2026-05-04T10:00:01Z  stderr message", "stdout", false, "2026-05-04T10:00:01Z  stderr message")]
+    [InlineData("invalid stderr first\r\nsecond\n", "stdout", false, "invalid stderr first", "second", "")]
+    [InlineData("2026-05-04T10:00:01Z stdout", "stdout", false, "2026-05-04T10:00:01Z stdout")]
+    [InlineData("", "stdout", false, "")]
+    public void DockerParsingPreservesWhitespaceFallbackAndEmptyLogicalLines(string input, string stream, bool timestamped, params string[] messages)
+    {
+        var fallback = DateTimeOffset.UnixEpoch;
+        var records = LogParsing.ParseDockerLine("api", "service:api", 7, input, fallback);
+        Assert.Equal(messages, records.Select(x => x.Message));
+        Assert.All(records, x => Assert.Equal(stream, x.Stream));
+        Assert.All(records, x => Assert.Equal(timestamped ? new DateTimeOffset(2026, 5, 4, 10, 0, 1, TimeSpan.Zero) : fallback, x.ObservedAt));
+        Assert.Equal(Enumerable.Range(7, messages.Length).Select(n => $"service:api:{n:000000000000}"), records.Select(x => x.Cursor));
+    }
+
+    [Fact]
+    public void JournalParsingPreservesBareCarriageReturnsAndTruncatesBeforeRedaction()
+    {
+        var longLine = new string('x', AgentRuntimeLimits.MaxLineLength - 8) + " token=example-token";
+        var records = LogParsing.ParseJournalLine("caddy", "caddy", 10,
+            $"2026-05-04T10:00:01Z {longLine}\r\nnext\rvalue\r\n", DateTimeOffset.UnixEpoch);
+        Assert.Equal(3, records.Count);
+        Assert.Equal(RuntimeLogRedactor.Redact(longLine[..AgentRuntimeLimits.MaxLineLength]), records[0].Message);
+        Assert.Equal("next\rvalue", records[1].Message);
+        Assert.Equal("", records[2].Message);
+        Assert.Equal(["caddy:000000000010", "caddy:000000000011", "caddy:000000000012"], records.Select(x => x.Cursor));
+    }
+
     [Fact]
     public async Task CursorStore_ReloadsAcceptedCursors()
     {
@@ -219,6 +248,32 @@ public sealed class RuntimeAgentTests
         Assert.Equal(3, firstRead.Select(log => log.Cursor).Distinct().Count());
         Assert.All(firstRead, log => Assert.DoesNotContain("some-value", log.Message, StringComparison.Ordinal));
         Assert.Equal(firstRead.AsEnumerable(), secondRead);
+    }
+
+    [Fact]
+    public async Task CollectorCapsFirstDistinctRecordsButStillReadsLaterSources()
+    {
+        var config = new AgentConfig("srv", "org", "app_1", "https://api.example", "minicloud-demo", "/missing", "/tmp/token", "/tmp/state");
+        var output = string.Join("\r\n", Enumerable.Range(1, 250).Select(n => $"  2026-05-04T10:00:01Z line {n}  "));
+        var runner = new RecordingProcessRunner(new Dictionary<string, ProcessResult>
+        {
+            [DockerPs] = new(0, " \r\nabc\r\ndef\r\n ", ""),
+            ["docker inspect abc def"] = new(0, Containers, ""),
+            ["docker logs --timestamps --since 20s --tail 100 abc"] = new(0, output + "\n2026-05-04T10:00:01Z line 1\n \t\n", output),
+            ["docker logs --timestamps --since 20s --tail 100 def"] = new(0, "2026-05-04T10:00:01Z later service", ""),
+            ["journalctl -u caddy --since 20 seconds ago --output short-iso --no-pager"] = new(0, "2026-05-04T10:00:01Z later journal", "")
+        });
+        using var collector = new RuntimeCollector(config, runner);
+        var records = await collector.CollectLogsAsync(CancellationToken.None);
+        Assert.Equal(500, records.Count);
+        Assert.All(records, x => Assert.Equal("service:api", x.Source));
+        Assert.Equal(Enumerable.Range(1, 250).Select(n => $"line {n}"), records.Take(250).Select(x => x.Message));
+        Assert.Equal(records.Take(250).Select(x => x.Message), records.Skip(250).Select(x => x.Message));
+        Assert.All(records.Take(250), x => Assert.Equal("stdout", x.Stream));
+        Assert.All(records.Skip(250), x => Assert.Equal("stderr", x.Stream));
+        Assert.Equal(500, records.Select(x => x.Cursor).Distinct().Count());
+        Assert.Contains("docker logs --timestamps --since 20s --tail 100 def", runner.Calls);
+        Assert.Contains("journalctl -u caddy --since 20 seconds ago --output short-iso --no-pager", runner.Calls);
     }
 
     [Fact]
