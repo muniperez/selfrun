@@ -6,6 +6,10 @@ change.** Historical releases remain immutable and are not retroactively
 authenticated by the new workflow. CLI `v*` and server `server-v*` are distinct;
 neither installer uses repository-wide `latest`.
 
+For guided server setup from a **review candidate**, or to publish your own
+CLI with matching committed server source, see the [two seed paths](stateless-seed.md#guided-installation).
+Those test builds are distinct from the versioned CLI release channel below.
+
 ## Binary installation
 
 Select an actual newly published signed **CLI** tag:

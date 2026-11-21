@@ -6,7 +6,11 @@ namespace Minicloud.Cli.Commands;
 
 public sealed partial class CliApplication
 {
-    private async Task<int> RunPortableSeedAsync(string[] args, CancellationToken ct)
+    private sealed record GuidedSeedInputs(SeedPortableConfig Config, string KeyFingerprint, string? Credential, bool Local,
+        SeedVerifiedRelease? ExpectedRelease = null, Action<SeedPortableReport>? BeforeCreate = null,
+        Action<SeedResource>? AfterCreate = null);
+
+    private async Task<int> RunPortableSeedAsync(string[] args, CancellationToken ct, GuidedSeedInputs? guided = null)
     {
         if (args is ["generate-id"] or ["new-id"])
         {
@@ -50,7 +54,8 @@ public sealed partial class CliApplication
             var configPath = Path.GetFullPath(Option("--config")!);
             SeedFiles.Check(configPath);
             SeedGuard.Require(new FileInfo(configPath).Length is > 0 and < 1048576, "Invalid configuration size.");
-            var config = SeedPortableConfig.Parse(await File.ReadAllTextAsync(configPath, ct));
+            var config = guided?.Config ?? SeedPortableConfig.Parse(await File.ReadAllTextAsync(configPath, ct));
+            config.Validate();
             credential = config.ProviderCredential;
             embeddedCredential = config.ProviderCredential;
             reportPath = Path.GetFullPath(Option("--report")!);
@@ -97,12 +102,14 @@ public sealed partial class CliApplication
             SeedGuard.Require(!useAgent || keyPath is not null, "--use-ssh-agent requires the explicit user-owned --ssh-key.");
             var publicKey = keyPath is null ? "" : await SeedUserKey.ReadAsync(keyPath, useAgent, ct);
             if (keyPath is not null)
-                report.RootKeyFingerprint = "SHA256:" + Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(
-                    Convert.FromBase64String(publicKey.Split(' ')[1]))).TrimEnd('=');
+                report.RootKeyFingerprint = SeedUserKey.Fingerprint(publicKey);
+            SeedGuard.Require(guided is null || report.RootKeyFingerprint == guided.KeyFingerprint,
+                "The user-owned SSH key differs from the original selection. Restore the original key.");
             scratch = Path.Combine(Path.GetDirectoryName(reportPath)!, ".seed-session-" + Guid.NewGuid().ToString("N"));
             SeedFiles.Directory(scratch);
             var host = new SeedHost(keyPath, useAgent, localSource: localSource is not null);
-            credential = Option("--credential-file") is { } credentialPath ? SeedFiles.Credential(credentialPath, _console) : config.ProviderCredential;
+            credential = guided?.Credential ?? (Option("--credential-file") is { } credentialPath
+                ? SeedFiles.Credential(credentialPath, _console) : config.ProviderCredential);
             using var provider = string.IsNullOrEmpty(credential) ? null : new SeedProvider(config.Selection.Provider, credential);
             if (provider is not null)
             {
@@ -152,6 +159,8 @@ public sealed partial class CliApplication
             {
                 SeedGuard.Require(observation.State == "installed" && observation.Release == config.Selection.ServerVersion,
                     "Export requires this exact installed target; inspect installed identity/release first.");
+                if (guided?.ExpectedRelease is { } original)
+                    RequireGuidedInstallation(observation, config, original, guided.Local);
                 state.Plan = state.Plan with { ReleaseSource = observation.Source! };
                 var destination = Option("--recovery-dir");
                 var reportDirectory = Path.GetDirectoryName(reportPath)! + Path.DirectorySeparatorChar;
@@ -161,6 +170,8 @@ public sealed partial class CliApplication
                     "Select a separate protected --recovery-dir, never the public report directory.");
                 await host.ExportAsync(state, scratch, destination!, options.ContainsKey("--setup-token"), ct);
                 report.NextActions = ["Private recovery files exported separately. Verify independent encrypted custody; enter any setup token manually at the verified HTTPS setup origin."];
+                if (guided is not null && state.SetupTokenExportPath is { } tokenPath)
+                    _console.WriteLine("Protected setup token file: " + tokenPath);
                 return CliExitCodes.Success;
             }
             // Observation precedes release comparison/verification. Never run the installer to discover installed identity.
@@ -168,6 +179,11 @@ public sealed partial class CliApplication
                 ? await new SeedRelease().VerifyAsync(config.Selection.ServerVersion, Path.Combine(scratch, "release"), ct)
                 : SeedLocalSource.Verify(Path.GetFullPath(localSource), Option("--source-sha256")!,
                     config.Selection.ServerVersion, Path.Combine(scratch, "release"));
+            if (guided?.ExpectedRelease is { } expected)
+            {
+                SeedGuard.Require(release == expected, "The server release or source archive changed since creation. Restore the original build and trust inputs.");
+                RequireGuidedInstallation(observation, config, expected, guided.Local);
+            }
             var refresh = options.ContainsKey("--refresh-partial-source");
             SeedGuard.Require(!refresh || observation.State == "installed" && observation.Progress == "prepared"
                 && observation.ArtifactTrust == SeedLocalSource.Trust
@@ -210,7 +226,9 @@ public sealed partial class CliApplication
             if (report.Classification == "new_seed")
             {
                 await host.CheckPrerequisitesAsync(ct);
-                await SeedPortable.CreateAsync(config, state, provider!, publicKey, newSeed, Option("--approve"), report.Classification, ct);
+                await SeedPortable.CreateAsync(config, state, provider!, publicKey, newSeed, Option("--approve"), report.Classification, ct,
+                    guided?.BeforeCreate is { } beforeCreate ? () => beforeCreate(report) : null);
+                guided?.AfterCreate?.Invoke(state.Server!);
                 SeedPortable.Observe(report, state, new("awaiting_trust", "awaiting_independent_ssh_trust"));
                 report.NextActions = ["Retain this resource ID in explicit target configuration. Obtain its host fingerprint independently through provider console, replan and continue; never repeat initial creation."];
                 return 10;
@@ -221,6 +239,10 @@ public sealed partial class CliApplication
         }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
+            if (guided is not null && ex is CliCommandException
+                && (string.IsNullOrEmpty(credential ?? guided.Credential)
+                    || !ex.Message.Contains((credential ?? guided.Credential)!, StringComparison.Ordinal)))
+                _console.WriteError(ex.Message);
             if (report is not null)
             {
                 report.Result = ex is OperationCanceledException ? "unknown" : "failed";
@@ -260,6 +282,16 @@ public sealed partial class CliApplication
             }
             finally { if (scratch is not null && Directory.Exists(scratch)) Directory.Delete(scratch, true); }
         }
+    }
+
+    private static void RequireGuidedInstallation(SeedObservation observation, SeedPortableConfig config, SeedVerifiedRelease expected, bool local)
+    {
+        if (observation.State == "installed" && observation.Release == config.ServerVersion)
+            SeedGuard.Require(observation.Source == expected.Source
+                && (local
+                    ? observation.ArtifactTrust == SeedLocalSource.Trust && observation.SourceArchiveSha256 == expected.Digest
+                    : observation.ArtifactTrust != SeedLocalSource.Trust),
+                "Installed release source or artifact trust differs from the original reviewed plan. Do not reinstall.");
     }
 
     private static async Task<SeedObservation> ObservePortableHostAsync(SeedHost host, SeedState state, string scratch, CancellationToken ct)

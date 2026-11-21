@@ -6,6 +6,9 @@ namespace Minicloud.Cli.Seed;
 
 internal static class SeedUserKey
 {
+    internal static string Fingerprint(string publicKey) => "SHA256:" + Convert.ToBase64String(
+        System.Security.Cryptography.SHA256.HashData(Convert.FromBase64String(publicKey.Split(' ')[1]))).TrimEnd('=');
+
     internal static string PublicKey(string privateKey)
     {
         const string begin = "-----BEGIN OPENSSH PRIVATE KEY-----";

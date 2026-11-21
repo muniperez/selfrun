@@ -18,6 +18,10 @@ It uses the [existing signed installer](server-installer.md) and shared
 
 ## Before starting
 
+For a first install, use [`minicloud seed` in a terminal](stateless-seed.md#guided-installation)
+with a downloaded candidate or your own published CLI. The wizard prepares
+protected inputs and guides the approval, SSH verification, and setup handoffs.
+
 **Stateless interface (#90):** use the [current configuration, plan/apply/check
 and portable-report guide](stateless-seed.md). It supersedes the machine-bound
 journal/hidden-bootstrap-key requirements below. The remaining commands on this

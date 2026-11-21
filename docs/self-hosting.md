@@ -7,11 +7,13 @@ host based on these source assets. Once a versioned release is available, use
 its signed installer and release documentation; never build a production host
 from a checkout or substitute floating image tags.
 
-The standalone [CLI seed implementation](seed.md) can orchestrate a dedicated
-Hetzner, DigitalOcean or Vultr VPS and this same signed installer once a
-compatible release actually exists. Its source implementation is not provider,
-native-binary or host qualification; it fails closed for the unpublished
-candidate. Domain/public HTTPS access is required; IP-only access is deferred.
+The [guided CLI seed](stateless-seed.md#guided-installation) can use explicitly
+selected, matching committed source for a **test** installation on a dedicated
+Hetzner, DigitalOcean or Vultr VPS. Download a review candidate or publish from a
+clean clone. The separate signed option requires an exact compatible published
+server release and fails closed if unavailable. Neither path establishes live
+provider or host qualification. Domain/public HTTPS access is required; IP-only
+access is deferred.
 
 The public control-plane installer, setup flow and coordinated maintenance
 now have source implementations. Installation and maintenance have not been

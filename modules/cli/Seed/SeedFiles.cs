@@ -120,7 +120,7 @@ internal static class SeedFiles
         }
         else
         {
-            SeedGuard.Require(!Console.IsInputRedirected, "Noninteractive seed requires --credential-file <owner-only path>.");
+            SeedGuard.Require(!console.IsInputRedirected, "Noninteractive seed requires --credential-file <owner-only path>.");
             console.Write("Provider API credential (hidden): ");
             var secret = new StringBuilder();
             while (true)
@@ -208,14 +208,19 @@ internal sealed class SeedJournal : IDisposable
         var pending = Path.Combine(DirectoryPath, "operation.pending");
         SeedGuard.Require(!File.Exists(pending), "An interrupted journal write remains. Preserve it and reconcile operation.json before resuming.");
         SeedFiles.WriteNew(pending, JsonSerializer.SerializeToUtf8Bytes(state, Json));
+        PublishDurably(pending, path, overwrite: true);
+    }
+
+    internal static void PublishDurably(string pending, string path, bool overwrite)
+    {
         if (OperatingSystem.IsWindows())
-            SeedGuard.Require(MoveFileEx(pending, path, 0x1 | 0x8), "Atomic write-through journal replacement failed. Preserve operation.pending; no mutation is safe.");
-        else File.Move(pending, path, true);
+            SeedGuard.Require(MoveFileEx(pending, path, (overwrite ? 0x1u : 0u) | 0x8), "Atomic write-through seed state update failed. Preserve pending state; no mutation is safe.");
+        else File.Move(pending, path, overwrite);
         // Flush the rename on Unix before allowing any provider mutation.
         if (!OperatingSystem.IsWindows())
         {
-            var result = SeedProcess.RunAsync("sync", OperatingSystem.IsLinux() ? ["-f", DirectoryPath] : [], null, default).GetAwaiter().GetResult();
-            SeedGuard.Require(result.ExitCode == 0, "Could not durably flush seed journal; no provider mutation is safe.");
+            var result = SeedProcess.RunAsync("sync", OperatingSystem.IsLinux() ? ["-f", Path.GetDirectoryName(path)!] : [], null, default).GetAwaiter().GetResult();
+            SeedGuard.Require(result.ExitCode == 0, "Could not durably flush seed state; no provider mutation is safe.");
         }
     }
     public void Dispose() => operationLock.Dispose();

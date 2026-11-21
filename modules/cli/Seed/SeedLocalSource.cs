@@ -10,6 +10,55 @@ namespace Minicloud.Cli.Seed;
 internal static class SeedLocalSource
 {
     internal const string Trust = "operator-pinned-local-source";
+    private const string SourceResource = "Minicloud.Cli.Seed.source.tar";
+    internal static string? EmbeddedTag => typeof(SeedLocalSource).Assembly.GetManifestResourceInfo(SourceResource) is not null
+        && SeedRelease.CliSourceRevision is { Length: 40 } revision ? "server-v0.0.1-local." + revision : null;
+
+    internal static string PrepareEmbedded(string archive, string tag)
+    {
+        var revision = SeedRelease.CliSourceRevision;
+        SeedGuard.Require(tag == EmbeddedTag, "This executable does not carry the selected committed source. Resume with the original executable.");
+        if (!File.Exists(archive))
+        {
+            var pending = archive + ".pending-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                using (var source = typeof(SeedLocalSource).Assembly.GetManifestResourceStream(SourceResource)!)
+                using (var reader = new TarReader(source))
+                using (var output = SeedFiles.Create(pending))
+                {
+                    using (var gzip = new GZipStream(output, CompressionLevel.Optimal, leaveOpen: true))
+                    using (var writer = new TarWriter(gzip, TarEntryFormat.Pax, leaveOpen: true))
+                    {
+                        // git archive records the selected commit in its global PAX header.
+                        var header = reader.GetNextEntry() as PaxGlobalExtendedAttributesTarEntry;
+                        SeedGuard.Require(header?.GlobalExtendedAttributes.GetValueOrDefault("comment") == revision,
+                            "Embedded source revision differs from this executable.");
+                        while (reader.GetNextEntry() is { } entry)
+                            writer.WriteEntry(entry);
+                        var descriptor = new
+                        {
+                            schemaVersion = 1, kind = Trust, sourceRevision = revision, serverVersion = tag[8..],
+                            cliCompatibility = new { protocolVersion = 1, minimumVersion = (string?)null,
+                                maximumExclusiveVersion = (string?)null, sourceRevisions = new[] { revision } }
+                        };
+                        using var data = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(descriptor));
+                        writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "minicloud-local-source.json")
+                        {
+                            DataStream = data, Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                            ModificationTime = DateTimeOffset.UnixEpoch
+                        });
+                    }
+                    output.Flush(true);
+                }
+                File.Move(pending, archive, overwrite: false);
+            }
+            finally { File.Delete(pending); }
+        }
+        SeedFiles.Check(archive);
+        using var input = File.OpenRead(archive);
+        return Convert.ToHexStringLower(SHA256.HashData(input));
+    }
 
     internal static SeedVerifiedRelease Verify(string archive, string expectedDigest, string tag, string directory)
     {
