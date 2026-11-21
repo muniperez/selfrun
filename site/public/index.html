@@ -62,34 +62,25 @@
       <ol class="setup-list">
         <li id="self-host">
           <h3>Install MiniCloud on a VPS</h3>
-          <p>The current installer is for testing from source. On your computer, install Git, Python 3.11 or later, the .NET 10 SDK, and OpenSSH. You also need a VPS provider account, an SSH key, and DNS access. After installation, export the one-time setup token and use it at the dashboard’s <code>/setup</code> page to create the first account.</p>
+          <p>The current installer is for testing from source. On Linux (x64 or ARM64) or Apple Silicon macOS, install Git, Python 3.11 or later, the .NET 10 SDK, and OpenSSH. You also need a VPS provider account, an SSH key, and DNS access. After installation, export the one-time setup token and use it at the dashboard’s <code>/setup</code> page to create the first account.</p>
           <section>
             <h4>Build and install a test server</h4>
             <ol class="install-list">
               <li>
-                <p><strong>Build the server archive and CLI from the same checkout.</strong> Save the archive SHA-256 printed by the packaging command.</p>
+                <p><strong>Install the CLI.</strong> Use the installer in the checkout so the CLI matches the server code you’re about to package.</p>
                 <pre tabindex="0"><code>git clone https://github.com/muniventures/minicloud.git
 cd minicloud
-umask 077
+export PATH="$HOME/.local/bin:$PATH"
+MINICLOUD_INSTALL_MODE=source MINICLOUD_VERSION="$(git rev-parse HEAD)" \
+  MINICLOUD_INSTALL_DIR="$HOME/.local/bin" sh install.sh</code></pre>
+                <p><strong>Package the server for a test install.</strong> There is no published server release yet. The Python command creates the archive the CLI will send to the VPS. Save the printed <code>sha256</code> for the deployment plan, and the seed ID for the next step.</p>
+                <pre tabindex="0"><code>umask 077
 seed_dir="$PWD/.local/artifacts/local-seed"
 mkdir -p "$seed_dir/reports"
-
 python3 -B scripts/self-hosting/local_source.py package \
   --version 0.0.1-local.1 --output "$seed_dir/source.tar.gz"
-
-dotnet publish modules/cli/Minicloud.Cli.csproj -c Release \
-  --artifacts-path "$seed_dir/cli-build" --output "$seed_dir/cli" \
-  -p:SourceRevisionId="$(git rev-parse HEAD)"
-cat &gt; "$seed_dir/cli/minicloud" &lt;&lt;'SH'
-#!/bin/sh
-cli_dir=$(CDPATH= cd "$(dirname "$0")" &amp;&amp; pwd)
-exec dotnet "$cli_dir/Minicloud.Cli.dll" "$@"
-SH
-chmod 700 "$seed_dir/cli/minicloud"
-export PATH="$seed_dir/cli:$PATH"
-printf '%s\n' "$seed_dir/cli"
 minicloud seed new-id</code></pre>
-                <p>Add the printed CLI directory to your shell’s startup <code>PATH</code> to use it in new terminals. To resume the server setup in a new shell, return to the MiniCloud checkout, set <code>seed_dir="$PWD/.local/artifacts/local-seed"</code>, add <code>$seed_dir/cli</code> to <code>PATH</code>, and restore the variables and <code>seed_local</code> function in the VPS creation step. Run only the commands for the step you are resuming.</p>
+                <p>To resume in a new terminal, return to this checkout, restore <code>PATH</code> and <code>seed_dir</code> as shown above, and restore the variables and <code>seed_local</code> function in the VPS creation step. Keep the original archive and seed ID.</p>
               </li>
               <li>
                 <p><strong>Set the provider and domains.</strong> Save this DigitalOcean example to <code>$seed_dir/seed-config.json</code>. Set <code>providerAccount</code> to <code>DigitalOcean account </code> followed by <code>account.uuid</code> from your provider’s authenticated <code>GET /v2/account</code> response. Fill in the seed ID, region, size, and domains. Keep the seed ID if you need to resume. Put the provider token in <code>$seed_dir/provider-token</code>. Both files need mode <code>0600</code>. <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#protected-configuration-and-user-owned-key">Hetzner and Vultr account formats</a> are in the seed guide.</p>
