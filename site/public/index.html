@@ -22,9 +22,8 @@
 
   <main class="frame" id="main">
     <section class="hero" aria-labelledby="headline">
-      <h1 id="headline">Self-hosted agentic coding and app hosting</h1>
-      <p>A MiniCloud instance is a dashboard, API, registry, and worker you install on one VPS. It provisions separate servers in your Hetzner, DigitalOcean, or Vultr account for Docker apps and optional coding VMs.</p>
-      <p class="release-note">The current install builds a test server from source.</p>
+      <h1 id="headline">MiniCloud runs coding agents and hosts apps on your servers</h1>
+      <p>Work on a Git repository with Codex or Claude Code in a Linux VM you control. You or your agent can use the MiniCloud CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
       <div class="actions">
         <a class="primary" href="#setup">Set up MiniCloud</a>
         <a class="secondary" href="https://github.com/muniventures/minicloud">View source on GitHub</a>
@@ -57,7 +56,7 @@
 
     <section class="section" id="setup" aria-labelledby="setup-title">
       <h2 id="setup-title">Set up MiniCloud</h2>
-      <p class="intro">A <strong>MiniCloud instance</strong> is the dashboard, API, and deployment worker you install on one VPS. It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for coding and app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
+      <p class="intro">A <strong>MiniCloud instance</strong> is your installation of MiniCloud. Its dashboard, API, container registry, and deployment worker run together on one virtual private server (VPS). It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for coding and app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
       <p class="intro">If someone already runs MiniCloud for your team, get the dashboard address and sign-in details from them and <a href="#cli-login">sign in from your terminal</a>.</p>
 
       <ol class="setup-list">
