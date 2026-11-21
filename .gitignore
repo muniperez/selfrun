@@ -47,7 +47,6 @@ minicloud-dev.db-*
 # Other
 *.DS_Store
 *.lock.json
-!templates/development-workspaces/image/manifest.lock.json
 
 # Local settings and generated frontend files
 .env

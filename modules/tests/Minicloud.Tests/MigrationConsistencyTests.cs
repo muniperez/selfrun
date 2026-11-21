@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -21,55 +20,13 @@ public sealed class MigrationConsistencyTests
     }
 
     [Fact]
-    public async Task WorkspaceIdleTimeoutMigrationLeavesExistingRowsUnset()
+    public void FreshPostgresMigrationIncludesPortalSessionsAndExcludesWorkspaceTables()
     {
-        const string previous = "20261117100000_DevelopmentWorkspaceVms";
-        const string current = "20261119145527_DevelopmentWorkspaceIdleTimeout";
-        using var postgres = CreateContext();
-        var script = postgres.GetService<IMigrator>().GenerateScript(previous, current);
-        Assert.Contains("ALTER TABLE development_workspaces ADD idle_timeout_minutes integer;", script);
-        Assert.DoesNotContain("DEFAULT", script);
+        using var db = CreateContext();
+        var script = db.GetService<IMigrator>().GenerateScript();
 
-        await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
-        await using var db = new MinicloudDbContext(new DbContextOptionsBuilder<MinicloudDbContext>().UseSqlite(connection).Options);
-        await db.Database.ExecuteSqlRawAsync("""
-            CREATE TABLE "__EFMigrationsHistory" ("MigrationId" TEXT PRIMARY KEY, "ProductVersion" TEXT NOT NULL);
-            CREATE TABLE development_workspaces (id TEXT PRIMARY KEY);
-            INSERT INTO development_workspaces (id) VALUES ('old-workspace');
-            """);
-        foreach (var migration in db.Database.GetMigrations().TakeWhile(id => id != current))
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") VALUES ({migration}, '10.0.5')");
-
-        await db.Database.MigrateAsync(current);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT idle_timeout_minutes FROM development_workspaces WHERE id = 'old-workspace'";
-        Assert.Equal(DBNull.Value, await command.ExecuteScalarAsync());
-    }
-
-    [Fact]
-    public void WorkspaceKeepRunningMigrationDefaultsExistingRowsToIdleStop()
-    {
-        using var postgres = CreateContext();
-        var script = postgres.GetService<IMigrator>().GenerateScript(
-            "20261119152838_DevelopmentWorkspaceResourceTelemetry", "20261119155230_DevelopmentWorkspaceKeepRunning");
-        Assert.Contains("ALTER TABLE development_workspaces ADD keep_running boolean NOT NULL DEFAULT FALSE;", script);
-    }
-
-    [Fact]
-    public void WorkspaceDeletionMigrationReleasesNameAndKeyAndRollsBackSafely()
-    {
-        const string previous = "20261119155230_DevelopmentWorkspaceKeepRunning";
-        const string current = "20261119160815_DevelopmentWorkspaceDeletion";
-        using var postgres = CreateContext();
-        var migrator = postgres.GetService<IMigrator>();
-        var up = migrator.GenerateScript(previous, current);
-        Assert.Contains("CREATE UNIQUE INDEX \"IX_development_workspaces_organization_id_idempotency_key\" ON development_workspaces (organization_id, idempotency_key) WHERE volume_status <> 'deleted';", up);
-        Assert.Contains("CREATE UNIQUE INDEX \"IX_development_workspaces_organization_id_name\" ON development_workspaces (organization_id, name) WHERE volume_status <> 'deleted';", up);
-        var down = migrator.GenerateScript(current, previous);
-        var rename = down.IndexOf("SET name = id, idempotency_key = id WHERE volume_status = 'deleted'", StringComparison.Ordinal);
-        Assert.InRange(rename, 0, down.IndexOf("CREATE UNIQUE INDEX", StringComparison.Ordinal));
+        Assert.Contains("ALTER TABLE browser_sessions ADD renewed_at", script);
+        Assert.DoesNotContain("development_workspace", script);
     }
 
     [Fact]

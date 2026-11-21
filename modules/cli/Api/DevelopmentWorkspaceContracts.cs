@@ -1,8 +1,8 @@
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Contracts;
+namespace Minicloud.Cli.Api;
 
-public sealed record WorkspaceSelectionOption(
+internal sealed record WorkspaceSelectionOption(
     string ImageId, string ImageName, string Profile, string PlanId, string PlanName,
     string ProviderAccountName, string Region, string Sku, int CpuCount, int MemoryGiB,
     decimal ComputeHourlyRate, bool IsDefault,
@@ -10,13 +10,13 @@ public sealed record WorkspaceSelectionOption(
     IReadOnlyList<DevelopmentWorkspaceAgentResponse>? Agents = null);
 
 /// <summary>A coding agent installed in a dev environment image, available through T3.</summary>
-public sealed record DevelopmentWorkspaceAgentResponse(string Id, string Name, string Version);
+internal sealed record DevelopmentWorkspaceAgentResponse(string Id, string Name, string Version);
 
-public sealed record WorkspaceSelections(
+internal sealed record WorkspaceSelections(
     bool Available, string? UnavailableReason, IReadOnlyList<WorkspaceSelectionOption> Options,
     string? Currency = null, decimal? VolumeMonthlyRatePerGb = null);
 
-public sealed record CreateDevelopmentWorkspaceRequest(
+internal sealed record CreateDevelopmentWorkspaceRequest(
     string OrganizationId,
     string Name,
     string ImageId,
@@ -32,11 +32,11 @@ public sealed record CreateDevelopmentWorkspaceRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     bool StartPrimaryVm = false);
 
-public sealed record UpdateDevelopmentWorkspaceIdleTimeoutRequest(
+internal sealed record UpdateDevelopmentWorkspaceIdleTimeoutRequest(
     [property: JsonRequired, JsonNumberHandling(JsonNumberHandling.Strict)] int? IdleTimeoutMinutes,
     bool KeepRunning = false);
 
-public sealed record DevelopmentWorkspaceResponse(
+internal sealed record DevelopmentWorkspaceResponse(
     string Id,
     string OrganizationId,
     string Name,
@@ -74,17 +74,16 @@ public sealed record DevelopmentWorkspaceResponse(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<DevelopmentWorkspaceAgentResponse>? Agents = null);
 
-public sealed record DevelopmentWorkspaceTaskLeaseRequest(string TaskId, long Generation);
-public sealed record DevelopmentWorkspaceGenerationRequest(long Generation);
-public sealed record DevelopmentWorkspaceResizeRequest(long Generation, string ImageId, string Profile, string PlanId);
-public sealed record DevelopmentWorkspaceDiscardRequest(long Generation, bool DiscardLocalData, bool AcknowledgeIgnoredDataLoss);
-public sealed record CompleteDevelopmentWorkspaceTaskRequest(long Generation, bool Cancelled = false);
-public sealed record LaunchEphemeralDevelopmentWorkspaceVmRequest(
+internal sealed record DevelopmentWorkspaceGenerationRequest(long Generation);
+internal sealed record DevelopmentWorkspaceResizeRequest(long Generation, string ImageId, string Profile, string PlanId);
+internal sealed record DevelopmentWorkspaceDiscardRequest(long Generation, bool DiscardLocalData, bool AcknowledgeIgnoredDataLoss);
+internal sealed record CompleteDevelopmentWorkspaceTaskRequest(long Generation, bool Cancelled = false);
+internal sealed record LaunchEphemeralDevelopmentWorkspaceVmRequest(
     string ImageId, string Profile, string PlanId, string Repository, string BaseRef, string BaseCommit,
     bool PushAuthorized, bool AcknowledgeIgnoredDataLoss, string IdempotencyKey,
     string? RepositoryCredentialRef = null);
 
-public sealed record DevelopmentWorkspaceVmResponse(
+internal sealed record DevelopmentWorkspaceVmResponse(
     string Id, string Kind, long Generation, string DesiredState, string Phase,
     string ImageId, string Profile, string PlanId, string ProviderAccountId, string Region, string Sku,
     string? ProviderServerId, string? ErrorCode, string? ErrorMessage,
@@ -99,8 +98,30 @@ public sealed record DevelopmentWorkspaceVmResponse(
     string? StartupStage = null,
     DevelopmentWorkspaceVmResources? Resources = null);
 
-public sealed record DevelopmentWorkspaceTaskLeaseResponse(
+internal sealed record DevelopmentWorkspaceTaskLeaseResponse(
     string VmId, string TaskId, long Generation, string Status, DateTimeOffset ExpiresAt);
 
-public sealed record DevelopmentWorkspaceGatewayLaunchRequest(long Generation, string Service = "t3");
-public sealed record DevelopmentWorkspaceGatewayLaunchResponse(string Url, DateTimeOffset ExpiresAt);
+internal sealed record DevelopmentWorkspaceGatewayLaunchRequest(long Generation, string Service = "t3");
+internal sealed record DevelopmentWorkspaceGatewayLaunchResponse(string Url, DateTimeOffset ExpiresAt);
+
+/// <summary>
+/// Latest dev environment resource sample. State is current, stale (no fresh sample for 120 seconds),
+/// historical (the VM is not running) or unsupported (the image predates resource telemetry).
+/// </summary>
+internal sealed record DevelopmentWorkspaceVmResources(
+    string State,
+    DateTimeOffset? ObservedAt,
+    DateTimeOffset? ReceivedAt,
+    DevelopmentWorkspaceCpuResources? Cpu,
+    DevelopmentWorkspaceMemoryResources? Memory,
+    IReadOnlyList<DevelopmentWorkspaceFilesystemResources> Filesystems,
+    IReadOnlyDictionary<string, string> Unavailable,
+    bool DiskUsageSupported,
+    bool DirectoryDeletionSupported);
+
+internal sealed record DevelopmentWorkspaceCpuResources(int LogicalCount, double? UtilizationPercent, double? WindowSeconds);
+internal sealed record DevelopmentWorkspaceMemoryResources(long TotalBytes, long AvailableBytes);
+internal sealed record DevelopmentWorkspaceFilesystemResources(
+    IReadOnlyList<string> Paths, long TotalBytes, long FreeBytes, long AvailableBytes,
+    long? InodesTotal, long? InodesAvailable, int? NestedMountsExcluded,
+    IReadOnlyList<string>? Roles = null, int? ScratchBindMounts = null);

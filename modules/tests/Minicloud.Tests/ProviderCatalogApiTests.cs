@@ -149,32 +149,6 @@ public sealed class ProviderCatalogApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WorkspaceVmReferencePreventsPlanDeletionWithConflict()
-    {
-        using var client = Client();
-        var account = await CreateAccountAsync(client, "Workspace provider", "synthetic-workspace-token");
-        var plan = await CreatePlanAsync(client, account.Id, "Workspace plan");
-        await using (var scope = _factory.Services.CreateAsyncScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
-            var workspace = new DevelopmentWorkspace { Id = "catalog-workspace", OrganizationId = OrganizationId,
-                CreatedBy = "actor", Name = "Workspace", PrimaryVmId = "catalog-workspace-vm", ProviderAccountId = account.Id, Region = "nbg1",
-                Currency = "USD", IdempotencyKey = "catalog-create", RequestDigest = "digest" };
-            workspace.Vms.Add(new DevelopmentWorkspaceVm { Id = "catalog-workspace-vm", WorkspaceId = workspace.Id,
-                OrganizationId = OrganizationId, Kind = "primary", IdempotencyKey = "catalog-primary",
-                RequestDigest = "digest", Generation = 1, ImageId = "image", Profile = "standard",
-                PlanId = plan.Id, ProviderAccountId = account.Id, Region = "nbg1", Sku = "synthetic",
-                ProviderImage = "provider-image", ImageManifestSha256 = new('a', 64) });
-            db.DevelopmentWorkspaces.Add(workspace);
-            await db.SaveChangesAsync();
-        }
-        var response = await client.DeleteAsync($"/api/plans/{plan.Id}");
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        await ErrorAsync(response, "plan_in_use");
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/api/plans/{plan.Id}")).StatusCode);
-    }
-
-    [Fact]
     public async Task CrossOrganizationIdsCannotListReadEditOrSelectAnotherAccountsPlan()
     {
         using var owner = Client();
