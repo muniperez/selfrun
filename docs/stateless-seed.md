@@ -11,7 +11,8 @@ artifacts, or substitute an unqualified release just to make seed proceed.
 Both paths below lead to the same `seed` wizard. No JSON, Python, or helper
 script is needed on the workstation. Use a terminal, OpenSSH client tools,
 and an existing user-owned Ed25519 or RSA (at least 3072-bit) OpenSSH private
-key. If it is encrypted, unlock it in your own SSH agent and opt in when
+key. Enter its absolute path (`~/` also works on Unix). If it is encrypted,
+unlock it in your own SSH agent and opt in when
 prompted. Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
 See [provider permissions and host requirements](seed.md#before-starting).
 
@@ -97,6 +98,9 @@ resume may prompt for the token for a read-only inventory lookup. Empty
 inventory is not evidence that a create failed: reconcile with the provider,
 never delete the state or try another create. After the target is known and
 its fingerprint is verified, SSH continuation does not require the token.
+Keep guided state on a protected local filesystem (with hard links on Unix).
+Abandoned staging files do not block resume or authorize creation; a published
+dispatch marker always prevents another create.
 
 Hetzner has no project-identity API. Guided seed stores only a seed-specific
 fingerprint of the original token in protected state, not the token or its

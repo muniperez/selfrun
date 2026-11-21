@@ -55,7 +55,11 @@ public sealed partial class CliApplication
                 selection.Validate();
                 var architecture = SeedAnswer("Server architecture (linux/amd64 or linux/arm64): ");
                 SeedGuard.Require(architecture is "linux/amd64" or "linux/arm64", "Select the server architecture explicitly.");
-                var key = Path.GetFullPath(SeedAnswer("Absolute path to your owner-only OpenSSH private key: "));
+                var key = SeedAnswer("Absolute path to your owner-only OpenSSH private key (~/... also works on Unix): ");
+                if (!OperatingSystem.IsWindows() && key.StartsWith("~/", StringComparison.Ordinal))
+                    key = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), key[2..]);
+                SeedGuard.Require(Path.IsPathFullyQualified(key), "Supply an absolute SSH private-key path (~/... also works on Unix).");
+                key = Path.GetFullPath(key);
                 var useAgent = SeedConfirm("Use your independently unlocked SSH agent for this key? [y/N]: ", "y");
                 var keyFingerprint = SeedUserKey.Fingerprint(await SeedUserKey.ReadAsync(key, useAgent, ct));
                 string? project = null;
@@ -280,7 +284,7 @@ public sealed partial class CliApplication
 
     private static void WriteGuided<T>(string path, T value)
     {
-        var pending = path + ".pending";
+        var pending = path + ".pending-" + Guid.NewGuid().ToString("N");
         SeedFiles.WriteNew(pending, JsonSerializer.SerializeToUtf8Bytes(value, SeedJournal.Json));
         SeedJournal.PublishDurably(pending, path, overwrite: false);
     }

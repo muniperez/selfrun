@@ -212,11 +212,12 @@ def check_hetzner_resume(cli, root, env, fixture):
     dialogue(cli, root, env, state, [
         ("Server source:", "local"), ("Provider (", "hetzner"), ("Region ID", "fixture"),
         ("Server size ID", "fixture-size"), ("Dashboard hostname", DOMAIN), ("Separate application DNS suffix", APP_DOMAIN),
-        ("Server architecture", "linux/amd64"), ("owner-only OpenSSH private key", str(root / "user-key")),
+        ("Server architecture", "linux/amd64"), ("owner-only OpenSSH private key", "~/user-key"),
         ("SSH agent", ""), ("Hetzner project identifier", "fixture-project"), credential, (approval, ""),
     ], 10)
     session_file = state / "session.json"
     session = json.loads(session_file.read_text())
+    assert session["keyPath"] == str(root / "user-key")
     scope = session["hetznerCredentialScope"]
     seed_id = session["config"]["seedId"]
     assert scope == hashlib.sha256(f"minicloud-seed-scope:{seed_id}:{TOKEN}".encode()).hexdigest()
@@ -302,6 +303,12 @@ esac
             assert fixture.posts == []
 
             state = root / "local"
+            state.mkdir()
+            abandoned = [state / (name + ".pending") for name in
+                         ("session.json", "create-dispatched.json", "resource.json", "target.json")]
+            abandoned.append(state / "create-dispatched.json.pending-00000000000000000000000000000000")
+            for path in abandoned:
+                path.write_text('{"interrupted":')
             report = state / "reports" / "seed-report.json"
             approval = "type 'create'"
             fingerprint = "Paste only its independent"
@@ -360,6 +367,8 @@ esac
                                                              openBao="ready", browser="ready")))
             dialogue(cli, root, env, state, [("Export private recovery", "")], 0)
             assert (root / "mutations").read_text().splitlines() == ["install"]
+            assert fixture.posts == ["/v2/account/keys", "/v2/droplets"]
+            assert all(path.read_text() == '{"interrupted":' for path in abandoned)
             assert all(TOKEN.encode() not in file.read_bytes() for file in state.glob("**/*.json"))
             check_hetzner_resume(cli, root, env, hetzner)
         finally:
@@ -376,4 +385,4 @@ if __name__ == "__main__":
         run(executable, Path(directory), lose_response)
     print("Guided seed passed: missing signed release, prepare/plan, "
           f"{'lost create' if lose_response else 'create'}, pinned resume, install, DNS and protected setup; "
-          "changed Hetzner token blocked before planning or reconciliation requests.")
+          "abandoned staging ignored, Unix SSH path expanded, and changed Hetzner token blocked.")

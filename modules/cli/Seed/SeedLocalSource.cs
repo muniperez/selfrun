@@ -51,7 +51,7 @@ internal static class SeedLocalSource
                     }
                     output.Flush(true);
                 }
-                File.Move(pending, archive, overwrite: false);
+                SeedJournal.PublishDurably(pending, archive, overwrite: false);
             }
             finally { File.Delete(pending); }
         }
