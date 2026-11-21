@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 import importlib.util
+import hashlib
 import fcntl
 import json
 import os
@@ -14,6 +15,8 @@ from unittest.mock import patch
 artifacts = pathlib.Path(sys.argv.pop(1)).resolve()
 spec = importlib.util.spec_from_file_location("seed_inspector", pathlib.Path(__file__).parents[1] / "inspect-host.py")
 inspector = importlib.util.module_from_spec(spec)
+helper = (pathlib.Path(__file__).parents[1] / "provider-layout.py").read_text()
+exec(helper, inspector.__dict__)
 spec.loader.exec_module(inspector)
 seed = "a" * 32
 
@@ -67,13 +70,13 @@ class InspectorTests(unittest.TestCase):
             raise AssertionError("Unexpected mutation: " + repr(args))
         return subprocess.CompletedProcess(args, 0, stdout=output)
 
-    def observe(self):
+    def observe(self, provider=None):
         def snapshot():
             return {str(p): (p.lstat().st_mode, p.lstat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                     for p in (self.root, *self.root.rglob("*"))}
         before = snapshot()
         with patch.object(inspector.shutil, "which", return_value="docker"):
-            result = inspector.inspect_host(seed, self.root, os.getuid(), self.run_docker)
+            result = inspector.inspect_host(seed, self.root, os.getuid(), self.run_docker, provider=provider)
         self.assertEqual(before, snapshot(), "Check modified host files, including on failure.")
         return result
 
@@ -169,6 +172,12 @@ class InspectorTests(unittest.TestCase):
         (self.root / "opt/customer-data").mkdir(mode=0o700)
         self.assertEqual("reconciliation_required", self.observe()["state"])
 
+    def test_provider_layout_does_not_override_unknown_occupancy_or_conflicting_binding(self):
+        self.write("/opt/digitalocean/unknown", "not a vendor agent")
+        self.assertEqual("reconciliation_required", self.observe(provider="digitalocean")["state"])
+        self.write("/opt/minicloud.seed-operation", "b" * 32)
+        self.assertEqual("reconciliation_required", self.observe(provider="digitalocean")["state"])
+
     def test_stale_ready_metadata_never_means_live_ready_or_auto_unseal_after_reboot(self):
         self.install()
         for i, name in enumerate(("postgres", "openbao", "openbao-agent", "kratos", "api", "dashboard", "worker", "caddy")):
@@ -183,6 +192,239 @@ class InspectorTests(unittest.TestCase):
         self.assertEqual("unavailable", result["openBao"])
         self.assertEqual(["ps", "-aq"], self.commands[0])
         self.assertEqual("inspect", self.commands[1][0])
+
+
+class ProviderLayoutTests(unittest.TestCase):
+    """Synthetic dpkg database, real package-manager queries and real file modes."""
+
+    def setUp(self):
+        self.root = artifacts / ("provider-layout-" + uuid.uuid4().hex)
+        self.root.mkdir(mode=0o700)
+        self.db = self.root / "var/lib/dpkg"
+        (self.db / "info").mkdir(parents=True)
+        self.vendor = self.root / "opt/digitalocean"
+        self.vendor.mkdir(parents=True)
+        self.files = {
+            "do-agent": ["bin/do-agent", "do-agent/scripts/update.sh"],
+            "droplet-agent": ["bin/droplet-agent", "droplet-agent/scripts/update.sh"],
+        }
+        records = []
+        for package, names in self.files.items():
+            paths = {"opt/digitalocean"}
+            hashes = []
+            for name in names:
+                p = self.vendor / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("synthetic package fixture\n")
+                p.chmod(0o755)
+                paths.update(str(parent.relative_to(self.root)) for parent in p.parents
+                             if parent != self.root and self.root in parent.parents)
+                paths.add(str(p.relative_to(self.root)))
+                hashes.append(hashlib.md5(p.read_bytes()).hexdigest() + "  " + str(p.relative_to(self.root)))
+            (self.db / "info" / (package + ".list")).write_text("\n".join("/" + p for p in sorted(paths)) + "\n")
+            (self.db / "info" / (package + ".md5sums")).write_text("\n".join(hashes) + "\n")
+            records.append("Package: " + package + "\nStatus: install ok installed\nArchitecture: amd64\n"
+                           "Version: 1.0\nMaintainer: Synthetic fixture <fixture@example.com>\n"
+                           "Description: Synthetic seed package fixture\n")
+        (self.db / "status").write_text("\n".join(records))
+        for directory in (self.vendor, *(p for p in self.vendor.rglob("*") if p.is_dir())):
+            directory.chmod(0o755)
+        self.commands = []
+        self.real_lstat = pathlib.Path.lstat
+        self.monitoring_owner = (1000, 65534)
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def metadata(self, p, *args, **kwargs):
+        info = self.real_lstat(p, *args, **kwargs)
+        if p == self.vendor or self.vendor in p.parents:
+            values = list(info)
+            monitoring = p.name == "do-agent" or self.vendor / "do-agent" in p.parents
+            values[4], values[5] = self.monitoring_owner if monitoring else (0, 0)
+            return os.stat_result(values)
+        return info
+
+    def package_command(self, args, **kwargs):
+        self.commands.append(args)
+        if args[0] == "dpkg-query":
+            args = [args[0], "--admindir=" + str(self.db), *args[1:]]
+        elif args[0] == "dpkg":
+            args = [args[0], "--root=" + str(self.root), *args[1:]]
+        else:
+            raise AssertionError("Not an observational package command")
+        return subprocess.run(args, **kwargs)
+
+    def validate(self, provider="digitalocean"):
+        with patch.object(pathlib.Path, "lstat", lambda p, *args, **kwargs: self.metadata(p, *args, **kwargs)):
+            inspector.validate_provider_layout(provider, self.root, self.package_command)
+
+    def test_stock_monitoring_nonroot_modes_and_root_console_are_verified(self):
+        before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in self.vendor.rglob("*") if p.is_file()}
+        self.validate()
+        self.assertEqual(2, sum(args[:2] == ["dpkg", "--verify"] for args in self.commands))
+        self.monitoring_owner = (0, 0)
+        self.validate()
+        self.assertEqual(before, {p: (p.stat().st_mtime_ns, p.read_bytes())
+                                  for p in self.vendor.rglob("*") if p.is_file()})
+
+    def test_observation_accepts_stock_layout_but_not_workloads_bindings_or_unknown_opt(self):
+        # Model trusted ancestors without changing permissions on this shared VM.
+        def metadata(p, *args, **kwargs):
+            info = self.metadata(p, *args, **kwargs)
+            if p == self.root or p in self.root.parents:
+                values = list(info)
+                values[0] &= ~0o022
+                values[4] = 0
+                return os.stat_result(values)
+            return info
+        workloads = b""
+        volumes = b""
+        def run(args, **kwargs):
+            if args[0] == "docker":
+                return subprocess.CompletedProcess(args, 0,
+                    stdout=workloads if args[1:] == ["ps", "-aq"] else volumes)
+            return self.package_command(args, **kwargs)
+        def observe(provider="digitalocean"):
+            with patch.object(pathlib.Path, "lstat", metadata), patch.object(inspector.shutil, "which", return_value="docker"):
+                return inspector.inspect_host(seed, self.root, os.getuid(), run, provider=provider)["state"]
+        self.assertEqual("empty", observe())
+        self.assertEqual("reconciliation_required", observe("vultr"))
+        workloads = b"a" * 12
+        self.assertEqual("reconciliation_required", observe())
+        workloads = b""
+        volumes = b"customer-volume"
+        self.assertEqual("reconciliation_required", observe())
+        volumes = b""
+        unknown = self.root / "opt/customer-data"
+        unknown.mkdir()
+        self.assertEqual("reconciliation_required", observe())
+        unknown.rmdir()
+        binding = self.root / "opt/minicloud.seed-operation"
+        binding.write_text("b" * 32)
+        binding.chmod(0o600)
+        self.assertEqual("reconciliation_required", observe())
+
+    def test_other_providers_without_vendor_directory_do_not_query_packages(self):
+        shutil.rmtree(self.vendor)
+        self.validate("hetzner")
+        self.assertFalse(self.commands)
+
+    def test_provider_status_ownership_and_integrity_are_required(self):
+        with self.assertRaises(AssertionError):
+            self.validate("hetzner")
+        status = self.db / "status"
+        original = status.read_text()
+        status.write_text(original.replace("install ok installed", "deinstall ok config-files", 1))
+        with self.assertRaises(AssertionError):
+            self.validate()
+        status.write_text(original)
+        inventory = self.db / "info/do-agent.list"
+        original = inventory.read_text()
+        inventory.write_text(original.replace("/opt/digitalocean/bin/do-agent\n", ""))
+        with self.assertRaises(AssertionError):
+            self.validate()
+        inventory.write_text(original)
+        binary = self.vendor / "bin/do-agent"
+        binary.write_text("changed package binary\n")
+        with self.assertRaises(AssertionError):
+            self.validate()
+
+    def test_missing_checksum_authority_or_failed_package_query_is_not_verified(self):
+        checksums = self.db / "info/do-agent.md5sums"
+        original = checksums.read_text()
+        for content in ("", original.splitlines()[0] + "\n"):
+            checksums.write_text(content)
+            with self.assertRaises(AssertionError):
+                self.validate()
+        checksums.write_text(original)
+        def unavailable(args, **kwargs):
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"unavailable")
+        with patch.object(pathlib.Path, "lstat", lambda p, *args, **kwargs: self.metadata(p, *args, **kwargs)), self.assertRaises(AssertionError):
+            inspector.validate_provider_layout("digitalocean", self.root, unavailable)
+
+    def test_unknown_files_missing_files_and_unsafe_modes_or_owners_are_refused(self):
+        extra = self.vendor / "customer-data"
+        extra.write_text("unknown")
+        with self.assertRaises(AssertionError):
+            self.validate()
+        extra.unlink()
+        binary = self.vendor / "bin/do-agent"
+        binary.chmod(0o775)
+        with self.assertRaises(AssertionError):
+            self.validate()
+        binary.chmod(0o755)
+        self.monitoring_owner = (1000, 1000)
+        with self.assertRaises(AssertionError):
+            self.validate()
+        self.monitoring_owner = (1000, 65534)
+        self.vendor.chmod(0o775)
+        with self.assertRaises(AssertionError):
+            self.validate()
+        self.vendor.chmod(0o755)
+        update = self.vendor / "do-agent/scripts/update.sh"
+        update.unlink()
+        update.symlink_to(binary)
+        with self.assertRaises(AssertionError):
+            self.validate()
+        update.unlink()
+        update.write_text("synthetic package fixture\n")
+        update.chmod(0o755)
+        binary.unlink()
+        with self.assertRaises(AssertionError):
+            self.validate()
+
+    def test_preparation_executes_the_same_validator_before_accepting_opt(self):
+        source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
+        start = source.index("if test -e /opt/containerd")
+        end = source.index("test ! -e /opt/minicloud.seed-operation.pending")
+        prefix = source[start:end]
+        # Supply only synthetic filesystem/metadata and dpkg authorities to the
+        # embedded helper; execute the actual preparation occupancy gate in bash.
+        setup = ("namespace={}\nexec(" + repr(helper) + ",namespace)\n"
+                 "namespace['validate_provider_layout'](sys.argv[1],pathlib.Path(" + repr(str(self.root)) + "),run)\n")
+        metadata_code = """
+real_lstat=pathlib.Path.lstat
+def fixture_lstat(p,*args,**kwargs):
+ info=real_lstat(p,*args,**kwargs)
+ values=list(info)
+ values[4],values[5]=(1000,65534) if p.name=='do-agent' or 'do-agent' in p.parts else (0,0)
+ return os.stat_result(values)
+pathlib.Path.lstat=fixture_lstat
+"""
+        python = ("import os,pathlib,subprocess,sys\n" + metadata_code
+                  + "def run(args,**kwargs):\n"
+                  + " option='--admindir='+"
+                  + repr(str(self.db)) + " if args[0]=='dpkg-query' else '--root='+"
+                  + repr(str(self.root)) + "\n"
+                  + " args=[args[0],option,*args[1:]]\n"
+                  + " return subprocess.run(args,**kwargs)\n" + setup)
+        quote = lambda value: "'" + value.replace("'", "'\\''") + "'"
+        # Path rewriting applies to the shell, not the already quoted Python.
+        script = "set -euo pipefail\n" + prefix.replace("/opt", str(self.root / "opt")).replace(
+            "__SEED_PROVIDER_LAYOUT__", quote(python))
+        for provider, expected in (("digitalocean", 0), ("vultr", 1)):
+            result = subprocess.run(["bash", "-s", "--", seed, "linux/amd64", "", "local-source", provider],
+                                    input=script.encode(), capture_output=True)
+            self.assertEqual(expected == 0, result.returncode == 0, result.stderr.decode())
+        binary = self.vendor / "bin/do-agent"
+        original = binary.read_text()
+        binary.write_text("changed package binary\n")
+        result = subprocess.run(["bash", "-s", "--", seed, "linux/amd64", "", "local-source", "digitalocean"],
+                                input=script.encode(), capture_output=True)
+        self.assertNotEqual(0, result.returncode)
+        binary.write_text(original)
+        status = self.db / "status"
+        original = status.read_text()
+        status.write_text(original.replace("install ok installed", "deinstall ok config-files", 1))
+        result = subprocess.run(["bash", "-s", "--", seed, "linux/amd64", "", "local-source", "digitalocean"],
+                                input=script.encode(), capture_output=True)
+        self.assertNotEqual(0, result.returncode)
+        status.write_text(original)
+        (self.root / "opt/customer-data").mkdir()
+        result = subprocess.run(["bash", "-s", "--", seed, "linux/amd64", "", "local-source", "digitalocean"],
+                                input=script.encode(), capture_output=True)
+        self.assertNotEqual(0, result.returncode)
 
 
 if __name__ == "__main__":
