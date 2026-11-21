@@ -101,6 +101,16 @@ fail closed. Only the separate successful aggregate establishes complete native
 coverage. It does not qualify provider persistence, off-host backup, gateway, account
 sign-in or browser behavior.
 
+Each phase receipt records its actual `startedAt`, each probe's `completedAt`, and
+`finishedAt` after owned cleanup. Aggregation requires timezone-aware, ordered
+timestamps and validates authorization at phase start and every probe completion.
+Only after every component passes validation and full nonempty native coverage is
+established does the aggregate record its authoritative span: the earliest component
+`startedAt` and latest component `finishedAt`, normalized to UTC ISO timestamps.
+It does not read the current clock or re-stamp component receipts. Owned synthetic
+cleanup may finish after authorization expires; this does not extend authorization
+or allow probes after expiry.
+
 Native outputs now live under the owning repository's ignored
 `.local/artifacts/native/<runId>/`, or the staged subtree's `.local/artifacts/native/`
 when no repository is present, **not `image/runs/`**. Keep root permissions; do not

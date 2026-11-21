@@ -144,6 +144,15 @@ def protected_json(path):
     return json.loads(path.read_text())
 
 
+def receipt_time(value):
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise ProbeError("BAD_RECEIPT_TIME") from None
+    check(parsed.utcoffset() is not None, "RECEIPT_TIMEZONE_REQUIRED")
+    return parsed.astimezone(dt.timezone.utc)
+
+
 def aggregate_receipts(expected, receipts):
     """Validate explicitly selected receipts; never discover runs or issue authorization."""
     check(set(expected.get("batches", {})) == set(BATCHES) and set(receipts) == set(BATCHES),
@@ -162,6 +171,7 @@ def aggregate_receipts(expected, receipts):
           expected["harnessSources"] == harness_sources(), "WRONG_AGGREGATION_SOURCE")
     seen = set()
     covered = set()
+    spans = []
     for batch, steps in BATCHES.items():
         mapping, receipt = expected["batches"][batch], receipts[batch]
         run_id = mapping.get("runId", "")
@@ -180,23 +190,24 @@ def aggregate_receipts(expected, receipts):
               receipt.get("runtimeQualifiedNative") is False, "INCOMPLETE_OR_FALSE_BATCH_CLAIM")
         auth = receipt.get("authorization", {})
         check(auth.get("runId") == run_id, "WRONG_BATCH_AUTHORIZATION")
-        validate_authorization(auth, dt.datetime.fromisoformat(receipt["startedAt"]),
-                               expected["machineIdSha256"])
+        times = [receipt_time(receipt.get("startedAt"))] + [
+            receipt_time(probe.get("completedAt")) for probe in receipt["probes"]] + [
+                receipt_time(receipt.get("finishedAt"))]
+        validate_authorization(auth, times[0], expected["machineIdSha256"])
         check(auth.get("batchId") == batch and
               all(auth.get(key) == expected[key] for key in identity_keys[2:]),
               "WRONG_BATCH_AUTHORIZATION")
-        for probe in receipt["probes"]:
-            validate_authorization(auth, dt.datetime.fromisoformat(probe["completedAt"]),
-                                   expected["machineIdSha256"])
-        times = [dt.datetime.fromisoformat(receipt["startedAt"])] + [
-            dt.datetime.fromisoformat(probe["completedAt"]) for probe in receipt["probes"]] + [
-                dt.datetime.fromisoformat(receipt["finishedAt"])]
+        for completed in times[1:-1]:
+            validate_authorization(auth, completed, expected["machineIdSha256"])
         check(all(first <= second for first, second in zip(times, times[1:])),
               "INVALID_RECEIPT_TIME_ORDER")
         covered.update(names)
-    check(covered == REQUIRED_PROBES, "INCOMPLETE_NATIVE_COVERAGE")
+        spans.append((times[0], times[-1]))
+    check(bool(covered) and covered == REQUIRED_PROBES, "INCOMPLETE_NATIVE_COVERAGE")
     return dict(schemaVersion=2, type="NativeWorkspaceAggregateQualification",
                 **{key: expected[key] for key in identity_keys},
+                startedAt=min(start for start, _ in spans).isoformat(),
+                finishedAt=max(finish for _, finish in spans).isoformat(),
                 batches=expected["batches"], requiredProbes=sorted(covered),
                 nativeCandidatePassed=True, runtimeQualifiedNative=True,
                 terminalInputObservedNative=True, terminalIdleKernelQualifiedNative=True,

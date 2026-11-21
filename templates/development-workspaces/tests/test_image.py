@@ -778,6 +778,36 @@ class NativeBatchTests(unittest.TestCase):
         self.assertEqual(set(combined["requiredProbes"]), native.REQUIRED_PROBES)
         self.assertFalse(combined["runtimeQualified"])
 
+    def test_aggregate_span_uses_validated_phase_extrema_in_utc_without_clock_or_mutation(self):
+        origin = native.dt.datetime(2026, 1, 1, tzinfo=native.dt.timezone.utc)
+        receipts = {}
+        for batch, start, finish, offset_minutes in (
+            ("workspace", 0, 180, 330),
+            ("tooling", 90, 410, -240),
+            ("recovery", 30, 120, 60),
+        ):
+            receipt = copy.deepcopy(self.receipts[batch])
+            zone = native.dt.timezone(native.dt.timedelta(minutes=offset_minutes))
+            def timestamp(seconds):
+                return (origin + native.dt.timedelta(seconds=seconds)).astimezone(zone).isoformat()
+            receipt["startedAt"] = timestamp(start)
+            receipt["finishedAt"] = timestamp(finish)
+            receipt["authorization"].update(issuedAt=timestamp(start),
+                                             expiresAt=timestamp(start + 300))
+            for number, probe in enumerate(receipt["probes"], 1):
+                probe["completedAt"] = timestamp(start + number)
+            receipts[batch] = receipt
+        original_receipts = copy.deepcopy(receipts)
+        original_expected = copy.deepcopy(self.expected)
+        with patch.object(native.dt, "datetime", wraps=native.dt.datetime) as clock:
+            clock.now.side_effect = AssertionError("aggregation must not use the current clock")
+            combined = native.aggregate_receipts(self.expected, receipts)
+            clock.now.assert_not_called()
+        self.assertEqual(combined["startedAt"], "2026-01-01T00:00:00+00:00")
+        self.assertEqual(combined["finishedAt"], "2026-01-01T00:06:50+00:00")
+        self.assertEqual(receipts, original_receipts)
+        self.assertEqual(self.expected, original_expected)
+
     def test_batch_authorization_cannot_be_reused_for_another_batch_or_legacy_run(self):
         native.validate_execution_scope({}, None)
         for batch in native.BATCHES:
@@ -816,13 +846,18 @@ class NativeBatchTests(unittest.TestCase):
             native.aggregate_receipts(expected, self.receipts)
 
     def test_aggregate_rejects_missing_duplicate_failed_probes_or_incomplete_cleanup(self):
-        for failure in ("batch", "probe", "duplicate", "failed", "evidence", "cleanup", "false-claim"):
+        for failure in ("batch", "empty-batches", "probe", "empty-probes", "duplicate",
+                        "failed", "evidence", "cleanup", "false-claim"):
             receipts = copy.deepcopy(self.receipts)
             workspace = receipts["workspace"]
             if failure == "batch":
                 del receipts["recovery"]
+            elif failure == "empty-batches":
+                receipts.clear()
             elif failure == "probe":
                 workspace["probes"].pop()
+            elif failure == "empty-probes":
+                workspace["probes"].clear()
             elif failure == "duplicate":
                 workspace["probes"].append(copy.deepcopy(workspace["probes"][0]))
             elif failure == "failed":
@@ -845,6 +880,29 @@ class NativeBatchTests(unittest.TestCase):
             workspace["probes"][-1]["completedAt"] = (
                 self.now + native.dt.timedelta(seconds=seconds)).isoformat()
             with self.subTest(seconds=seconds), self.assertRaises(native.ProbeError):
+                native.aggregate_receipts(self.expected, receipts)
+
+    def test_aggregate_rejects_naive_malformed_or_missing_time_endpoints(self):
+        for field in ("startedAt", "completedAt", "finishedAt"):
+            for value, code in (
+                ("2026-01-01T00:00:00", "RECEIPT_TIMEZONE_REQUIRED"),
+                ("not-a-timestamp", "BAD_RECEIPT_TIME"),
+                (None, "BAD_RECEIPT_TIME"),
+                (123, "BAD_RECEIPT_TIME"),
+            ):
+                receipts = copy.deepcopy(self.receipts)
+                target = (receipts["workspace"]["probes"][-1] if field == "completedAt"
+                          else receipts["workspace"])
+                target[field] = value
+                with self.subTest(field=field, value=value), \
+                        self.assertRaisesRegex(native.ProbeError, code):
+                    native.aggregate_receipts(self.expected, receipts)
+            receipts = copy.deepcopy(self.receipts)
+            target = (receipts["workspace"]["probes"][-1] if field == "completedAt"
+                      else receipts["workspace"])
+            del target[field]
+            with self.subTest(field=field, missing=True), \
+                    self.assertRaisesRegex(native.ProbeError, "BAD_RECEIPT_TIME"):
                 native.aggregate_receipts(self.expected, receipts)
 
     def test_expiration_after_one_overlong_probe_blocks_and_still_cleans_up(self):
