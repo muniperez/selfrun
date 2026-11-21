@@ -18,21 +18,19 @@ See [provider permissions and host requirements](seed.md#before-starting).
 
 ### Download a candidate
 
-Open the [CLI seed review Actions runs](https://github.com/muniventures/minicloud/actions?query=workflow%3A%22CLI+seed+review%22).
-Choose a successful run for the commit you reviewed, then download
-**minicloud-seed-linux-arm64** from its summary or Artifacts section. GitHub
-requires sign-in for artifact downloads and retains this artifact for 30 days.
-This unsigned review build is for ARM64 glibc Linux, not a published CLI or
-signed server release. Check the source revision and SHA256 in the run
-summary; a checksum alone does not establish provenance. Unzip the downloaded
-Actions artifact in a directory you own, then run:
+The [setup page](https://muniventures.github.io/minicloud/#self-host) has direct
+downloads for Windows x64, Apple silicon macOS, and glibc Linux on x64 or ARM64.
+Choose the build for the computer where you will run the CLI. Extract the
+archive and put `minicloud` (Windows: `minicloud.exe`) on your PATH.
 
 ```sh
-sha256sum --check checksums.txt
-tar -xzf minicloud-seed-linux-arm64.tar.gz
-./minicloud help seed
-./minicloud seed
+minicloud seed
 ```
+
+These are unsigned test builds. Each archive includes a `SOURCE.txt` file
+identifying the commit it was built from. You can also run the executable
+directly in the extracted directory with `./minicloud seed` on macOS or Linux,
+or `.\minicloud.exe seed` in Windows PowerShell.
 
 `help seed` reports `Embedded TEST source:` with the exact revision when
 `local` is available. The review candidate and future CLI archives built
@@ -43,17 +41,17 @@ does not select a signed **server** release.
 
 ### Publish from a clone
 
-Install Git and the .NET 10 SDK. From a clone, check out a reviewed commit
-that contains the `Seed` publish profile. A locally committed revision works
-without pushing; uncommitted changes are refused. On Linux:
+Install Git and the .NET 10 SDK. The CLI embeds the server source from the current commit. Commit any local changes you want to include before publishing.
 
 ```sh
 git clone https://github.com/muniventures/minicloud.git
 cd minicloud
-git checkout --detach <reviewed-commit-containing-guided-seed>
 dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
-.local/artifacts/seed-cli/Minicloud.Cli seed
+cd .local/artifacts/seed-cli
+./Minicloud.Cli seed
 ```
+
+In Windows PowerShell, use `.\Minicloud.Cli.exe seed` for the last command. To use the shorter `minicloud` command throughout the CLI guides, rename the published executable to `minicloud` (Windows: `minicloud.exe`) and place it on your PATH.
 
 The profile builds a standalone executable for your SDK's platform and picks
 up the checked-out Git revision automatically. It embeds only tracked files

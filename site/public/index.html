@@ -62,74 +62,22 @@
       <ol class="setup-list">
         <li id="self-host">
           <h3>Install MiniCloud on a VPS</h3>
-          <p>Run the MiniCloud CLI with OpenSSH, your own SSH private key, a funded VPS provider account, and DNS access. The current guided setup is for <strong>test installations</strong>, not production. Choose either CLI path below; neither requires Python, editing JSON, or writing a wrapper.</p>
-          <section>
-            <h4>Download or build the CLI</h4>
-            <ol class="install-list">
-              <li>
-                <p><strong>Download for ARM64 Linux.</strong> Sign in to GitHub and open a successful <a href="https://github.com/muniventures/minicloud/actions?query=workflow%3A%22CLI+seed+review%22">CLI seed review run</a> for the commit you reviewed. Download and unzip <strong>minicloud-seed-linux-arm64</strong> in a directory you own. This is an unsigned review build, not a published release. Compare the source revision and SHA-256 with the run summary before running it.</p>
-                <pre tabindex="0"><code>sha256sum --check checksums.txt
-tar -xzf minicloud-seed-linux-arm64.tar.gz
-./minicloud help seed
-./minicloud seed</code></pre>
-              </li>
-              <li>
-                <p><strong>Or publish from a clean clone.</strong> On Linux, use Git and the .NET 10 SDK. Check out a reviewed commit that contains the <code>Seed</code> profile. The profile embeds that exact commit and builds the standalone CLI for your platform.</p>
-                <pre tabindex="0"><code>git clone https://github.com/muniventures/minicloud.git
-cd minicloud
-git checkout --detach &lt;reviewed-commit&gt;
-dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
-.local/artifacts/seed-cli/Minicloud.Cli seed</code></pre>
-              </li>
-            </ol>
-            <h4>Seed, resume, and open the dashboard</h4>
-            <ol class="install-list">
-              <li>
-                <p><strong>Choose the source and review the plan.</strong> In the wizard, choose <code>local</code> to explicitly trust the executable’s embedded TEST source. Enter your provider, region, size, architecture, dashboard hostname, separate app DNS suffix, and SSH key path. Enter the provider token only at the hidden prompt. Review the source revision, account, and quote before typing <code>create</code>. Your provider bills you once the VPS is created, including while setup is paused.</p>
-              </li>
-              <li>
-                <p><strong>Verify the VPS and approve installation.</strong> Confirm the original server ID in your authenticated provider console. In that server’s console, run <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> and paste its fingerprint into the wizard. Review the pinned-host plan before typing <code>install</code>.</p>
-              </li>
-              <li>
-                <p><strong>Resume with the same command.</strong> After a pause or interruption, rerun the same executable with <code>seed</code>. Keep the protected state directory, archive, and SSH key. If a create request was interrupted, reconcile the original server with your provider; do not start a replacement.</p>
-              </li>
-              <li>
-                <p><strong>Open the dashboard.</strong> Add the two DNS records the wizard prints for the dashboard and API, then rerun <code>seed</code> to verify HTTPS. Use the wizard’s private recovery export and enter the one-time token manually at the printed HTTPS <code>/setup</code> URL. Create your first account, sign in, and keep an encrypted copy of the recovery files off the VPS.</p>
-              </li>
-            </ol>
-            <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#guided-installation">Guided seed and recovery guide</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/operator-setup.md">First operator account</a></p>
-          </section>
-          <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
+          <ol class="install-list">
+            <li>
+              <p><strong>Get the CLI.</strong> Download the test build for your computer or <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#publish-from-a-clone">build it from source</a>.</p>
+              <p><a href="./downloads/minicloud-seed-osx-arm64.tar.gz" download>macOS (Apple silicon)</a> · <a href="./downloads/minicloud-seed-win-x64.zip" download>Windows (x64)</a> · <a href="./downloads/minicloud-seed-linux-x64.tar.gz" download>Linux (x64)</a> · <a href="./downloads/minicloud-seed-linux-arm64.tar.gz" download>Linux (ARM64)</a></p>
+            </li>
+            <li>
+              <p><strong>Run the setup wizard.</strong> With the extracted CLI on your PATH, run:</p>
+              <pre tabindex="0"><code>minicloud seed</code></pre>
+              <p>The wizard asks for your provider, SSH key, and domain, shows the cost before creating the VPS, and tells you how to open your dashboard. <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#guided-installation">Full setup guide</a></p>
+            </li>
+          </ol>
         </li>
 
         <li id="cli-login">
           <h3>Sign in from your terminal</h3>
-          <p>The <code>minicloud</code> command needs to know which dashboard to use. Replace <code>cloud.example.com</code> with your dashboard hostname. If you just built MiniCloud, use the CLI you built with it. For a team server, use the CLI your team provides or install a compatible version below.</p>
-          <section>
-            <h4>Install the CLI for an existing server</h4>
-            <p>Use Linux (x64 or ARM64) or Apple Silicon macOS with Git, jq, and the .NET 10 SDK. The server advertises the CLI builds it accepts. This command selects and prints a compatible build after you enter the dashboard hostname.</p>
-            <pre tabindex="0"><code>dashboard=cloud.example.com
-revision=$(curl -fsS "https://api.$dashboard/api/instance" |
-  jq -er 'first(.cliCompatibility.sourceRevisions[]? |
-    strings | select(test("^[0-9a-f]{40}$"))) //
-    error("No compatible CLI commit listed")')
-printf '%s\n' "$revision"</code></pre>
-            <p>Install the build selected above. If the server lists no compatible build or uses private source, ask the person who runs it for the CLI.</p>
-            <pre tabindex="0"><code>(
-  set -e
-  : "${revision:?Run the previous block first}"
-  installer=$(mktemp)
-  trap 'rm -f "$installer"' EXIT
-  url=https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh
-  curl -fsSL "$url" -o "$installer"
-  MINICLOUD_INSTALL_MODE=source MINICLOUD_VERSION="$revision" \
-    MINICLOUD_INSTALL_DIR="$HOME/.local/bin" sh "$installer"
-)
-export PATH="$HOME/.local/bin:$PATH"</code></pre>
-            <p>Add <code>$HOME/.local/bin</code> to your shell’s startup <code>PATH</code> to keep using <code>minicloud</code> in new terminals.</p>
-            <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md#explicit-exact-source-mode">CLI installation and Windows instructions</a></p>
-          </section>
-          <h4>Sign in with the CLI</h4>
+          <p>Use the CLI you set up above. If you’re joining an existing server, use the <a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md">CLI version your team provides</a>. Replace <code>cloud.example.com</code> with your dashboard hostname.</p>
           <pre tabindex="0"><code>minicloud instance add work cloud.example.com
 minicloud login</code></pre>
           <p><code>work</code> is a name for this server on your computer. Complete sign-in in the browser, then return to your terminal.</p>
@@ -137,6 +85,7 @@ minicloud login</code></pre>
 
         <li id="first-deploy">
           <h3>Deploy your first app</h3>
+          <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
           <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>minicloud init</code> to select or create an app, choose the folders and plan, and write <code>minicloud.yml</code>. Your first deployment can create a billable VPS under that plan.</p>
           <pre tabindex="0"><code>minicloud init</code></pre>
           <p>Before deploying, review <code>minicloud.yml</code>. Keep the app ID that <code>init</code> wrote and check each service’s folder, Dockerfile, port, and public access. Here is an example <code>services</code> section for a public frontend and a private API:</p>
