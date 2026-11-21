@@ -1,6 +1,6 @@
 # Your first MiniCloud workspace
 
-MiniCloud gives you an **agentic cloud coding environment**: a VM for T3 and your coding tools, with a primary disk that keeps your workspace files when compute stops.
+MiniCloud gives you an **agentic cloud coding environment**. Its primary VM runs T3 and your coding tools. Your projects stay on a retained volume when compute stops.
 
 ## Before you start
 
@@ -24,12 +24,12 @@ To see an app running in a workspace, start a preview-enabled service and open *
 
 ## Use a temporary VM
 
-From an environment's overview, select **Launch temporary VM**. Choose an approved image, size and plan, then enter a repository URL, base ref and resolved commit SHA. Add a repository credential reference only if the repository needs one, authorize task-scoped pushes if needed, and acknowledge the data-loss notice before launching.
+From an environment's overview, select **Launch temporary VM**. Choose an approved image, size and plan, then enter a repository URL, base ref and resolved commit SHA. Add a repository credential reference only if the repository needs one, authorize pushes to the isolated work branch, and acknowledge the data-loss notice before launching.
 
 A temporary VM gets its own disk and a fresh checkout; it cannot see the primary VM's files or retained storage. Untracked files, Git-ignored files and unpushed work can be lost when the VM is deleted. Changes survive through the authorized Git branch after a verified push. Launching starts compute and incurs charges while the VM runs.
 
 ## Set idle behavior
 
-Open the environment's **Settings** tab and review **Idle timeout**. The effective timeout is shown there; the initial default is six hours. You can enter 1–10,080 whole minutes and select **Save idle timeout**, or choose **Keep running** to turn off automatic idle shutdown. Keep running continues compute charges until you stop the machines yourself. The primary and each temporary VM use the timeout independently.
+Open the environment's **Settings** tab and review **Idle timeout**. The dashboard shows the effective timeout. The default is six hours unless your operator configures a different duration. You can enter 1–10,080 whole minutes and select **Save idle timeout**, or choose **Keep running** to turn off automatic idle shutdown. Keep running continues compute charges until you stop the machines yourself. The primary and each temporary VM use the timeout independently.
 
 For full lifecycle and access details, see [Projects in managed development workspaces](workspace-projects.md), [T3 Connect](t3-connect.md), and the [prepared image guide](../templates/development-workspaces/README.md).
