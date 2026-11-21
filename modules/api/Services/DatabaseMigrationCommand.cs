@@ -7,8 +7,9 @@ namespace Minicloud.Api.Services;
 
 public static class DatabaseMigrationCommand
 {
-    public static MinicloudDatabaseOptions ResolveOptions(IConfiguration configuration, string environmentName) =>
-        new()
+    public static MinicloudDatabaseOptions ResolveOptions(IConfiguration configuration, string environmentName)
+    {
+        var options = new MinicloudDatabaseOptions
         {
             Provider = configuration["Database:Provider"] ?? (environmentName == "Development" ? "Sqlite" : "Postgres"),
             MinicloudConnectionString = configuration.GetConnectionString("Minicloud"),
@@ -17,6 +18,10 @@ public static class DatabaseMigrationCommand
             DatabaseUrl = configuration["DATABASE_URL"],
             PasswordFile = configuration["Database:PasswordFile"]
         };
+        if (options.Provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
+            options.FallbackConnectionString = "Data Source=minicloud-dev.db";
+        return options;
+    }
 
     public static async Task RunAsync(
         IConfiguration configuration,
@@ -31,6 +36,8 @@ public static class DatabaseMigrationCommand
         if (db.Database.IsSqlite())
         {
             await SqliteDatabaseConfigurator.ConfigureDatabaseAsync(db);
+            await SqliteDatabaseInitializer.InitializeAsync(db, cancellationToken);
+            return;
         }
 
         if (!db.Database.IsNpgsql())

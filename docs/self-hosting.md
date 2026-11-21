@@ -51,6 +51,33 @@ never be used for a hosted installation. Run the API/dashboard from source using
 the commands in the repository [README](../README.md); the production stack's
 OpenBao, Kratos and Caddy configuration is separate.
 
+### Local SQLite initialization
+
+SQLite is supported for disposable local API development and tests, not the
+hosted control plane. Set `Database:Provider` to `Sqlite` and
+`ConnectionStrings:Minicloud` to a disposable SQLite connection string. API
+startup initializes it when `Database:RunMigrationsOnStartup` is enabled
+(enabled by default in Development); the standalone
+`dotnet modules/api/bin/Release/net10.0/Minicloud.Api.dll migrate` command
+initializes it regardless of that startup switch. Without a configured
+connection string, both SQLite paths use `Data Source=minicloud-dev.db`.
+
+Both paths create the current schema and seed rows atomically only in an empty
+database. Repeating initialization, or opening a database created by
+`EnsureCreated` with the same current model, preserves existing rows and does
+not rerun seeds. Reuse requires the stored table/index DDL to match the current
+EF-created SQLite schema exactly. Additional objects, changed DDL, or Minicloud
+migration history are rejected explicitly without upgrading or rebuilding data.
+Historical SQLite upgrades are not supported: the EF migration history and
+snapshot target PostgreSQL and contain PostgreSQL-specific transformations.
+Do not bypass this refusal or delete a populated database to force an upgrade.
+Use a separate empty disposable database for a new local development revision;
+retaining historical SQLite data across schema changes needs a separately
+reviewed SQLite upgrade path.
+
+PostgreSQL remains the hosted database and continues to use its existing
+migrations, drift checks and standalone migration state safeguards.
+
 Server containers expose only the dashboard/API behind Caddy on TCP 80/443.
 PostgreSQL, OpenBao and Kratos administration stay on the private Compose
 network. Database credentials, encryption keys, OpenBao AppRole material and
