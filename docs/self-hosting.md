@@ -51,7 +51,7 @@ never be used for a hosted installation. Run the API/dashboard from source using
 the commands in the repository [README](../README.md); the production stack's
 OpenBao, Kratos and Caddy configuration is separate.
 
-### Local SQLite initialization
+### Local SQLite initialization and upgrades
 
 SQLite is supported for disposable local API development and tests, not the
 hosted control plane. Set `Database:Provider` to `Sqlite` and
@@ -62,18 +62,40 @@ startup initializes it when `Database:RunMigrationsOnStartup` is enabled
 initializes it regardless of that startup switch. Without a configured
 connection string, both SQLite paths use `Data Source=minicloud-dev.db`.
 
-Both paths create the current schema and seed rows atomically only in an empty
+Both paths create the current schema and seed rows atomically in an empty
 database. Repeating initialization, or opening a database created by
 `EnsureCreated` with the same current model, preserves existing rows and does
-not rerun seeds. Reuse requires the stored table/index DDL to match the current
-EF-created SQLite schema exactly. Additional objects, changed DDL, or Minicloud
-migration history are rejected explicitly without upgrading or rebuilding data.
-Historical SQLite upgrades are not supported: the EF migration history and
-snapshot target PostgreSQL and contain PostgreSQL-specific transformations.
-Do not bypass this refusal or delete a populated database to force an upgrade.
-Use a separate empty disposable database for a new local development revision;
-retaining historical SQLite data across schema changes needs a separately
-reviewed SQLite upgrade path.
+not rerun seeds.
+
+The supported populated upgrade prerequisite is the **complete SQLite
+`EnsureCreated` schema from source revision
+`feb807325b371d813ffb2613135a16da2426f220`**, before T30 identity/session changes.
+That revision's `modules/tests/Minicloud.Tests/SqliteTestHarness.cs` uses the
+actual SQLite runtime model with EF Core 10.0.5. The regression fixture
+`modules/tests/Minicloud.Tests/Fixtures/Sqlite-feb8073.sql` freezes its full
+provider-generated schema. This is a verified source prerequisite, not a
+published SQLite server release or a hand-created subset of tables.
+
+The upgrade recognizes that exact table/index schema and runs explicit
+conversions in a single writer transaction. It preserves internal user and
+organization IDs, memberships, API/runtime credential hashes, applications,
+environments, secrets and deployment children. It adds current tables and
+seeds only newly introduced tables, initializes SSH selection as `none`, and
+backfills deployment numbers by organization and UTC day with timestamp/ID
+ordering. As required by T30, it retires `firebase_uid`, leaves new Kratos
+bindings null, and does not recreate owners or import passwords. Existing
+operators require the explicit verified [`bind-operator`](bootstrap.md)
+procedure; schema migration alone does not admit browser login.
+
+Optional `__EFMigrationsHistory` is retained unchanged when its table schema
+matches EF's SQLite history table and its entries form a known contiguous
+migration prefix. History is not used as proof of the source schema and
+PostgreSQL migration SQL is never replayed on SQLite. Unknown schemas, extra
+objects, unknown/incomplete history, invalid relationships or failed
+conversions are rejected without committing schema or row changes. Both
+entry points support an idempotent retry after successful upgrade.
+Other historical schemas need separately verified conversions; do not delete
+populated databases or falsify their migration history to bypass rejection.
 
 PostgreSQL remains the hosted database and continues to use its existing
 migrations, drift checks and standalone migration state safeguards.
