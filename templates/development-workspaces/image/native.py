@@ -1520,10 +1520,10 @@ class Native:
             check(command(["systemctl", "show", T3_UNIT, "-p", prop, "--value"]) == expected,
                   "UNQUALIFIED_T3_RESTART_POLICY")
 
-    def watcher_state(self, *, active=False, stopped=False):
+    def watcher_state(self, *, active=False, stopped=False, dependency_exhausted=False):
         properties = ("ActiveState", "SubState", "Result", "Job", "MainPID", "ControlPID",
                       "ControlGroup", "PartOf", "Restart", "RestartUSec", "StartLimitBurst",
-                      "StartLimitIntervalUSec")
+                      "StartLimitIntervalUSec", "NRestarts", "ExecMainCode", "ExecMainStatus")
         state = dict(line.split("=", 1) for line in command(
             ["systemctl", "show", WATCH_UNIT, "-p", ",".join(properties)]).splitlines()
                      if "=" in line)
@@ -1539,12 +1539,22 @@ class Native:
             "watcherResult": state["Result"] if state["Result"] in (
                 "success", "signal", "exit-code", "start-limit-hit", "timeout", "oom-kill") else "unknown",
             "jobPresent": bool(state["Job"]), "controlPresent": state["ControlPID"] != "0",
+            "mainPresent": state["MainPID"] != "0",
+            "automaticRestartsAbsent": state["NRestarts"] == "0",
+            "cleanExitObserved": state["ExecMainCode"] == str(os.CLD_EXITED) and
+                                 state["ExecMainStatus"] == "0",
         }
-        if state["Result"] != "success" or state["Job"] != "" or state["ControlPID"] != "0":
+        exhausted = (dependency_exhausted and not active and
+                     state["ActiveState"] == state["SubState"] == "failed" and
+                     state["Result"] == "start-limit-hit" and
+                     evidence["automaticRestartsAbsent"] and evidence["cleanExitObserved"])
+        if ((state["Result"] != "success" and not exhausted) or
+                state["Job"] != "" or state["ControlPID"] != "0"):
             raise ProbeError("WATCHER_FAILED_OR_PENDING_PRESERVE_EVIDENCE", evidence)
         running = state["ActiveState"] == "active" and state["SubState"] == "running"
         dead = state["ActiveState"] == "inactive" and state["SubState"] == "dead"
-        if not ((running or dead) and (not active or running) and (not stopped or dead)):
+        if not ((running or dead or exhausted) and (not active or running) and
+                (not stopped or dead or exhausted)):
             raise ProbeError("WATCHER_REQUIRED_STATE_NOT_OBSERVED", evidence)
         cgroup = "/system.slice/" + WATCH_UNIT
         if running:
@@ -1560,22 +1570,39 @@ class Native:
             check(not events.exists() or "populated 0" in events.read_text().splitlines(),
                   "WATCHER_NOT_DRAINED")
         return {"active": running, "mainPid": int(state["MainPID"]),
-                "policyMatched": True, "failureAbsent": True}
+                "policyMatched": True, "failureAbsent": not exhausted,
+                "automaticRestartsAbsent": evidence["automaticRestartsAbsent"],
+                **({"dependencyBudgetExhaustion": evidence} if exhausted else {})}
 
-    def t3_case_start(self, adapter):
+    def t3_case_start(self, adapter, *, retry_budget=None):
         self.fresh_authorization()
         check(self.owns_runtime and self.config["vmId"] == self.run_id,
               "T3_CASE_REQUIRES_SYNTHETIC_RUNTIME")
         self.check_t3_freezer(False)
         self.qualify_t3_restart_policy()
-        # Inspect before stopping: stop/reset-failed must not hide a genuine watcher failure.
-        self.watcher_state()
+        # Only the uninterrupted, verified dependency burst permits a failed watcher.
+        if retry_budget is not None:
+            check(self.t3_unit() == retry_budget and
+                  retry_budget["ActiveState"] == retry_budget["SubState"] == "failed" and
+                  retry_budget["Result"] == "signal" and retry_budget["NRestarts"] == 5 and
+                  retry_budget["Job"] == "" and
+                  retry_budget["MainPID"] == retry_budget["ControlPID"] == 0,
+                  "T3_RETRY_EXHAUSTION_CHANGED_BEFORE_RECOVERY")
+        watcher_before = self.watcher_state(dependency_exhausted=True) if retry_budget is not None \
+            else self.watcher_state()
+        if retry_budget is not None and not watcher_before["automaticRestartsAbsent"]:
+            raise ProbeError("WATCHER_INDEPENDENT_RESTART_PRESERVE_EVIDENCE", watcher_before)
         try:
             adapter.stop_services()
         finally:
             adapter.thaw()
         self.t3_stays_stopped(after_crash=True)
-        self.watcher_state(stopped=True)
+        if retry_budget is not None:
+            watcher_after = self.watcher_state(stopped=True, dependency_exhausted=True)
+            if not watcher_after["automaticRestartsAbsent"]:
+                raise ProbeError("WATCHER_INDEPENDENT_RESTART_PRESERVE_EVIDENCE", watcher_after)
+        else:
+            self.watcher_state(stopped=True)
         self.check_t3_freezer(False)
         self.fresh_authorization()
         # Only between completed cases: the next explicit start consumes slot one.
@@ -1586,7 +1613,9 @@ class Native:
         self.check_t3_pid(before["MainPID"])
         self.check_t3_freezer(False)
         watcher = self.watcher_state(active=True)
-        return before | {"idlePrecondition": self.t3_idle(before), "scratchWatcher": watcher}
+        return before | {"idlePrecondition": self.t3_idle(before), "scratchWatcher": watcher,
+                         **({"scratchWatcherBeforeExplicitRecovery": watcher_before}
+                            if retry_budget is not None else {})}
 
     def t3_retry_budget(self, adapter):
         budget_started = time.monotonic()
@@ -1597,6 +1626,9 @@ class Native:
                 ready = self.t3_ready()
                 self.t3_idle(ready)
                 starts[-1]["scratchWatcher"] = self.watcher_state(active=True)
+            if not starts[-1]["scratchWatcher"]["automaticRestartsAbsent"]:
+                raise ProbeError("WATCHER_INDEPENDENT_RESTART_PRESERVE_EVIDENCE",
+                                 starts[-1]["scratchWatcher"])
             pid = self.signal_t3_main(signal.SIGKILL)
             delayed = self.t3_restart_delay("signal")
             check(delayed["NRestarts"] == kills - 1, "T3_RETRY_COUNTER_UNEXPECTED")
@@ -1619,7 +1651,11 @@ class Native:
                         retryBudgetExhaustedInSeconds=round(budget_seconds, 2),
                         retryBudgetSuccessfulStarts=starts, exhaustedFailureStayedVisible=True)
         try:
-            self.t3_case_start(adapter)
+            evidence["scratchWatcherBeforeExplicitRecovery"] = self.watcher_state(
+                dependency_exhausted=True)
+            recovered = self.t3_case_start(adapter, retry_budget=exhausted)
+            evidence["scratchWatcherBeforeExplicitRecovery"] = recovered[
+                "scratchWatcherBeforeExplicitRecovery"]
             evidence["explicitRecoveryScratchWatcher"] = self.t3_recovered(pid)
         except ProbeError as error:
             raise ProbeError(str(error), {"retryBudget": evidence,

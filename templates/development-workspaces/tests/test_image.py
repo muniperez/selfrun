@@ -354,14 +354,22 @@ class ImageTests(unittest.TestCase):
                 probe = native.Native.__new__(native.Native)
                 adapter = Mock()
                 events = []
-                start = dict(ActiveState="active", SubState="running", Job="", MainPID=100, NRestarts=0)
+                healthy_watcher = {"active": True, "mainPid": 456, "automaticRestartsAbsent": True}
+                exhausted_watcher = {"active": False, "failureAbsent": False,
+                                     "automaticRestartsAbsent": True,
+                                     "dependencyBudgetExhaustion": {"watcherResult": "start-limit-hit"}}
+                start = dict(ActiveState="active", SubState="running", Job="", MainPID=100,
+                             NRestarts=0, scratchWatcher=healthy_watcher)
                 starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(5)]
                 failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
                               ControlPID=0, NRestarts=5, Result="signal")
                 with patch.object(probe, "t3_case_start",
-                                  side_effect=lambda adapter: events.append(("boundary", {})) or start) as setup, \
+                                  side_effect=lambda adapter, **kw:
+                                  events.append(("boundary", kw)) or start |
+                                  ({"scratchWatcherBeforeExplicitRecovery": exhausted_watcher}
+                                   if kw else {})) as setup, \
                         patch.object(probe, "watcher_state",
-                                     return_value={"active": True, "mainPid": 456}) as watcher, \
+                                     side_effect=[healthy_watcher] * 4 + [exhausted_watcher]) as watcher, \
                         patch.object(probe, "t3_ready", side_effect=starts[1:]) as ready, \
                         patch.object(probe, "t3_idle") as idle, \
                         patch.object(probe, "signal_t3_main", side_effect=range(100, 105)) as kill, \
@@ -386,14 +394,19 @@ class ImageTests(unittest.TestCase):
                         result = probe.t3_retry_budget(adapter)
                         self.assertEqual(result["retryBudgetSuccessfulStarts"], starts)
                         self.assertEqual([state["scratchWatcher"] for state in starts[1:]],
-                                         [watcher.return_value] * 4)
+                                         [healthy_watcher] * 4)
+                        self.assertEqual(result["scratchWatcherBeforeExplicitRecovery"], exhausted_watcher)
+                        self.assertEqual(watcher.call_args_list,
+                                         [unittest.mock.call(active=True)] * 4 +
+                                         [unittest.mock.call(dependency_exhausted=True)])
                         self.assertEqual(kill.call_count, 5)
                         self.assertEqual([call.args[0] for call in idle.call_args_list], starts[1:])
                         self.assertEqual(ready.call_count, 4)
                         self.assertEqual(events, [("boundary", {}), ("exhausted", {"failed": True}),
-                                                  ("boundary", {})])
+                                                  ("boundary", {"retry_budget": failed})])
                         self.assertEqual(setup.call_args_list,
-                                         [unittest.mock.call(adapter)] * 2)
+                                         [unittest.mock.call(adapter),
+                                          unittest.mock.call(adapter, retry_budget=failed)])
                     if early:
                         setup.assert_called_once_with(adapter)
 
@@ -436,7 +449,8 @@ class ImageTests(unittest.TestCase):
     def test_retry_budget_does_not_crash_busy_automatic_restart_or_reset_it(self):
         probe, _, _ = self.recovery_probe([{"state": "BusyOrUnknown"}])
         before = probe.t3_unit.return_value
-        start = before | {"MainPID": 100}
+        start = before | {"MainPID": 100,
+                          "scratchWatcher": {"active": True, "automaticRestartsAbsent": True}}
         adapter = Mock()
         with patch.object(probe, "t3_case_start", return_value=start), \
                 patch.object(probe, "signal_t3_main", return_value=100) as crash, \
@@ -994,7 +1008,8 @@ class NativeBatchTests(unittest.TestCase):
         properties = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
                           MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
                           Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
-                          StartLimitIntervalUSec="5min")
+                          StartLimitIntervalUSec="5min", NRestarts="0",
+                          ExecMainCode="1", ExecMainStatus="0")
         with patch.object(probe, "fresh_authorization"), \
                 patch.object(probe, "check_t3_freezer"), \
                 patch.object(probe, "qualify_t3_restart_policy"), \
@@ -1010,6 +1025,7 @@ class NativeBatchTests(unittest.TestCase):
         probe = native.Native.__new__(native.Native)
         adapter = Mock()
         start = dict(ActiveState="active", SubState="running", Job="", MainPID=100, NRestarts=0)
+        start["scratchWatcher"] = {"active": True, "automaticRestartsAbsent": True}
         starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(1, 5)]
         failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
                       ControlPID=0, NRestarts=5, Result="signal")
@@ -1018,7 +1034,8 @@ class NativeBatchTests(unittest.TestCase):
         with patch.object(probe, "t3_case_start", side_effect=[start, failure]), \
                 patch.object(probe, "t3_ready", side_effect=starts), \
                 patch.object(probe, "t3_idle"), \
-                patch.object(probe, "watcher_state"), \
+                patch.object(probe, "watcher_state",
+                             return_value={"active": True, "automaticRestartsAbsent": True}), \
                 patch.object(probe, "signal_t3_main", side_effect=range(100, 105)), \
                 patch.object(probe, "t3_restart_delay",
                              side_effect=[{"NRestarts": n} for n in range(5)]), \
@@ -1034,7 +1051,146 @@ class NativeBatchTests(unittest.TestCase):
         command.assert_not_called()
         recovered.assert_not_called()
         self.assertTrue(caught.exception.evidence["retryBudget"]["exhaustedFailureStayedVisible"])
+        self.assertTrue(caught.exception.evidence["retryBudget"][
+            "scratchWatcherBeforeExplicitRecovery"]["automaticRestartsAbsent"])
         self.assertEqual(caught.exception.evidence["recoveryFailure"]["watcherResult"], "start-limit-hit")
+
+    def test_explicit_dependency_budget_recovery_requires_clean_drained_watcher_without_own_retries(self):
+        exhausted = dict(ActiveState="failed", SubState="failed", Result="signal", Job="",
+                         MainPID=0, ControlPID=0, NRestarts=5)
+        watcher = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
+                       MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
+                       Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
+                       StartLimitIntervalUSec="5min", NRestarts="0",
+                       ExecMainCode="1", ExecMainStatus="0")
+        changes = ({}, {"Result": "exit-code"}, {"Result": "signal"}, {"Result": "timeout"},
+                   {"Result": "oom-kill"}, {"Job": "42"}, {"ControlPID": "123"},
+                   {"MainPID": "123"}, {"ControlGroup": "/unowned"}, {"NRestarts": "1"},
+                   {"NRestarts": "invalid"}, {"ExecMainCode": "2"}, {"ExecMainStatus": "1"},
+                   {"PartOf": ""}, {"StartLimitBurst": "10"})
+        for change in changes:
+            with self.subTest(change=change):
+                probe = native.Native.__new__(native.Native)
+                probe.run_id = "synthetic"
+                probe.config = {"vmId": probe.run_id}
+                probe.owns_runtime = True
+                events = []
+                adapter = Mock()
+                adapter.stop_services.side_effect = lambda: events.append("stop")
+                adapter.thaw.side_effect = lambda: events.append("thaw")
+                adapter.start_services.side_effect = lambda: events.append("start")
+                reset = False
+                def command(argv):
+                    nonlocal reset
+                    if argv[1] == "reset-failed":
+                        self.assertEqual(argv, ["systemctl", "reset-failed",
+                                                native.T3_UNIT, native.WATCH_UNIT])
+                        events.append("reset")
+                        reset = True
+                        return ""
+                    self.assertEqual(argv[1:3], ["show", native.WATCH_UNIT])
+                    events.append("watcher")
+                    state = watcher | change
+                    if reset:
+                        state = watcher | dict(ActiveState="active", SubState="running",
+                                               Result="success", MainPID="456",
+                                               ControlGroup="/system.slice/" + native.WATCH_UNIT)
+                    return "\n".join(f"{key}={value}" for key, value in state.items())
+                proc = Mock()
+                proc.exists.return_value = False
+                proc.stat.return_value.st_uid = 0
+                proc.joinpath.return_value.read_text.return_value = "0::/system.slice/" + native.WATCH_UNIT
+                with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "check_t3_freezer"), \
+                        patch.object(probe, "qualify_t3_restart_policy"), \
+                        patch.object(probe, "check_t3_pid"), \
+                        patch.object(probe, "t3_unit", return_value=exhausted), \
+                        patch.object(probe, "t3_stays_stopped",
+                                     side_effect=lambda **kw: events.append("drained")), \
+                        patch.object(probe, "t3_ready", return_value={"MainPID": 123, "NRestarts": 0}), \
+                        patch.object(probe, "t3_idle", return_value={"idleObserved": True}), \
+                        patch.object(native, "command", side_effect=command), \
+                        patch.object(native, "Path", return_value=proc):
+                    if change:
+                        with self.assertRaises(native.ProbeError):
+                            probe.t3_case_start(adapter, retry_budget=exhausted)
+                        self.assertEqual(events, ["watcher"])
+                        adapter.stop_services.assert_not_called()
+                    else:
+                        result = probe.t3_case_start(adapter, retry_budget=exhausted)
+                        self.assertEqual(events, ["watcher", "stop", "thaw", "drained",
+                                                  "watcher", "reset", "start", "watcher"])
+                        prior = result["scratchWatcherBeforeExplicitRecovery"]
+                        self.assertFalse(prior["failureAbsent"])
+                        self.assertEqual(prior["dependencyBudgetExhaustion"]["watcherResult"],
+                                         "start-limit-hit")
+                        self.assertTrue(prior["dependencyBudgetExhaustion"]["cleanExitObserved"])
+                        self.assertTrue(result["scratchWatcher"]["active"])
+                        self.assertTrue(result["scratchWatcher"]["failureAbsent"])
+                    self.assertEqual(reset, not bool(change))
+
+    def test_dependency_budget_recovery_rechecks_t3_and_watcher_before_reset(self):
+        probe = native.Native.__new__(native.Native)
+        probe.run_id = "synthetic"
+        probe.config = {"vmId": probe.run_id}
+        probe.owns_runtime = True
+        exhausted = dict(ActiveState="failed", SubState="failed", Result="signal", Job="",
+                         MainPID=0, ControlPID=0, NRestarts=5)
+        for fault in ("t3-changed", "watcher-retried", "watcher-after-stop", "watcher-populated"):
+            with self.subTest(fault=fault):
+                adapter = Mock()
+                good = {"automaticRestartsAbsent": True}
+                with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "check_t3_freezer"), \
+                        patch.object(probe, "qualify_t3_restart_policy"), \
+                        patch.object(probe, "t3_unit", return_value=exhausted |
+                                     ({"Job": "42"} if fault == "t3-changed" else {})), \
+                        patch.object(probe, "watcher_state", side_effect=[
+                            native.ProbeError("WATCHER_NOT_DRAINED") if fault == "watcher-populated" else
+                            {"automaticRestartsAbsent": False} if fault == "watcher-retried" else good,
+                            native.ProbeError("WATCHER_FAILED_OR_PENDING_PRESERVE_EVIDENCE")]), \
+                        patch.object(probe, "t3_stays_stopped"), \
+                        patch.object(native, "command") as command:
+                    with self.assertRaises(native.ProbeError):
+                        probe.t3_case_start(adapter, retry_budget=exhausted)
+                    command.assert_not_called()
+                    adapter.start_services.assert_not_called()
+                    self.assertEqual(adapter.stop_services.call_count,
+                                     int(fault == "watcher-after-stop"))
+
+    def test_dependency_exhausted_watcher_requires_empty_cgroup(self):
+        probe = native.Native.__new__(native.Native)
+        state = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
+                     MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
+                     Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
+                     StartLimitIntervalUSec="5min", NRestarts="0",
+                     ExecMainCode="1", ExecMainStatus="0")
+        for contents in ("populated 1\n", "unknown\n", "populated 0\n"):
+            with self.subTest(contents=contents), \
+                    patch.object(native, "command", return_value="\n".join(
+                        f"{key}={value}" for key, value in state.items())), \
+                    patch.object(native.Path, "exists", return_value=True), \
+                    patch.object(native.Path, "read_text", return_value=contents):
+                if contents == "populated 0\n":
+                    self.assertFalse(probe.watcher_state(dependency_exhausted=True)["failureAbsent"])
+                else:
+                    with self.assertRaisesRegex(native.ProbeError, "WATCHER_NOT_DRAINED"):
+                        probe.watcher_state(dependency_exhausted=True)
+
+    def test_retry_budget_rejects_independent_watcher_restart_before_next_crash(self):
+        probe = native.Native.__new__(native.Native)
+        adapter = Mock()
+        watcher = {"active": True, "automaticRestartsAbsent": False}
+        with patch.object(probe, "t3_case_start",
+                          return_value={"scratchWatcher": watcher}) as setup, \
+                patch.object(probe, "signal_t3_main") as kill, \
+                patch.object(native, "command") as command:
+            with self.assertRaisesRegex(native.ProbeError, "WATCHER_INDEPENDENT_RESTART") as caught:
+                probe.t3_retry_budget(adapter)
+        setup.assert_called_once_with(adapter)
+        kill.assert_not_called()
+        command.assert_not_called()
+        self.assertEqual(caught.exception.evidence, watcher)
 
     def test_receipt_read_permissions_and_symlink_rejection(self):
         path = Mock()
@@ -1067,7 +1223,8 @@ class NativeBatchTests(unittest.TestCase):
         good = dict(ActiveState="inactive", SubState="dead", Result="success", Job="",
                     MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
                     Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
-                    StartLimitIntervalUSec="5min")
+                    StartLimitIntervalUSec="5min", NRestarts="0",
+                    ExecMainCode="1", ExecMainStatus="0")
         for change in ({}, {"MainPID": "123"}, {"Job": "42"}, {"PartOf": ""},
                        {"StartLimitBurst": "10"}, {"Result": "signal"}):
             state = good | change
