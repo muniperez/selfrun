@@ -32,6 +32,92 @@ public sealed class SeedProviderTests
         Assert.Equal("GET", Assert.Single(fixture.Requests).Method);
     }
 
+    [Fact]
+    public async Task DigitalOcean_team_binding_survives_same_team_user_and_credential_rotation()
+    {
+        var fixture = new Fixture("digitalocean");
+        using var provider = fixture.CreateProvider();
+        var quote = await provider.QuoteAsync(Selection("digitalocean"), Operation, default);
+        Assert.Equal("DigitalOcean team synthetic-team", quote.Account);
+        var config = new SeedPortableConfig
+        {
+            SchemaVersion = 1, SeedId = Operation, Provider = "digitalocean", ProviderAccount = quote.Account,
+            Region = "region", Size = "size", Domain = "cloud.example.com", AppDomain = "apps.example.com",
+            ServerVersion = "server-v1.2.3", InitialCreationIntent = SeedPortableConfig.CreationIntent,
+            ProviderCredential = Credential
+        };
+        var state = config.State();
+        state.Plan = state.Plan with { Quote = quote with { CredentialScope = "authorized-account-access" } };
+        var approval = SeedPortable.Approval(config, state, "new_seed", "public-key", true);
+        fixture.Bodies["account"] = new { account = new { uuid = "different-user", team = new { uuid = "synthetic-team", name = "renamed-team" },
+            status = "active", email_verified = true, droplet_limit = 5 } };
+        fixture.ExpectedCredential = "synthetic-rotated-credential";
+        using var rotated = fixture.CreateProvider();
+        Assert.Equal(quote.Account, await rotated.GetAccountIdentityAsync(default));
+        var rotatedQuote = await rotated.QuoteAsync(Selection("digitalocean"), Operation, default);
+        state.Plan = state.Plan with { Quote = rotatedQuote with { CredentialScope = "authorized-account-access" } };
+        Assert.Equal(approval, SeedPortable.Approval(config with { ProviderCredential = fixture.ExpectedCredential },
+            state, "new_seed", "public-key", true));
+        fixture.Bodies["account"] = new { account = new { uuid = "different-user", team = new { uuid = "different-team" } } };
+        Assert.NotEqual(quote.Account, await rotated.GetAccountIdentityAsync(default));
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    [Fact]
+    public async Task DigitalOcean_without_team_preserves_the_individual_account_contract()
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["account"] = new { account = new { uuid = "synthetic-user", status = "active", email_verified = true, droplet_limit = 5 } };
+        using var provider = fixture.CreateProvider();
+        Assert.Equal("DigitalOcean account synthetic-user", await provider.GetAccountIdentityAsync(default));
+        Assert.Equal("DigitalOcean account synthetic-user", (await provider.QuoteAsync(Selection("digitalocean"), Operation, default)).Account);
+    }
+
+    [Fact]
+    public async Task DigitalOcean_accepts_opaque_API_identifiers_without_requiring_a_GUID()
+    {
+        var fixture = new Fixture("digitalocean");
+        var team = new string('t', 40);
+        fixture.Bodies["account"] = new { account = new { uuid = new string('u', 40), team = new { uuid = team } } };
+        using var provider = fixture.CreateProvider();
+        Assert.Equal("DigitalOcean team " + team, await provider.GetAccountIdentityAsync(default));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{\"name\":\"team-without-id\"}")]
+    [InlineData("{\"uuid\":null}")]
+    [InlineData("{\"uuid\":\"\"}")]
+    [InlineData("{\"uuid\":\" \"}")]
+    [InlineData("{\"uuid\":42}")]
+    [InlineData("\"invalid-team\"")]
+    public async Task DigitalOcean_supplied_team_requires_a_valid_identifier_without_user_fallback(string team)
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["account"] = JsonSerializer.Deserialize<JsonElement>(
+            "{\"account\":{\"uuid\":\"synthetic-user\",\"status\":\"active\",\"email_verified\":true,\"droplet_limit\":5,\"team\":" + team + "}}");
+        using var provider = fixture.CreateProvider();
+        var error = await Assert.ThrowsAsync<CliCommandException>(() => provider.GetAccountIdentityAsync(default));
+        Assert.Contains("team identity is missing or invalid", error.Message);
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.QuoteAsync(Selection("digitalocean"), Operation, default));
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"uuid\":null}")]
+    [InlineData("{\"uuid\":\"\"}")]
+    [InlineData("{\"uuid\":42}")]
+    public async Task DigitalOcean_individual_only_scope_requires_a_valid_user_identifier(string account)
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["account"] = JsonSerializer.Deserialize<JsonElement>("{\"account\":" + account + "}");
+        using var provider = fixture.CreateProvider();
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.GetAccountIdentityAsync(default));
+        Assert.Equal("GET", Assert.Single(fixture.Requests).Method);
+    }
+
     [Theory]
     [InlineData("hetzner", 2)]
     [InlineData("digitalocean", 1)]
@@ -144,7 +230,8 @@ public sealed class SeedProviderTests
         public readonly Dictionary<string, object> Bodies = [];
         public readonly List<(string Method, string Host, string Body)> Requests = [];
         public bool Deny;
-        internal SeedProvider CreateProvider() => new(provider, Credential, this);
+        public string ExpectedCredential = Credential;
+        internal SeedProvider CreateProvider() => new(provider, ExpectedCredential, this);
         public Fixture(string provider)
         {
             this.provider = provider;
@@ -162,7 +249,8 @@ public sealed class SeedProviderTests
                     price_hourly = new { net = "0.02" }, included_traffic = 1000000000, price_per_tb_traffic = new { net = "1" } } } } },
                 primary_ips = new[] { new { type = "ipv4", prices = new[] { new { location = "region", price_monthly = new { net = "1" }, price_hourly = new { net = "0.001" } } } } } } };
             Bodies["account"] = provider == "digitalocean"
-                ? (object)new { account = new { uuid = "synthetic-account", status = "active", email_verified = true, droplet_limit = 5 } }
+                ? (object)new { account = new { uuid = "synthetic-user", team = new { uuid = "synthetic-team", name = "Synthetic Team" },
+                    status = "active", email_verified = true, droplet_limit = 5 } }
                 : new { account = new { email = "synthetic@example.invalid", acls = new[] { "provision" } } };
             Bodies["regions"] = provider == "digitalocean"
                 ? (object)new { regions = new[] { new { slug = "region", available = true } } }
@@ -193,7 +281,7 @@ public sealed class SeedProviderTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            Assert.Equal(Credential, request.Headers.Authorization?.Parameter);
+            Assert.Equal(ExpectedCredential, request.Headers.Authorization?.Parameter);
             Requests.Add((request.Method.Method, request.RequestUri!.Host, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct)));
             if (Deny) return new(HttpStatusCode.Forbidden) { Content = new StringContent(Credential) };
             var path = string.Join("/", request.RequestUri.AbsolutePath.Split('/').Skip(2));

@@ -16,6 +16,7 @@ public sealed partial class CliApplication
         SeedPortableReport? report = null;
         SeedState? state = null;
         string? reportPath = null, scratch = null, credential = null, embeddedCredential = null;
+        var checkingDigitalOceanAccount = false;
         try
         {
             var action = args.FirstOrDefault();
@@ -106,10 +107,15 @@ public sealed partial class CliApplication
             using var provider = string.IsNullOrEmpty(credential) ? null : new SeedProvider(config.Selection.Provider, credential);
             if (provider is not null)
             {
+                checkingDigitalOceanAccount = config.Provider == "digitalocean";
                 var account = await provider.GetAccountIdentityAsync(ct);
-                SeedGuard.Require(config.Selection.Provider == "hetzner"
-                    ? config.ProviderAccount.StartsWith("hetzner-project:", StringComparison.Ordinal)
-                    : account == config.ProviderAccount, "Authorized provider account differs from explicit providerAccount scope.");
+                checkingDigitalOceanAccount = false;
+                if (SeedPortable.ProviderAccountMismatch(config, account) is { } mismatch)
+                {
+                    report.Reasons = [mismatch];
+                    report.NextActions = ["Read docs/stateless-seed.md account-scope migration guidance. Preserve the original seed, target and host binding; no provider or host mutation was attempted."];
+                    return SeedPortable.ExitCode(report);
+                }
                 var found = await provider.FindServerAsync(state.Id, ct);
                 if (found is not null)
                 {
@@ -180,7 +186,11 @@ public sealed partial class CliApplication
                 ? await provider!.QuoteAsync(config.Selection, state.Id, ct)
                 : state.Plan.Quote;
             if (state.Server is null)
+            {
                 SeedGuard.Require(quote.Architecture == config.Architecture, "Approved architecture differs from provider image.");
+                var mismatch = SeedPortable.ProviderAccountMismatch(config, quote.Account);
+                SeedGuard.Require(mismatch is null, mismatch ?? "");
+            }
             quote = quote with { Account = config.ProviderAccount, CredentialScope = "authorized-account-access" };
             state.Plan = new(config.Selection, quote, release.Digest, release.Source)
             {
@@ -225,8 +235,12 @@ public sealed partial class CliApplication
             {
                 report.Result = ex is OperationCanceledException ? "unknown" : "failed";
                 report.Classification = "reconciliation_required";
-                report.Reasons = ["Operation did not establish a safe verified result. Secret-bearing diagnostics suppressed; no automatic create retry or rollback."];
-                report.NextActions = [state?.KeyCreateStarted == true || state?.ServerCreateStarted == true
+                report.Reasons = [checkingDigitalOceanAccount
+                    ? "DigitalOcean authorized account/team identity could not be established. Missing or invalid supplied team data never falls back to individual scope. No inventory or host mutation was attempted."
+                    : "Operation did not establish a safe verified result. Secret-bearing diagnostics suppressed; no automatic create retry or rollback."];
+                report.NextActions = [checkingDigitalOceanAccount
+                    ? "Independently reconcile the selected account/team and historical approval using docs/stateless-seed.md. Preserve the original config and host binding; no automatic migration."
+                    : state?.KeyCreateStarted == true || state?.ServerCreateStarted == true
                     ? "Creation may be uncertain even if inventory is empty. Retain the same seedId; reconcile provider console/support before any new initial-create assertion."
                     : "Check protected inputs, host trust, identity and metadata. Resolve incomplete maintenance without reinstalling."];
             }

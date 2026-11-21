@@ -120,6 +120,17 @@ internal sealed record SeedPortableReport
 
 internal static class SeedPortable
 {
+    internal static string? ProviderAccountMismatch(SeedPortableConfig config, string account)
+    {
+        if (config.Provider == "hetzner"
+            ? config.ProviderAccount.StartsWith("hetzner-project:", StringComparison.Ordinal)
+            : config.ProviderAccount == account) return null;
+        return config.Provider == "digitalocean" && account.StartsWith("DigitalOcean team ", StringComparison.Ordinal)
+            && config.ProviderAccount.StartsWith("DigitalOcean account ", StringComparison.Ordinal)
+            ? "Historical DigitalOcean user-only scope cannot establish team ownership. Independently reconcile the original approved team and resource before explicitly updating providerAccount and reviewing a new plan. Existing host bindings are not automatically converted; retain host-only access with the original binding."
+            : "Authorized provider account differs from explicit providerAccount scope. Independently reconcile the selected account/team and original approved resources; do not replace an existing installation.";
+    }
+
     internal static JsonDocument ReadDocument(string json)
     {
         var document = JsonDocument.Parse(json);
@@ -231,6 +242,8 @@ internal static class SeedPortable
             "Creation requires explicit initialCreationIntent, --new-seed, no unresolved prior request, and one authorized creator.");
         SeedGuard.Require(approval == Approval(config, state, classification, publicKey, newSeed),
             "Review a fresh exact plan before apply. Approval must bind identity, account, cost, release, key and target.");
+        var mismatch = ProviderAccountMismatch(config, await provider.GetAccountIdentityAsync(ct));
+        SeedGuard.Require(mismatch is null, mismatch ?? "");
         SeedGuard.Require(await provider.FindServerAsync(state.Id, ct) is null,
             "Target appeared after planning. Replan and reconcile; no creation.");
         var key = await provider.FindKeyAsync(state.Id, publicKey, ct);

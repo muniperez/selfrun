@@ -25,9 +25,27 @@ internal sealed partial class SeedProvider : ISeedProvider
     private string AccountIdentity(JsonElement account) => provider switch
     {
         "hetzner" => "Hetzner project scoped by the supplied credential (scope fingerprint binds approval)",
-        "digitalocean" => "DigitalOcean account " + Text(account, "uuid"),
+        "digitalocean" => DigitalOceanAccountIdentity(account),
         _ => "Vultr account " + SeedGuard.Hash(Text(account, "email"))
     };
+
+    private static string DigitalOceanAccountIdentity(JsonElement account)
+    {
+        SeedGuard.Require(account.ValueKind == JsonValueKind.Object,
+            "DigitalOcean account data is invalid; reconcile the authorized scope.");
+        if (account.TryGetProperty("team", out var team))
+            return "DigitalOcean team " + AccountUuid(team, "team");
+        return "DigitalOcean account " + AccountUuid(account, "user");
+    }
+
+    private static string AccountUuid(JsonElement value, string scope)
+    {
+        SeedGuard.Require(value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty("uuid", out var uuid) && uuid.ValueKind == JsonValueKind.String
+            && System.Text.RegularExpressions.Regex.IsMatch(uuid.GetString()!, "^[A-Za-z0-9-]{1,100}$"),
+            $"DigitalOcean {scope} identity is missing or invalid; reconcile the authorized scope. No individual-only fallback is permitted for supplied team data.");
+        return value.GetProperty("uuid").GetString()!;
+    }
 
     public async Task<string> GetAccountIdentityAsync(CancellationToken ct)
     {
