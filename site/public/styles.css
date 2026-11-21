@@ -134,6 +134,7 @@ figure img { display: block; width: 100%; height: auto; border: 1px solid var(--
 .setup-list > li { border-top: 1px solid var(--line); padding-block: 1.25rem; }
 .setup-list > li::marker { font-weight: 700; }
 .setup-list > li:last-child { padding-bottom: 0; }
+.download-list a { display: inline-block; padding-block: .45rem; }
 .install-list, .manage-list { padding-left: 1.3rem; }
 .install-list > li + li, .manage-list > li + li { margin-top: .75rem; }
 
