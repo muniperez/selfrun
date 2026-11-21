@@ -174,7 +174,7 @@ internal sealed partial class SeedProvider : ISeedProvider
         return matches.Length == 0 ? null : Text(matches[0], "id");
     }
 
-    public async Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct)
+    public async Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct, string? userData = null)
     {
         var s = state.Plan.Selection;
         var q = state.Plan.Quote;
@@ -193,6 +193,12 @@ internal sealed partial class SeedProvider : ISeedProvider
                 tags = new[] { Name(state.Id) }, enable_ipv6 = false, disable_public_ipv4 = false, enable_vpc = false,
                 backups = "disabled", ddos_protection = false, activation_email = false, user_scheme = "root" }
         };
+        if (userData is not null)
+        {
+            var request = JsonSerializer.SerializeToNode(body)!.AsObject();
+            request.Add("user_data", provider == "vultr" ? Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(userData)) : userData);
+            body = request;
+        }
         var value = (await SendAsync(HttpMethod.Post, Servers, body, ct)).GetProperty(ServerObject);
         SeedGuard.Require(Owned(value, state.Id), "Created server response lacks ownership; resume for reconciliation.");
         state.Server = new(Text(value, "id"), state.Id, s.Region, s.Size, q.Image, null);

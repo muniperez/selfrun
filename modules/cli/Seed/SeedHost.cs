@@ -14,15 +14,23 @@ internal sealed partial class SeedHost(string? userKey = null, bool useAgent = f
     private static string Remote(SeedState state) => "/var/lib/minicloud-seed/" + state.Id;
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''") + "'";
     private static string NullFile => OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
-    private IEnumerable<string> SshOptions(SeedState state, string directory) =>
+    private IEnumerable<string> SshOptions(SeedState state, string directory) => StrictOptions(directory)
+        .Concat(["-i", userKey ?? Path.Combine(directory, "id_ed25519"), "root@" + state.Server!.Address]);
+
+    private static string[] StrictOptions(string directory) =>
     [
         "-F", NullFile, "-T", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
         "-o", "StrictHostKeyChecking=yes", "-o", "CheckHostIP=yes", "-o", "ConnectTimeout=20",
         "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
         "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "HostKeyAlgorithms=ssh-ed25519",
+        "-o", "UpdateHostKeys=no",
         "-o", "GlobalKnownHostsFile=" + NullFile, "-o", "UserKnownHostsFile=\"" + Path.Combine(directory, "known_hosts").Replace('\\', '/').Replace("\"", "\\\"") + "\"",
-        "-i", userKey ?? Path.Combine(directory, "id_ed25519"), "root@" + state.Server!.Address
     ];
+
+    internal static IEnumerable<string> EnrollmentProbeOptions(string directory, string address) => StrictOptions(directory)
+        .Concat(["-N", "-o", "IdentityAgent=none", "-o", "IdentityFile=none", "-o", "PubkeyAuthentication=no",
+            "-o", "HostbasedAuthentication=no", "-o", "GSSAPIAuthentication=no", "-o", "PreferredAuthentications=none",
+            "root@" + address]);
 
     private Task<SeedProcessResult> SshAsync(SeedState state, string directory, string command, byte[]? input, CancellationToken ct) =>
         (process ?? SeedProcess.RunAsync)("ssh", SshOptions(state, directory).Append("env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " + command), input, ct, useAgent);

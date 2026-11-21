@@ -323,7 +323,7 @@ public sealed class SeedLifecycleTests : IDisposable
         public Task<string?> FindKeyAsync(string operation, string key, CancellationToken ct) => Task.FromResult<string?>(null);
         public Task<string> CreateKeyAsync(string operation, string key, CancellationToken ct) { KeyCreates++; return Task.FromResult("key"); }
         public Task<SeedResource?> FindServerAsync(string operation, CancellationToken ct) { ServerLookups++; return Task.FromResult(Server); }
-        public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct)
+        public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct, string? userData = null)
         {
             Creates++;
             if (CreateError is not null) throw CreateError;

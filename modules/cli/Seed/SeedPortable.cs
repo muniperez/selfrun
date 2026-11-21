@@ -235,7 +235,7 @@ internal static class SeedPortable
     };
 
     public static async Task CreateAsync(SeedPortableConfig config, SeedState state, ISeedProvider provider,
-        string publicKey, bool newSeed, string? approval, string classification, CancellationToken ct, Action? beforeMutation = null)
+        string publicKey, bool newSeed, string? approval, string classification, CancellationToken ct, Func<string>? beforeMutation = null)
     {
         SeedGuard.Require(newSeed && config.Target is null && classification == "new_seed"
             && config.InitialCreationIntent == SeedPortableConfig.CreationIntent,
@@ -251,14 +251,14 @@ internal static class SeedPortable
         SeedGuard.Require(key is null, "Operation key already exists. Reconcile any prior create; no automatic retry.");
         state.SshKeyId = await provider.FindUserKeyAsync(publicKey, ct);
         ct.ThrowIfCancellationRequested();
-        beforeMutation?.Invoke();
+        var userData = beforeMutation?.Invoke();
         if (state.SshKeyId is null)
         {
             state.KeyCreateStarted = true;
             state.SshKeyId = await provider.CreateKeyAsync(state.Id, publicKey, ct);
         }
         state.ServerCreateStarted = true;
-        state.Server = await provider.CreateServerAsync(state, ct);
+        state.Server = await provider.CreateServerAsync(state, ct, userData);
         SeedLifecycle.Match(state, state.Server);
     }
 }

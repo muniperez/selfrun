@@ -19,8 +19,10 @@ It uses the [existing signed installer](server-installer.md) and shared
 ## Before starting
 
 For a first install, use [`minicloud seed` in a terminal](stateless-seed.md#guided-installation)
-with a downloaded candidate or your own published CLI. The wizard prepares
-protected inputs and guides the approval, SSH verification, and setup handoffs.
+with a downloaded candidate or your own published CLI. The current wizard
+manages and verifies SSH for new installations and guides the approval and
+setup handoffs. See the [older-session procedure](stateless-seed.md#automatic-ssh-and-older-sessions)
+if the VPS was created without automatic enrollment.
 
 **Stateless interface (#90):** use the [current configuration, plan/apply/check
 and portable-report guide](stateless-seed.md). It supersedes the machine-bound
@@ -349,3 +351,19 @@ cd /operator-private/location/minicloud-seed-tests
 Run the test command from this private worktree. Keep build outputs, results and
 fixtures in its own ignored `.local/artifacts/`, not the original shared checkout
 or a shared temporary directory.
+
+On Linux, build a standalone candidate from the committed revision and rehearse
+the guided flow against synthetic providers:
+
+```sh
+dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
+python3 -B scripts/self-hosting/test_guided_seed_cli.py \
+  .local/artifacts/seed-cli/Minicloud.Cli .local/artifacts
+python3 -B scripts/self-hosting/test_guided_seed_cli.py \
+  .local/artifacts/seed-cli/Minicloud.Cli .local/artifacts --lost-create --real-ssh
+```
+
+`--real-ssh` requires Linux user/mount namespaces, cloud-init's system Python
+modules, and OpenSSH server. It runs cloud-init's SSH and user-script handlers
+in a private mount namespace and probes an isolated SSH daemon on loopback.
+Without that flag the SSH exchange is simulated. Neither mode creates cloud resources.

@@ -14,6 +14,32 @@ public sealed class SeedProviderTests
     private static SeedSelection Selection(string provider) => new(provider, "region", "size", "cloud.example.com", "apps.example.com", "server-v1.2.3");
 
     [Theory]
+    [InlineData("hetzner", "servers", "ssh_keys")]
+    [InlineData("digitalocean", "droplets", "ssh_keys")]
+    [InlineData("vultr", "instances", "sshkey_id")]
+    public async Task Guided_create_sends_first_boot_data_to_only_the_owned_server_request(string name, string endpoint, string keyField)
+    {
+        var fixture = new Fixture(name);
+        using var provider = fixture.CreateProvider();
+        var selection = Selection(name);
+        var quote = await provider.QuoteAsync(selection, Operation, default);
+        var keyId = await provider.CreateKeyAsync(Operation, "ssh-ed25519 synthetic-fixture", default);
+        var state = new SeedState { Id = Operation, Plan = new(selection, quote, "digest", "source"), SshKeyId = keyId };
+        var data = SeedEnrollment.UserData(Operation, Enumerable.Repeat((byte)42, 32).ToArray());
+        await provider.CreateServerAsync(state, default, data);
+
+        var mutations = fixture.Requests.Where(x => x.Method == "POST").ToArray();
+        Assert.Equal(2, mutations.Length);
+        Assert.DoesNotContain("user_data", mutations[0].Body);
+        Assert.EndsWith("/" + endpoint, mutations[1].Path);
+        Assert.DoesNotContain(Credential, mutations[1].Body);
+        using var payload = JsonDocument.Parse(mutations[1].Body);
+        var actual = payload.RootElement.GetProperty("user_data").GetString()!;
+        Assert.Equal(data, name == "vultr" ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(actual)) : actual);
+        Assert.Equal(keyId, Assert.Single(payload.RootElement.GetProperty(keyField).EnumerateArray()).ToString());
+    }
+
+    [Theory]
     [InlineData("hetzner")]
     [InlineData("digitalocean")]
     [InlineData("vultr")]
@@ -228,7 +254,7 @@ public sealed class SeedProviderTests
     {
         private readonly string provider;
         public readonly Dictionary<string, object> Bodies = [];
-        public readonly List<(string Method, string Host, string Body)> Requests = [];
+        public readonly List<(string Method, string Host, string Body, string Path)> Requests = [];
         public bool Deny;
         public string ExpectedCredential = Credential;
         internal SeedProvider CreateProvider() => new(provider, ExpectedCredential, this);
@@ -282,7 +308,8 @@ public sealed class SeedProviderTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Assert.Equal(ExpectedCredential, request.Headers.Authorization?.Parameter);
-            Requests.Add((request.Method.Method, request.RequestUri!.Host, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct)));
+            Requests.Add((request.Method.Method, request.RequestUri!.Host, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct),
+                request.RequestUri.AbsolutePath));
             if (Deny) return new(HttpStatusCode.Forbidden) { Content = new StringContent(Credential) };
             var path = string.Join("/", request.RequestUri.AbsolutePath.Split('/').Skip(2));
             if (request.Method == HttpMethod.Post)

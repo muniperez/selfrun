@@ -667,7 +667,7 @@ public sealed class SeedPortableTests : IDisposable
         { KeyCreates++; UploadedKey = key; return Task.FromResult("key-id"); }
         public Task<SeedResource?> FindServerAsync(string operation, CancellationToken ct)
         { InventoryReads++; return Task.FromResult<SeedResource?>(null); }
-        public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct)
+        public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct, string? userData = null)
         {
             Creates++;
             if (LoseResponse) throw new HttpRequestException("synthetic-secret-provider-response");
