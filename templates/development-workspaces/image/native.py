@@ -804,6 +804,7 @@ class Native:
                 check(MOUNT_UNIT in command(["systemctl", "show", unit, "-p", prop, "--value"]).split(),
                       "RETAINED_MOUNT_WIRING_MISSING")
         check(command(["systemctl", "is-enabled", T3_UNIT]) == "enabled", "PRIMARY_T3_NOT_ENABLED_FOR_REBOOT")
+        previous_pid = self.t3_unit()["MainPID"]
         command(["systemctl", "stop", T3_UNIT, *scratch_units], timeout=180)
         self.wait(self.rt.Linux.t3_cgroup_empty)
         guarded_loop(self.device, self.directory / "fixture.ext4")
@@ -820,9 +821,10 @@ class Native:
         check(Path("/workspace/transcripts/native-user.txt").read_text() == "representative-user-data\n",
               "RETAINED_MARKER_MISSING_AFTER_REMOUNT")
         self.wait(lambda: command(["systemctl", "is-active", scratch_units[1]]) == "active")
-        check(self.control("status")["phase"] == "Ready", "REMOUNTED_RUNTIME_NOT_READY")
+        self.t3_recovered(previous_pid)
         return {"sameFilesystemAndOwnerVerified": True, "markerPreserved": True,
-                "t3BootEnabled": True, "scratchWatcherActive": True, "actualReboot": False}
+                "t3BootEnabled": True, "t3EnvironmentIdentityPreserved": True,
+                "scratchWatcherActive": True, "actualReboot": False}
 
     def wait(self, predicate, seconds=30):
         expires = time.monotonic() + seconds
@@ -2011,9 +2013,9 @@ class Native:
                 return
             if not self.report.probe("loop-ext4-root-bootstrap", self.prepare):
                 return
-            if not self.report.probe("retained-volume-service-remount", self.retained_volume_remount):
-                return
             if not self.report.probe("native-http-scopes-tickets-websocket", self.start_services):
+                return
+            if not self.report.probe("retained-volume-service-remount", self.retained_volume_remount):
                 return
             self.report.probe("connect-management-rejects-routine-t3-token", self.connect_management)
             if not self.report.probe("t3-oom-crash-restart-stop-race-and-retry-budget", self.t3_recovery):
