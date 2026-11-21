@@ -103,6 +103,10 @@ class ReleaseTests(unittest.TestCase):
             self.assertRegex(revision, r"^[0-9a-f]{40}$")
         self.assertIsNone(candidate["cliCompatibility"]["minimumVersion"])
         self.assertIsNone(candidate["cliCompatibility"]["maximumExclusiveVersion"])
+        selected_tag = f"server-v{selected['serverVersion']}"
+        release.validate_core(candidate, selected_tag, source)
+        with self.assertRaisesRegex(release.ReleaseError, "Mixed release"):
+            release.validate_core(candidate, "server-v0.0.1-rc.1", source)
 
     def resign_inventory(self):
         manifest = release.read_json(self.output / "server-manifest.json")

@@ -2,7 +2,9 @@
 
 ## Selected identifiers, not a qualified release
 
-- Server candidate: **`0.0.1-rc.1`**, unpublished metadata only.
+- Server candidate: **`0.0.1-rc.2`**, unpublished metadata pending operator
+  review (#251). The previous `server-v0.0.1-rc.1` tag exists, but its publisher
+  failed and no server release is available. Never move or reuse that tag.
 - CLI source: **`2a5ae0ccea6c3dd680b4146586ec0668c60c8b93`**, actual canonical
   public `main` containing the merged authentication, SSH and numbered-deployment
   clients. Public prerequisite repairs #70–#75 and ledger #76 were already
@@ -10,10 +12,11 @@
 - `packaging/server/release.json` is the strict schema-1 pipeline input, not a
   generated/signed release manifest. The existing producer adds the actual
   checked-out server source SHA and real product-image digests at release time.
-- CLI protocol `1`, only the source SHA above in `sourceRevisions`, and both
+- CLI protocol `1`, the source SHA above plus stateless seed CLI source
+  **`7a4b16130215ea8b2c74221cb02c5e45344d4427`** (#102) in `sourceRevisions`, and both
   version bounds `null`: an explicit candidate allowlist, **not measured runtime
   compatibility** or a claim that arbitrary CLI versions work.
-- Latest application migration: `20261111142623_DeploymentNumbers`.
+- Latest application migration: `20261120154929_PortalSessionRenewal`.
   Identity and configuration schema versions are both `1`, the initial bundled
   `identity.schema.json` and `configuration.schema.json` contracts (including
   the merged optional Google configuration); JSON Schema draft identifiers and
@@ -58,10 +61,13 @@ publisher provenance, security support or registry availability at installation.
 
 ## Deferred validation and release gates
 
-No manual tests, builds, dependency installs, CI reruns, image pulls/runs,
+The original T80 handoff performed no manual tests, builds, dependency installs, CI reruns, image pulls/runs,
 credentials, hosted changes, deployment, tags or publication were performed.
 The focused checked-in candidate/payload/source-pin regression is authored
-**unrun**. Automatic PR CI is separate evidence, not T90/T91 acceptance.
+**unrun** at that handoff. For #251, the release contracts passed (21 tests),
+self-hosting/installer contracts passed (93 tests, 3 opt-in Docker/Compose cases skipped),
+and focused .NET metadata/discovery checks passed (24 tests) on local Linux arm64.
+These synthetic checks are not T90/T91 acceptance or release qualification.
 
 After explicit authorization, the focused commands already documented in
 [server packaging](../packaging/server/README.md#focused-checks-and-remaining-evidence)
@@ -85,7 +91,8 @@ acceptance; #44 retains later auth/optional-provider validation.
 
 Real two-architecture product builds, agent ELF verification, signing/provenance,
 public GHCR visibility and anonymous pulls, installation and recovery acceptance
-remain later authorized gates. No `server-v0.0.1-rc.1` tag, assets or product
+remain later authorized gates. The existing rc1 tag is not moved or reused;
+no rc2 tag, assets or product
 image digests are supplied or claimed. The metadata allowlist does not satisfy
 the historical tested-only qualification requirement: record actual evidence
 before publication rather than weakening the validator or inferring a pass.

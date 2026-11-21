@@ -45,22 +45,24 @@ until all of these are present in the selected source revision:
   supporting scripts/configuration. Only regular files/directories are allowed.
   Keep operator secrets and generated execution output out of these assets.
 - T80 supplies `packaging/server/release.json` with selected candidate
-  compatibility, schema versions and resolved dependency digests. The current
-  unpublished `0.0.1-rc.1` input selects exact CLI source revisions,
-  **not qualified runtime compatibility**. See the test-prerelease pairing below and the
-  [public candidate handoff](../../docs/public-candidate-handoff.md) for registry
+  compatibility, schema versions and resolved dependency digests. The
+  `0.0.1-rc.2` input is pending operator review and selects exact CLI source
+  revisions, **not qualified runtime compatibility**. The prior
+  `server-v0.0.1-rc.1` tag exists from a failed publication attempt but has no
+  server release or assets and is not reused. See the test-prerelease pairing
+  below and the [public candidate handoff](../../docs/public-candidate-handoff.md) for registry
   evidence, the explicit public-only scope decision and outstanding T90/T91
   qualification. Input presence or a successful preflight is not release acceptance.
 
-### Selected TEST prerelease pairing
+### Selected TEST prerelease pairing (pending operator review)
 
-The existing unpublished `server-v0.0.1-rc.1` input preserves customer-workflow
+The pending `server-v0.0.1-rc.2` input preserves customer-workflow
 CLI source `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` and additionally allows seed
 stateless CLI source `7a4b16130215ea8b2c74221cb02c5e45344d4427` (#102).
 The superseded pre-stateless seed source is no longer selected. Both version bounds remain
-`null`; this is an exact-source allowlist, not a version range. Schema versions,
-dependency index digests and the candidate version are unchanged. Product image
-digests must come from the real release build, never placeholders.
+`null`; this is an exact-source allowlist, not a version range. Schema versions
+and dependency index digests are unchanged; only the prerelease version advances.
+Product image digests must come from the real release build, never placeholders.
 
 The stateless implementation passed all 453 CLI tests in a private local Linux
 arm64 worktree; backend, dashboard and release-contract CI passed on #102.
@@ -68,10 +70,11 @@ This is **automated evidence only**, not a live CLI/server compatibility test. T
 will build the local CLI with informational source exactly
 `7a4b16130215ea8b2c74221cb02c5e45344d4427`; the server manifest's source must
 instead identify the actual merged release-build commit containing this input.
-After review, only the authorized publisher may publish this signed **TEST
-prerelease**, without reusing an existing tag/release. Preparing or merging this
-input does not publish it. Live seed/provider, native amd64/arm64, full-image,
-OIDC/signature/anonymous-pull and installation/recovery qualification remain
+After operator review, only the authorized publisher may publish this signed **TEST
+prerelease** as the new `server-v0.0.1-rc.2` release; the existing rc1 tag must
+not be reused. Preparing or merging this input does not publish it. Live seed/provider,
+native amd64/arm64, full-image, OIDC/signature/anonymous-pull and
+installation/recovery qualification remain
 pending; the earlier workflow source is retained, not newly qualified.
 
 Compose must reference exactly the three product images and the four dependency
@@ -210,6 +213,24 @@ Server GitHub releases use `make_latest=false` (`gh --latest=false`), with
 prereleases marked accordingly. Optional `server-channel/stable.json` discovery
 is not published by this workflow; exact release selection needs no channel.
 Never use repository-wide latest-release discovery or CLI executable archives.
+
+### Previous GHCR failure and owner-only prerequisites
+
+[The rc1 publisher](https://github.com/muniventures/minicloud/actions/runs/43381436203)
+passed contracts, preflight and GHCR login, then failed pushing
+`ghcr.io/muniventures/minicloud-api:0.0.1-rc.1-amd64` with
+`permission_denied: read_package`. Signing and release creation never ran.
+The current publish job already requests `packages: write`, `contents: write`
+and `id-token: write`; the `server-release` environment permits `server-v*` tags.
+
+Before an authorized rc2 publication, a package owner must inspect the
+`minicloud-api`, `minicloud-dashboard` and `minicloud-worker` GHCR packages:
+link them to `muniventures/minicloud`, grant that repository **Write** under
+**Manage Actions access** (or verify equivalent inherited access), and make
+them **public** for the mandatory anonymous-pull gate. Repository workflow
+permissions do not override package-level access. Read-only package API queries
+returned 404 during #251; that does not establish absence or current visibility,
+so owner confirmation remains required. No settings or credentials were changed.
 
 ## Focused checks and remaining evidence
 
