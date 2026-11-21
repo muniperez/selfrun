@@ -223,3 +223,157 @@ original IDs, paths/configuration, phase and last successful operation;
 it contains no credentials. Preserve both; maintenance depends on them.
 Keep each installed release's verified assets directory: `upgrade` requires it
 as `--previous-assets-dir`.
+
+## Optional email/code account recovery
+
+**First-install scope:** a new, independently verified signed release containing
+`compose.email-recovery.yml` and `identity.recovery.schema.json` supports this
+opt-in through the same `preflight`, `prepare`, `initialize`, `activate` and
+`install` commands above. `server-v0.0.1-rc.3` does **not** contain this feature;
+setting only the API flag on that release cannot deliver a code. This source
+change does not create or publish a replacement release.
+
+Omit `emailRecovery`, or use `{"enabled": false}`, to keep the original
+password-only setup: no SMTP input, courier activation, API recovery capability
+or identity schema change. Google remains independently disabled by default.
+The `recovery` object used for OpenBao/off-host material is unrelated to account
+email recovery.
+
+For an opted-in **new** installation, add this non-secret object to `$config`:
+
+```json
+"emailRecovery": {
+  "enabled": true,
+  "smtpFile": "/root/minicloud-inputs/email-recovery.smtp.json"
+}
+```
+
+Use the signed `email-recovery.smtp.example.json` as the shape for the separate
+protected SMTP input. All three fields are required:
+
+```json
+{
+  "connectionUri": "smtps://synthetic-user:percent-encoded-password@smtp.example.invalid:465/",
+  "fromAddress": "recovery@example.invalid",
+  "fromName": "MiniCloud"
+}
+```
+
+The example is not a working external relay. On an authorized self-hosted
+installation, use your operator-managed relay and approved sender. `smtps`
+means implicit TLS; `smtp` means mandatory StartTLS by default. Both validate
+certificates; skipping TLS certificate verification is not supported. Include
+an explicit port and no path beyond `/`. Percent-encode SMTP username/password
+components, including `$`, quotes, `#` and backslashes. Provide both username
+and password, or neither if the relay explicitly permits unauthenticated TLS.
+The sender must be a bare email address; the sender name supports 1-100 ASCII
+letters, digits, spaces, dots, underscores and hyphens, without edge spaces.
+Unknown/duplicate fields, unsafe dotenv values and arbitrary SMTP query
+options are rejected without logging their values.
+
+Protect this input just like Google credentials: a canonical absolute path
+outside installation, assets and recovery directories, in a root-owned `0700`
+input directory, with a root-owned nonsymlink `0600`/`0400` regular file.
+Do not put the URI in CLI arguments, ordinary environment variables, logs or
+Git. The helper imports it into the existing protected `secrets/kratos.env`;
+only Kratos/migration consumers read that file. Public configuration,
+installation metadata and Compose command arguments contain the input path,
+not SMTP credential values. Docker administrators can inspect container
+environment values, so retain the existing root/Docker trust boundary.
+
+The inventory-verified overlay enables the API's `Kratos:EmailRecoveryEnabled`
+and Kratos v1.3.1 code recovery together, keeps passwordless login/MFA off,
+selects the email-recoverable schema under the original `user` schema ID, and
+runs the ordinary SMTP courier with `serve --watch-courier` in the existing
+Kratos container. No new service/image, published Kratos port, admin proxy,
+alternate bootstrap or authentication bypass is introduced. Opted-in HTTPS
+readiness also requires the deployed public capabilities endpoint to advertise
+password and email recovery; readiness is not a delivery qualification.
+
+**Existing-release scope:** resumes and maintenance retain the exact original
+configuration and SMTP input values, credentials, schema ID and identity trait
+shape. Existing password-only installations stay password-only on upgrade.
+An installation originally created with this opt-in can retain it only with a
+target signed release that supports the same contract. Activation on existing
+installs, credential rotation, legacy recoverable-address backfill and
+identity/config migrations are **not** implemented here. Do not edit installed
+bundle bytes, configuration, identities or `kratos.env` to force activation.
+Missing established secrets or changed SMTP input fail closed rather than
+regenerating or overwriting them. Keep the original protected input available
+for resume/maintenance; backups/restore remain subject to their original
+protected recovery procedures and exact-configuration checks.
+
+### Disposable capture-sink qualification recipe
+
+This is a **future signed-candidate QA recipe**, not a command to run against a
+customer instance. Use two explicitly authorized disposable fixtures: a fresh
+dedicated signed-install host and a separate private capture-sink host. Do not
+run foreign sink containers on the dedicated MiniCloud host: the installer
+deliberately rejects them. Preserve its ordinary DNS/TLS/provisioning checks.
+Use only `recovery-synthetic@example.invalid`, generated fixture passwords and
+synthetic provider/key/membership data; never copy real identities, credentials
+or databases. No Google or real third-party mailbox is involved.
+
+On the isolated sink fixture, independently obtain a vetted Mailpit binary
+supporting these flags, clear inherited `MP_*` configuration, and deny external
+egress. Allow SMTP ingress only from the signed fixture host (including its
+Docker egress address). Bind SMTP to the fixture's private address and the UI
+only to loopback:
+
+```sh
+mailpit --smtp "$sink_private_ip:1025" --listen 127.0.0.1:8025 \
+  --disable-version-check --smtp-disable-rdns \
+  --smtp-allowed-recipients '^recovery-synthetic@example\.invalid$'
+```
+
+Do not configure relay, forwarding, release-to-SMTP, SMTP auth acceptance
+overrides, link checking or third-party integrations. Access the sink UI only
+locally or through your fixture SSH tunnel. This captures normal SMTP delivery;
+it does **not** prove delivery through an external authenticated TLS relay.
+
+For this fixture only, use the private sink address in protected SMTP JSON:
+
+```json
+{
+  "connectionUri": "smtp://192.0.2.10:1025/?disable_starttls=true",
+  "fromAddress": "recovery@example.invalid",
+  "fromName": "MiniCloud fixture"
+}
+```
+
+Replace the documentation-only `192.0.2.10` with the isolated reachable private
+fixture address. Add `"allowInsecureSmtp": true` alongside `enabled` and
+`smtpFile` in the first-install `emailRecovery` object. This explicit
+unauthenticated plaintext exception is solely for capture tests; SMTP
+authentication credentials with `disable_starttls=true` are rejected.
+
+1. Independently verify the new exact signed release and complete the supported
+   manual `prepare` / `initialize` / `activate` flow and HTTPS `/setup`, using
+   the synthetic address as the operator email. Do not use a Kratos admin
+   identity write or bootstrap/CSRF bypass to prepare recovery metadata.
+2. Confirm `GET /api/account/capabilities` reports `emailRecovery: true`,
+   `password: true`, `google: false`. Sign in normally in two separate browser
+   profiles; create a disposable machine key and membership through supported
+   product actions if needed, and record their baseline access.
+3. In a third profile open dashboard `/recovery`. Submit the synthetic email
+   through its bounded `/api/account/flows/recovery/browser` and
+   `/api/account/flows/recovery?flow=...` flow with both normal cookie/CSRF
+   boundaries. Confirm the sink receives that recipient's code via SMTP;
+   unknown recipients must not receive mail.
+4. Redeem the captured code through the same public flow, enter password
+   settings, and set a new generated password. Confirm an incorrect/expired
+   code cannot grant a session and a redeemed code cannot be reused. Keep
+   passwords, codes, cookies and tokens out of screenshots/logs.
+5. Confirm the prior browser/Grafana sessions are rejected, the old password
+   fails and the new password signs in. Confirm the synthetic machine key
+   still works and memberships are unchanged. Resume the signed host helper
+   and confirm it preserves its installation ID and protected credential bytes.
+
+Offline packaging tests verify input protection, disabled/default and resume
+contracts, schema/Compose wiring, capability alignment and signed-manifest
+inventory generation. They simulate host commands and signature verification;
+they do **not** claim SMTP delivery, code redemption, full password/session
+revocation, signed installation or external relay qualification. The sequence
+above and authenticated TLS SMTP delivery remain #309/#44 signed-release QA
+for the integration coordinator, with no production/service changes authorized
+by this patch.

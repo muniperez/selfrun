@@ -42,3 +42,11 @@ credentials, or rotate those credentials.
 
 Independent recovery-dependency archives (`*-recovery`) are not full backups.
 Never use them as a pre-upgrade backup.
+
+Email/code recovery is a protected first-install opt-in in releases containing
+`compose.email-recovery.yml` and `identity.recovery.schema.json`. Existing
+password-only configurations and identities are not activated or backfilled
+by upgrade. An already opted-in installation retains its exact original
+configuration and protected SMTP input/credential values; the target must
+contain the same recovery contract. Toggling recovery and rotating SMTP
+credentials on existing installations are not supported by this change.

@@ -1,0 +1,5 @@
+{
+  "connectionUri": "smtps://synthetic-user:replace-with-percent-encoded-password@smtp.example.invalid:465/",
+  "fromAddress": "recovery@example.invalid",
+  "fromName": "MiniCloud"
+}

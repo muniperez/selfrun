@@ -194,6 +194,28 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(release.sha256(data), manifest["files"][name])
         self.assertEqual(set(release.COMPONENTS), set(manifest["images"]))
 
+    def test_current_payload_packages_email_recovery_in_signed_inventory_without_new_images(self):
+        root = Path(__file__).resolve().parents[2]
+        config = root / "packaging/server/release.json"
+        selected = release.read_json(config)
+        tag = "server-v" + selected["serverVersion"]
+        payload = root / "packaging/server/bundle"
+        with patch.object(release, "run", return_value=json.dumps(self.compose)):
+            release.package(root, config, payload, tag, SOURCE, self.images_path, self.output)
+        manifest = release.read_json(self.output / "server-manifest.json")
+        with patch.object(release, "run", return_value=""):
+            self.assertEqual(manifest, release.verify_assets(self.output, tag))
+        with tarfile.open(self.output / manifest["bundle"]["name"]) as archive:
+            for name in ("compose.email-recovery.yml", "identity.recovery.schema.json",
+                         "email-recovery.smtp.example.json", "server_install.py"):
+                data = archive.extractfile(name).read()
+                self.assertEqual((payload / name).read_bytes(), data)
+                self.assertEqual(release.sha256(data), manifest["files"][name])
+            self.assertEqual({key: value for key, value in manifest.items() if key not in ("bundle", "files")},
+                             json.load(archive.extractfile("server-release.json")))
+        self.assertEqual(set(images().values()), set(manifest["images"].values()))
+        self.assertEqual(set(release.DEPENDENCIES), set(manifest["dependencies"]))
+
     def test_bundle_is_reproducible_and_outputs_cannot_escape_ignored_artifacts(self):
         manifest = self.package()
         self.output = self.root / ".local/artifacts/repeated"
