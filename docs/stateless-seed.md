@@ -102,6 +102,11 @@ Keep guided state on a protected local filesystem (with hard links on Unix).
 Abandoned staging files do not block resume or authorize creation; a published
 dispatch marker always prevents another create.
 
+For a TEST install, the wizard checks the archive against the executable's
+embedded source before planning and on resume. Canceling the initial credential
+prompt leaves no session or provider request; rerun the wizard to reuse the
+verified archive. A mismatched archive is never overwritten or used.
+
 Hetzner has no project-identity API. Guided seed stores only a seed-specific
 fingerprint of the original token in protected state, not the token or its
 fingerprint in the report. Use that same token when resuming a paused plan

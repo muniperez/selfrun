@@ -33,6 +33,7 @@ public sealed partial class CliApplication
             SeedFiles.Directory(reports);
             var reportPath = Path.Combine(reports, "seed-report.json");
             string? credential = null;
+            string? verifiedSourceDigest = null;
             var session = ReadGuided<GuidedSession>(sessionPath);
             var dispatch = ReadGuided<GuidedDispatch>(dispatchPath);
             var resource = ReadGuided<SeedResource>(resourcePath);
@@ -65,7 +66,8 @@ public sealed partial class CliApplication
                 string? project = null;
                 if (selection.Provider == "hetzner")
                     project = SeedAnswer("Hetzner project identifier you independently verified in the provider console: ");
-                var digest = mode == "local" ? SeedLocalSource.PrepareEmbedded(archive, tag) : null;
+                if (mode == "local")
+                    verifiedSourceDigest = SeedLocalSource.PrepareEmbedded(archive, tag, allowCreate: true);
                 credential = SeedFiles.Credential(null, _console);
                 var seedId = Guid.NewGuid().ToString("N");
                 using var provider = new SeedProvider(selection.Provider, credential);
@@ -79,7 +81,7 @@ public sealed partial class CliApplication
                     ServerVersion = tag, Architecture = architecture
                 };
                 config.Validate();
-                session = new(config, key, useAgent, keyFingerprint, digest, scope);
+                session = new(config, key, useAgent, keyFingerprint, verifiedSourceDigest, scope);
                 SeedGuard.Require(!JsonSerializer.Serialize(session, SeedJournal.Json).Contains(credential, StringComparison.Ordinal),
                     "A configuration value contains the supplied credential. Never enter a credential in another prompt.");
                 WriteGuided(sessionPath, session);
@@ -93,8 +95,8 @@ public sealed partial class CliApplication
             var localSource = saved.SourceSha256 is not null;
             if (localSource)
             {
-                SeedGuard.Require(File.Exists(archive), "Original source archive is missing. Restore the protected archive; never substitute different bytes.");
-                SeedGuard.Require(SeedLocalSource.PrepareEmbedded(archive, configForRun.ServerVersion) == saved.SourceSha256,
+                verifiedSourceDigest ??= SeedLocalSource.PrepareEmbedded(archive, configForRun.ServerVersion, allowCreate: false);
+                SeedGuard.Require(verifiedSourceDigest == saved.SourceSha256,
                     "Original embedded source archive hash changed. Restore the approved bytes.");
                 _console.WriteLine($"TEST source {configForRun.ServerVersion}, SHA256 {saved.SourceSha256}.");
                 _console.WriteLine("This explicitly selected source is not a signed release. Review its provenance; the VPS will build it natively.");

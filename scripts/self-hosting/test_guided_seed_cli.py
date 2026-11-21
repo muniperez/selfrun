@@ -183,11 +183,11 @@ def dialogue(cli, root, env, state, turns, code):
                 while (index := output.find(marker, pos)) == -1:
                     assert read(), output.decode(errors="replace")
                 pos = index + len(marker)
-                if answer in TOKENS:
+                if answer in TOKENS or answer == "\x1b":
                     while termios.tcgetattr(slave)[3] & termios.ECHO:
                         assert time.monotonic() < deadline, "Credential prompt did not hide input."
                         time.sleep(.01)
-                os.write(master, (answer + "\n").encode())
+                os.write(master, (answer if answer == "\x1b" else answer + "\n").encode())
             os.close(slave)
             slave = None
             while read():
@@ -313,15 +313,43 @@ esac
             approval = "type 'create'"
             fingerprint = "Paste only its independent"
             credential = ("credential (hidden): ", TOKEN)
-            output = dialogue(cli, root, env, state, [("Server source:", "local"), *choices, (approval, "")], 10)
-            with (state / "source.tar.gz").open("rb") as source:
-                sha = hashlib.file_digest(source, "sha256").hexdigest()
-            with tarfile.open(state / "source.tar.gz") as source:
+            local_choices = [("Server source:", "local"), *choices[:-1]]
+            archive = state / "source.tar.gz"
+            session_file = state / "session.json"
+            requests = list(fixture.requests)
+            output = dialogue(cli, root, env, state, [*local_choices, (credential[0], "\x1b")], 2)
+            assert "Credential entry canceled" in output and not session_file.exists()
+            assert fixture.requests == requests
+            original = archive.read_bytes()
+            tampered = original + b"unexpected bytes"
+            archive.write_bytes(tampered)
+            output = dialogue(cli, root, env, state, local_choices, 2)
+            assert "does not match this executable's embedded TEST source" in output
+            assert credential[0] not in output and not session_file.exists() and fixture.requests == requests
+            assert archive.read_bytes() == tampered
+            archive.write_bytes(original)
+            archive_inode = archive.stat().st_ino
+            output = dialogue(cli, root, env, state, [*local_choices, credential, (approval, "")], 10)
+            sha = hashlib.sha256(original).hexdigest()
+            assert archive.stat().st_ino == archive_inode and archive.read_bytes() == original
+            with tarfile.open(archive) as source:
                 descriptor = json.load(source.extractfile("minicloud-local-source.json"))
                 assert descriptor["sourceRevision"] == revision and descriptor["cliCompatibility"]["sourceRevisions"] == [revision]
                 assert source.getmember("modules/api/Dockerfile").isfile()
             assert sha in output and revision in output and fixture.posts == []
             assert json.loads(report.read_text())["plan"]["releaseDigest"] == sha
+
+            session_bytes = session_file.read_bytes()
+            session = json.loads(session_bytes)
+            session["sourceSha256"] = hashlib.sha256(tampered).hexdigest()
+            session_file.write_text(json.dumps(session))
+            archive.write_bytes(tampered)
+            requests = list(fixture.requests)
+            output = dialogue(cli, root, env, state, [], 2)
+            assert "does not match this executable's embedded TEST source" in output
+            assert credential[0] not in output and fixture.requests == requests
+            archive.write_bytes(original)
+            session_file.write_bytes(session_bytes)
 
             handoff = []
             if lose_create_response:
@@ -385,4 +413,5 @@ if __name__ == "__main__":
         run(executable, Path(directory), lose_response)
     print("Guided seed passed: missing signed release, prepare/plan, "
           f"{'lost create' if lose_response else 'create'}, pinned resume, install, DNS and protected setup; "
+          "embedded source verified after cancellation and on resume, "
           "abandoned staging ignored, Unix SSH path expanded, and changed Hetzner token blocked.")
