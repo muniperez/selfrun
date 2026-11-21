@@ -40,6 +40,8 @@ export function accountErrorMessage(error: unknown) {
     switch (error.code) {
       case "auth_flow_expired": return "This form expired. Restart to try again.";
       case "auth_flow_invalid": return "Check your details and try again.";
+      case "auth_password_rejected": return "The password was rejected. Choose a different password and try again.";
+      case "session_refresh_required": return "Log out and sign in again before updating account settings.";
       case "unauthenticated": return "Sign in was rejected or your session expired.";
       case "csrf_invalid": return "This form is no longer valid. Restart to try again.";
       case "forbidden": return "You do not have permission to perform this action.";

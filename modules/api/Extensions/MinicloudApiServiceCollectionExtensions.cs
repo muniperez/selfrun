@@ -156,7 +156,7 @@ public static class MinicloudApiServiceCollectionExtensions
         services.AddSingleton<IValidateOptions<PortalSessionOptions>, PortalSessionOptionsValidator>();
         services.AddScoped<BrowserSessionService>();
         services.AddHttpClient<KratosBrowserFlowClient>(client =>
-            client.Timeout = TimeSpan.FromSeconds(10))
+            client.Timeout = Timeout.InfiniteTimeSpan) // The flow client bounds each operation, including response bodies.
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
                 AllowAutoRedirect = false,
