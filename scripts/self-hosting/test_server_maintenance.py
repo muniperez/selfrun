@@ -12,6 +12,8 @@ import unittest
 from unittest import mock
 import uuid
 
+import test_server_installer as installer_tests
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "packaging/server/bundle"
@@ -161,6 +163,7 @@ class MaintenanceTests(Fixture):
             lambda files: files.pop("openbao-root-token"),
             lambda files: files.update({"../escape": b"not allowed"}),
             lambda files: files.update({"openbao-root-token": b"incorrect root"}),
+            lambda files: files.update({"openbao-root-token": b""}),
             lambda files: files.update({"age-identity": self.identity.read_bytes()}),
         ):
             with self.subTest(transform=transform):
@@ -482,6 +485,8 @@ class CoordinatedMaintenanceTests(Fixture):
         self.runtime = FakeInstaller(self, self.old_manifest, self.state)
         self.runtime.extract()
         self.events.clear()
+        self.directory("installation/secrets/ssh")
+        self.write(self.secrets / "ssh/host-pins", b"")
         self.subject = maintenance.Maintenance(self.runtime, vars(installer))
 
     @staticmethod
@@ -569,6 +574,63 @@ class CoordinatedMaintenanceTests(Fixture):
         self.assertEqual("open", self.authority.state)
         self.assertEqual([], list(self.backups.iterdir()))
         self.assertIn(("compose", "unpause", "openbao"), self.events)
+
+    def test_empty_pin_exception_does_not_accept_unsafe_authenticated_members(self):
+        backup = self.run_operation("backup")
+        archive = Path(backup["archive"])
+        record, _, installation, _ = self.subject.verify_backup(archive, self.identity)
+        original_record = json.loads(json.dumps(record))
+        original_files = {path.name: path.read_bytes() for path in archive.iterdir()}
+        cases = [
+            ("secrets/ssh/host-pins", 0, tarfile.REGTYPE),
+            ("secrets/ssh/host-pins", 0, tarfile.SYMTYPE),
+            ("secrets/ssh/host-pins", 0, tarfile.LNKTYPE),
+            ("secrets/ssh/host-pins", 0, tarfile.DIRTYPE),
+            ("secrets/ssh/host-pins", maintenance.MAX_FILE + 1, tarfile.REGTYPE),
+            ("secrets/ssh/host-pins/../other", 1, tarfile.REGTYPE),
+            ("secrets/ssh/host-pins/../other", 0, tarfile.REGTYPE),
+            ("/secrets/ssh/host-pins", 1, tarfile.REGTYPE),
+            ("/secrets/ssh/host-pins", 0, tarfile.REGTYPE),
+            ("secrets/ssh/./host-pins", 0, tarfile.REGTYPE),
+            ("secrets/ssh/host-pins/", 0, tarfile.REGTYPE),
+            ("secrets/ssh/other", 0, tarfile.REGTYPE),
+            ("secrets/postgres-admin-password", 0, tarfile.REGTYPE),
+            ("installation.json", 0, tarfile.REGTYPE),
+        ]
+        for name, size, kind in cases:
+            with self.subTest(name=name, size=size, kind=kind):
+                record = json.loads(json.dumps(original_record))
+                buffer = io.BytesIO()
+                with tarfile.open(fileobj=buffer, mode="w") as tar:
+                    for existing, content in installation.items():
+                        if existing == name and not (
+                                name == "secrets/ssh/host-pins" and size == 0 and kind == tarfile.REGTYPE):
+                            continue
+                        member = tarfile.TarInfo(existing)
+                        member.size = len(content)
+                        tar.addfile(member, io.BytesIO(content))
+                    member = tarfile.TarInfo(name)
+                    member.size, member.type = size, kind
+                    member.linkname = "installation.json" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ""
+                    tar.addfile(member, io.BytesIO(b"x" * size) if kind == tarfile.REGTYPE else None)
+                for path in archive.iterdir():
+                    path.write_bytes(original_files[path.name])
+                component = archive / "installation.tar.age"
+                component.unlink()
+                record["components"]["installation.tar"] = self.subject.encrypt_stream(
+                    component, self.recipients, buffer.getvalue())
+                manifest = archive / "manifest.age"
+                manifest.unlink()
+                self.subject.encrypt_stream(manifest, self.recipients, json.dumps(record).encode())
+                before_state = self.runtime.state_path.read_bytes()
+                before_calls = len(self.docker_calls())
+                for operation in ("verify-backup", "restore"):
+                    with self.assertRaisesRegex(installer.InstallError, "Unsafe installation component member"):
+                        self.run_operation(operation, archive=archive,
+                                           confirm_replace_live=self.state["installationId"])
+                self.assertEqual(before_state, self.runtime.state_path.read_bytes())
+                self.assertEqual(before_calls, len(self.docker_calls()))
+                self.assertEqual("open", self.authority.state)
 
     def upgrade_target(self, version="0.2.0"):
         target = self.release(version, "20261201000000_Next")
@@ -891,6 +953,157 @@ class CoordinatedMaintenanceTests(Fixture):
         released = self.run_operation("release", confirm_operation_id=result["operationId"])
         self.assertEqual("fence_released", released["state"])
         self.assertEqual("open", self.authority.state)
+
+
+class StockMaintenanceInstaller(installer_tests.FixtureInstaller):
+    """Keep the stock installer/maintenance dispatch; simulate only host services."""
+
+    def __init__(self, args, host):
+        super().__init__(args, host)
+        self.authority = Authority()
+
+    def compose(self, *args, **kwargs):
+        if "maintenance" in args:
+            operation = args[args.index("maintenance") + 1]
+            return json.dumps(self.authority(operation, json.loads(kwargs["input"]))).encode()
+        return super().compose(*args, **kwargs)
+
+    def compose_invocation(self, *args):
+        return ["docker", "compose", "--project-name", "minicloud", *args], dict(os.environ)
+
+    def docker_environment(self):
+        return dict(os.environ)
+
+    def openbao(self):
+        super().openbao()
+        material = self.args.recovery_dir / self.state["installationId"]
+        for name, data in {
+            "openbao-recovery.json": json.dumps({
+                "unseal_keys_b64": ["synthetic-share-1", "synthetic-share-2", "synthetic-share-3"],
+                "root_token": "synthetic-root-never-logged",
+            }).encode(),
+            "openbao-root-token": b"synthetic-root-never-logged",
+        }.items():
+            if not (material / name).exists():
+                installer_tests.installer.exclusive(material / name, data)
+
+    def unseal(self, status=None):
+        pass
+
+    def service_readiness(self):
+        pass
+
+
+class StockEmptyPinsTests(unittest.TestCase):
+    setUp = installer_tests.InstallerTests.setUp
+    fixture_chain = installer_tests.InstallerTests.fixture_chain
+    write = staticmethod(installer_tests.InstallerTests.write)
+
+    def install_stock(self, mode):
+        self.payload["server_maintenance.py"] = (BUNDLE / "server_maintenance.py").read_bytes()
+        archive = self.assets / self.manifest["bundle"]["name"]
+        with tarfile.open(archive, "w:gz") as tar:
+            for name, data in self.payload.items():
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                tar.addfile(member, io.BytesIO(data))
+        self.manifest["bundle"]["sha256"] = installer.hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.manifest["files"] = {name: installer.hashlib.sha256(data).hexdigest()
+                                  for name, data in self.payload.items()}
+        self.manifest["applicationMigration"] = maintenance.MAINTENANCE_MIGRATION
+        (self.assets / "server-manifest.json").write_text(json.dumps(self.manifest))
+        bin_dir = self.base / "bin"
+        bin_dir.mkdir(mode=0o700)
+        docker = bin_dir / "docker"
+        docker.write_text(FAKE_DOCKER.format(log=str(self.base / "docker.log"),
+                                           fail=str(self.base / "docker.fail")))
+        docker.chmod(0o700)
+        patch = mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.subject = StockMaintenanceInstaller(self.args, self.host)
+        self.subject.bootstrap_state = "ready"
+        for command in (("install",) if mode == "automatic" else ("prepare", "initialize", "activate")):
+            self.args.command = command
+            self.subject.execute()
+        self.original_state = self.subject.state_path.read_bytes()
+        self.original_secrets = {path.relative_to(self.args.root).as_posix(): path.read_bytes()
+                                 for path in (self.args.root / "secrets").rglob("*") if path.is_file()}
+        self.pins = self.args.root / "secrets/ssh/host-pins"
+        self.assertEqual(b"", self.pins.read_bytes())
+        self.assertEqual(0o600, self.pins.stat().st_mode & 0o777)
+        self.assertEqual(0, self.pins.stat().st_uid)
+        self.backups, self.keys = self.base / "backups", self.base / "keys"
+        for path in (self.backups, self.keys):
+            path.mkdir(mode=0o700)
+        self.identity, self.recipients = self.keys / "identity", self.keys / "recipients"
+        installer.run(["age-keygen", "-o", str(self.identity)])
+        self.identity.chmod(0o600)
+        self.write(self.recipients, installer.run(["age-keygen", "-y", str(self.identity)]))
+        for key, value in {
+            "backup_dir": self.backups, "identity_file": self.identity, "recipients_file": self.recipients,
+            "drain_timeout": 30, "archive": None, "previous_assets_dir": None,
+            "confirm_replace_live": None, "confirm_operation_id": None, "keep_fenced": False,
+            "output_dir": None, "at": None, "keep": None, "confirm_backup_id": None,
+        }.items():
+            setattr(self.args, key, value)
+
+    def run_operation(self, operation, **kwargs):
+        self.args.command = "maintenance"
+        self.args.maintenance_operation = operation
+        for key, value in kwargs.items():
+            setattr(self.args, key, value)
+        # Synthetic streams need little space; model the dedicated host's capture headroom.
+        usage = maintenance.shutil.disk_usage(self.backups)
+        with mock.patch.object(maintenance.shutil, "disk_usage",
+                               return_value=usage._replace(free=maintenance.BACKUP_HEADROOM)), \
+                installer_tests.installer.installation_lock(self.args.root):
+            return self.subject.execute()
+
+    def roundtrip(self, mode):
+        self.install_stock(mode)
+        saved = self.run_operation("backup")
+        self.assertEqual("backup_saved", saved["state"])
+        self.assertEqual("open", self.subject.authority.state)
+        self.assertEqual(self.original_state, self.subject.state_path.read_bytes())
+        archive = Path(saved["archive"])
+        self.assertEqual("backup_verified", self.run_operation("verify-backup", archive=archive)["state"])
+        # Force the restore writer to recreate the credential tree, not merely reuse it.
+        self.pins.write_bytes(b"synthetic-pin-added-after-backup\n")
+        result = self.run_operation("restore", archive=archive,
+                                    confirm_replace_live=self.subject.state["installationId"])
+        self.assertEqual("restored_fenced", result["state"])
+        self.assertEqual("fenced", self.subject.authority.state)
+        self.assertEqual(self.original_state, self.subject.state_path.read_bytes())
+        self.assertEqual(self.original_secrets, {
+            path.relative_to(self.args.root).as_posix(): path.read_bytes()
+            for path in (self.args.root / "secrets").rglob("*") if path.is_file()})
+        self.assertEqual(0o600, self.pins.stat().st_mode & 0o777)
+        self.assertEqual(0, self.pins.stat().st_uid)
+        self.assertTrue((self.args.root / f"secrets-superseded-{result['operationId']}").is_dir())
+        self.assertEqual("restore_confirmed", self.run_operation(
+            "restore-confirm", confirm_operation_id=result["operationId"])["state"])
+        self.assertEqual("open", self.subject.authority.state)
+
+    def test_automatic_stock_empty_pins_backup_verify_restore(self):
+        self.roundtrip("automatic")
+
+    def test_manual_stock_empty_pins_backup_verify_restore(self):
+        self.roundtrip("manual")
+
+    def test_stock_empty_other_credential_capture_fails_and_releases_fence(self):
+        self.install_stock("automatic")
+        (self.args.root / "secrets/deploy-ssh-public-key").write_bytes(b"")
+        with self.assertRaisesRegex(installer_tests.installer.InstallError,
+                                    "Unsafe installation component member"):
+            self.run_operation("backup")
+        self.assertEqual("open", self.subject.authority.state)
+        self.assertEqual([], list(self.backups.iterdir()))
+        record = installer_tests.installer.read_json(self.args.root / "maintenance.json")
+        self.assertEqual("failed", record["state"])
+        self.assertTrue(record["lastFailure"]["fenceReleased"])
+        self.assertNotIn("heldFence", record)
+        self.assertNotIn("lastSuccessfulBackup", record)
 
 
 if __name__ == "__main__":

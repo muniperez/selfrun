@@ -133,11 +133,16 @@ def validate_core(value, tag, source=None):
     validate_compatibility(value.get("cliCompatibility"))
 
 
-def validate_images(images):
+def validate_images(images, *, allow_legacy=True):
     require(isinstance(images, dict) and set(images) == set(COMPONENTS), "Pin exactly api, dashboard and worker images.")
+    families = set()
     for component, reference in images.items():
-        require(matches(rf"ghcr.io/{REPOSITORY}-{component}@{DIGEST}", reference),
+        current = matches(rf"ghcr\.io/{REPOSITORY}-release-{component}@{DIGEST}", reference)
+        legacy = allow_legacy and matches(rf"ghcr\.io/{REPOSITORY}-{component}@{DIGEST}", reference)
+        require(current or legacy,
                 f"Invalid canonical {component} image digest.")
+        families.add("release" if current else "legacy")
+    require(len(families) == 1, "Product images must use one canonical repository family.")
 
 
 def validate_manifest(value, tag):
@@ -223,7 +228,7 @@ def environment_bytes(value):
 def package(root, config, payload, tag, source, images, output):
     value = preflight(root, config, payload, tag, source)
     value["images"] = read_json(images)
-    validate_images(value["images"])
+    validate_images(value["images"], allow_legacy=False)
     files = payload_files(payload)
     # Other installation settings stay uninterpolated; no operator secrets are needed to package.
     compose = json.loads(run(["docker", "compose", "--project-directory", str(payload),
@@ -380,7 +385,7 @@ def build_images(root, tag, source, output):
     output.mkdir(parents=True, exist_ok=True)
     images = {}
     for component in COMPONENTS:
-        repository = f"ghcr.io/{REPOSITORY}-{component}"
+        repository = f"ghcr.io/{REPOSITORY}-release-{component}"
         references = []
         for architecture in ("amd64", "arm64"):
             metadata = output / f"{component}-{architecture}.json"

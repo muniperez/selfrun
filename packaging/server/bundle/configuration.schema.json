@@ -12,6 +12,35 @@
     "apiHostname": { "$ref": "#/$defs/hostname" },
     "consoleHostname": { "$ref": "#/$defs/hostname" },
     "manageDnsRecords": { "type": "boolean", "default": false },
+    "emailRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "description": "First-install opt-in only. Omit to preserve password-only installation without SMTP.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "smtpFile": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Absolute protected operator SMTP JSON input path, not a credential value."
+        },
+        "allowInsecureSmtp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicit unauthenticated plaintext SMTP allowance for an isolated capture sink; never disables certificate validation."
+        }
+      },
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": { "required": ["smtpFile"] },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["smtpFile"] },
+            { "required": ["allowInsecureSmtp"] }
+          ]
+        }
+      }
+    },
     "googleOidc": {
       "type": "object",
       "additionalProperties": false,

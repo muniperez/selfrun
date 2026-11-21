@@ -11,8 +11,10 @@ import subprocess
 import sys
 import uuid
 
+# __SEED_PROVIDER_LAYOUT__
 
-def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acquire_lock=True):
+
+def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acquire_lock=True, provider=None):
     def path(name):
         return base / name.lstrip("/")
 
@@ -116,6 +118,7 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
                     assert isinstance(record["lastFailure"], dict) and record["lastFailure"].get("fenceReleased") is True
         else:
             protected(path("/opt"), True)
+            validate_provider_layout(provider, base, run)
             containerd = path("/opt/containerd")
             if exists(containerd):
                 protected(containerd, True)
@@ -123,7 +126,7 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
                 for directory in (containerd / "bin", containerd / "lib"):
                     protected(directory, True)
                     assert not any(directory.iterdir())
-            assert not any(p.name not in ("minicloud.seed-operation", "minicloud.installation.lock", "containerd")
+            assert not any(p.name not in ("minicloud.seed-operation", "minicloud.installation.lock", "containerd", "digitalocean")
                            for p in path("/opt").iterdir())
 
         services = {}
@@ -171,5 +174,5 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
 
 
 if __name__ == "__main__":
-    assert len(sys.argv) == 2 and re.fullmatch("[a-f0-9]{32}", sys.argv[1])
-    print(json.dumps(inspect_host(sys.argv[1])))
+    assert len(sys.argv) == 3 and re.fullmatch("[a-f0-9]{32}", sys.argv[1])
+    print(json.dumps(inspect_host(sys.argv[1], provider=sys.argv[2])))

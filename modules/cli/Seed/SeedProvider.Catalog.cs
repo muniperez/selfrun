@@ -53,6 +53,7 @@ internal sealed partial class SeedProvider
     private async Task<SeedQuote> DigitalOceanQuoteAsync(SeedSelection s, CancellationToken ct)
     {
         var account = (await SendAsync(HttpMethod.Get, "account", null, ct)).GetProperty("account");
+        var accountIdentity = AccountIdentity(account);
         SeedGuard.Require(Text(account, "status") == "active" && account.GetProperty("email_verified").GetBoolean(), "DigitalOcean account must be active and email-verified.");
         var droplets = await ListAsync("droplets", "droplets", ct);
         SeedGuard.Require(droplets.Count < account.GetProperty("droplet_limit").GetInt32(), "DigitalOcean droplet quota exhausted.");
@@ -73,7 +74,7 @@ internal sealed partial class SeedProvider
             "USD", "hourly, monthly cap", "Taxes excluded; included outbound transfer TB=" + Text(size, "transfer")
                 + "; excess bandwidth, backups, volumes and other optional services excluded; IPv6 disabled.",
             "https://api.digitalocean.com/v2/sizes") };
-        return new(AccountIdentity(account), "", Text(image, "id"), "linux/amd64", "root",
+        return new(accountIdentity, "", Text(image, "id"), "linux/amd64", "root",
             size.GetProperty("vcpus").GetInt32(), size.GetProperty("memory").GetInt32(), size.GetProperty("disk").GetInt32(), costs, default,
             "Account/droplet/region/size/image/SSH-key/VPC read, droplet create/delete and SSH-key create/delete scopes required. Attach only the recorded existing default VPC; no network/project creation. Quota check is not a reservation.",
             Text(network, "id"));

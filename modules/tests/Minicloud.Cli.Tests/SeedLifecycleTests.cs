@@ -102,7 +102,8 @@ public sealed class SeedLifecycleTests : IDisposable
         state.ServerCreateStarted = true;
         state.SshKeyId = "7";
         if (responseRecorded) state.Server = new("server", state.Id, "region", "size", "42", "203.0.113.1");
-        fixture.Bodies["account"] = new { account = new { uuid = "synthetic-account", status = "active", email_verified = true, droplet_limit = quotaExhausted ? 1 : 5 } };
+        fixture.Bodies["account"] = new { account = new { uuid = "synthetic-user", team = new { uuid = "synthetic-team" },
+            status = "active", email_verified = true, droplet_limit = quotaExhausted ? 1 : 5 } };
         fixture.Bodies["droplets"] = new { droplets = new[] { fixture.Server(true) } };
         if (!quotaExhausted)
         {
@@ -322,7 +323,7 @@ public sealed class SeedLifecycleTests : IDisposable
         public Task<string?> FindKeyAsync(string operation, string key, CancellationToken ct) => Task.FromResult<string?>(null);
         public Task<string> CreateKeyAsync(string operation, string key, CancellationToken ct) { KeyCreates++; return Task.FromResult("key"); }
         public Task<SeedResource?> FindServerAsync(string operation, CancellationToken ct) { ServerLookups++; return Task.FromResult(Server); }
-        public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct)
+        public Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct, string? userData = null)
         {
             Creates++;
             if (CreateError is not null) throw CreateError;

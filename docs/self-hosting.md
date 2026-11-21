@@ -7,11 +7,13 @@ host based on these source assets. Once a versioned release is available, use
 its signed installer and release documentation; never build a production host
 from a checkout or substitute floating image tags.
 
-The standalone [CLI seed implementation](seed.md) can orchestrate a dedicated
-Hetzner, DigitalOcean or Vultr VPS and this same signed installer once a
-compatible release actually exists. Its source implementation is not provider,
-native-binary or host qualification; it fails closed for the unpublished
-candidate. Domain/public HTTPS access is required; IP-only access is deferred.
+The [guided CLI seed](stateless-seed.md#guided-installation) can use explicitly
+selected, matching committed source for a **test** installation on a dedicated
+Hetzner, DigitalOcean or Vultr VPS. Download a review candidate or publish from a
+clean clone. The separate signed option requires an exact compatible published
+server release and fails closed if unavailable. Neither path establishes live
+provider or host qualification. Domain/public HTTPS access is required; IP-only
+access is deferred.
 
 The public control-plane installer, setup flow and coordinated maintenance
 now have source implementations. Installation and maintenance have not been
@@ -50,6 +52,55 @@ docker compose -f compose.dev.yml up -d postgres openbao openbao-init
 never be used for a hosted installation. Run the API/dashboard from source using
 the commands in the repository [README](../README.md); the production stack's
 OpenBao, Kratos and Caddy configuration is separate.
+
+### Local SQLite initialization and upgrades
+
+SQLite is supported for disposable local API development and tests, not the
+hosted control plane. Set `Database:Provider` to `Sqlite` and
+`ConnectionStrings:Minicloud` to a disposable SQLite connection string. API
+startup initializes it when `Database:RunMigrationsOnStartup` is enabled
+(enabled by default in Development); the standalone
+`dotnet modules/api/bin/Release/net10.0/Minicloud.Api.dll migrate` command
+initializes it regardless of that startup switch. Without a configured
+connection string, both SQLite paths use `Data Source=minicloud-dev.db`.
+
+Both paths create the current schema and seed rows atomically in an empty
+database. Repeating initialization, or opening a database created by
+`EnsureCreated` with the same current model, preserves existing rows and does
+not rerun seeds.
+
+The supported populated upgrade prerequisite is the **complete SQLite
+`EnsureCreated` schema from source revision
+`feb807325b371d813ffb2613135a16da2426f220`**, before T30 identity/session changes.
+That revision's `modules/tests/Minicloud.Tests/SqliteTestHarness.cs` uses the
+actual SQLite runtime model with EF Core 10.0.5. The regression fixture
+`modules/tests/Minicloud.Tests/Fixtures/Sqlite-feb8073.sql` freezes its full
+provider-generated schema. This is a verified source prerequisite, not a
+published SQLite server release or a hand-created subset of tables.
+
+The upgrade recognizes that exact table/index schema and runs explicit
+conversions in a single writer transaction. It preserves internal user and
+organization IDs, memberships, API/runtime credential hashes, applications,
+environments, secrets and deployment children. It adds current tables and
+seeds only newly introduced tables, initializes SSH selection as `none`, and
+backfills deployment numbers by organization and UTC day with timestamp/ID
+ordering. As required by T30, it retires `firebase_uid`, leaves new Kratos
+bindings null, and does not recreate owners or import passwords. Existing
+operators require the explicit verified [`bind-operator`](bootstrap.md)
+procedure; schema migration alone does not admit browser login.
+
+Optional `__EFMigrationsHistory` is retained unchanged when its table schema
+matches EF's SQLite history table and its entries form a known contiguous
+migration prefix. History is not used as proof of the source schema and
+PostgreSQL migration SQL is never replayed on SQLite. Unknown schemas, extra
+objects, unknown/incomplete history, invalid relationships or failed
+conversions are rejected without committing schema or row changes. Both
+entry points support an idempotent retry after successful upgrade.
+Other historical schemas need separately verified conversions; do not delete
+populated databases or falsify their migration history to bypass rejection.
+
+PostgreSQL remains the hosted database and continues to use its existing
+migrations, drift checks and standalone migration state safeguards.
 
 Server containers expose only the dashboard/API behind Caddy on TCP 80/443.
 PostgreSQL, OpenBao and Kratos administration stay on the private Compose

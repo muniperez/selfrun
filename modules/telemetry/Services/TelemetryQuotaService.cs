@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Minicloud.Telemetry.Data;
@@ -12,7 +11,9 @@ public sealed class TelemetryQuotaService(
     TimeProvider timeProvider,
     IOptions<TelemetryOptions> options)
 {
-    private readonly ConcurrentDictionary<string, TokenBucket> _buckets = new(StringComparer.Ordinal);
+    private const int MaxTrackedApps = 4096;
+    private readonly Dictionary<string, TokenBucket> _buckets = new(StringComparer.Ordinal);
+    private readonly object _bucketGate = new();
     private readonly SemaphoreSlim _dailyGate = new(1, 1);
 
     public async Task<TelemetryQuotaDecision> ReserveAsync(
@@ -38,16 +39,50 @@ public sealed class TelemetryQuotaService(
                 TimeSpan.FromSeconds(5));
         }
 
-        var bucket = _buckets.GetOrAdd(appId, _ => new TokenBucket(burst));
         TimeSpan? retryAfter = null;
-        var now = timeProvider.GetUtcNow();
-        lock (bucket.Sync)
+        lock (_bucketGate)
         {
+            var now = timeProvider.GetUtcNow();
+            if (!_buckets.TryGetValue(appId, out var bucket))
+            {
+                if (_buckets.Count >= MaxTrackedApps)
+                {
+                    string? reclaimableApp = null;
+                    var capacityRetry = TimeSpan.FromSeconds(300);
+                    foreach (var entry in _buckets)
+                    {
+                        entry.Value.Refill(now, sustained, burst);
+                        if (entry.Value.Available == burst)
+                        {
+                            reclaimableApp = entry.Key;
+                            break;
+                        }
+
+                        var delay = RetryAfterForDeficit(burst - entry.Value.Available, sustained);
+                        if (delay < capacityRetry)
+                            capacityRetry = delay;
+                    }
+
+                    if (reclaimableApp is null)
+                    {
+                        return new TelemetryQuotaDecision(
+                            false, "Per-app ingest rate tracking capacity reached; retry with backoff.", capacityRetry);
+                    }
+
+                    // Lookup, safe reclamation and debit share a lock: no caller can
+                    // retain an evicted bucket and reset another caller's active quota.
+                    _buckets.Remove(reclaimableApp);
+                }
+
+                bucket = new TokenBucket(burst);
+                _buckets.Add(appId, bucket);
+            }
+
             bucket.Refill(now, sustained, burst);
             if (bucket.Available < byteCount)
             {
                 var deficit = byteCount - bucket.Available;
-                retryAfter = TimeSpan.FromSeconds(Math.Min(300, Math.Max(1, (deficit + sustained - 1) / sustained)));
+                retryAfter = RetryAfterForDeficit(deficit, sustained);
             }
             else
             {
@@ -151,9 +186,11 @@ public sealed class TelemetryQuotaService(
         return delay < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : delay;
     }
 
+    private static TimeSpan RetryAfterForDeficit(long deficit, long sustained) =>
+        TimeSpan.FromSeconds(Math.Clamp(Math.Ceiling((double)deficit / sustained), 1, 300));
+
     private sealed class TokenBucket(long capacity)
     {
-        public readonly object Sync = new();
         public long Available = capacity;
         public DateTimeOffset LastRefill;
         private bool _initialized;
@@ -173,7 +210,15 @@ public sealed class TelemetryQuotaService(
                 return;
             }
 
-            var refill = (long)(elapsedSeconds * sustainedPerSecond);
+            var replenished = elapsedSeconds * sustainedPerSecond;
+            if (replenished >= capacityCap - Available)
+            {
+                Available = capacityCap;
+                LastRefill = now;
+                return;
+            }
+
+            var refill = (long)replenished;
             if (refill > 0)
             {
                 Available = Math.Min(capacityCap, Available + refill);

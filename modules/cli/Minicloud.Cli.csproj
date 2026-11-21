@@ -16,6 +16,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Seed/prepare-host.sh" LogicalName="Minicloud.Cli.Seed.prepare-host.sh" />
     <EmbeddedResource Include="Seed/inspect-host.py" LogicalName="Minicloud.Cli.Seed.inspect-host.py" />
+    <EmbeddedResource Include="Seed/provider-layout.py" LogicalName="Minicloud.Cli.Seed.provider-layout.py" />
     <ProjectReference Include="..\contracts\Minicloud.Contracts.csproj" />
   </ItemGroup>
 
@@ -23,5 +24,30 @@
     <InternalsVisibleTo Include="Minicloud.Tests" />
     <InternalsVisibleTo Include="Minicloud.Cli.Tests" />
   </ItemGroup>
+
+  <Target Name="EmbedSeedSource" BeforeTargets="AssignTargetPaths"
+          DependsOnTargets="GetAssemblyVersion;InitializeSourceControlInformation;AddSourceRevisionToInformationalVersion"
+          Condition="'$(EmbedSeedSource)' == 'true'">
+    <Exec Command="git rev-parse HEAD" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_SeedHead" />
+    </Exec>
+    <Exec Command="git status --porcelain --untracked-files=all" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_SeedDirty" />
+    </Exec>
+    <Error Condition="'$(_SeedDirty)' != '' Or '$(_SeedHead)' != '$(SourceRevisionId)'"
+           Text="Embedded seed source requires a clean checkout and SourceRevisionId matching HEAD. Commit reviewed changes before publishing." />
+    <Error Condition="'$(GenerateAssemblyInfo)' != 'true' Or '$(GenerateAssemblyInformationalVersionAttribute)' != 'true'
+                     Or !$([System.Text.RegularExpressions.Regex]::IsMatch('$(InformationalVersion)', '(?:sha[.]|\+)$(_SeedHead)$'))"
+           Text="Embedded seed source requires assembly informational metadata ending in the exact HEAD revision (+REVISION or +sha.REVISION)." />
+    <PropertyGroup>
+      <_SeedArchive>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'seed-source.tar'))</_SeedArchive>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)/../..&quot; archive --format=tar --output=&quot;$(_SeedArchive)&quot; $(_SeedHead)" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(IntermediateOutputPath)seed-source.tar" LogicalName="Minicloud.Cli.Seed.source.tar" />
+      <FileWrites Include="$(IntermediateOutputPath)seed-source.tar" />
+    </ItemGroup>
+  </Target>
 
 </Project>
