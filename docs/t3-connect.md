@@ -101,7 +101,7 @@ own CLI authorization; owner-only enrollment is not a shell isolation boundary.
   route expiry; replacement generations are not suppressed by cached failure
   state. The cursor uses constant memory and resets on worker restart. A stable
   pool is selected with at most two single-row keyset queries per poll, using the
-  `(desired_state, phase, id)` index (apply the scheduler-index migration).
+  existing schema and indexes; no scheduler migration is required.
   Each VM gets one attempt per sweep, but sweep duration still depends on pool size,
   poll interval and probe duration; this does not guarantee renewal before the
   unchanged 90-second route TTL. Maintenance admission and publication fencing

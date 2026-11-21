@@ -43,7 +43,6 @@ public sealed partial class MinicloudDbContext
             entity.HasIndex(x => new { x.ProviderAccountId, x.ProviderServerId }).IsUnique();
             entity.HasIndex(x => new { x.Repository, x.WorkBranch }).IsUnique().HasFilter("kind = 'ephemeral'");
             entity.HasIndex(x => new { x.DesiredState, x.Phase, x.ShutdownDeadline });
-            entity.HasIndex(x => new { x.DesiredState, x.Phase, x.Id });
             entity.Property(x => x.Kind).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasOne<DevelopmentWorkspace>().WithMany(x => x.Vms)

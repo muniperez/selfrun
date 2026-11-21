@@ -2450,8 +2450,6 @@ namespace Minicloud.Common.Migrations
                     b.HasIndex("WorkspaceId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("DesiredState", "Phase", "Id");
-
                     b.HasIndex("DesiredState", "Phase", "ShutdownDeadline");
 
                     b.ToTable("development_workspace_vms", null, t =>
