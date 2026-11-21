@@ -235,7 +235,7 @@ internal static class SeedPortable
     };
 
     public static async Task CreateAsync(SeedPortableConfig config, SeedState state, ISeedProvider provider,
-        string publicKey, bool newSeed, string? approval, string classification, CancellationToken ct)
+        string publicKey, bool newSeed, string? approval, string classification, CancellationToken ct, Action? beforeMutation = null)
     {
         SeedGuard.Require(newSeed && config.Target is null && classification == "new_seed"
             && config.InitialCreationIntent == SeedPortableConfig.CreationIntent,
@@ -250,6 +250,8 @@ internal static class SeedPortable
         // An existing operation key can be evidence of an interrupted create before inventory became visible.
         SeedGuard.Require(key is null, "Operation key already exists. Reconcile any prior create; no automatic retry.");
         state.SshKeyId = await provider.FindUserKeyAsync(publicKey, ct);
+        ct.ThrowIfCancellationRequested();
+        beforeMutation?.Invoke();
         if (state.SshKeyId is null)
         {
             state.KeyCreateStarted = true;

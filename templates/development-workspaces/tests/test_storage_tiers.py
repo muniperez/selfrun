@@ -186,6 +186,75 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(0o600, stat.S_IMODE(self.marker.stat().st_mode))
         self.assertTrue(st.read_marker(str(self.marker), os.getuid()))
 
+    def test_native_fixture_owns_cache_leaves_and_purges_without_touching_credentials(self):
+        native = load_image("native_cache_fixture", "native.py")
+        caches = (".npm/_cacache/index", ".nuget/packages/demo/1.0.0", ".cargo/registry/cache/demo",
+                  ".cargo/git/db/demo", ".gradle/caches/modules-2", "go/pkg/mod/cache/download",
+                  ".cache/pip/http")
+        credentials = (".cargo/credentials.toml", ".cargo/config.toml", ".gradle/gradle.properties",
+                       ".npmrc", ".nuget/NuGet/NuGet.Config")
+        with patch.object(native.os, "chown", wraps=os.chown) as chown:
+            for relative in caches:
+                native.owned_cache_fixture(self.home, self.home / relative,
+                                           uid=os.getuid(), gid=os.getgid())
+            for relative in credentials:
+                native.owned_cache_fixture(self.home, self.home / relative, "synthetic-credential\n",
+                                           uid=os.getuid(), gid=os.getgid())
+        # The probe runs as root: implicit mkdir ownership is not the coding user's ownership.
+        explicitly_owned = {Path(call.args[0]) for call in chown.call_args_list}
+        for relative in caches:
+            path = self.home / relative
+            for directory in (path, *path.parents):
+                if directory == self.home:
+                    break
+                self.assertIn(directory, explicitly_owned)
+        before = {relative: ((self.home / relative).read_bytes(), (self.home / relative).stat())
+                  for relative in credentials}
+
+        report = self.prepare()
+
+        self.assertEqual(("ready", "written"), (report["state"], report["marker"]))
+        self.assertEqual(7, sum(value == "moved" for value in report["migration"].values()))
+        self.assertEqual("purged", report["trash"]["state"])
+        self.assertEqual(0, report["trash"]["errors"])
+        self.assertFalse((self.home / st.TRASH).exists())
+        for relative in caches:
+            self.assertFalse((self.home / relative / "native-cache-entry").exists())
+        for relative, (data, info) in before.items():
+            path = self.home / relative
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(data, path.read_bytes())
+            after = path.stat()
+            self.assertEqual((info.st_ino, info.st_uid, info.st_gid, info.st_mode),
+                             (after.st_ino, after.st_uid, after.st_gid, after.st_mode))
+
+    @unittest.skipIf(os.geteuid() == 0, "Requires real unprivileged Linux permission enforcement")
+    def test_unreadable_cache_leaf_defers_cleanup_and_next_start_retries_only_trash(self):
+        self.file(".npm/_cacache/index/native-cache-entry")
+        (self.home / ".npm/_cacache/index").chmod(0)
+
+        first = self.prepare()
+
+        self.assertEqual(("ready", "written", "moved", "pending"),
+                         (first["state"], first["marker"], first["migration"][".npm"],
+                          first["trash"]["state"]))
+        self.assertGreater(first["trash"]["errors"], 0)
+        trash = self.home / st.TRASH
+        self.assertTrue(trash.is_dir())
+        retained = next(trash.iterdir()) / "_cacache/index"
+        self.assertEqual(0, stat.S_IMODE(retained.stat().st_mode))
+        # Repair only the synthetic leaf; the product must not bypass permission failures.
+        retained.chmod(0o700)
+        self.file(".npm/new-cache", "created-after-migration\n")
+
+        second = self.prepare()
+
+        self.assertEqual(("present", "purged"), (second["marker"], second["trash"]["state"]))
+        self.assertNotIn("migration", second)
+        self.assertEqual(0, second["trash"]["errors"])
+        self.assertFalse(trash.exists())
+        self.assertEqual("created-after-migration\n", (self.home / ".npm/new-cache").read_text())
+
     def test_links_and_foreign_or_mounted_directories_are_never_followed_or_moved(self):
         (self.home / ".npm").symlink_to(self.outside, target_is_directory=True)
         (self.home / ".cargo").symlink_to(self.outside, target_is_directory=True)

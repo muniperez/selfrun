@@ -229,6 +229,20 @@ def check(condition, code):
         raise ProbeError(code)
 
 
+def owned_cache_fixture(home, path, data=None, uid=2000, gid=2000):
+    for parent in reversed(path.relative_to(home).parents[:-1]):
+        directory = home / parent
+        directory.mkdir(mode=0o700, exist_ok=True)
+        os.chown(directory, uid, gid)
+    if data is None:
+        path.mkdir(mode=0o700, exist_ok=True)
+        os.chown(path, uid, gid)
+        path = path / "native-cache-entry"
+        data = "regenerable\n"
+    path.write_text(data)
+    os.chown(path, uid, gid)
+
+
 def work_inventory_evidence(status):
     inventory = status.get("workInventory") if isinstance(status, dict) else None
     reason = inventory.get("reason") if isinstance(inventory, dict) else None
@@ -1108,24 +1122,16 @@ class Native:
                   ".cache/pip/http")
         credentials = (".cargo/credentials.toml", ".cargo/config.toml", ".gradle/gradle.properties", ".npmrc",
                        ".nuget/NuGet/NuGet.Config")
-        def owned(path, data=None):
-            for parent in reversed(path.relative_to(home).parents[:-1]):
-                directory = home / parent
-                directory.mkdir(mode=0o700, exist_ok=True)
-                os.chown(directory, 2000, 2000)
-            if data is None:
-                path.mkdir(mode=0o700, exist_ok=True)
-                path = path / "native-cache-entry"
-                data = "regenerable\n"
-            path.write_text(data)
-            os.chown(path, 2000, 2000)
         for name in (".cache", ".cargo/registry", ".cargo/git", ".gradle/caches"):
             if (home / name).is_symlink():
                 (home / name).unlink()
         for name in caches:
-            owned(home / name)
+            owned_cache_fixture(home, home / name)
+            info = (home / name).stat()
+            check(info.st_uid == 2000 and info.st_gid == 2000 and
+                  stat.S_IMODE(info.st_mode) == 0o700, "CACHE_FIXTURE_NOT_CODING_OWNED")
         for name in credentials:
-            owned(home / name, "native-credential-" + name + "\n")
+            owned_cache_fixture(home, home / name, "native-credential-" + name + "\n")
         Path(tiers.MARKER).unlink(missing_ok=True)
         previous = self.t3_unit()["MainPID"]
         adapter = self.rt.Linux(self.config)
@@ -1155,6 +1161,7 @@ class Native:
                 "t3ServiceEnvironmentMatched": sorted(expected), "codingLoginShellMatched": True,
                 "rootLoginShellUnchanged": True, "containerRuntimePresent": False,
                 "cacheMigrationMovedCaches": len(caches), "credentialsUntouched": len(credentials),
+                "cacheFixtureLeavesCodingOwned": True, "cacheTrashPurged": True,
                 "migrationMarkerRootOnly": True}
 
     def terminal_scratch(self):

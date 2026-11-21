@@ -58,7 +58,7 @@ fcntl.flock(lock_fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         return MutationLockScript + "\nimport base64, json\nnamespace={'__name__':'seed_inspection'}\nexec("
             + JsonSerializer.Serialize(InspectionScript) + ", namespace)\ncontext=json.loads(base64.b64decode("
             + Quote(context) + "))\n" + """
-observation=namespace["inspect_host"](context["seedId"],acquire_lock=False)
+observation=namespace["inspect_host"](context["seedId"],acquire_lock=False,provider=context["identity"]["provider"])
 assert observation["state"] in ("preparing","installed")
 if observation.get("identity") is not None:
  assert observation["identity"] == context["identity"]
@@ -142,10 +142,29 @@ if observation["state"] == "installed":
         return "SHA256:" + Convert.ToBase64String(SHA256.HashData(key)).TrimEnd('=');
     }
 
+    internal static string ProviderLayoutScript
+    {
+        get
+        {
+            using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.provider-layout.py")!;
+            using var reader = new StreamReader(resource);
+            return reader.ReadToEnd();
+        }
+    }
+
+    internal static string PreparationScript
+    {
+        get
+        {
+            using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.prepare-host.sh")!;
+            using var reader = new StreamReader(resource);
+            return reader.ReadToEnd().Replace("__SEED_PROVIDER_LAYOUT__",
+                Quote(ProviderLayoutScript + "\nvalidate_provider_layout(sys.argv[1])\n"));
+        }
+    }
+
     public async Task PrepareAsync(SeedState state, string directory, CancellationToken ct)
     {
-        using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.prepare-host.sh")!;
-        using var script = new MemoryStream(); await resource.CopyToAsync(script, ct);
         var identity = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(new
         {
             provider = state.Plan.Selection.Provider, providerAccount = state.ProviderAccountId ?? state.Plan.Quote.Account,
@@ -153,7 +172,8 @@ if observation["state"] == "installed":
             image = state.Plan.Quote.Image, architecture = state.Plan.Quote.Architecture
         }));
         var result = await SshAsync(state, directory, $"bash -s -- {Quote(state.Id)} {Quote(state.Plan.Quote.Architecture)} {Quote(identity)} "
-            + Quote(localSource ? "local-source" : "github-sigstore"), script.ToArray(), ct);
+            + Quote(localSource ? "local-source" : "github-sigstore") + " " + Quote(state.Plan.Selection.Provider),
+            Encoding.UTF8.GetBytes(PreparationScript), ct);
         SeedGuard.Require(result.ExitCode == 0, "Dedicated Ubuntu host preparation failed. Preserve resources; inspect through pinned SSH. No host output was logged.");
     }
 
