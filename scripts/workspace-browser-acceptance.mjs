@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { resolve, join, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
@@ -27,8 +27,8 @@ assert(Number.isInteger(port) && port > 1024 && port < 65536, "Invalid acceptanc
 const origin = `http://127.0.0.1:${port}`;
 execFileSync("git", ["check-ignore", ".local/artifacts/issue138/browser/report.json"], { cwd: root });
 await mkdir(artifacts, { recursive: true });
-const scratch = join(artifacts, "scratch");
-await mkdir(scratch, { recursive: true });
+// Chromium's Unix socket paths must fit within sockaddr_un's path limit.
+const scratch = await mkdtemp(join(root, ".local/artifacts/ws-"));
 process.env.TMPDIR = scratch;
 process.env.XDG_CACHE_HOME = join(scratch, "xdg-cache");
 process.env.XDG_CONFIG_HOME = join(scratch, "xdg-config");
@@ -37,7 +37,9 @@ const report = {
   environment: { node: process.version, platform: process.platform, architecture: process.arch },
   startedAt: new Date().toISOString(), checks: [], screenshots: [], errors: [],
   gaps: ["No live provider, billing, retained-volume durability, gateway, T3 terminal or Git push qualification.",
-    "Organization switching has no selector in the current production shell; late workspace-route replies are tested instead.",
+    "Organization switching uses the public GitHub settings organizationId route, not a shell selector (none exists).",
+    "Creation starts the primary VM automatically; create-stopped is not offered by the current dashboard.",
+    "Git-save repair is simulated in fixture state; no repository authorization or Git push is performed.",
     "Screenshots are drawing-review evidence, not pixel-perfect or cross-browser qualification."],
 };
 const requests = [];
@@ -83,6 +85,7 @@ const selection = {
   imageId: "image-standard", imageName: "Qualified development image",
   profile: "Standard", planId: "plan-cx23", planName: "Development",
   providerAccountName: "Synthetic Hetzner", region: "fsn1", sku: "cx23",
+  isDefault: true, computeHourlyRate: 0.008,
 };
 function fixture() {
   return {
@@ -101,14 +104,15 @@ function fixture() {
       }),
       workspace("epsilon", "release-tools"),
     ],
-    selections: { available: true, options: [selection] },
+    otherWorkspaces: [workspace("other", "other-organization-only", { organizationId: "org-other" })],
+    selections: { available: true, options: [selection], currency: "EUR", volumeMonthlyRatePerGb: 0.044 },
     selectionFailure: false, readFailure: false, ambiguousCreate: false,
-    staleMutation: false, launchExpired: false, launchTtlMs: 60000,
-    sequence: 0, delayedDetail: null, delayedLaunch: null,
+    staleMutation: false, launchRejected: false, launchExpired: false, launchTtlMs: 60000,
+    gitRepaired: false, sequence: 0, delayedDetail: null, delayedCollection: null, delayedLaunch: null,
     unexpected: [], external: [], calls: [],
   };
 }
-async function installApi(context, state) {
+async function installApi(context, state, viewport) {
   await context.route("**/*", async route => {
     const request = route.request();
     const url = new URL(request.url());
@@ -120,7 +124,7 @@ async function installApi(context, state) {
     const method = request.method();
     const body = request.postDataJSON();
     const entry = { method, path: url.pathname, query: Object.fromEntries(url.searchParams), body };
-    if (method !== "OPTIONS") { state.calls.push(entry); requests.push(entry); }
+    if (method !== "OPTIONS") { state.calls.push(entry); requests.push({ viewport, ...entry }); }
     const fulfill = (data, status = 200) => route.fulfill({
       status, contentType: "application/json",
       headers: { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true",
@@ -135,35 +139,70 @@ async function installApi(context, state) {
     });
     if (url.pathname === "/api/me") return fulfill({
       id: "user-fixture", email: "acceptance@example.invalid", displayName: "Browser Acceptance",
-      organizations: [{ id: "org-fixture", name: "Synthetic organization", slug: "synthetic", role: state.role }],
+      organizations: [{ id: "org-fixture", name: "Synthetic organization", slug: "synthetic", role: state.role },
+        { id: "org-other", name: "Other synthetic organization", slug: "other", role: "viewer" }],
     });
+    if (url.pathname === "/api/github-apps") {
+      assert.equal(method, "GET");
+      return fulfill({ organizationId: url.searchParams.get("organizationId"), status: "not_configured" });
+    }
     if (url.pathname === "/api/development-workspaces/selections") {
       if (state.selectionFailure) return error("catalog_unavailable", "Synthetic catalog unavailable", 503);
       return fulfill(state.selections);
     }
     if (url.pathname === "/api/development-workspaces") {
-      if (method === "GET") return state.readFailure
-        ? error("read_failed", "Synthetic refresh failed", 500) : fulfill(state.workspaces);
+      if (method === "GET") {
+        const organizationId = url.searchParams.get("organizationId");
+        assert(["org-fixture", "org-other"].includes(organizationId), "Unknown collection organization");
+        const snapshot = structuredClone(organizationId === "org-fixture" ? state.workspaces : state.otherWorkspaces);
+        if (state.delayedCollection?.organizationId === organizationId) {
+          const delayed = state.delayedCollection;
+          delayed.requested = true;
+          await delayed.promise;
+          await fulfill(snapshot);
+          delayed.settled = true;
+          return;
+        }
+        return state.readFailure ? error("read_failed", "Synthetic refresh failed", 500) : fulfill(snapshot);
+      }
       assert.equal(method, "POST");
       assert.equal(body.organizationId, "org-fixture");
       assert(body.idempotencyKey);
       if (state.ambiguousCreate) { state.ambiguousCreate = false; return route.abort("failed"); }
-      const created = workspace("created", body.name, { volumeSizeGb: body.volumeSizeGb });
+      assert.equal(body.startPrimaryVm, true);
+      const created = workspace("created", body.name, { volumeSizeGb: body.volumeSizeGb,
+        estimatedMonthlyStorage: body.volumeSizeGb * 0.044,
+        desiredState: "running", phase: "provisioning",
+        vms: [vm("created-primary", { desiredState: "running", phase: "provisioning",
+          startupStage: "preparing_vm", computeReserved: true })] });
       state.workspaces.push(created);
       return fulfill(created, 201);
     }
     const match = url.pathname.match(/^\/api\/development-workspaces\/([^/]+)(?:\/(.*))?$/);
     if (match) {
-      const item = state.workspaces.find(item => item.id === match[1]);
+      const item = [...state.workspaces, ...state.otherWorkspaces].find(item => item.id === match[1]);
       if (!item) return error("not_found", "Workspace not found", 404);
+      assert.equal(url.searchParams.get("organizationId"), item.organizationId);
       if (!match[2]) {
         assert.equal(method, "GET");
         const snapshot = structuredClone(item);
         if (state.delayedDetail?.id === item.id) {
-          state.delayedDetail.requested = true;
-          await state.delayedDetail.promise;
+          const delayed = state.delayedDetail;
+          delayed.requested = true;
+          await delayed.promise;
+          await fulfill(snapshot);
+          delayed.settled = true;
+          return;
         }
         return state.readFailure ? error("read_failed", "Synthetic refresh failed", 500) : fulfill(snapshot);
+      }
+      const history = match[2].match(/^vms\/([^/]+)\/resource-history$/);
+      if (history) {
+        assert.equal(method, "GET");
+        const target = item.vms.find(vm => vm.id === history[1]);
+        assert(target, "Unknown history VM");
+        return fulfill({ vmId: target.id, generation: target.generation,
+          windowStart: timestamp, windowEnd: timestamp, samples: [] });
       }
       assert.equal(method, "POST");
       assert.equal(url.searchParams.get("organizationId"), "org-fixture");
@@ -173,6 +212,7 @@ async function installApi(context, state) {
           target.phase = target.kind === "ephemeral" ? "awaiting_git_save" : "stopped";
           target.gitStatus = target.kind === "ephemeral" ? "push_failed" : "not_required";
           target.errorMessage = target.kind === "ephemeral" ? "Repository push rejected. Repair repository authorization." : null;
+          target.computeReserved = target.kind === "ephemeral";
         }
         return fulfill(item);
       }
@@ -192,6 +232,7 @@ async function installApi(context, state) {
         assert.equal(body.generation, target.generation);
         const action = mutation[2];
         if (action === "launch") {
+          if (state.launchRejected) return error("launch_rejected", "Synthetic launch rejected", 409);
           const response = {
             url: "https://gateway.example.invalid/synthetic-session",
             expiresAt: new Date(Date.now() + (state.launchExpired ? -1000 : state.launchTtlMs)).toISOString(),
@@ -204,8 +245,11 @@ async function installApi(context, state) {
           if (state.delayedLaunch) state.delayedLaunch.settled = true;
           return result;
         }
-        if (action === "start") { target.desiredState = "running"; target.phase = "provisioning"; target.computeReserved = true; }
-        if (action === "stop") { target.desiredState = "stopped"; target.phase = "stopped"; target.gitStatus = "saved"; target.computeReserved = false; target.errorMessage = null; }
+        if (action === "start") { target.desiredState = "running"; target.phase = "provisioning"; target.startupStage = "preparing_vm"; target.computeReserved = true; }
+        if (action === "stop") {
+          if (target.kind === "ephemeral" && !state.gitRepaired) return error("git_push_failed", "Repository access is still blocked.");
+          target.desiredState = "stopped"; target.phase = "stopped"; target.gitStatus = "saved"; target.computeReserved = false; target.errorMessage = null;
+        }
         if (action === "discard") {
           assert.equal(target.kind, "ephemeral");
           assert.equal(body.discardLocalData, true);
@@ -213,6 +257,7 @@ async function installApi(context, state) {
           target.phase = "stopped"; target.desiredState = "stopped"; target.gitStatus = "discarded"; target.computeReserved = false;
         }
         target.revision++;
+        item.revision++;
         return fulfill(item);
       }
     }
@@ -222,26 +267,42 @@ async function installApi(context, state) {
 }
 const mutations = state => state.calls.filter(call => call.method !== "GET");
 async function choose(dialog) {
-  await dialog.getByLabel("Workspace image", { exact: true }).selectOption(selection.imageId);
-  await dialog.getByLabel("Profile", { exact: true }).selectOption(selection.profile);
-  await dialog.getByLabel("Approved plan", { exact: true }).selectOption(selection.planId);
+  await dialog.getByLabel("Image", { exact: true }).selectOption(selection.imageId);
+  await dialog.getByLabel("Size", { exact: true }).selectOption(selection.profile);
+  await dialog.getByLabel("Plan", { exact: true }).selectOption(selection.planId);
 }
 async function capture(page, name, viewport) {
   const directory = join(artifacts, viewport);
   await mkdir(directory, { recursive: true });
   const path = join(directory, `${name}.png`);
   await page.evaluate(() => window.scrollTo(0, 0));
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    `${viewport} ${name}: page overflows viewport`);
   await page.screenshot({ path, fullPage: !name.startsWith("create"), animations: "disabled" });
   report.screenshots.push(relative(root, path));
 }
 async function refresh(page) {
-  await page.getByRole("button", { name: "Refresh workspace status", exact: true }).click();
-  await until(() => page.getByRole("button", { name: "Refresh workspace status", exact: true }).isEnabled(), "refresh settled");
+  await page.getByRole("button", { name: "Environment actions", exact: true }).click();
+  const response = page.waitForResponse(response => response.request().method() === "GET"
+    && new URL(response.url()).pathname === new URL(page.url()).pathname.replace("/workspaces/", "/api/development-workspaces/"));
+  await page.getByRole("menuitem", { name: "Refresh status", exact: true }).click();
+  await response;
+}
+async function stopAll(page) {
+  await page.getByRole("button", { name: "Environment actions", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "Stop all VMs", exact: true }).focus();
+  await page.keyboard.press("Enter");
+}
+async function collection(page) {
+  const link = page.getByRole("link", { name: "Dev Environments", exact: true }).last();
+  if (!await link.isVisible()) await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await link.click();
 }
 async function runViewport(name, viewport) {
   const context = await browser.newContext({ viewport, serviceWorkers: "block", acceptDownloads: false, colorScheme: "light" });
   const state = fixture();
-  await installApi(context, state);
+  await installApi(context, state, name);
   const page = await context.newPage();
   page.setDefaultTimeout(12000);
   page.on("pageerror", error => report.errors.push(`${name}: ${error.message}`));
@@ -249,20 +310,21 @@ async function runViewport(name, viewport) {
   try {
     await page.goto(`${origin}/workspaces`);
     await check(`${name}: collection/filter/detail/back are read-only`, async () => {
-      await page.getByRole("table", { name: "Workspaces", exact: true }).waitFor();
+      await page.getByRole("table", { name: "Dev environments", exact: true }).waitFor();
       await capture(page, "collection", name);
-      const filterTrigger = page.locator('[aria-label="workspaces controls"] button[aria-haspopup="dialog"]');
+      const filterTrigger = page.getByRole("button", { name: /Filter & sort/ });
       await filterTrigger.click();
       await page.getByRole("combobox", { name: "Primary VM state", exact: true }).click();
       await page.getByRole("option", { name: "Stopped", exact: true }).click();
       await page.keyboard.press("Escape");
       await until(async () => await page.getByRole("link", { name: "docs-preview", exact: true }).count() === 0, "primary-state filter applied");
-      const search = page.getByRole("textbox", { name: /Search workspaces/i });
+      const search = page.getByRole("textbox", { name: "Search dev environments", exact: true });
       await search.fill("api-sandbox");
       await until(async () => await page.getByRole("link", { name: "docs-preview", exact: true }).count() === 0, "filter applied");
-      await page.getByRole("link", { name: "api-sandbox", exact: true }).click();
+      await page.getByRole("link", { name: "api-sandbox", exact: true }).focus();
+      await page.keyboard.press("Enter");
       await card("alpha-primary").waitFor();
-      await page.getByRole("link", { name: "Workspaces", exact: true }).last().click();
+      await page.getByRole("link", { name: "Dev Environments", exact: true }).last().click();
       await until(async () => await search.inputValue() === "api-sandbox", "filter persisted");
       assert.equal(mutations(state).length, 0);
       await search.fill("");
@@ -273,9 +335,9 @@ async function runViewport(name, viewport) {
       await page.getByRole("link", { name: "docs-preview", exact: true }).waitFor();
     });
     await check(`${name}: dialog keyboard focus returns to trigger`, async () => {
-      const trigger = page.getByRole("button", { name: "Create workspace", exact: true });
+      const trigger = page.getByRole("button", { name: "Create dev environment", exact: true });
       await trigger.focus(); await page.keyboard.press("Enter");
-      const dialog = page.getByRole("dialog", { name: "Create workspace", exact: true });
+      const dialog = page.getByRole("dialog", { name: "Create dev environment", exact: true });
       await dialog.waitFor();
       assert(await dialog.evaluate(el => el.contains(document.activeElement)));
       for (let i = 0; i < 12; i++) {
@@ -285,13 +347,14 @@ async function runViewport(name, viewport) {
       await page.keyboard.press("Escape");
       await until(() => trigger.evaluate(el => el === document.activeElement), "focus returned");
     });
-    await check(`${name}: create stopped, ambiguous retry keeps idempotency key`, async () => {
-      await page.getByRole("button", { name: "Create workspace", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Create workspace", exact: true });
-      await dialog.getByLabel("Workspace name", { exact: true }).fill("browser-created");
-      await choose(dialog);
+    await check(`${name}: name-and-create defaults, automatic start, ambiguous retry keeps idempotency key`, async () => {
+      await page.getByRole("button", { name: "Create dev environment", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Create dev environment", exact: true });
+      await dialog.getByLabel("Name", { exact: true }).fill("browser-created");
+      await dialog.getByRole("note", { name: "Automatic start", exact: true }).waitFor();
+      assert((await dialog.getByRole("region", { name: "Summary", exact: true }).innerText()).includes("20 GB"));
       await capture(page, "create", name);
-      const submit = dialog.getByRole("button", { name: "Create stopped workspace", exact: true });
+      const submit = dialog.getByRole("button", { name: "Create environment", exact: true });
       await submit.scrollIntoViewIfNeeded();
       const bounds = await submit.boundingBox();
       assert(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, "Create action is clipped");
@@ -299,44 +362,69 @@ async function runViewport(name, viewport) {
       state.ambiguousCreate = true;
       await submit.click();
       await dialog.getByRole("alert").waitFor();
-      await dialog.getByRole("button", { name: "Create stopped workspace", exact: true }).click();
+      await submit.click();
       await until(async () => await dialog.count() === 0, "created dialog closed");
+      await card("created-primary").waitFor();
+      assert.equal(new URL(page.url()).pathname, "/workspaces/created");
       const creates = mutations(state).filter(call => call.path === "/api/development-workspaces");
       assert.equal(creates.length, 2);
       assert.deepEqual(creates[0].body, creates[1].body);
-      assert.equal(state.workspaces.find(item => item.id === "created").vms[0].phase, "stopped");
+      assert.equal(creates[0].body.startPrimaryVm, true);
+      assert.equal(creates[0].body.volumeSizeGb, 20);
+      assert.equal(state.workspaces.find(item => item.id === "created").vms[0].phase, "provisioning");
       assert.equal(mutations(state).filter(call => /\/start$/.test(call.path)).length, 0);
     });
-    await page.getByRole("link", { name: "browser-created", exact: true }).last().click();
-    await card("created-primary").waitFor();
-    await check(`${name}: explicit start, readiness, T3 and preview authorization, expired links`, async () => {
+    await check(`${name}: stop created VM, direct revisit, retained storage costs and explicit start`, async () => {
+      const primary = card("created-primary");
+      await primary.getByRole("button", { name: "More actions for Primary VM", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await page.keyboard.press("Home");
+      await page.keyboard.press("Enter");
+      await primary.getByText("Stopped", { exact: true }).waitFor();
+      const before = mutations(state).length;
+      await page.reload();
+      await card("created-primary").getByText("Stopped", { exact: true }).waitFor();
+      await refresh(page);
+      await page.getByRole("tab", { name: "Storage & costs", exact: true }).click();
+      await page.getByText(/Storage is charged even when all VMs are stopped/).waitFor();
+      await page.getByText("0.88 EUR", { exact: true }).waitFor();
+      assert.equal(mutations(state).length, before);
+      await page.getByRole("tab", { name: "Overview", exact: true }).click();
+    });
+    await check(`${name}: explicit start, readiness, T3 and preview authorization, rejected/expired links`, async () => {
       const primary = card("created-primary");
       assert.equal(await primary.getByRole("button", { name: "Connect to T3", exact: true }).count(), 0);
-      await primary.getByRole("button", { name: "Start compute", exact: true }).click();
-      await until(() => primary.innerText().then(text => text.includes("provisioning")), "provisioning shown");
+      await primary.getByRole("button", { name: "Start VM", exact: true }).click();
+      await primary.getByRole("list", { name: "VM startup stages", exact: true }).waitFor();
       assert.equal(await primary.getByRole("button", { name: "Connect to T3", exact: true }).count(), 0);
       const vm = state.workspaces.find(item => item.id === "created").vms[0];
       vm.phase = "ready"; vm.revision++;
       await refresh(page);
       await primary.getByRole("button", { name: "Connect to T3", exact: true }).click();
-      await primary.getByRole("link", { name: /Open authorized T3 session/ }).waitFor();
+      await primary.getByRole("link", { name: "Open T3", exact: true }).waitFor();
       const beforePreview = mutations(state).length;
       await primary.getByRole("button", { name: "Open preview", exact: true }).click();
       assert.equal(mutations(state).length, beforePreview, "Opening preview fields must not authorize or start compute");
-      await primary.getByLabel("Registered preview slug").fill("docs");
-      await primary.getByRole("button", { name: "Authorize preview", exact: true }).click();
-      await primary.getByRole("link", { name: /Open authorized docs preview/ }).waitFor();
+      await primary.getByLabel("Preview name", { exact: true }).fill("docs");
+      await primary.getByRole("button", { name: "Get preview link", exact: true }).click();
+      await primary.getByRole("link", { name: "Open preview", exact: true }).waitFor();
       const launch = mutations(state).filter(call => call.path.endsWith("/launch"));
       assert.deepEqual(launch.map(call => call.body), [{ generation: 7, service: "t3" }, { generation: 7, service: "docs" }]);
-      state.launchExpired = true;
+      state.launchRejected = true;
       await primary.getByRole("button", { name: "Connect to T3", exact: true }).click();
       await primary.getByRole("alert").waitFor();
-      assert.equal(await primary.getByRole("link", { name: /Open authorized/ }).count(), 0);
+      assert((await primary.getByRole("alert").innerText()).includes("This didn't start the VM"));
+      assert.equal(await primary.getByRole("link").count(), 0);
+      state.launchRejected = false;
+      state.launchExpired = true;
+      await primary.getByRole("button", { name: "Connect to T3", exact: true }).click();
+      await primary.getByText("Link expired", { exact: true }).waitFor();
+      assert.equal(await primary.getByRole("link").count(), 0);
       state.launchExpired = false;
       state.launchTtlMs = 1000;
       await primary.getByRole("button", { name: "Connect to T3", exact: true }).click();
-      await primary.getByRole("link", { name: /Open authorized T3 session/ }).waitFor();
-      await until(async () => await primary.getByRole("link", { name: /Open authorized/ }).count() === 0, "expired link removed");
+      await primary.getByRole("link", { name: "Open T3", exact: true }).waitFor();
+      await until(async () => await primary.getByRole("link").count() === 0, "expired link removed");
       state.launchTtlMs = 60000;
     });
     await check(`${name}: late launch authorization cannot cross VM generations`, async () => {
@@ -349,12 +437,12 @@ async function runViewport(name, viewport) {
       await refresh(page);
       release();
       await until(() => state.delayedLaunch.settled, "late launch settled");
-      assert.equal(await card("created-primary").getByRole("link", { name: /Open authorized/ }).count(), 0);
+      assert.equal(await card("created-primary").getByRole("link").count(), 0);
       state.delayedLaunch = null;
     });
     await check(`${name}: stop and revisit do not restart compute`, async () => {
-      await card("created-primary").getByText("Advanced VM controls", { exact: true }).click();
-      await card("created-primary").getByRole("button", { name: "Stop compute", exact: true }).click();
+      await card("created-primary").getByRole("button", { name: "More actions for Primary VM", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Stop VM", exact: true }).click();
       await card("created-primary").getByText("Stopped", { exact: true }).waitFor();
       const count = mutations(state).length;
       await page.reload(); await card("created-primary").waitFor();
@@ -362,17 +450,17 @@ async function runViewport(name, viewport) {
     });
     await check(`${name}: independent sibling launches require both acknowledgments`, async () => {
       for (let i = 0; i < 2; i++) {
-        await page.getByRole("button", { name: "Launch ephemeral VM", exact: true }).click();
-        const dialog = page.getByRole("dialog", { name: "Launch ephemeral VM", exact: true });
+        await page.getByRole("button", { name: "Launch temporary VM", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Launch temporary VM", exact: true });
         await choose(dialog);
         await dialog.getByLabel("Repository URL", { exact: true }).fill("https://example.invalid/synthetic/repository.git");
         await dialog.getByLabel("Base ref", { exact: true }).fill("refs/heads/main");
         await dialog.getByLabel("Resolved base commit SHA", { exact: true }).fill("a".repeat(40));
-        const launch = dialog.getByRole("button", { name: "Launch ephemeral VM", exact: true });
+        const launch = dialog.getByRole("button", { name: "Launch temporary VM", exact: true });
         assert(await launch.isDisabled());
         await dialog.getByLabel(/I authorize task-scoped pushes/).check();
         assert(await launch.isDisabled());
-        await dialog.getByLabel(/I acknowledge ignored\/untracked/).check();
+        await dialog.getByLabel(/I understand that untracked files/).check();
         await launch.click();
         await until(async () => await dialog.count() === 0, "ephemeral launch completed");
       }
@@ -381,37 +469,45 @@ async function runViewport(name, viewport) {
       assert.equal(item.vms[0].phase, "stopped");
       assert.equal(item.providerVolumeId, "volume-created");
       assert.notEqual(item.vms[1].workBranch, item.vms[2].workBranch);
-      await card("created-primary").getByRole("button", { name: "Start compute", exact: true }).click();
-      await card("created-primary").getByText("provisioning", { exact: true }).waitFor();
+      await card("created-primary").getByRole("button", { name: "Start VM", exact: true }).click();
+      await card("created-primary").getByRole("list", { name: "VM startup stages", exact: true }).waitFor();
       item.vms[0].phase = "ready"; item.vms[0].revision++;
       await refresh(page);
       await capture(page, "detail", name);
     });
     await check(`${name}: stop-all cancel then confirm lists all generations`, async () => {
       const before = mutations(state).length;
-      await page.getByRole("button", { name: "Stop all VMs", exact: true }).click();
+      await stopAll(page);
       const dialog = page.getByRole("dialog", { name: "Stop all VMs?", exact: true });
       for (const id of ["created-primary", "task-1", "task-2"]) assert((await dialog.innerText()).includes(id));
       await dialog.getByRole("button", { name: "Cancel stop all", exact: true }).click();
       assert.equal(mutations(state).length, before);
-      await page.getByRole("button", { name: "Stop all VMs", exact: true }).click();
-      await dialog.getByRole("button", { name: "Confirm stop all", exact: true }).click();
+      await until(() => page.getByRole("button", { name: "Environment actions", exact: true }).evaluate(el => el === document.activeElement), "stop-all focus returned");
+      await stopAll(page);
+      await dialog.getByRole("button", { name: "Confirm stop all", exact: true }).focus();
+      await page.keyboard.press("Enter");
       await until(async () => await dialog.count() === 0, "stop all completed");
       assert.equal(mutations(state).at(-1).path, "/api/development-workspaces/created/stop-all");
     });
     await check(`${name}: Git-save repair/retry and generation-bound discard isolate siblings/volume`, async () => {
-      await page.getByRole("button", { name: "Expand VM task-1", exact: true }).click();
+      await page.getByRole("button", { name: /^minicloud\/task-1,/ }).click();
       const item = state.workspaces.find(item => item.id === "created");
       const primarySnapshot = structuredClone(item.vms[0]);
       const volumeSnapshot = [item.providerVolumeId, item.volumeSizeGb, item.volumeStatus];
       await card("task-1").getByRole("region", { name: "Git save recovery for VM task-1" }).waitFor();
       await capture(page, "recovery", name);
-      await page.getByRole("button", { name: "Expand VM task-2", exact: true }).click();
       const siblingSnapshot = structuredClone(item.vms[2]);
+      const blockedSnapshot = structuredClone(item.vms[1]);
       await card("task-1").getByRole("button", { name: "Retry stop", exact: true }).click();
-      await until(() => card("task-1").getByRole("button", { name: "Start compute", exact: true }).isEnabled(), "Git-save retry settled");
+      await card("task-1").getByRole("alert").filter({ hasText: "Repository access is still blocked" }).waitFor();
+      assert.deepEqual(item.vms[1], blockedSnapshot);
+      assert.deepEqual(item.vms[2], siblingSnapshot);
+      state.gitRepaired = true;
+      await card("task-1").getByRole("button", { name: "Retry stop", exact: true }).click();
+      await until(() => card("task-1").getByRole("button", { name: "Start VM", exact: true }).isEnabled(), "Git-save retry settled");
       assert.deepEqual(item.vms[2], siblingSnapshot);
       const savedSiblingSnapshot = structuredClone(item.vms[1]);
+      await page.getByRole("button", { name: /^minicloud\/task-2,/ }).click();
       await card("task-2").getByRole("button", { name: "Discard local data…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Discard VM task-2 generation 1", exact: true });
       const confirm = dialog.getByRole("button", { name: "Confirm irreversible discard", exact: true });
@@ -420,7 +516,8 @@ async function runViewport(name, viewport) {
       await dialog.getByRole("checkbox").check();
       assert(await confirm.isDisabled());
       await dialog.getByLabel("Type discard task-2 1", { exact: true }).fill("discard task-2 1");
-      await confirm.click();
+      await confirm.focus();
+      await page.keyboard.press("Enter");
       await until(async () => await dialog.count() === 0, "discard completed");
       assert.deepEqual(mutations(state).at(-1).body, { generation: 1, discardLocalData: true, acknowledgeIgnoredDataLoss: true });
       assert.deepEqual(item.vms[0], primarySnapshot);
@@ -429,80 +526,134 @@ async function runViewport(name, viewport) {
     });
     await check(`${name}: stale generation and refresh failure surface actionable errors`, async () => {
       state.staleMutation = true;
-      await card("created-primary").getByRole("button", { name: "Start compute", exact: true }).click();
+      await page.getByRole("button", { name: /^Primary VM,/ }).click();
+      await card("created-primary").getByRole("button", { name: "Start VM", exact: true }).click();
       await card("created-primary").getByRole("alert").waitFor();
       assert((await card("created-primary").innerText()).includes("Generation changed"));
       state.readFailure = true;
       await refresh(page);
       await page.getByRole("alert").filter({ hasText: "Synthetic refresh failed" }).waitFor();
       state.readFailure = false;
-      await page.getByRole("button", { name: "Retry", exact: true }).click();
+      await page.getByRole("button", { name: "Retry status check", exact: true }).click();
       await until(async () => await page.getByRole("alert").filter({ hasText: "Synthetic refresh failed" }).count() === 0, "read retry");
     });
     await page.goto(`${origin}/workspaces`);
     await check(`${name}: eligibility unavailable/empty/failure refresh gates create`, async () => {
       state.selections = { available: false, unavailableReason: "Operator disabled fixture provisioning", options: [] };
-      await page.getByRole("button", { name: "Create workspace", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Create workspace", exact: true });
-      await dialog.getByText("Operator disabled fixture provisioning").waitFor();
-      const submit = dialog.getByRole("button", { name: "Create stopped workspace", exact: true });
+      await page.getByRole("button", { name: "Create dev environment", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Create dev environment", exact: true });
+      await dialog.getByText(/Operator disabled fixture provisioning/).waitFor();
+      await dialog.getByLabel("Name", { exact: true }).fill("choices-check");
+      const submit = dialog.getByRole("button", { name: "Create environment", exact: true });
       assert(await submit.isDisabled());
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       state.selections = { available: true, options: [] };
-      await dialog.getByRole("button", { name: "Refresh choices", exact: true }).click();
-      await dialog.getByText(/No compatible choices/).waitFor();
+      await page.getByRole("button", { name: "Create dev environment", exact: true }).click();
+      await dialog.getByLabel("Name", { exact: true }).fill("choices-check");
+      await dialog.getByText(/No approved setup is available/).waitFor();
       assert(await submit.isDisabled());
       state.selectionFailure = true;
-      await dialog.getByRole("button", { name: "Refresh choices", exact: true }).click();
+      await dialog.getByRole("button", { name: "Retry", exact: true }).click();
       await dialog.getByRole("alert").waitFor();
       assert(await submit.isDisabled());
       state.selectionFailure = false; state.selections = { available: true, options: [selection] };
-      await dialog.getByRole("button", { name: "Retry choices", exact: true }).click();
-      await choose(dialog);
+      await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+      await until(() => submit.isEnabled(), "choices restored");
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     });
     await check(`${name}: read-only role disables management without mutations`, async () => {
       state.role = "viewer";
       const before = state.calls.length;
       await page.reload();
+      await page.getByRole("link", { name: "api-sandbox", exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Create dev environment", exact: true }).count(), 0);
       await page.getByRole("link", { name: "api-sandbox", exact: true }).click();
       await card("alpha-primary").waitFor();
-      assert(await page.getByRole("button", { name: "Start compute", exact: true }).isDisabled());
-      assert.equal(await page.getByRole("button", { name: "Stop all VMs", exact: true }).count(), 0);
+      assert(await page.getByRole("button", { name: "Start VM", exact: true }).isDisabled());
+      await page.getByRole("button", { name: "Environment actions", exact: true }).click();
+      assert.equal(await page.getByRole("menuitem", { name: "Stop all VMs", exact: true }).count(), 0);
+      await page.keyboard.press("Escape");
+      assert.equal(await page.getByRole("button", { name: "Launch temporary VM", exact: true }).count(), 0);
+      await collection(page);
+      await page.getByRole("link", { name: "docs-preview", exact: true }).click();
+      await card("beta-primary").waitFor();
+      assert(await card("beta-primary").getByRole("button", { name: "Connect to T3", exact: true }).isDisabled());
+      assert(await card("beta-primary").getByRole("button", { name: "Open preview", exact: true }).isDisabled());
+      await card("beta-primary").getByRole("button", { name: "More actions for Primary VM", exact: true }).click();
+      assert.equal(await page.getByRole("menuitem", { name: "Stop VM", exact: true }).getAttribute("aria-disabled"), "true");
+      await page.keyboard.press("Escape");
       assert.equal(state.calls.slice(before).filter(call => call.method !== "GET").length, 0);
     });
     await check(`${name}: late detail response cannot replace a different route`, async () => {
-      await page.getByRole("link", { name: "Workspaces", exact: true }).last().click();
+      await page.getByRole("link", { name: "Dev Environments", exact: true }).last().click();
       let release;
-      state.delayedDetail = { id: "beta", requested: false, promise: new Promise(resolve => { release = resolve; }) };
+      state.delayedDetail = { id: "beta", requested: false, settled: false, promise: new Promise(resolve => { release = resolve; }) };
       await page.getByRole("link", { name: "docs-preview", exact: true }).click();
       await until(() => state.delayedDetail.requested, "delayed route requested");
       await page.goBack();
       await page.getByRole("link", { name: "api-sandbox", exact: true }).click();
       await card("alpha-primary").waitFor();
       release();
-      await sleep(150);
+      await until(() => state.delayedDetail.settled, "late detail response settled");
+      state.delayedDetail = null;
       assert.equal(await card("beta-primary").count(), 0);
       assert.equal(await page.getByRole("heading", { name: "api-sandbox", exact: true }).count(), 1);
     });
-    await check(`${name}: no external traffic, unknown APIs or page-level horizontal overflow`, async () => {
-      assert.deepEqual(state.unexpected, []);
-      assert.deepEqual(state.external, []);
-      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Page overflows viewport");
+    await check(`${name}: organization switch fences an in-flight collection and preserves distinct read-only rows`, async () => {
+      const before = mutations(state).length;
+      await page.getByRole("link", { name: "Dev Environments", exact: true }).last().click();
+      await page.getByRole("link", { name: "api-sandbox", exact: true }).waitFor();
+      let release;
+      const delayed = { organizationId: "org-fixture", requested: false, settled: false,
+        promise: new Promise(resolve => { release = resolve; }) };
+      state.delayedCollection = delayed;
+      await page.getByRole("button", { name: "Refresh dev environments", exact: true }).click();
+      await until(() => delayed.requested, "delayed organization collection requested");
+      // The public settings URL selects a loaded membership without reloading the app.
+      await page.evaluate(() => {
+        window.history.pushState({}, "", "/settings/github?organizationId=org-other");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await page.getByText("Status: not_configured", { exact: true }).waitFor();
+      await collection(page);
+      await page.getByRole("link", { name: "other-organization-only", exact: true }).waitFor();
+      release();
+      await until(() => delayed.settled, "old organization reply settled");
+      state.delayedCollection = null;
+      assert.equal(await page.getByRole("link", { name: "api-sandbox", exact: true }).count(), 0);
+      assert.equal(await page.getByRole("button", { name: "Create dev environment", exact: true }).count(), 0);
+      await page.getByRole("link", { name: "other-organization-only", exact: true }).click();
+      await card("other-primary").waitFor();
+      assert(await card("other-primary").getByRole("button", { name: "Start VM", exact: true }).isDisabled());
+      await page.evaluate(() => {
+        window.history.pushState({}, "", "/settings/github?organizationId=org-fixture");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await page.getByText("Status: not_configured", { exact: true }).waitFor();
+      await collection(page);
+      await page.getByRole("link", { name: "api-sandbox", exact: true }).waitFor();
+      assert.equal(await page.getByRole("link", { name: "other-organization-only", exact: true }).count(), 0);
+      assert.equal(mutations(state).length, before);
     });
     await check(`${name}: empty collection, failed refresh and retry remain read-only`, async () => {
       const before = mutations(state).length;
       const originalItems = state.workspaces;
       state.workspaces = [];
       await page.goto(`${origin}/workspaces`);
-      await page.getByText(/No workspaces yet/).waitFor();
-      assert.equal(await page.getByRole("button", { name: "Create workspace", exact: true }).count(), 0);
+      await page.getByText(/No dev environments yet/).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Create dev environment", exact: true }).count(), 0);
       state.readFailure = true;
-      await page.getByRole("button", { name: "Refresh workspaces", exact: true }).click();
+      await page.getByRole("button", { name: "Refresh dev environments", exact: true }).click();
       await page.getByRole("alert").filter({ hasText: "Synthetic refresh failed" }).waitFor();
       state.workspaces = originalItems; state.readFailure = false;
       await page.getByRole("button", { name: "Retry", exact: true }).click();
       await page.getByRole("link", { name: "api-sandbox", exact: true }).waitFor();
       assert.equal(mutations(state).length, before);
+    });
+    await check(`${name}: no external traffic, unknown APIs or page-level horizontal overflow`, async () => {
+      assert.deepEqual(state.unexpected, []);
+      assert.deepEqual(state.external, []);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Page overflows viewport");
     });
   } finally { await context.close(); }
 }
