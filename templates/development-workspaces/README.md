@@ -21,11 +21,16 @@ failure handling. This is not a real ext4, systemd-freezer, age, or live restore
 
 ### Safe native qualification diagnostics
 
-If a disposable native qualification stops at `T3_RESTART_LEFT_UNKNOWN_WORK`, retain only
-the probe/source identity and the short allowlisted work-inventory reason code. Do not retain
+If a disposable native qualification stops at `T3_RESTART_LEFT_UNKNOWN_WORK` or
+`T3_DID_NOT_REMAIN_STOPPED`, retain only the probe/source identity, short allowlisted
+work-inventory reason code and bounded service-state/cgroup evidence. Evidence includes
+allowlisted active/sub/result states, job/main/control presence, cgroup population and the
+direct service-cgroup process count (not descendant counts). Missing, unreadable, malformed
+or over-limit reads are explicit diagnostic states, never evidence of emptiness. Do not retain
 runtime logs, process arguments, executable or cgroup paths, SQL, usernames, or secrets.
-The native probe polls only this advisory signal for a bounded interval and rechecks VM,
-T3, retained-volume, and Ready identities on every observation. Repeat a clean native
+The native probe polls positive advisory idle for at most 30 seconds, with paced,
+deadline-bounded calls, and rechecks VM, T3 service, retained-volume, and Ready identities
+on every observation. Repeat a clean native
 qualification before capturing an image.
 
 Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
@@ -642,7 +647,27 @@ automatic SIGKILL and cgroup OOM recovery: same environment ID, retained project
 UUID and VM generation; authenticated HTTP and WebSocket access; and Connect management.
 It also checks exit 130, the exact five-failure budget, and job and freezer state when a
 stop lands during the restart delay or frozen `ExecStartPre`. The probe runs before terminal
-probes. Before rollout, a disposable hosted workspace must also show that a Minicloud gateway
+probes on the authorized isolated synthetic workspace, with no editor, agent turn or
+active terminal child. Each independent case stops and positively verifies a drained unit
+through a full restart window, then resets the shared start-limit accounting and starts
+once. HTTP readiness alone is not an idle precondition: after that start, the same guarded
+positive-idle polling used after recovery must observe `IdleCandidate` before SIGKILL,
+OOM injection, intentional exit or frozen-stop setup. The uninterrupted retry-budget
+case also requires positive idle after each automatic start; it never resets mid-case.
+This waits for startup provider-detection helpers to exit naturally, without restarting,
+classifying them as infrastructure, hiding them or signaling surviving children.
+Persistent busy/unknown work, identity drift or a late idle observation fails closed before
+fault injection. Positive idle is advisory, not a promise that no later child can appear:
+the separate positive cgroup-empty and six-second stopped/restart-window assertions remain
+mandatory. `KillMode=process`, `SendSIGKILL=no` and active-child lifecycle/classifier gates
+are unchanged; retained work must block, not be killed to make qualification pass.
+For the frozen prestart fixture, systemd `255.4-1ubuntu8.10` can send SIGKILL
+and then report auxiliary-process `EINVAL`; the command's exit status alone is not delivery
+evidence. The native-only fixture requires the exact owned cgroup, the same main process's
+SIGKILL exit, an empty service cgroup, and the unrestarted `auto-restart` timer before it
+continues. A remaining process, wrong exit, or missed transition still blocks qualification.
+The frozen prestart, stop-completion and retry-budget assertions are unchanged.
+Before rollout, a disposable hosted workspace must also show that a Minicloud gateway
 launch and a previously linked T3 Connect relay recover after a T3 crash.
 
 ### Build outputs on local scratch
