@@ -237,26 +237,37 @@ h3 {
   object-fit: contain;
 }
 
-.guide-list {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-  margin: 1.75rem 0 0;
+.setup-step {
+  max-width: 68ch;
+  margin-top: 2rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1.5rem;
+}
+
+.setup-step p {
+  margin-top: .75rem;
+}
+
+.setup-instructions {
   padding-left: 1.5rem;
 }
 
-.guide-list li::marker {
-  color: var(--secondary);
-  font-family: ui-monospace, monospace;
+.setup-instructions li + li {
+  margin-top: .9rem;
 }
 
-.guide-list a {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .35em;
-  min-height: 2.75rem;
-  font-weight: 650;
+.setup-step pre {
+  max-width: 100%;
+  margin: .75rem 0 0;
+  padding: .75rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  background: #f2f2f2;
+  font-size: .875rem;
+}
+
+.setup-step :not(pre) > code {
+  overflow-wrap: anywhere;
 }
 
 .site-footer {
@@ -268,13 +279,10 @@ h3 {
 }
 
 @media (max-width: 46rem) {
-  .workflow-grid, .architecture, .guide-list {
+  .workflow-grid {
     grid-template-columns: 1fr;
   }
 
-  .guide-list {
-    gap: 0;
-  }
 }
 
 @media (max-width: 34rem) {
