@@ -1,0 +1,20 @@
+# Selected only by the verified host helper for an explicit first-install opt-in.
+services:
+  kratos-migrate:
+    environment: &email-recovery
+      SELFSERVICE_FLOWS_RECOVERY_ENABLED: ${MINICLOUD_EMAIL_RECOVERY_ENABLED:?set the protected email recovery opt-in}
+      SELFSERVICE_FLOWS_RECOVERY_USE: code
+      SELFSERVICE_METHODS_CODE_ENABLED: "true"
+      SELFSERVICE_METHODS_CODE_PASSWORDLESS_ENABLED: "false"
+      SELFSERVICE_METHODS_CODE_MFA_ENABLED: "false"
+      COURIER_DELIVERY_STRATEGY: smtp
+    volumes:
+      - ./identity.recovery.schema.json:/etc/config/identity.schema.json:ro
+  kratos:
+    command: ["serve", "--config", "/etc/config/kratos.yml", "--watch-courier"]
+    environment: *email-recovery
+    volumes:
+      - ./identity.recovery.schema.json:/etc/config/identity.schema.json:ro
+  api:
+    environment:
+      Kratos__EmailRecoveryEnabled: ${MINICLOUD_EMAIL_RECOVERY_ENABLED:?set the protected email recovery opt-in}
