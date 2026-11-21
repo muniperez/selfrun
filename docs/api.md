@@ -56,6 +56,13 @@ as a whole.
 
 ## Development workspace status and selections
 
+When the worker observes that a running primary cannot verify its retained
+mount, the workspace and primary VM report `phase: "blocked"` with
+`errorCode: "workspace_storage_unavailable"`. The workspace reports
+`volumeStatus: "unavailable"` and gateway admission is closed. The same
+generation can return to `ready` after the worker verifies the mount and
+managed T3 again.
+
 `GET /api/development-workspaces/{id}?organizationId={id}` can report
 `vms[].startupStage` for the VM's current startup operation: `preparing_vm`,
 `preparing_storage` (primary only), `setting_up`, or `checking_readiness`.

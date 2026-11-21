@@ -1,7 +1,7 @@
 [Unit]
 Description=Pinned loopback-only T3; no invented drain API
-After=minicloud-workspace.service
-Requires=minicloud-workspace.service
+After=minicloud-workspace.service minicloud-workspace-mount.service
+Requires=minicloud-workspace.service minicloud-workspace-mount.service
 Wants=minicloud-t3-connect.service
 Wants=minicloud-scratch-mounts.service minicloud-scratch-watch.service
 After=minicloud-scratch-mounts.service

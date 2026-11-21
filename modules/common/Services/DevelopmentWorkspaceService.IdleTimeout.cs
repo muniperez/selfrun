@@ -53,7 +53,7 @@ public sealed partial class DevelopmentWorkspaceService
     private async Task<bool> IsIdleAsync(DevelopmentWorkspaceVm vm, int? timeoutMinutes, CancellationToken ct)
     {
         var now = Now;
-        return vm.DesiredState == "running" && vm.Phase == "ready" && HasIdleElapsed(vm, timeoutMinutes, now)
+        return vm.DesiredState == "running" && ReportedPhase(vm) == "ready" && HasIdleElapsed(vm, timeoutMinutes, now)
             && HasFreshHeartbeat(vm, now) && !await HasUnresolvedTasksAsync(vm, ct);
     }
 

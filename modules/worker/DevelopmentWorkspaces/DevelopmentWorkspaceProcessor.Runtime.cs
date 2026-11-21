@@ -24,8 +24,17 @@ public sealed partial class DevelopmentWorkspaceProcessor
             throw new InvalidOperationException("The reserved workspace image has no matching qualified T3 registration.");
         var status = Result(await runtime.CallAsync(Target(vm), operationId, "status", null, ct));
         if (status.GetProperty("vmId").GetString() != vm.Id || status.GetProperty("generation").GetInt64() != vm.Generation ||
-            status.GetProperty("kind").GetString() != vm.Kind || status.GetProperty("phase").GetString() != "Ready")
-            throw new InvalidOperationException("Runtime identity or readiness differs from its reserved generation.");
+            status.GetProperty("kind").GetString() != vm.Kind)
+            throw new InvalidOperationException("Runtime identity differs from its reserved generation.");
+        var phase = status.GetProperty("phase").GetString();
+        if (phase == "StorageUnavailable" && vm.Kind == DevelopmentWorkspaceVmKinds.Primary &&
+            vm.Phase == "ready" && vm.DesiredState == "running")
+        {
+            await RecordUnavailableStorageAsync(vm, operationId, ct);
+            return;
+        }
+        if (phase != "Ready")
+            throw new InvalidOperationException("Runtime readiness differs from its reserved generation.");
         var port = await tunnels.EnsureAsync(Target(vm), ct);
         string credential;
         var credentialRef = vm.RuntimeCredentialRef;
@@ -84,6 +93,11 @@ public sealed partial class DevelopmentWorkspaceProcessor
             throw new InvalidOperationException("Runtime route publication lost its generation authority.");
         fresh.RuntimeCredentialRef = credentialRef; fresh.RuntimeTokenExpiresAt = expires;
         fresh.LastHeartbeatAt = Now; fresh.Revision++; fresh.UpdatedAt = Now;
+        if (publishRoute && fresh.Phase == "ready" && fresh.DesiredState == "running" &&
+            fresh.ErrorCode == DevelopmentWorkspaceService.RetainedStorageUnavailable)
+        {
+            fresh.ErrorCode = null; fresh.ErrorMessage = null; fresh.GatewayReady = true;
+        }
         // Best-effort telemetry: an old image or an invalid sample only clears the metrics.
         fresh.RuntimeCapabilities = DevelopmentWorkspaceService.NormalizeCapabilities(status);
         fresh.ResourceSampleJson = DevelopmentWorkspaceService.NormalizeResourceSample(status, fresh.Id, fresh.Generation, Now);
@@ -160,6 +174,26 @@ public sealed partial class DevelopmentWorkspaceProcessor
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         await RecordResourceHistoryAsync(history, ct);
+    }
+
+    private async Task RecordUnavailableStorageAsync(DevelopmentWorkspaceVm vm, string operationId, CancellationToken ct)
+    {
+        db.ChangeTracker.Clear();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await maintenance.EnsureCommitAuthorityAsync(db, ct);
+        var fresh = await db.DevelopmentWorkspaceVms.SingleAsync(x => x.Id == vm.Id, ct);
+        if (fresh.Generation != vm.Generation || fresh.OperationId != vm.OperationId ||
+            (fresh.OperationId ?? fresh.AllocationOperationId) != operationId ||
+            fresh.Phase != "ready" || fresh.DesiredState != "running")
+            return;
+        // Keep the generation monitorable. Do not refresh the readiness heartbeat or revoke
+        // routes permanently; a verified mount and T3 session can reopen the same generation.
+        fresh.GatewayReady = false;
+        fresh.ErrorCode = DevelopmentWorkspaceService.RetainedStorageUnavailable;
+        fresh.ErrorMessage = "The retained workspace volume is not mounted or its identity could not be verified.";
+        fresh.Revision++; fresh.UpdatedAt = Now;
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     // Runs only after the heartbeat commit: history is best-effort and must never affect status or route publication.
@@ -260,7 +294,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
         }
         var vm = await db.DevelopmentWorkspaceVms.AsNoTracking()
             .Where(x => x.Phase == "ready" && x.DesiredState == "running")
-            .OrderBy(x => x.LastHeartbeatAt).FirstOrDefaultAsync(ct);
+            .OrderBy(x => x.ErrorCode == DevelopmentWorkspaceService.RetainedStorageUnavailable
+                ? (DateTimeOffset?)x.UpdatedAt : x.LastHeartbeatAt).FirstOrDefaultAsync(ct);
         if (vm is not null) await MonitorVmAsync(vm, ct);
     }
 
@@ -279,7 +314,8 @@ public sealed partial class DevelopmentWorkspaceProcessor
             }
             db.ChangeTracker.Clear();
             vm = await db.DevelopmentWorkspaceVms.AsNoTracking().SingleAsync(x => x.Id == vm.Id, ct);
-            if (vm.Phase != "ready" || vm.DesiredState != "running") return;
+            if (vm.Phase != "ready" || vm.DesiredState != "running" ||
+                vm.ErrorCode == DevelopmentWorkspaceService.RetainedStorageUnavailable) return;
             if (!await IsRuntimeIdleAsync(vm, vm.OperationId ?? vm.AllocationOperationId ?? operationId, ct))
             {
                 await lifecycle.ActivityAsync(vm.WorkspaceId, vm.OrganizationId, vm.Id, vm.Generation, ct);

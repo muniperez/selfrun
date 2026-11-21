@@ -1,0 +1,9 @@
+[Unit]
+Description=Verify or recover the retained Minicloud workspace mount
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B /opt/minicloud-workspace/runtime.py mount-for-services
+UMask=0077
+TimeoutStartSec=90

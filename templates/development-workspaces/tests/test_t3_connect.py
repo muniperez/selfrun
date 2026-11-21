@@ -142,7 +142,8 @@ class ConnectTests(unittest.TestCase):
                        action="quiesce", gatewayAdmissionsFenced=True, unobservableToolsAbsent=True)
         with self.assertRaisesRegex(rt.Blocked, "approval is pending"):
             self.runtime.handle(request)
-        status = self.runtime.handle(dict(request, action="status", includeWorkInventory=True))
+        with patch.object(self.runtime.adapter, "verify_workspace_mount"):
+            status = self.runtime.handle(dict(request, action="status", includeWorkInventory=True))
         self.assertEqual(status["workInventory"]["state"], "BusyOrUnknown")
         self.assertEqual(self.runtime.s["phase"], "Ready")
 

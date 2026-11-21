@@ -115,7 +115,7 @@ public sealed partial class DevelopmentWorkspaceService
     {
         if (vm.ResourceSampleGeneration != vm.Generation || vm.ResourceSampleReceivedAt is null) return null;
         var capabilities = Capabilities(vm);
-        var running = vm.Phase == "ready" && vm.DesiredState == "running";
+        var running = ReportedPhase(vm) == "ready" && vm.DesiredState == "running";
         var diskUsage = running && capabilities.Contains("disk-usage-v1");
         var deletion = diskUsage && capabilities.Contains("directory-delete-v1");
         if (vm.ResourceSampleJson is null || !capabilities.Contains("resources-v1"))
