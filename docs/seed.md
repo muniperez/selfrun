@@ -203,6 +203,13 @@ piped into root; no .NET/Node SDK, source build or provider credential is sent.
 Password SSH login is disabled, root access is key-only, and forwarding/X11
 are disabled. Existing conflicting policy/state fails closed.
 
+Stock DigitalOcean agent-only `/opt/digitalocean` is accepted only for a
+DigitalOcean target after installed vendor-package ownership, integrity and
+ordinary layout checks. Observation and preparation use the same bounded
+contract and leave vendor files untouched. Unknown `/opt` entries, existing
+workloads and conflicting bindings remain refused; other providers are unchanged.
+See [the layout and qualification limits](stateless-seed.md#stock-digitalocean-agent-layout).
+
 Host orchestration inputs/assets/recovery are under
 `/var/lib/minicloud-seed/<operation>/`, with a durable operation binding at
 `/opt/minicloud.seed-operation`; the install root remains `/opt/minicloud`.

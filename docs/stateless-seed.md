@@ -276,6 +276,33 @@ It takes a shared **existing** installer-lock inode where present; it never
 creates a host lock or metadata, even on partial/failing hosts. Ordinary SSH/HTTP
 access logging is not a forbidden mutation.
 
+### Stock DigitalOcean agent layout
+
+For a DigitalOcean target, seed observation and preparation accept only the
+verified vendor-agent layout under `/opt/digitalocean`, not arbitrary provider
+software or a populated `/opt`. Installed `do-agent` and `droplet-agent` package
+ownership and integrity must establish the ordinary agent files. The stock
+monitoring package can have UID 1000, group `nogroup`, mode 0755 files; requiring
+every vendor file to be root-owned would reject the observed stock image.
+This exception does not authorize group/world-writable files or unknown entries.
+Other providers do not gain this exception.
+
+Seed neither runs the vendor update scripts nor changes, removes, or repairs
+installed vendor files. Unknown package/layout contents, failed verification,
+existing Docker workloads, conflicting operation bindings and interrupted
+metadata still require reconciliation. Do not clear `/opt`, remove provider
+agents, rewrite package records, or weaken permissions to make seed proceed.
+The existing empty `/opt/containerd/bin` and `/opt/containerd/lib` exception
+remains separate.
+
+This support has synthetic fixture verification only; #289 records the stock
+DigitalOcean Ubuntu 24.04 observation, not qualification of a corrected signed
+CLI/server pair on a live host. There is no change to exact-source compatibility,
+signed-release trust or immutable production/maintenance fences. The standalone
+signed installer's preflight checks its installation root, tools, resources,
+workloads and ports without requiring unrelated `/opt` siblings to be absent;
+it needs no corresponding vendor-layout relaxation.
+
 Host mutations use `/opt/minicloud.installation.lock`, the same persistent inode
 as the signed installer/maintenance. Preparation/checkpoints use protected,
 crash-safe host writes. Future schemas, occupied hosts without metadata,
