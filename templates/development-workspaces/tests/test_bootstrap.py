@@ -373,9 +373,22 @@ class VolumeFormatTests(unittest.TestCase):
 
     def patched(self, signatures, mounts="/dev/vda1 / ext4 rw 0 0\n"):
         stack = contextlib.ExitStack()
-        stack.enter_context(patch.object(bootstrap.Path, "stat",
-                                         return_value=SimpleNamespace(st_mode=0o060600)))
-        stack.enter_context(patch.object(bootstrap.Path, "resolve", return_value=Path("/dev/vdb")))
+        original_stat = bootstrap.Path.stat
+        original_resolve = bootstrap.Path.resolve
+        device_path = Path(self.device)
+
+        def fake_stat(path, *args, **kwargs):
+            if path == device_path:
+                return SimpleNamespace(st_mode=0o060600)
+            return original_stat(path, *args, **kwargs)
+
+        def fake_resolve(path, *args, **kwargs):
+            if path == device_path:
+                return Path("/dev/vdb")
+            return original_resolve(path, *args, **kwargs)
+
+        stack.enter_context(patch.object(bootstrap.Path, "stat", fake_stat))
+        stack.enter_context(patch.object(bootstrap.Path, "resolve", fake_resolve))
         stack.enter_context(patch("builtins.open", unittest.mock.mock_open(read_data=mounts)))
         stack.enter_context(patch.object(bootstrap, "block_signatures", side_effect=signatures))
         lock_dir = stack.enter_context(tempfile.TemporaryDirectory())
