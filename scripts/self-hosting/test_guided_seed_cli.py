@@ -331,6 +331,7 @@ set -eu
 if [[ -f "$HOME/ssh-port" ]]; then
     read -r port < "$HOME/ssh-port"
     /usr/bin/ssh-keyscan -T 2 -t ed25519 -p "$port" 127.0.0.1 | while read -r address type blob; do
+        [[ "$address" != '#' ]] || continue
         [[ "$address" == "[127.0.0.1]:$port" ]]
         printf '127.0.0.1 %s %s\\n' "$type" "$blob"
     done
