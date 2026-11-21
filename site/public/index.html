@@ -64,8 +64,8 @@
         <li id="self-host">
           <h3>Install MiniCloud on a VPS</h3>
           <p>The current installer is for testing from source. On your computer, install Git, Python 3.11 or later, the .NET 10 SDK, and OpenSSH. You also need a VPS provider account, an SSH key, and DNS access. After installation, export the one-time setup token and use it at the dashboard’s <code>/setup</code> page to create the first account.</p>
-          <details>
-            <summary>Build and install a test server</summary>
+          <section>
+            <h4>Build and install a test server</h4>
             <ol class="install-list">
               <li>
                 <p><strong>Build the server archive and CLI from the same checkout.</strong> Save the archive SHA-256 printed by the packaging command.</p>
@@ -143,15 +143,15 @@ seed_local apply --credential-file "$provider_token" \
               </li>
             </ol>
             <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md">Source installation and recovery guide</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/operator-setup.md">First operator account</a></p>
-          </details>
+          </section>
           <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
         </li>
 
         <li id="cli-login">
           <h3>Sign in from your terminal</h3>
           <p>The <code>minicloud</code> command needs to know which dashboard to use. Replace <code>cloud.example.com</code> with your dashboard hostname. If you just built MiniCloud, use the CLI you built with it. For a team server, use the CLI your team provides or install a compatible version below.</p>
-          <details>
-            <summary>Install the CLI for an existing server</summary>
+          <section>
+            <h4>Install the CLI for an existing server</h4>
             <p>Use Linux (x64 or ARM64) or Apple Silicon macOS with Git, jq, and the .NET 10 SDK. The server advertises the CLI builds it accepts. This command selects and prints a compatible build after you enter the dashboard hostname.</p>
             <pre tabindex="0"><code>dashboard=cloud.example.com
 revision=$(curl -fsS "https://api.$dashboard/api/instance" |
@@ -173,7 +173,8 @@ printf '%s\n' "$revision"</code></pre>
 export PATH="$HOME/.local/bin:$PATH"</code></pre>
             <p>Add <code>$HOME/.local/bin</code> to your shell’s startup <code>PATH</code> to keep using <code>minicloud</code> in new terminals.</p>
             <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md#explicit-exact-source-mode">CLI installation and Windows instructions</a></p>
-          </details>
+          </section>
+          <h4>Sign in with the CLI</h4>
           <pre tabindex="0"><code>minicloud instance add work cloud.example.com
 minicloud login</code></pre>
           <p><code>work</code> is a name for this server on your computer. Complete sign-in in the browser, then return to your terminal.</p>
