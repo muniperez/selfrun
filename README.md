@@ -47,7 +47,7 @@ The available installation path is a **test installation built from source**. A 
 
 ### Open your first workspace
 
-On an instance with workspace images enabled, open **Dev Environments** and choose **Create dev environment**. Select an available image and plan, create the environment, then start its primary VM. When it is ready, connect to T3, open the session link, and sign in to your chosen coding provider. [Workspace walkthrough](docs/first-workspace.md) · [Image setup for operators](templates/development-workspaces/README.md#prepared-image)
+On an instance with workspace images enabled, open **Dev Environments** and choose **Create dev environment**. Name the environment, choose a size and location, and review the image, storage, and estimated cost. Creating the environment starts its primary VM. When ready, select **Connect to T3**, open the session link, and sign in to your chosen coding provider. [Workspace walkthrough](docs/first-workspace.md) · [Image setup for operators](templates/development-workspaces/README.md#prepared-image)
 
 ### Deploy your first app
 
