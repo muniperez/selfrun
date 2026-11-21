@@ -8,6 +8,14 @@ namespace Minicloud.Worker.Tests.DevelopmentWorkspaces;
 
 public sealed class DevelopmentWorkspaceDeletionPostgresTests
 {
+    [Fact]
+    public Task ReadyVmRefreshRemainsFairAcrossRepeatedFailuresOnPostgres() =>
+        WithPostgres(async fixture =>
+        {
+            await fixture.ApplyDeletionIdentityMigrationAsync();
+            await fixture.VerifyRefreshFairnessAsync();
+        });
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

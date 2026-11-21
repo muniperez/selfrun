@@ -96,6 +96,17 @@ own CLI authorization; owner-only enrollment is not a shell isolation boundary.
 
 ## Lifecycle and operator notes
 
+- Each worker host monitors ready, running VMs round-robin, one VM per poll.
+  Failed attempts advance the host-local cursor without refreshing heartbeat or
+  route expiry; replacement generations are not suppressed by cached failure
+  state. The cursor uses constant memory and resets on worker restart. A stable
+  pool is selected with at most two single-row keyset queries per poll, using the
+  `(desired_state, phase, id)` index (apply the scheduler-index migration).
+  Each VM gets one attempt per sweep, but sweep duration still depends on pool size,
+  poll interval and probe duration; this does not guarantee renewal before the
+  unchanged 90-second route TTL. Maintenance admission and publication fencing
+  remain mandatory. Failure events contain exception type, not exception text
+  or credentials.
 - The reserved `connect` gateway service is root-reserved loopback port **774**, primary only.
   Keep both 3773 and 774 inaccessible publicly and from sibling VMs; preserve the
   existing private SSH forwarding/firewall contract. Do not register this as a

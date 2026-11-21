@@ -20,6 +20,7 @@ public static class DevelopmentWorkspaceWorkerRegistration
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         services.AddScoped<WorkspaceGitAccessService>();
+        services.AddSingleton<DevelopmentWorkspaceRefreshScheduler>();
         services.AddScoped<DevelopmentWorkspaceProcessor>();
         services.AddHostedService<DevelopmentWorkspaceWorker>();
         return services;
