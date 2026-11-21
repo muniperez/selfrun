@@ -1,4 +1,5 @@
 import hashlib
+import copy
 import importlib.util
 import io
 import json
@@ -32,6 +33,7 @@ class ImageTests(unittest.TestCase):
     def recovery_probe(self, inventories, status_changes=None):
         probe = native.Native.__new__(native.Native)
         probe.client = Mock()
+        probe.watcher_state = Mock()
         probe.directory = Path("/synthetic-native-only")
         probe.t3_project_id = "synthetic-project"
         probe.environment_id = "synthetic-environment"
@@ -192,7 +194,7 @@ class ImageTests(unittest.TestCase):
                 adapter.thaw.assert_called_once()
                 adapter.freeze.assert_not_called()
                 # Only the completed boundary resets; idle polling never stops/restarts or signals.
-                mocks[3].assert_any_call(["systemctl", "reset-failed", native.T3_UNIT])
+                mocks[3].assert_any_call(["systemctl", "reset-failed", native.T3_UNIT, native.WATCH_UNIT])
                 self.assertEqual(sum(call.args[0][0] == "systemctl"
                                      for call in mocks[3].call_args_list), 1)
 
@@ -284,6 +286,7 @@ class ImageTests(unittest.TestCase):
         adapter.start_services.side_effect = lambda: events.append("start")
         before = dict(MainPID=123, NRestarts=0)
         with patch.object(probe, "fresh_authorization"), \
+                patch.object(probe, "watcher_state") as watcher, \
                 patch.object(probe, "check_t3_freezer"), \
                 patch.object(probe, "check_t3_pid"), \
                 patch.object(probe, "t3_ready", return_value=before), \
@@ -298,7 +301,7 @@ class ImageTests(unittest.TestCase):
                     return {"Restart": "on-failure", "RestartUSec": "5s", "OOMPolicy": "stop",
                             "StartLimitBurst": "5", "StartLimitIntervalUSec": "5min",
                             "KillMode": "process", "SendSIGKILL": "no"}[argv[4]]
-                self.assertEqual(argv, ["systemctl", "reset-failed", native.T3_UNIT])
+                self.assertEqual(argv, ["systemctl", "reset-failed", native.T3_UNIT, native.WATCH_UNIT])
                 events.append("reset")
             command.side_effect = run
             # Each independent fixture gets slot one even after earlier cases consumed starts.
@@ -307,6 +310,9 @@ class ImageTests(unittest.TestCase):
                                  before | {"idlePrecondition": {"idleObserved": True}})
             self.assertEqual(events,
                              (["qualify"] * 7 + ["stop", "thaw", "drained", "reset", "start", "idle"]) * 3)
+            self.assertEqual(watcher.call_args_list,
+                             [unittest.mock.call(), unittest.mock.call(stopped=True),
+                              unittest.mock.call(active=True)] * 3)
 
     def test_native_case_refuses_reset_with_unowned_frozen_undrained_or_changed_policy(self):
         for failure in ("ownership", "frozen", "policy", "drain", "counter"):
@@ -317,6 +323,7 @@ class ImageTests(unittest.TestCase):
                 probe.owns_runtime = failure != "ownership"
                 adapter = Mock()
                 with patch.object(probe, "fresh_authorization"), \
+                        patch.object(probe, "watcher_state"), \
                         patch.object(probe, "check_t3_freezer") as freezer, \
                         patch.object(probe, "qualify_t3_restart_policy") as policy, \
                         patch.object(probe, "t3_stays_stopped") as drained, \
@@ -331,7 +338,8 @@ class ImageTests(unittest.TestCase):
                     with self.assertRaises(native.ProbeError):
                         probe.t3_case_start(adapter)
                     if failure == "counter":
-                        command.assert_called_once_with(["systemctl", "reset-failed", native.T3_UNIT])
+                        command.assert_called_once_with(
+                            ["systemctl", "reset-failed", native.T3_UNIT, native.WATCH_UNIT])
                     else:
                         command.assert_not_called()
                         adapter.start_services.assert_not_called()
@@ -346,7 +354,9 @@ class ImageTests(unittest.TestCase):
                 starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(5)]
                 failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
                               ControlPID=0, NRestarts=5, Result="signal")
-                with patch.object(probe, "t3_case_start", return_value=start) as setup, \
+                with patch.object(probe, "t3_case_start",
+                                  side_effect=lambda adapter: events.append(("boundary", {})) or start) as setup, \
+                        patch.object(probe, "watcher_state"), \
                         patch.object(probe, "t3_ready", side_effect=starts[1:]) as ready, \
                         patch.object(probe, "t3_idle") as idle, \
                         patch.object(probe, "signal_t3_main", side_effect=range(100, 105)) as kill, \
@@ -364,7 +374,7 @@ class ImageTests(unittest.TestCase):
                     if early:
                         with self.assertRaisesRegex(native.ProbeError, "T3_RETRY_BUDGET_EXHAUSTED_EARLY"):
                             probe.t3_retry_budget(adapter)
-                        self.assertEqual(events, [])
+                        self.assertEqual(events, [("boundary", {})])
                         adapter.start_services.assert_not_called()
                     else:
                         result = probe.t3_retry_budget(adapter)
@@ -372,11 +382,12 @@ class ImageTests(unittest.TestCase):
                         self.assertEqual(kill.call_count, 5)
                         self.assertEqual([call.args[0] for call in idle.call_args_list], starts[1:])
                         self.assertEqual(ready.call_count, 4)
-                        self.assertEqual(events, [
-                            ("exhausted", {"failed": True}),
-                            ("command", ["systemctl", "reset-failed", native.T3_UNIT])])
-                        adapter.start_services.assert_called_once()
-                    setup.assert_called_once_with(adapter)
+                        self.assertEqual(events, [("boundary", {}), ("exhausted", {"failed": True}),
+                                                  ("boundary", {})])
+                        self.assertEqual(setup.call_args_list,
+                                         [unittest.mock.call(adapter)] * 2)
+                    if early:
+                        setup.assert_called_once_with(adapter)
 
     def test_native_recovery_isolates_each_crash_and_frozen_stop_case(self):
         probe = native.Native.__new__(native.Native)
@@ -703,6 +714,301 @@ assert.throws(() => sourceControlEvidence({ sourceControlProviders:
         self.assertIn("age", install)
         self.assertIn("git", install)
         self.assertFalse(any(value.startswith(("postgresql", "libpq")) for value in install))
+
+
+class NativeBatchTests(unittest.TestCase):
+    def setUp(self):
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="native-batches-", dir=ARTIFACTS)
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name)
+        self.now = native.dt.datetime.now(native.dt.timezone.utc)
+        self.runtime = "a" * 64
+        self.machine = "b" * 64
+        self.expected = dict(machineIdSha256=self.machine, runtimeSha256=self.runtime,
+                             installedImageManifestSha256="c" * 64,
+                             installedImmutableInputs={"/synthetic/runtime.py": self.runtime},
+                             harnessSources=native.harness_sources(), batches={})
+        self.receipts = {}
+        self.runtime_patch = patch.object(native, "EXPECTED_RUNTIME_SHA256", self.runtime)
+        self.runtime_patch.start()
+        self.addCleanup(self.runtime_patch.stop)
+        for number, (batch, steps) in enumerate(native.BATCHES.items(), 1):
+            run_id = "native-" + f"{number:032x}"
+            self.expected["batches"][batch] = dict(
+                runId=run_id, reportPath=f"/synthetic/{batch}/report.json", reportSha256="d" * 64)
+            auth = dict(acknowledgement=native.ACK, runId=run_id,
+                        machineIdSha256=self.machine, runtimeSha256=self.runtime,
+                        clockSource="native-vm-utc", issuedAt=self.now.isoformat(),
+                        expiresAt=(self.now + native.dt.timedelta(seconds=300)).isoformat(),
+                        loopBackedExt4Only=True, syntheticWorkspaceMayBeErased=True,
+                        batchId=batch,
+                        **{key: self.expected[key] for key in (
+                            "installedImageManifestSha256", "installedImmutableInputs", "harnessSources")})
+            report = native.Report(self.path / f"{batch}.json", run_id, batch=batch)
+            report.value.update({key: self.expected[key] for key in (
+                "machineIdSha256", "installedImageManifestSha256", "installedImmutableInputs")})
+            report.value.update(authorization=auth, startedAt=self.now.isoformat(), cleanup="complete")
+            for name, _ in steps:
+                self.assertTrue(report.probe(name, lambda: {}))
+            report.finish()
+            self.receipts[batch] = report.value
+
+    def test_batches_and_aggregate_separately_require_complete_native_coverage(self):
+        for receipt in self.receipts.values():
+            self.assertTrue(receipt["batchPassed"])
+            self.assertFalse(receipt["nativeCandidatePassed"])
+            self.assertFalse(receipt["runtimeQualifiedNative"])
+        combined = native.aggregate_receipts(self.expected, self.receipts)
+        self.assertTrue(combined["nativeCandidatePassed"])
+        self.assertTrue(combined["terminalIdleKernelQualifiedNative"])
+        self.assertEqual(set(combined["requiredProbes"]), native.REQUIRED_PROBES)
+        self.assertFalse(combined["runtimeQualified"])
+
+    def test_batch_authorization_cannot_be_reused_for_another_batch_or_legacy_run(self):
+        native.validate_execution_scope({}, None)
+        for batch in native.BATCHES:
+            auth = self.receipts[batch]["authorization"]
+            native.validate_execution_scope(auth, batch)
+            for other in (None, *native.BATCHES):
+                if other != batch:
+                    with self.subTest(batch=batch, other=other), self.assertRaises(native.ProbeError):
+                        native.validate_execution_scope(auth, other)
+
+    def test_aggregate_rejects_wrong_sources_targets_runs_and_authorization_binding(self):
+        for key, bad in (
+            ("machineIdSha256", "e" * 64), ("runtimeSha256", "e" * 64),
+            ("harnessSources", {"native.py": "e" * 64}),
+            ("installedImmutableInputs", {"/synthetic/changed.py": "e" * 64}),
+            ("installedImageManifestSha256", "e" * 64), ("runId", "native-" + "e" * 32),
+            ("batchId", "tooling"),
+        ):
+            receipts = copy.deepcopy(self.receipts)
+            receipts["workspace"][key] = bad
+            with self.subTest(key=key), self.assertRaises(native.ProbeError):
+                native.aggregate_receipts(self.expected, receipts)
+        for key, bad in (("runId", "native-" + "e" * 32),
+                         ("batchId", "tooling"), ("harnessSources", {})):
+            receipts = copy.deepcopy(self.receipts)
+            receipts["workspace"]["authorization"][key] = bad
+            with self.subTest(authorization=key), self.assertRaises(native.ProbeError):
+                native.aggregate_receipts(self.expected, receipts)
+        expected = copy.deepcopy(self.expected)
+        expected["batches"]["workspace"]["runId"] = expected["batches"]["tooling"]["runId"]
+        with self.assertRaisesRegex(native.ProbeError, "DUPLICATE_OR_INVALID_BATCH_RUN"):
+            native.aggregate_receipts(expected, self.receipts)
+
+    def test_aggregate_rejects_missing_duplicate_failed_probes_or_incomplete_cleanup(self):
+        for failure in ("batch", "probe", "duplicate", "failed", "evidence", "cleanup", "false-claim"):
+            receipts = copy.deepcopy(self.receipts)
+            workspace = receipts["workspace"]
+            if failure == "batch":
+                del receipts["recovery"]
+            elif failure == "probe":
+                workspace["probes"].pop()
+            elif failure == "duplicate":
+                workspace["probes"].append(copy.deepcopy(workspace["probes"][0]))
+            elif failure == "failed":
+                workspace["probes"][-1]["state"] = "blocked"
+            elif failure == "evidence":
+                del workspace["probes"][-1]["evidence"]
+            elif failure == "cleanup":
+                workspace["cleanup"] = "blocked"
+            else:
+                workspace["nativeCandidatePassed"] = True
+            with self.subTest(failure=failure), self.assertRaises(native.ProbeError):
+                native.aggregate_receipts(self.expected, receipts)
+
+    def test_aggregate_checks_probe_times_but_allows_later_owned_cleanup(self):
+        receipts = copy.deepcopy(self.receipts)
+        workspace = receipts["workspace"]
+        workspace["finishedAt"] = (self.now + native.dt.timedelta(seconds=320)).isoformat()
+        self.assertTrue(native.aggregate_receipts(self.expected, receipts)["nativeCandidatePassed"])
+        for seconds in (-1, 300, 301):
+            workspace["probes"][-1]["completedAt"] = (
+                self.now + native.dt.timedelta(seconds=seconds)).isoformat()
+            with self.subTest(seconds=seconds), self.assertRaises(native.ProbeError):
+                native.aggregate_receipts(self.expected, receipts)
+
+    def test_expiration_after_one_overlong_probe_blocks_and_still_cleans_up(self):
+        probe = native.Native.__new__(native.Native)
+        probe.batch = "tooling"
+        clock = [self.now]
+        auth = self.receipts["tooling"]["authorization"]
+        def authorize():
+            native.validate_authorization(auth, clock[0], self.machine)
+        probe.report = native.Report(self.path / "overlong.json", auth["runId"], authorize, "tooling")
+        probe.guard = Mock(return_value={})
+        def overlong():
+            clock[0] += native.dt.timedelta(seconds=301)
+        probe.pristine = Mock(side_effect=overlong)
+        probe.codex_git = Mock()
+        probe.cleanup = Mock(side_effect=lambda: probe.report.value.update(cleanup="complete"))
+        probe.run_batch()
+        probe.cleanup.assert_called_once()
+        probe.codex_git.assert_not_called()
+        self.assertEqual(probe.report.value["probes"][-1]["failureCode"], "AUTHORIZATION_NOT_FRESH")
+        self.assertFalse(probe.report.value["batchPassed"])
+        self.assertFalse(probe.report.value["nativeCandidatePassed"])
+
+    def test_expired_entry_does_not_probe_or_mutate_and_legacy_run_still_covers_all(self):
+        auth = self.receipts["tooling"]["authorization"]
+        for batch in (None, *native.BATCHES):
+            probe = native.Native.__new__(native.Native)
+            probe.batch = batch
+            probe.report = native.Report(self.path / f"run-{batch}.json", auth["runId"], batch=batch)
+            methods = {method for steps in native.BATCHES.values() for _, method in steps}
+            for method in methods:
+                setattr(probe, method, Mock(return_value={}))
+            probe.cleanup = Mock(side_effect=lambda: probe.report.value.update(cleanup="complete"))
+            probe.run() if batch is None else probe.run_batch()
+            names = [entry["name"] for entry in probe.report.value["probes"]]
+            if batch is None:
+                self.assertEqual(set(names), native.REQUIRED_PROBES)
+                self.assertTrue(probe.report.value["nativeCandidatePassed"])
+            else:
+                self.assertEqual(names, [name for name, _ in native.BATCHES[batch]])
+                self.assertTrue(probe.report.value["batchPassed"])
+        report = native.Report(self.path / "expired.json", auth["runId"],
+                               lambda: native.validate_authorization(
+                                   auth, self.now + native.dt.timedelta(seconds=300), self.machine))
+        function = Mock()
+        self.assertFalse(report.probe("target-and-toolchain-guard", function))
+        function.assert_not_called()
+
+    def test_explicit_report_hash_is_checked_before_aggregation(self):
+        argv = ["native.py", "aggregate", "--expected-runtime-sha256", self.runtime,
+                "--expected", "/synthetic/expected.json", "--output", str(self.path / "aggregate.json")]
+        with patch.object(sys, "argv", argv), \
+                patch.object(native, "protected_json", side_effect=[
+                    self.expected, self.receipts["tooling"]]), \
+                patch.object(native, "sha", return_value="e" * 64), \
+                patch.object(native, "write_json") as write:
+            with self.assertRaisesRegex(native.ProbeError, "REPORT_HASH_MISMATCH"):
+                native.main()
+            write.assert_not_called()
+
+    def test_expired_cleanup_can_still_wait_for_owned_children_without_a_probe_gate(self):
+        probe = native.Native.__new__(native.Native)
+        probe.directory = self.path
+        probe.expires = self.now - native.dt.timedelta(seconds=1)
+        probe.client = Mock()
+        probe.shell_pid = 123
+        probe.rt = Mock()
+        probe.rt.Procfs.return_value.inventory.side_effect = [
+            {456: {"ppid": 123}}, {}, {}]
+        probe.owns_runtime = False
+        probe.alias = probe.device = None
+        probe.git_fixture_cleanup = probe.restore_fixture_cleanup = "complete"
+        probe.report = Mock(value={})
+        with patch.object(probe, "fresh_authorization") as authorize, \
+                patch.object(probe, "wait") as wait, \
+                patch.object(native.time, "sleep") as sleep:
+            probe.cleanup()
+        authorize.assert_not_called()
+        wait.assert_not_called()
+        sleep.assert_called_once_with(0.2)
+        self.assertEqual(probe.report.value["cleanup"], "complete")
+
+    def test_watcher_failure_is_not_stopped_or_reset_at_case_boundary(self):
+        probe = native.Native.__new__(native.Native)
+        probe.run_id = "synthetic"
+        probe.config = {"vmId": probe.run_id}
+        probe.owns_runtime = True
+        adapter = Mock()
+        properties = dict(ActiveState="failed", SubState="failed", Result="start-limit-hit", Job="",
+                          MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
+                          Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
+                          StartLimitIntervalUSec="5min")
+        with patch.object(probe, "fresh_authorization"), \
+                patch.object(probe, "check_t3_freezer"), \
+                patch.object(probe, "qualify_t3_restart_policy"), \
+                patch.object(native, "command", return_value="\n".join(
+                    f"{key}={value}" for key, value in properties.items())) as command:
+            with self.assertRaisesRegex(native.ProbeError, "WATCHER_FAILED_OR_PENDING"):
+                probe.t3_case_start(adapter)
+            adapter.stop_services.assert_not_called()
+            adapter.start_services.assert_not_called()
+            self.assertEqual(command.call_count, 1)
+
+    def test_failed_watcher_after_exhaustion_preserves_budget_evidence_without_reset(self):
+        probe = native.Native.__new__(native.Native)
+        adapter = Mock()
+        start = dict(ActiveState="active", SubState="running", Job="", MainPID=100, NRestarts=0)
+        starts = [start | dict(MainPID=100 + n, NRestarts=n) for n in range(1, 5)]
+        failed = dict(ActiveState="failed", SubState="failed", Job="", MainPID=0,
+                      ControlPID=0, NRestarts=5, Result="signal")
+        failure = native.ProbeError("WATCHER_FAILED_OR_PENDING_PRESERVE_EVIDENCE",
+                                    {"watcherResult": "start-limit-hit"})
+        with patch.object(probe, "t3_case_start", side_effect=[start, failure]), \
+                patch.object(probe, "t3_ready", side_effect=starts), \
+                patch.object(probe, "t3_idle"), \
+                patch.object(probe, "watcher_state"), \
+                patch.object(probe, "signal_t3_main", side_effect=range(100, 105)), \
+                patch.object(probe, "t3_restart_delay",
+                             side_effect=[{"NRestarts": n} for n in range(5)]), \
+                patch.object(probe, "wait_t3", side_effect=starts + [failed]), \
+                patch.object(probe, "check_t3_pid"), \
+                patch.object(probe, "t3_stays_stopped", return_value=failed) as drained, \
+                patch.object(probe, "t3_recovered") as recovered, \
+                patch.object(native, "command") as command, \
+                patch.object(native.time, "monotonic", side_effect=[0, 30]):
+            with self.assertRaisesRegex(native.ProbeError, "WATCHER_FAILED_OR_PENDING") as caught:
+                probe.t3_retry_budget(adapter)
+        drained.assert_called_once_with(failed=True)
+        command.assert_not_called()
+        recovered.assert_not_called()
+        self.assertTrue(caught.exception.evidence["retryBudget"]["exhaustedFailureStayedVisible"])
+        self.assertEqual(caught.exception.evidence["recoveryFailure"]["watcherResult"], "start-limit-hit")
+
+    def test_receipt_read_permissions_and_symlink_rejection(self):
+        path = Mock()
+        path.is_symlink.return_value = False
+        path.is_file.return_value = True
+        path.stat.return_value = Mock(st_uid=0, st_mode=0o644)
+        with patch.object(native, "Path", return_value=path):
+            with self.assertRaisesRegex(native.ProbeError, "RECEIPT_MUST_BE_ROOT_0600"):
+                native.protected_json("/synthetic/receipt.json")
+            path.is_symlink.return_value = True
+            with self.assertRaisesRegex(native.ProbeError, "PROTECTED_RECEIPT_REQUIRED"):
+                native.protected_json("/synthetic/receipt.json")
+
+    def test_watcher_policy_identity_and_drained_state_are_positive_requirements(self):
+        probe = native.Native.__new__(native.Native)
+        good = dict(ActiveState="inactive", SubState="dead", Result="success", Job="",
+                    MainPID="0", ControlPID="0", ControlGroup="", PartOf=native.T3_UNIT,
+                    Restart="on-failure", RestartUSec="10s", StartLimitBurst="5",
+                    StartLimitIntervalUSec="5min")
+        for change in ({}, {"MainPID": "123"}, {"Job": "42"}, {"PartOf": ""},
+                       {"StartLimitBurst": "10"}, {"Result": "signal"}):
+            state = good | change
+            with patch.object(native, "command", return_value="\n".join(
+                    f"{key}={value}" for key, value in state.items())), \
+                    patch.object(native.Path, "exists", return_value=False):
+                if change:
+                    with self.subTest(change=change), self.assertRaises(native.ProbeError):
+                        probe.watcher_state(stopped=True)
+                else:
+                    self.assertFalse(probe.watcher_state(stopped=True)["active"])
+                    with self.assertRaises(native.ProbeError):
+                        probe.watcher_state(active=True)
+        cgroup = "/system.slice/" + native.WATCH_UNIT
+        running = good | dict(ActiveState="active", SubState="running",
+                              MainPID="123", ControlGroup=cgroup)
+        proc = Mock()
+        proc.stat.return_value = Mock(st_uid=0)
+        proc.joinpath.return_value.read_text.return_value = "0::" + cgroup
+        with patch.object(native, "command", return_value="\n".join(
+                f"{key}={value}" for key, value in running.items())), \
+                patch.object(native, "Path", return_value=proc):
+            self.assertTrue(probe.watcher_state(active=True)["active"])
+            proc.joinpath.return_value.read_text.return_value = "0::/unowned"
+            with self.assertRaisesRegex(native.ProbeError, "WATCHER_IDENTITY_MISMATCH"):
+                probe.watcher_state(active=True)
+            proc.joinpath.return_value.read_text.return_value = "0::" + cgroup
+            proc.stat.return_value.st_uid = 2000
+            with self.assertRaisesRegex(native.ProbeError, "WATCHER_IDENTITY_MISMATCH"):
+                probe.watcher_state(active=True)
 
 
 class NativeRestoreTests(unittest.TestCase):

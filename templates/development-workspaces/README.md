@@ -33,6 +33,87 @@ deadline-bounded calls, and rechecks VM, T3 service, retained-volume, and Ready 
 on every observation. Repeat a clean native
 qualification before capturing an image.
 
+### Explicit native batches and receipts
+
+`image/native.py run --expected-runtime-sha256 <sha256> --authorization <file>`
+remains the full legacy invocation. It does not renew authorization. For a run that
+cannot fit the **300-second ceiling**, use the three explicitly authorized batches
+on the **same audited immutable installed image and inputs**, not a continuation
+of a previous fixture:
+
+```sh
+python3 -B image/native.py plan --expected-runtime-sha256 <sha256>
+python3 -B image/native.py batch --batch tooling \
+  --expected-runtime-sha256 <sha256> --authorization <fresh-tooling-authorization>
+python3 -B image/native.py batch --batch recovery \
+  --expected-runtime-sha256 <sha256> --authorization <fresh-recovery-authorization>
+python3 -B image/native.py batch --batch workspace \
+  --expected-runtime-sha256 <sha256> --authorization <fresh-workspace-authorization>
+python3 -B image/native.py aggregate --expected-runtime-sha256 <sha256> \
+  --expected <root-0600-exact-receipt-mapping> \
+  --output .local/artifacts/native/aggregate.json
+```
+
+These are disposable-builder-only commands, never workstation or hosted-workspace
+commands. `tooling` isolates Codex/Git; `recovery` includes bootstrap, HTTP/WS,
+remount, Connect management and **all** protected recovery cases together;
+`workspace` repeats bootstrap/HTTP/WS and keeps terminal input, both unfrozen/frozen
+PTY proofs, quiesce, readback and encrypted synthetic restore together. `plan` lists
+the exact ordered probes for each batch. No required probe is dropped. Each batch
+creates a fresh run ID, loop-backed synthetic fixture and complete owned cleanup.
+There is no auto-orchestration, auto-issued authorization, clock override or refresh.
+Runtime checks use the current native VM UTC clock, before **and after** each probe.
+A probe exceeding its authorization fails even if its operation returned successfully.
+Time margins still require disposable native measurement; offline tests do not prove
+batch duration or systemd/kernel qualification.
+
+The existing explicit ACK, exact machine/runtime hash, trusted issuance clock
+(`native-vm-utc` or `provider-https-date`), issuance/expiry with TTL at most 300 seconds,
+`native-<32 lowercase hex>` run ID, loop-only and synthetic-erasure acknowledgements
+remain mandatory. A batch authorization additionally binds `batchId`,
+`installedImageManifestSha256`, `installedImmutableInputs` (the manifest's exact
+absolute-path/hash map), and `harnessSources` (the `native.py` and
+`native-t3-probe.mjs` filename/hash map from `plan`). These must match the actual
+root-owned sources and installed inputs at guard entry. Private wrappers must
+obtain **independent explicit fresh approval for each batch**, retain these bindings,
+and use the batch exit status/`batchPassed`, not `nativeCandidatePassed`.
+A batch never claims full native candidate or runtime qualification.
+Its authorization cannot be reused for another batch or the legacy full `run`.
+
+The aggregate's expected JSON contains those same identity fields plus
+`machineIdSha256`, `runtimeSha256`, and **exactly** this `batches` map:
+
+```json
+{
+  "tooling": {"runId": "native-<32 hex>", "reportPath": "<exact report>", "reportSha256": "<sha256>"},
+  "recovery": {"runId": "native-<different 32 hex>", "reportPath": "<exact report>", "reportSha256": "<sha256>"},
+  "workspace": {"runId": "native-<different 32 hex>", "reportPath": "<exact report>", "reportSha256": "<sha256>"}
+}
+```
+
+This example is the **value of `batches`**, not a complete expected file. There is no
+directory scan or opportunistic selection. Reports and expected files must be
+root-owned, private (`0600`), regular non-symlink files under root-owned non-writable
+ancestor directories. Aggregation verifies exact report hashes, source/image/inputs,
+machine, unique expected run IDs, authorization binding and each successful probe's
+fresh completion time; missing/duplicate/failed/mismatched probes or incomplete cleanup
+fail closed. Only the separate successful aggregate establishes complete native
+coverage. It does not qualify provider persistence, off-host backup, gateway, account
+sign-in or browser behavior.
+
+Native outputs now live under the owning repository's ignored
+`.local/artifacts/native/<runId>/`, or the staged subtree's `.local/artifacts/native/`
+when no repository is present, **not `image/runs/`**. Keep root permissions; do not
+make receipts public for aggregation. Expired authorization still permits bounded
+teardown and inspection of positively owned fixtures (exact processes/units, guarded
+loop/aliases, VM config/state and synthetic erasure). This is a safety obligation,
+not permission for new mutation experiments or probes. Incomplete cleanup preserves
+ambiguous data/loops for inspection and cannot yield a pass.
+
+Focused offline verification:
+`python3 -B -m unittest discover -s templates/development-workspaces/tests -p test_image.py`.
+The broader affected checks are available through `templates/development-workspaces/test.sh`.
+
 Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
 primary VM and managed T3 unit, a private memory-only approval page on loopback
 774, and a distinct root-only management credential. Normal gateway scopes do
@@ -661,6 +742,21 @@ fault injection. Positive idle is advisory, not a promise that no later child ca
 the separate positive cgroup-empty and six-second stopped/restart-window assertions remain
 mandatory. `KillMode=process`, `SendSIGKILL=no` and active-child lifecycle/classifier gates
 are unchanged; retained work must block, not be killed to make qualification pass.
+The scratch watcher is `PartOf=minicloud-t3.service` and independently ships the same
+five-start/300-second accounting (with `RestartSec=10`). Independent cases therefore
+inspect its failure/policy/identity **before stop**, positively verify it stopped and
+drained after the owned stop, then reset accounting for **both** units at that boundary.
+A failed/pending watcher is never cleared to obtain a pass. No reset occurs between
+automatic starts or during the uninterrupted retry-budget assertion; only after
+exhaustion has remained visible through the complete stopped-window assertion does
+the next explicit owned case boundary reestablish the fixture. Normally recovered
+cases and automatic budget starts must have the real root watcher active in its
+owned service cgroup with the shipping policy, as must the later scratch-bind probe
+before and after its work. `PartOf` restart propagation can consume watcher slots:
+if supported product restarts genuinely exhaust it or leave it failed/inactive,
+qualification blocks rather than silently repairing the service. These changes do
+not relax either shipping unit's limits or change runtime lifecycle gates; native
+execution remains necessary to establish the actual product restart consequences.
 For the frozen prestart fixture, systemd `255.4-1ubuntu8.10` can send SIGKILL
 and then report auxiliary-process `EINVAL`; the command's exit status alone is not delivery
 evidence. The native-only fixture requires the exact owned cgroup, the same main process's
