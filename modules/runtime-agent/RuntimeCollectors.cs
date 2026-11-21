@@ -38,6 +38,14 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
     public async Task<IReadOnlyList<AgentLogRecord>> CollectLogsAsync(CancellationToken cancellationToken)
     {
         var records = new List<AgentLogRecord>();
+        var seen = new HashSet<(string Source, string Cursor, DateTimeOffset ObservedAt)>();
+        void Add(AgentLogRecord record)
+        {
+            if (records.Count < AgentRuntimeLimits.MaxBatchRecords && seen.Add((record.Source, record.Cursor, record.ObservedAt)))
+            {
+                records.Add(record);
+            }
+        }
         var now = DateTimeOffset.UtcNow;
         var containers = await InspectAsync(cancellationToken);
         foreach (var container in containers.RootElement.EnumerateArray())
@@ -46,7 +54,7 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
             var logs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", ["logs", "--timestamps", "--since", "20s", "--tail", "100", container.GetProperty("Id").GetString()!], cancellationToken);
             if (logs.ExitCode != 0)
             {
-                records.Add(SelfLog("minicloud-agent", $"Log collection failed for {service}.", now));
+                Add(SelfLog("minicloud-agent", $"Log collection failed for {service}.", now));
                 continue;
             }
             foreach (var (output, stream) in new[] { (logs.Stdout, "stdout"), (logs.Stderr, "stderr") })
@@ -55,16 +63,22 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
                 {
                     var separator = line.IndexOf(' ');
                     var tagged = separator > 0 ? line.Insert(separator + 1, stream + " ") : line;
-                    records.AddRange(LogParsing.ParseDockerLine(service, $"service:{service}", StableSequence(tagged), tagged, now));
+                    foreach (var record in LogParsing.ParseDockerLine(service, $"service:{service}", StableSequence(tagged), tagged, now))
+                    {
+                        Add(record);
+                    }
                 }
             }
         }
         var caddyLogs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "journalctl", ["-u", "caddy", "--since", "20 seconds ago", "--output", "short-iso", "--no-pager"], cancellationToken);
         foreach (var line in Lines(caddyLogs.ExitCode == 0 ? caddyLogs.Stdout : caddyLogs.Stderr))
         {
-            records.AddRange(LogParsing.ParseJournalLine("caddy", "caddy", StableSequence(line), line, now));
+            foreach (var record in LogParsing.ParseJournalLine("caddy", "caddy", StableSequence(line), line, now))
+            {
+                Add(record);
+            }
         }
-        var result = records.GroupBy(x => new { x.Source, x.Cursor, x.ObservedAt }).Select(x => x.First()).Take(AgentRuntimeLimits.MaxBatchRecords).ToArray();
+        var result = records.ToArray();
         RuntimeAgentDiagnostics.RecordRecords("logs", result.Length);
         return result;
     }
@@ -95,7 +109,17 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
             throw new InvalidOperationException($"Docker {operation} failed (exit {result.ExitCode}).");
         }
     }
-    private static IEnumerable<string> Lines(string value) => value.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private static IEnumerable<string> Lines(string value)
+    {
+        for (var start = 0; start < value.Length;)
+        {
+            var end = value.IndexOf('\n', start);
+            if (end < 0) { end = value.Length; }
+            var line = value.AsSpan(start, end - start).Trim().ToString();
+            if (line.Length != 0) { yield return line; }
+            start = end + 1;
+        }
+    }
     private static AgentLogRecord SelfLog(string source, string message, DateTimeOffset observedAt) => new(source, null, "stderr", observedAt, $"{source}:{StableSequence(message):000000000000}", RuntimeLogRedactor.Redact(message));
     private static long StableSequence(string value)
     {
