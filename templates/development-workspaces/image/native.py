@@ -1054,11 +1054,11 @@ class Native:
 
     def t3_unit(self):
         properties = ["ActiveState", "SubState", "Result", "Job", "MainPID", "ControlPID", "NRestarts",
-                      "ExecMainCode", "ExecMainStatus"]
+                      "ExecMainPID", "ExecMainCode", "ExecMainStatus"]
         values = dict(line.split("=", 1) for line in command(
             ["systemctl", "show", T3_UNIT, "-p", ",".join(properties)]).splitlines() if "=" in line)
         check(values.keys() == set(properties), "T3_UNIT_PROPERTIES_MISSING")
-        for key in ("MainPID", "ControlPID", "NRestarts", "ExecMainCode", "ExecMainStatus"):
+        for key in ("MainPID", "ControlPID", "NRestarts", "ExecMainPID", "ExecMainCode", "ExecMainStatus"):
             values[key] = int(values[key])
         return values
 
@@ -1172,8 +1172,53 @@ class Native:
                 return
             time.sleep(min(0.2, seconds))
 
+    def signal_frozen_t3_cgroup(self, before):
+        self.fresh_authorization()
+        check(self.owns_runtime and self.config["vmId"] == self.run_id,
+              "T3_SIGNAL_REQUIRES_SYNTHETIC_RUNTIME")
+        self.check_t3_freezer(True)
+        check(command(["systemctl", "show", T3_UNIT, "-p", "ControlGroup", "--value"]) ==
+              "/minicloudwork.slice/" + T3_UNIT, "T3_UNIT_NOT_IN_OWNED_CGROUP")
+        self.check_t3_pid(before["MainPID"])
+        current = self.t3_unit()
+        check(current["ActiveState"] == "active" and current["SubState"] == "running" and
+              current["Job"] == "" and current["ControlPID"] == 0 and
+              current["MainPID"] == before["MainPID"] and
+              current["NRestarts"] == before["NRestarts"], "T3_SIGNAL_TARGET_CHANGED")
+        failure = None
+        deadline = time.monotonic() + 3
+        try:
+            command(["systemctl", "kill", "--kill-whom=all", "--signal=SIGKILL", T3_UNIT], timeout=3)
+        except ProbeError as error:
+            if str(error) != "COMMAND_FAILED":
+                raise
+            failure = error
+
+        # systemd 255 can deliver SIGKILL before its auxiliary thread pass returns EINVAL.
+        # Neither a zero exit nor that error proves delivery to the whole service cgroup.
+        def delivered(state):
+            return (state["ActiveState"] == "activating" and state["SubState"] == "auto-restart" and
+                    state["Result"] == "signal" and state["Job"] == "" and
+                    state["MainPID"] == state["ControlPID"] == 0 and
+                    state["NRestarts"] == before["NRestarts"] and
+                    state["ExecMainPID"] == before["MainPID"] and
+                    state["ExecMainCode"] == os.CLD_KILLED and
+                    state["ExecMainStatus"] == signal.SIGKILL and self.rt.Linux.t3_cgroup_empty())
+        try:
+            delay = self.wait_t3(delivered, seconds=max(0, deadline - time.monotonic()))
+            check(time.monotonic() < deadline, "T3_CGROUP_SIGKILL_NOT_OBSERVED")
+        except ProbeError as error:
+            if str(error) != "EXPECTED_NATIVE_STATE_TIMEOUT":
+                raise
+            raise ProbeError("T3_CGROUP_SIGKILL_NOT_OBSERVED",
+                             {"signalCommandFailure": failure.evidence if failure else None}) from None
+        self.check_t3_freezer(True)
+        return dict(restartDelay=delay, mainKilledBySIGKILL=True, serviceCgroupDrained=True,
+                    signalCommandFailure=failure.evidence if failure else None)
+
     def t3_frozen_stop(self, adapter, stop_at):
         before = self.t3_ready()
+        delivery = None
         try:
             if stop_at != "before-freeze":
                 adapter.freeze()
@@ -1181,11 +1226,11 @@ class Native:
             if stop_at == "start-pre":
                 # In the disposable fixture, kill the monitor too. A remaining
                 # service cgroup lets systemd thaw its parent on a restart job.
-                self.check_t3_pid(before["MainPID"])
-                command(["systemctl", "kill", "--kill-whom=all", "--signal=SIGKILL", T3_UNIT])
+                delivery = self.signal_frozen_t3_cgroup(before)
+                during_delay = delivery["restartDelay"]
             else:
                 self.signal_t3_main(signal.SIGKILL)
-            during_delay = self.t3_restart_delay("signal")
+                during_delay = self.t3_restart_delay("signal")
             if stop_at == "before-freeze":
                 self.check_t3_freezer(False)
                 adapter.freeze()
@@ -1205,8 +1250,11 @@ class Native:
         finally:
             adapter.thaw()
         self.check_t3_freezer(False)
-        return dict(restartDelay=during_delay, beforeRuntimeStop=before_stop,
-                    afterRuntimeStop=after_stop, stayedRefrozenPastRestartDelay=True)
+        evidence = dict(restartDelay=during_delay, beforeRuntimeStop=before_stop,
+                        afterRuntimeStop=after_stop, stayedRefrozenPastRestartDelay=True)
+        if delivery is not None:
+            evidence["frozenCgroupSignal"] = delivery
+        return evidence
 
     def t3_recovery(self):
         unit = T3_UNIT

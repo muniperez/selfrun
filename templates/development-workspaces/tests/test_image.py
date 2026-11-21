@@ -161,6 +161,149 @@ class ImageTests(unittest.TestCase):
                 with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_DELAY_NOT_OBSERVED"):
                     probe.t3_restart_delay("signal")
 
+    def frozen_signal_probe(self, empty=True, kill_error=True):
+        probe = native.Native.__new__(native.Native)
+        probe.run_id = "synthetic-native-only"
+        probe.owns_runtime = True
+        probe.config = {"vmId": probe.run_id}
+        probe.expires = native.dt.datetime.now(native.dt.timezone.utc) + native.dt.timedelta(minutes=1)
+        probe.rt = Mock()
+        probe.rt.Linux.t3_cgroup_empty.return_value = empty
+        before = dict(ActiveState="active", SubState="running", Result="success", Job="",
+                      MainPID=123, ControlPID=0, NRestarts=2,
+                      ExecMainPID=123, ExecMainCode=0, ExecMainStatus=0)
+        probe.t3_unit = Mock(return_value=before)
+        clock = [0]
+        def advance(seconds):
+            clock[0] += seconds
+        def run(argv, **kwargs):
+            if argv[1] == "show":
+                return subprocess.CompletedProcess(argv, 0, "/minicloudwork.slice/" + native.T3_UNIT, "")
+            return subprocess.CompletedProcess(
+                argv, 1 if kill_error else 0, "",
+                "Failed to send signal SIGKILL to auxiliary processes: Invalid argument" if kill_error else "")
+        patches = (
+            patch.object(probe, "fresh_authorization"),
+            patch.object(probe, "check_t3_freezer"),
+            patch.object(native.Path, "read_text", return_value="0::/minicloudwork.slice/" + native.T3_UNIT),
+            patch.object(native.subprocess, "run", side_effect=run),
+            patch.object(native.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(native.time, "sleep", side_effect=advance),
+        )
+        mocks = [item.start() for item in patches]
+        for item in patches:
+            self.addCleanup(item.stop)
+        delay = before | dict(ActiveState="activating", SubState="auto-restart", Result="signal",
+                              MainPID=0, ExecMainCode=native.os.CLD_KILLED,
+                              ExecMainStatus=native.signal.SIGKILL)
+        return probe, before, delay, mocks
+
+    def test_frozen_t3_sigkill_requires_actual_delivery_even_after_auxiliary_einval(self):
+        for kill_error in (False, True):
+            with self.subTest(kill_error=kill_error):
+                probe, before, delay, mocks = self.frozen_signal_probe(kill_error=kill_error)
+                probe.t3_unit.side_effect = [before, before, delay]
+                result = probe.signal_frozen_t3_cgroup(before)
+                self.assertEqual(result["restartDelay"], delay)
+                self.assertTrue(result["mainKilledBySIGKILL"] and result["serviceCgroupDrained"])
+                if kill_error:
+                    self.assertEqual(result["signalCommandFailure"]["exitCode"], 1)
+                    self.assertEqual(result["signalCommandFailure"]["errorCategories"], ["invalid", "failed"])
+                else:
+                    self.assertIsNone(result["signalCommandFailure"])
+                self.assertEqual(mocks[3].call_args.args[0],
+                                 ["systemctl", "kill", "--kill-whom=all", "--signal=SIGKILL", native.T3_UNIT])
+                self.assertEqual(mocks[1].call_args_list[0].args, (True,))
+                self.assertEqual(mocks[1].call_args_list[-1].args, (True,))
+
+    def test_frozen_t3_signal_error_or_success_cannot_hide_missing_delivery(self):
+        for kill_error, change, empty in (
+                (True, {"ActiveState": "active", "SubState": "running", "MainPID": 123}, True),
+                (True, {}, False),
+                (False, {}, False),
+                (True, {"ExecMainPID": 122}, True),
+                (True, {"ExecMainCode": native.os.CLD_EXITED, "ExecMainStatus": 0}, True),
+                (True, {"ExecMainStatus": native.signal.SIGTERM}, True),
+                (True, {"NRestarts": 3}, True),
+                (True, {"ControlPID": 456}, True),
+                (True, {"Job": "42"}, True)):
+            with self.subTest(kill_error=kill_error, change=change, empty=empty):
+                probe, before, delay, _ = self.frozen_signal_probe(empty=empty, kill_error=kill_error)
+                probe.t3_unit.side_effect = [before] + [delay | change] * 20
+                with self.assertRaisesRegex(native.ProbeError, "T3_CGROUP_SIGKILL_NOT_OBSERVED") as caught:
+                    probe.signal_frozen_t3_cgroup(before)
+                failure = caught.exception.evidence["signalCommandFailure"]
+                if kill_error:
+                    self.assertEqual(failure["exitCode"], 1)
+                else:
+                    self.assertIsNone(failure)
+
+    def test_frozen_t3_signal_refuses_unowned_or_changed_target(self):
+        for change in ("runtime", "unit-cgroup", "pid-cgroup", "main-pid", "restart"):
+            with self.subTest(change=change):
+                probe, before, _, mocks = self.frozen_signal_probe()
+                expected = "T3_SIGNAL_TARGET_CHANGED"
+                if change == "runtime":
+                    probe.owns_runtime = False
+                    expected = "T3_SIGNAL_REQUIRES_SYNTHETIC_RUNTIME"
+                elif change == "unit-cgroup":
+                    mocks[3].side_effect = None
+                    mocks[3].return_value = subprocess.CompletedProcess([], 0, "/minicloudwork.slice", "")
+                    expected = "T3_UNIT_NOT_IN_OWNED_CGROUP"
+                elif change == "pid-cgroup":
+                    mocks[2].return_value = "0::/minicloudwork.slice/" + native.T3_UNIT + "/unqualified"
+                    expected = "T3_PID_NOT_IN_OWNED_CGROUP"
+                else:
+                    probe.t3_unit.side_effect = [before | (
+                        {"MainPID": 124} if change == "main-pid" else {"NRestarts": 3})]
+                with self.assertRaisesRegex(native.ProbeError, expected):
+                    probe.signal_frozen_t3_cgroup(before)
+                self.assertFalse(any(call.args[0][1] == "kill" for call in mocks[3].call_args_list))
+
+    def test_frozen_t3_signal_unavailable_is_not_treated_as_auxiliary_failure(self):
+        probe, before, _, mocks = self.frozen_signal_probe()
+        mocks[3].side_effect = [
+            subprocess.CompletedProcess([], 0, "/minicloudwork.slice/" + native.T3_UNIT, ""),
+            subprocess.TimeoutExpired("systemctl", 3),
+        ]
+        with self.assertRaisesRegex(native.ProbeError, "COMMAND_UNAVAILABLE_OR_TIMEOUT"):
+            probe.signal_frozen_t3_cgroup(before)
+        self.assertEqual(probe.t3_unit.call_count, 1)
+
+    def test_frozen_t3_signal_does_not_accept_a_late_state_observation(self):
+        probe, before, delay, mocks = self.frozen_signal_probe()
+        probe.t3_unit.side_effect = [before, delay]
+        mocks[4].side_effect = [0, 0, 0, 0, 4]
+        with self.assertRaisesRegex(native.ProbeError, "T3_CGROUP_SIGKILL_NOT_OBSERVED"):
+            probe.signal_frozen_t3_cgroup(before)
+
+    def test_frozen_t3_prestart_still_requires_frozen_job_and_one_restart(self):
+        for change in ({}, {"MainPID": 789}, {"Job": ""}, {"NRestarts": 4}):
+            with self.subTest(change=change):
+                probe, before, delay, _ = self.frozen_signal_probe()
+                prestart = delay | dict(SubState="start-pre", ControlPID=456, Job="42", NRestarts=3) | change
+                adapter = Mock()
+                with patch.object(probe, "t3_ready", return_value=before), \
+                        patch.object(probe, "signal_frozen_t3_cgroup",
+                                     return_value={"restartDelay": delay}) as delivery, \
+                        patch.object(probe, "wait_t3", return_value=prestart), \
+                        patch.object(probe, "t3_stays_stopped", return_value={"stopped": True}) as stopped, \
+                        patch.object(probe, "check_t3_pid") as owned_pid:
+                    if change:
+                        with self.assertRaisesRegex(native.ProbeError, "T3_FROZEN_PRESTART_JOB_NOT_OBSERVED"):
+                            probe.t3_frozen_stop(adapter, "start-pre")
+                        adapter.stop_services.assert_not_called()
+                        stopped.assert_not_called()
+                    else:
+                        result = probe.t3_frozen_stop(adapter, "start-pre")
+                        self.assertEqual(result["beforeRuntimeStop"], prestart)
+                        owned_pid.assert_called_once_with(456)
+                        adapter.stop_services.assert_called_once()
+                        stopped.assert_called_once_with(frozen=True, after_crash=True)
+                    delivery.assert_called_once_with(before)
+                    adapter.freeze.assert_called_once()
+                    adapter.thaw.assert_called_once()
+
     def test_t3_cancelled_restart_allows_retained_signal_result(self):
         probe = native.Native.__new__(native.Native)
         probe.rt = Mock()

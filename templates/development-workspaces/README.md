@@ -642,7 +642,13 @@ automatic SIGKILL and cgroup OOM recovery: same environment ID, retained project
 UUID and VM generation; authenticated HTTP and WebSocket access; and Connect management.
 It also checks exit 130, the exact five-failure budget, and job and freezer state when a
 stop lands during the restart delay or frozen `ExecStartPre`. The probe runs before terminal
-probes. Before rollout, a disposable hosted workspace must also show that a Minicloud gateway
+probes. For the frozen prestart fixture, systemd `255.4-1ubuntu8.10` can send SIGKILL
+and then report auxiliary-process `EINVAL`; the command's exit status alone is not delivery
+evidence. The native-only fixture requires the exact owned cgroup, the same main process's
+SIGKILL exit, an empty service cgroup, and the unrestarted `auto-restart` timer before it
+continues. A remaining process, wrong exit, or missed transition still blocks qualification.
+The frozen prestart, stop-completion and retry-budget assertions are unchanged.
+Before rollout, a disposable hosted workspace must also show that a Minicloud gateway
 launch and a previously linked T3 Connect relay recover after a T3 crash.
 
 ### Build outputs on local scratch
