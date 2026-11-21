@@ -3,8 +3,10 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -27,6 +29,7 @@ def load(name, filename):
 
 builder = load("generic_image_builder", "build.py")
 native = load("generic_native_qualification", "native.py")
+restore_runtime = load("native_restore_runtime", "../runtime.py")
 
 
 class ImageTests(unittest.TestCase):
@@ -1263,6 +1266,125 @@ class NativeRestoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="native-restore-", dir=ARTIFACTS)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+
+    def test_normal_codex_initialization_observes_helpers_before_clean_exit_with_scratch_environment(self):
+        binary = Mock()
+        binary.is_file.return_value = True
+        binary.is_symlink.return_value = False
+        binary.stat.return_value = Mock(st_uid=0, st_mode=0o755)
+        process = Mock(returncode=0)
+        process.stdin = io.StringIO()
+        process.stdout = io.StringIO('{"id":1,"result":{}}\n')
+        process.poll.return_value = 0
+        environment = {"TMPDIR": str(self.root / "scratch/tmp"), "XDG_CACHE_HOME": str(self.root / "scratch/cache")}
+
+        def observe(executable):
+            self.assertIs(executable, binary)
+            self.assertFalse(process.stdin.closed)
+            process.wait.assert_not_called()
+            return {"actualHelpersObserved": True}
+
+        with patch.object(native.Path, "glob", return_value=[binary]), \
+                patch.object(native.subprocess, "Popen", return_value=process) as launch, \
+                patch.object(native.select, "select", return_value=([process.stdout], [], [])):
+            result = native.initialize_codex_without_credentials(
+                self.root, self.root / "home", environment=environment, observe=observe)
+        self.assertEqual(result, {"actualHelpersObserved": True})
+        args, kwargs = launch.call_args
+        self.assertEqual(args[0][-4:], ["codex", "app-server", "--listen", "stdio://"])
+        self.assertEqual(kwargs["env"]["TMPDIR"], environment["TMPDIR"])
+        self.assertEqual(kwargs["env"]["CODEX_HOME"], str(self.root / "home/.codex"))
+        process.wait.assert_called_once_with(timeout=15)
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+
+    def test_actual_helper_observation_requires_fresh_complete_pinned_retained_group(self):
+        temporary = self.root / "home/.codex/tmp/arg0-linux"
+        group = temporary / "codex-arg0synthetic"
+        group.mkdir(parents=True)
+        binary = self.root / "image/codex"
+        binary.parent.mkdir()
+        binary.write_bytes(b"synthetic executable, not run")
+        links = [group / name for name in ("codex-linux-sandbox", "apply_patch", "applypatch")]
+        for path in links:
+            path.symlink_to(binary)
+        real_lstat = Path.lstat
+
+        def coding_lstat(path):
+            values = list(real_lstat(path))
+            values[stat.ST_UID] = values[stat.ST_GID] = 2000
+            return os.stat_result(values)
+
+        with patch.object(Path, "lstat", autospec=True, side_effect=coding_lstat):
+            evidence = native.codex_helper_artifacts(temporary, set(), binary)
+            self.assertEqual(evidence["tier"], "retained")
+            self.assertEqual(evidence["symlinkCount"], 3)
+            self.assertTrue(evidence["observedWhileCliRunning"])
+            with self.assertRaisesRegex(native.ProbeError, "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING"):
+                native.codex_helper_artifacts(temporary, set(links), binary)
+            links[-1].unlink()
+            with self.assertRaisesRegex(native.ProbeError, "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING"):
+                native.codex_helper_artifacts(temporary, set(), binary)
+
+    def test_complete_retained_manifest_and_import_cover_files_beyond_representative_limit(self):
+        source = self.root / "source"
+        source.mkdir()
+        (source / "lost+found").mkdir()
+        (source / ".minicloud-volume.json").write_text("source ownership")
+        files = {f"transcripts/session-{index:03}.txt": f"retained session {index}\n".encode()
+                 for index in range(70)}
+        files["home/.codex/config.toml"] = b'model = "synthetic"\n'
+        files["config/lost+found/.minicloud-volume.json"] = b"ordinary nested user file\n"
+        for name, value in files.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(value)
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        (scratch / "cache-entry").write_bytes(b"regenerable cache, not retained")
+        (source / "home/.cache").symlink_to(scratch, target_is_directory=True)
+        (source / "config/current").symlink_to("lost+found/.minicloud-volume.json")
+        expected, links, directories = native.retained_manifest(restore_runtime, source)
+        self.assertEqual(set(expected), set(files))
+        self.assertGreater(len(expected), 64)
+        self.assertEqual(len(restore_runtime.representative_hashes(source)), 64)
+        output = io.BytesIO()
+        restore_runtime.write_backup_archive(source, output)
+        with tarfile.open(fileobj=io.BytesIO(output.getvalue())) as archive:
+            self.assertNotIn("data/home/.cache/cache-entry", archive.getnames())
+            self.assertNotIn("data/.minicloud-volume.json", archive.getnames())
+
+        for missing in (False, True):
+            with self.subTest(missing_last_ordinary_file=missing):
+                target = self.root / ("missing-target" if missing else "complete-target")
+                target.mkdir()
+                (target / ".minicloud-volume.json").write_text("target ownership")
+                (target / "lost+found").mkdir()
+                config = dict(vmId="synthetic-restore", generation=1, kind="primary", uid=2000, gid=2000,
+                              workspace=str(target), volume={"providerVolumeId": "synthetic-target"})
+                runtime = restore_runtime.Runtime(config, self.root / (target.name + "-state"), Mock(), Mock())
+                runtime.s.update(phase="RestoreReady", restoreOperation="synthetic-import",
+                                 restoreSource=dict(receiptId="synthetic-local-import", representativeHashes=expected))
+                content = io.BytesIO(output.getvalue())
+                if missing:
+                    content = io.BytesIO()
+                    with tarfile.open(fileobj=content, mode="w") as filtered, \
+                            tarfile.open(fileobj=io.BytesIO(output.getvalue())) as original:
+                        for member in original:
+                            if member.name != "data/transcripts/session-069.txt":
+                                filtered.addfile(member, original.extractfile(member) if member.isfile() else None)
+                    content.seek(0)
+                    with self.assertRaises(FileNotFoundError), patch.object(restore_runtime.os, "sync"):
+                        runtime.restore_import("synthetic-import", content)
+                    self.assertEqual(runtime.s["phase"], "RestoreFailed")
+                else:
+                    with patch.object(restore_runtime.os, "chown"), patch.object(restore_runtime.os, "sync"):
+                        result = runtime.restore_import("synthetic-import", content)
+                    self.assertEqual(result["type"], "PrimaryRestored")
+                    self.assertEqual(native.retained_manifest(restore_runtime, target),
+                                     (expected, links, directories))
+                    self.assertEqual((target / ".minicloud-volume.json").read_text(), "target ownership")
+                    self.assertFalse(any((target / "lost+found").iterdir()))
 
     def archive(self, files, link=False):
         output = io.BytesIO()

@@ -124,6 +124,20 @@ Focused offline verification:
 `python3 -B -m unittest discover -s templates/development-workspaces/tests -p test_image.py`.
 The broader affected checks are available through `templates/development-workspaces/test.sh`.
 
+The workspace batch observes actual normal Codex `app-server` initialization without
+credentials, with the image's scratch environment and retained `CODEX_HOME`. In pinned
+[Codex 0.169.0](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/arg0/src/lib.rs),
+the three absolute helper symlinks live under `CODEX_HOME/tmp/arg0-linux/codex-arg0*`,
+not `TMPDIR`, and their session directory is removed on clean CLI exit. The batch
+requires live helper evidence and clean-exit removal; it never copies helpers, redirects
+`CODEX_HOME` to scratch, or expects exited CLI helpers in a later backup.
+Encrypted restore verifies every retained regular file's hash, all retained symlink
+metadata, and source directories, rather than only selected representative files.
+Scratch cache targets and nested scratch mounts remain outside the archive; root
+filesystem metadata remains excluded and the independent target's metadata is preserved.
+This is synthetic local writer/age/import evidence, not backend off-host backup or
+provider-volume recovery qualification.
+
 Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
 primary VM and managed T3 unit, a private memory-only approval page on loopback
 774, and a distinct root-only management credential. Normal gateway scopes do

@@ -6,7 +6,6 @@ import hashlib
 import http.client
 import http.server
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
@@ -429,16 +428,16 @@ def bootstrap_with_local_enrollment(config, directory):
         enrollment.unlink(missing_ok=True)
 
 
-def initialize_codex_without_credentials(workspace, home):
+def initialize_codex_without_credentials(workspace, home, *, environment=None, observe=None):
     binaries = list(Path("/opt/minicloud-tools/node_modules/@openai").glob("codex*/vendor/*/bin/codex"))
     check(len(binaries) == 1, "NATIVE_CODEX_EXECUTABLE_AMBIGUOUS")
     binary = binaries[0]
     check(binary.is_file() and not binary.is_symlink() and binary.stat().st_uid == 0 and
           not binary.stat().st_mode & 0o022, "UNTRUSTED_NATIVE_CODEX_EXECUTABLE")
     process = subprocess.Popen(["setpriv", "--reuid=2000", "--regid=2000", "--clear-groups",
-        str(binary), "app-server", "--listen", "stdio://"], cwd=workspace, text=True,
+        "codex", "app-server", "--listen", "stdio://"], cwd=workspace, text=True,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        env={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        env={**(environment or {}), "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
              "HOME": str(home), "CODEX_HOME": str(home / ".codex")})
     try:
         process.stdin.write(json.dumps(dict(id=1, method="initialize", params=dict(
@@ -449,9 +448,11 @@ def initialize_codex_without_credentials(workspace, home):
         check(bool(ready), "CODEX_NATIVE_INITIALIZE_TIMEOUT")
         response = json.loads(process.stdout.readline(65537))
         check(response.get("id") == 1 and "result" in response, "CODEX_NATIVE_INITIALIZE_REJECTED")
+        evidence = observe(binary) if observe is not None else None
         process.stdin.close()
         process.wait(timeout=15)
         check(process.returncode == 0, "CODEX_NATIVE_INITIALIZE_EXIT_FAILED")
+        return evidence
     finally:
         if process.poll() is None:
             process.terminate()
@@ -463,6 +464,45 @@ def initialize_codex_without_credentials(workspace, home):
         if not process.stdin.closed:
             process.stdin.close()
         process.stdout.close()
+
+
+def codex_helper_artifacts(temporary, previous, binary):
+    links = {str(path.relative_to(temporary)): os.readlink(path)
+             for path in temporary.rglob("*") if path.is_symlink() and path not in previous}
+    groups = {}
+    for name, target in links.items():
+        parts = Path(name).parts
+        if (len(parts) == 2 and parts[0].startswith("codex-arg0") and
+                parts[1] in ("codex-linux-sandbox", "apply_patch", "applypatch")):
+            groups.setdefault(Path(name).parent, {})[name] = target
+    complete = {name: target for group in groups.values()
+                if {Path(name).name for name in group} ==
+                {"codex-linux-sandbox", "apply_patch", "applypatch"}
+                for name, target in group.items()}
+    check(complete and all(os.path.isabs(target) and target == str(binary.resolve())
+                           for target in complete.values()),
+          "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING")
+    check(all((temporary / name).lstat().st_uid == (temporary / name).lstat().st_gid == 2000
+              for name in complete), "ACTUAL_CODEX_SYMLINK_OWNER_MISMATCH")
+    return {"tier": "retained", "temporaryRoot": str(temporary),
+            "observedWhileCliRunning": True, "normalCliEntrypoint": True,
+            "symlinkCount": len(complete),
+            "symlinks": [{"relativePath": name, "target": target}
+                         for name, target in sorted(complete.items())],
+            "temporaryHelpersRestored": False}
+
+
+def retained_manifest(runtime, root):
+    files, links, directories = {}, {}, set()
+    for path, info in runtime.backup_paths(root):
+        name = path.relative_to(root).as_posix()
+        if stat.S_ISREG(info.st_mode):
+            files[name] = sha(path)
+        elif stat.S_ISLNK(info.st_mode):
+            links[name] = os.readlink(path)
+        elif stat.S_ISDIR(info.st_mode) and name != ".":
+            directories.add(name)
+    return files, links, directories
 
 
 def source_control_versions(path, lock):
@@ -625,6 +665,7 @@ class Native:
         self.frozen_by_harness = False
         self.git_fixture_cleanup = "not-started"
         self.restore_fixture_cleanup = "not-started"
+        self.codex_artifacts = None
         self.scratch_mounted = None
         self.original_workspace_exists = Path("/workspace").exists()
         self.expires = dt.datetime.fromisoformat(authorization["expiresAt"].replace("Z", "+00:00"))
@@ -1002,6 +1043,9 @@ class Native:
             os.chown(path.parent, 2000, 2000)
             path.write_text(value)
             os.chown(path, 2000, 2000)
+        link = Path("/workspace/config/native-user-current.json")
+        link.symlink_to("native-user.json")
+        os.chown(link, 2000, 2000, follow_symlinks=False)
         return {"type": result["type"], "filesystemUuid": fs_uuid,
                 "formattedOnlyVerifiedNewLoopDevice": True, "providerPersistenceProof": False,
                 "noApplicationInstalledOrRegistered": True,
@@ -1174,7 +1218,19 @@ class Native:
         check(lines[-1:] == ["scratch-writable"] and
               dict(line.split("=", 1) for line in lines[:-1] if "=" in line) == expected,
               "T3_TERMINAL_SCRATCH_ENVIRONMENT_MISMATCH")
-        return {**result, "terminalEnvironmentMatched": sorted(expected), "terminalWroteScratchCacheAndTmp": True}
+        # Pinned Codex keeps arg0 helpers in CODEX_HOME, even with scratch TMPDIR.
+        temporary = Path("/workspace/home/.codex/tmp/arg0-linux")
+        previous = {path for path in temporary.rglob("*") if path.is_symlink()}
+        self.codex_artifacts = initialize_codex_without_credentials(
+            Path("/workspace"), Path("/workspace/home"), environment=expected,
+            observe=lambda binary: codex_helper_artifacts(temporary, previous, binary))
+        check(all(not (temporary / item["relativePath"]).is_symlink()
+                  for item in self.codex_artifacts["symlinks"]),
+              "CODEX_TEMPORARY_HELPERS_REMAIN_AFTER_CLEAN_EXIT")
+        self.codex_artifacts["removedOnCleanCliExit"] = True
+        self.codex_artifacts["scratchTmpdir"] = expected["TMPDIR"]
+        return {**result, "terminalEnvironmentMatched": sorted(expected), "terminalWroteScratchCacheAndTmp": True,
+                "actualCodexTemporaryArtifacts": self.codex_artifacts}
 
     def start_services(self):
         check(command(["systemctl", "show", "minicloud-t3.service", "-p", "MainPID", "--value"]) != "0",
@@ -2211,16 +2267,14 @@ class Native:
             source_owner = (mounted / ".minicloud-volume.json").read_bytes()
             check(json.loads(source_owner) == self.config["volume"]["owner"],
                   "SOURCE_RESTORE_FIXTURE_OWNER_CHANGED")
-            expected = {name: sha(mounted / name) for name in names}
-            source_links = {str(path.relative_to(mounted)): os.readlink(path)
-                            for path in mounted.rglob("*") if path.is_symlink()}
-            codex_links = {name: target for name, target in source_links.items()
-                           if name.startswith("home/.codex/tmp/arg0-linux/")}
-            check({Path(name).name for name in codex_links} >=
-                  {"codex-linux-sandbox", "apply_patch", "applypatch"} and
-                  all(os.path.isabs(target) for target in codex_links.values()),
-                  "ACTUAL_CODEX_ABSOLUTE_SYMLINK_FIXTURE_MISSING")
+            check(isinstance(self.codex_artifacts, dict) and
+                  self.codex_artifacts["tier"] == "retained" and
+                  self.codex_artifacts["symlinkCount"] >= 3 and
+                  self.codex_artifacts["removedOnCleanCliExit"],
+                  "ACTUAL_CODEX_HELPER_LIFECYCLE_EVIDENCE_MISSING")
             self.rt.validate_backup_tree(mounted)
+            expected, source_links, source_directories = retained_manifest(self.rt, mounted)
+            check(set(names) <= expected.keys(), "RETAINED_USER_FIXTURE_MISSING")
             command(["age-keygen", "--output", str(key)])
             recipient = command(["age-keygen", "-y", str(key)])
             check(recipient.startswith("age1"), "INVALID_SYNTHETIC_AGE_RECIPIENT")
@@ -2251,7 +2305,9 @@ class Native:
                     inspect_archive.wait(timeout=10)
             check(not {"data/lost+found", "data/.minicloud-volume.json"} & members,
                   "PRODUCTION_WRITER_INCLUDED_ROOT_FILESYSTEM_METADATA")
-            check(all("data/" + name in members for name in names), "NESTED_USER_DATA_OMITTED")
+            check(all("data/" + name in members for name in
+                      expected.keys() | source_links.keys() | source_directories),
+                  "RETAINED_USER_DATA_OMITTED")
             check(archived_links == source_links, "SOURCE_SYMLINK_METADATA_NOT_ARCHIVED")
             with backing.open("xb") as stream:
                 stream.truncate(512 * 1024**2)
@@ -2281,34 +2337,6 @@ class Native:
                              stat.S_IMODE(lost.stat().st_mode))
             marker_identity = (target_marker.stat().st_ino, target_marker.stat().st_uid,
                                stat.S_IMODE(target_marker.stat().st_mode))
-            rejected = []
-
-            def reject_metadata(label):
-                output = io.BytesIO()
-                try:
-                    self.rt.write_backup_archive(restored, output)
-                except self.rt.Blocked:
-                    check(output.getvalue() == b"", "UNSAFE_METADATA_PARTIALLY_ARCHIVED")
-                    rejected.append(label)
-                    return
-                raise ProbeError("PRODUCTION_WRITER_ACCEPTED_UNSAFE_FILESYSTEM_METADATA")
-
-            recovered = lost / "native-recovered-data"
-            recovered.write_bytes(b"Do not silently discard recovered native fixture data\n")
-            try:
-                reject_metadata("nonempty-lost-found")
-                check(recovered.read_bytes() == b"Do not silently discard recovered native fixture data\n",
-                      "RECOVERED_DATA_MUTATED_DURING_REJECTION")
-            finally:
-                recovered.unlink()
-            preserved_lost = restored / "native-preserved-lost-found"
-            lost.rename(preserved_lost)
-            try:
-                lost.symlink_to(preserved_lost, target_is_directory=True)
-                reject_metadata("aliased-lost-found")
-            finally:
-                lost.unlink()
-                preserved_lost.rename(lost)
             # Only import is under test: no fabricated provider/off-host admission or durability claim.
             operation = "native-local-restore-import"
             runtime.s.update(phase="RestoreReady", restoreOperation=operation,
@@ -2327,8 +2355,10 @@ class Native:
                     decrypted.wait(timeout=10)
             check(result["type"] == "PrimaryRestored" and result["representativeHashesVerified"],
                   "PRODUCTION_RESTORE_IMPORT_RECEIPT_MISSING")
-            check(all(sha(restored / name) == digest for name, digest in expected.items()),
-                  "RESTORED_REPRESENTATIVE_USER_HASH_MISMATCH")
+            restored_files, restored_links, restored_directories = retained_manifest(self.rt, restored)
+            check(restored_files == expected and restored_links == source_links and
+                  source_directories <= restored_directories,
+                  "RESTORED_COMPLETE_RETAINED_TREE_MISMATCH")
             check(all((restored / name).stat().st_uid == (restored / name).stat().st_gid == 2000
                       for name in expected), "RESTORED_USER_FILE_OWNERSHIP_MISMATCH")
             for name, target in source_links.items():
@@ -2349,19 +2379,15 @@ class Native:
                     "actualRuntimeRestoreImport": True, "restoreReceiptType": result["type"],
                     "sourceAndTargetAreDistinctLoopExt4": True,
                     "rootFilesystemMetadataOmitted": True, "nestedMetadataNamesPreserved": True,
-                    "targetOwnerAndLostFoundPreserved": True, "rejected": rejected,
+                    "targetOwnerAndLostFoundPreserved": True,
                     "productionBackupTreeValidationUsed": True,
                     "allWorkspaceSymlinkMetadataRestored": True,
-                    "actualCodexSymlinkCount": len(codex_links),
-                    "actualCodexSymlinkMetadataRestored": True,
+                    "completeRetainedUserFilesVerified": True,
+                    "retainedSymlinkCount": len(source_links),
+                    "retainedDirectoryCount": len(source_directories),
+                    "actualCodexTemporaryArtifacts": self.codex_artifacts,
                     "symlinkTargetBytesNotArchived": True, "symlinkUidsAllCoding": True,
-                    "representativeUserFilesAllCodingOwned": True,
-                    "actualCodexSymlinkEvidence": [
-                        {"relativePath": name, "target": target,
-                         "targetTextSha256": hashlib.sha256(os.fsencode(target)).hexdigest(),
-                         "archiveEntryType": "symlink", "archivedContentBytes": 0,
-                         "restoredUid": 2000, "restoredGid": 2000}
-                        for name, target in sorted(codex_links.items())],
+                    "retainedUserFilesAllCodingOwned": True,
                     "recoveryKeyOutsideSourceAndTarget": True, "recoveryKeyOffVm": False,
                     "plaintextArchivePersisted": False, "preAdmittedLocalImportFixture": True,
                     "restoreAdmissionQualified": False,
