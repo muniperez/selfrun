@@ -2,9 +2,15 @@
 
 ## Selected identifiers, not a qualified release
 
-- Server candidate: **`0.0.1-rc.2`**, unpublished metadata pending operator
-  review (#251). The previous `server-v0.0.1-rc.1` tag exists, but its publisher
-  failed and no server release is available. Never move or reuse that tag.
+- Server candidate: **`0.0.1-rc.3`**, unpublished metadata pending operator
+  review (#261). Both previous `server-v0.0.1-rc.1` and `server-v0.0.1-rc.2`
+  tags exist; their publishers failed. Never move or reuse either tag.
+  [The rc2 run](https://github.com/muniventures/minicloud/actions/runs/44935673888)
+  failed on its first image push with `permission_denied: read_package` because
+  the old name collides with a pre-existing private package. New builds use only
+  `ghcr.io/muniventures/minicloud-release-{api,dashboard,worker}`. Never expose
+  or grant access to the old packages; the operator owns authorized publication
+  and public visibility of the newly created release-only packages.
 - CLI source: **`2a5ae0ccea6c3dd680b4146586ec0668c60c8b93`**, actual canonical
   public `main` containing the merged authentication, SSH and numbered-deployment
   clients. Public prerequisite repairs #70–#75 and ledger #76 were already
@@ -69,6 +75,31 @@ self-hosting/installer contracts passed (93 tests, 3 opt-in Docker/Compose cases
 and focused .NET metadata/discovery checks passed (24 tests) on local Linux arm64.
 These synthetic checks are not T90/T91 acceptance or release qualification.
 
+For #261, local Linux arm64 checks passed: release contracts (24 tests),
+self-hosting/installer/maintenance contracts (93 tests, 3 opt-in Docker/Compose
+cases skipped), CLI seed/release checks (188 tests), and metadata/discovery
+checks (24 tests). The self-hosting suite initially lacked `age-keygen`; the
+official age 1.2.1 arm64 binary was supplied only under ignored artifacts for
+the successful rerun.
+
+The seed source pin is retained after executing **the exact historical
+`SeedRelease.cs`** from `7a4b16130215ea8b2c74221cb02c5e45344d4427`
+(Git blob `3b9404c2a340da33c3ae7d9830543808783c444f`) in a .NET 10 harness
+with that informational source SHA. `VerifyAsync` accepted producer-generated
+synthetic release-only manifest/bundle assets, and refused tampered inventory,
+incorrect bundle hash, incompatible source, altered archive member, runtime-core
+disagreement and simulated signature failure. Historical file/guard logic was
+retained; only external Compose/Cosign behavior was mocked, and all assets
+already existed locally (no downloads). The harness asserted exact canonical
+workflow identity and production issuer arguments, **not cryptographic validity**.
+Historical source and harness outputs stay under ignored
+`.local/artifacts/historical-seed/` and `.local/artifacts/verification-261/`;
+maintained CLI regressions cover current/historical archive bindings and
+incompatible-source refusal. No CLI repair or staged source-pin update is needed
+for this packaging contract. The customer workflow pin is unchanged.
+This remains an **unqualified TEST prerelease**, not measured live seed/server
+compatibility.
+
 After explicit authorization, the focused commands already documented in
 [server packaging](../packaging/server/README.md#focused-checks-and-remaining-evidence)
 remain:
@@ -76,6 +107,10 @@ remain:
 ```sh
 python3 -B -m unittest discover -s scripts/server-release -p 'test_*.py' -v
 python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -v
+dotnet test modules/tests/Minicloud.Cli.Tests/Minicloud.Cli.Tests.csproj \
+  --configuration Release --artifacts-path .local/artifacts/t80-cli-dotnet \
+  --results-directory .local/artifacts/t80-cli-results \
+  --filter 'FullyQualifiedName~Seed|FullyQualifiedName~Release' -m:1
 dotnet test modules/tests/Minicloud.Tests/Minicloud.Tests.csproj \
   --configuration Release --artifacts-path .local/artifacts/t80-dotnet \
   --results-directory .local/artifacts/t80-test-results \
@@ -91,8 +126,8 @@ acceptance; #44 retains later auth/optional-provider validation.
 
 Real two-architecture product builds, agent ELF verification, signing/provenance,
 public GHCR visibility and anonymous pulls, installation and recovery acceptance
-remain later authorized gates. The existing rc1 tag is not moved or reused;
-no rc2 tag, assets or product
+remain later authorized gates. The existing rc1 and rc2 tags are not moved or reused;
+no rc3 tag, assets or product
 image digests are supplied or claimed. The metadata allowlist does not satisfy
 the historical tested-only qualification requirement: record actual evidence
 before publication rather than weakening the validator or inferring a pass.
