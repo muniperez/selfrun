@@ -55,7 +55,7 @@ public sealed partial class CliApplication
             SeedFiles.Check(configPath);
             SeedGuard.Require(new FileInfo(configPath).Length is > 0 and < 1048576, "Invalid configuration size.");
             var config = guided?.Config ?? SeedPortableConfig.Parse(await File.ReadAllTextAsync(configPath, ct));
-            config.Validate();
+            if (guided is not null) config.Validate();
             credential = config.ProviderCredential;
             embeddedCredential = config.ProviderCredential;
             reportPath = Path.GetFullPath(Option("--report")!);
@@ -179,6 +179,8 @@ public sealed partial class CliApplication
                 ? await new SeedRelease().VerifyAsync(config.Selection.ServerVersion, Path.Combine(scratch, "release"), ct)
                 : SeedLocalSource.Verify(Path.GetFullPath(localSource), Option("--source-sha256")!,
                     config.Selection.ServerVersion, Path.Combine(scratch, "release"));
+            SeedGuard.Require(guided?.Local != true || release.Source == SeedRelease.CliSourceRevision,
+                "Guided TEST plans require the exact embedded CLI source revision.");
             if (guided?.ExpectedRelease is { } expected)
             {
                 SeedGuard.Require(release == expected, "The server release or source archive changed since creation. Restore the original build and trust inputs.");
@@ -234,7 +236,9 @@ public sealed partial class CliApplication
                 return 10;
             }
             // Host-only continuation needs no provider token or creation permissions.
-            SeedPortable.Observe(report, state, await SeedPortable.ContinueAsync(state, scratch, host, host, observation, ct));
+            var continued = await SeedPortable.ContinueAsync(state, scratch, host, host, observation, ct);
+            if (guided is not null) RequireGuidedInstallation(continued, config, release, guided.Local);
+            SeedPortable.Observe(report, state, continued);
             return SeedPortable.ExitCode(report);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)

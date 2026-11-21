@@ -3,7 +3,7 @@
 Issue #90 supersedes the required laptop journal and hidden bootstrap identity.
 This is source functionality, **not publication or live-provider qualification**.
 The [seed release/qualification gate](seed.md) still applies: an exact signed,
-compatible server release is mandatory in the default mode. Never bypass compatibility, publish
+compatible server release is mandatory in signed mode. Never bypass compatibility, publish
 artifacts, or substitute an unqualified release just to make seed proceed.
 
 ## Guided installation

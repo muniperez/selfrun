@@ -43,7 +43,7 @@ internal static class SeedLocalSource
                                 maximumExclusiveVersion = (string?)null, sourceRevisions = new[] { revision } }
                         };
                         using var data = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(descriptor));
-                        writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "minicloud-local-source.json")
+                        writer.WriteEntry(new UstarTarEntry(TarEntryType.RegularFile, "minicloud-local-source.json")
                         {
                             DataStream = data, Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
                             ModificationTime = DateTimeOffset.UnixEpoch

@@ -55,7 +55,7 @@ public sealed partial class CliApplication
                 selection.Validate();
                 var architecture = SeedAnswer("Server architecture (linux/amd64 or linux/arm64): ");
                 SeedGuard.Require(architecture is "linux/amd64" or "linux/arm64", "Select the server architecture explicitly.");
-                var key = Path.GetFullPath(SeedAnswer("Path to your owner-only OpenSSH private key: "));
+                var key = Path.GetFullPath(SeedAnswer("Absolute path to your owner-only OpenSSH private key: "));
                 var useAgent = SeedConfirm("Use your independently unlocked SSH agent for this key? [y/N]: ", "y");
                 var keyFingerprint = SeedUserKey.Fingerprint(await SeedUserKey.ReadAsync(key, useAgent, ct));
                 string? project = null;
@@ -73,9 +73,9 @@ public sealed partial class CliApplication
                     ServerVersion = tag, Architecture = architecture
                 };
                 config.Validate();
-                SeedGuard.Require(!JsonSerializer.Serialize(config, SeedJournal.Json).Contains(credential, StringComparison.Ordinal),
-                    "A configuration value contains the supplied credential. Never enter a credential in another prompt.");
                 session = new(config, key, useAgent, keyFingerprint, digest);
+                SeedGuard.Require(!JsonSerializer.Serialize(session, SeedJournal.Json).Contains(credential, StringComparison.Ordinal),
+                    "A configuration value contains the supplied credential. Never enter a credential in another prompt.");
                 WriteGuided(sessionPath, session);
             }
 
@@ -126,7 +126,7 @@ public sealed partial class CliApplication
             {
                 credential ??= SeedFiles.Credential(null, _console);
                 var planned = await StepAsync("plan", initial: true);
-                if (planned != 0) return planned;
+                if (planned != 0) return ExplainGuidedExit(planned, reportPath);
                 var plan = ReadGuided<SeedPortableReport>(reportPath)!;
                 SeedGuard.Require(plan.Classification == "new_seed" && plan.Approval is not null,
                     "This seed did not resolve to a new authorized target. Do not create a replacement.");
@@ -134,7 +134,7 @@ public sealed partial class CliApplication
                 if (!SeedConfirm("Only if you are the sole authorized creator with no unresolved prior request, type 'create' to approve this plan (Enter to pause): ", "create"))
                     return 10;
                 var applied = await StepAsync("apply", initial: true, approval: plan.Approval);
-                if (applied != 10 || dispatch is null) return applied;
+                if (applied != 10 || dispatch is null) return ExplainGuidedExit(applied, reportPath);
             }
 
             if (target is null)
@@ -172,16 +172,16 @@ public sealed partial class CliApplication
             configForRun.Validate();
 
             var continuation = await StepAsync("plan");
-            if (continuation != 0) return continuation;
+            if (continuation != 0) return ExplainGuidedExit(continuation, reportPath);
             if (target is null) WriteGuided(targetPath, configForRun.Target!);
             var observed = ReadGuided<SeedPortableReport>(reportPath)!;
-            PrintSeedDns(configForRun, configForRun.Target!.Ipv4!);
+            if (target is not null) PrintSeedDns(configForRun, target.Ipv4!);
             if (observed.Classification == "continue_partial")
             {
                 if (!SeedConfirm("Review the pinned-target plan above. Type 'install' to approve it (Enter to pause): ", "install"))
                     return 10;
                 continuation = await StepAsync("apply", approval: observed.Approval);
-                if (continuation is not (0 or 10)) return continuation;
+                if (continuation is not (0 or 10)) return ExplainGuidedExit(continuation, reportPath);
                 observed = ReadGuided<SeedPortableReport>(reportPath)!;
             }
             if (observed.Classification is "upgrade_required" or "reconciliation_required")
@@ -206,8 +206,8 @@ public sealed partial class CliApplication
             else _console.WriteLine("Rerun seed to export recovery material; do not leave your only copy on the server.");
             if (setup || observed.Observation.Browser == "ready")
             {
-                _console.WriteLine("After creating your operator account, sign in at https://" + configForRun.Domain + "/, or connect this CLI:");
-                _console.WriteLine($"  minicloud instance add my-cloud {configForRun.Domain}");
+                _console.WriteLine("After creating your operator account, sign in at https://" + configForRun.Domain + "/, or connect this CLI (use its path if not on PATH):");
+                _console.WriteLine($"  minicloud instance add my-cloud https://{configForRun.Domain}");
                 _console.WriteLine("  minicloud login");
             }
             else _console.WriteLine("Browser setup state is not verified. Check the original host and rerun seed; never reinitialize it.");
@@ -248,6 +248,13 @@ public sealed partial class CliApplication
     {
         _console.WriteLine($"DNS: set {config.Domain}. A {address} and api.{config.Domain}. A {address}.");
         _console.WriteLine("Remove conflicting A/AAAA records. Do not point the application wildcard at this control-plane VPS.");
+    }
+
+    private int ExplainGuidedExit(int code, string reportPath)
+    {
+        if (code is 10 or 11 or 12 && ReadGuided<SeedPortableReport>(reportPath) is { } report)
+            _console.WriteLine(string.Join(" ", report.NextActions));
+        return code;
     }
 
     private static T? ReadGuided<T>(string path) where T : class
