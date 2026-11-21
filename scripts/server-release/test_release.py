@@ -90,24 +90,27 @@ class ReleaseTests(unittest.TestCase):
         self.assertIsNotNone(selector)
         source = selector.group(1)
         config = root / "packaging/server/release.json"
-        selected = release.read_json(config)
+        selected_tag = "server-v0.0.1-rc.4"
         candidate = release.preflight(
             root, config, root / "packaging/server/bundle",
-            f"server-v{selected['serverVersion']}", source,
+            selected_tag, source,
         )
         revisions = candidate["cliCompatibility"]["sourceRevisions"]
         self.assertIn(source, revisions)
-        self.assertIn("7a4b16130215ea8b2c74221cb02c5e45344d4427", revisions)
+        self.assertEqual([
+            "2a5ae0ccea6c3dd680b4146586ec0668c60c8b93",
+            "7a4b16130215ea8b2c74221cb02c5e45344d4427",
+            "3b27fa11605d94a3073be68c235835d1e37e29d8",
+        ], revisions)
         self.assertNotIn("4fa46a46e0d492d0e9ae41e1cd9b8a8188170443", revisions)
         self.assertEqual(len(revisions), len(set(revisions)))
         for revision in revisions:
             self.assertRegex(revision, r"^[0-9a-f]{40}$")
         self.assertIsNone(candidate["cliCompatibility"]["minimumVersion"])
         self.assertIsNone(candidate["cliCompatibility"]["maximumExclusiveVersion"])
-        selected_tag = f"server-v{selected['serverVersion']}"
         release.validate_core(candidate, selected_tag, source)
         with self.assertRaisesRegex(release.ReleaseError, "Mixed release"):
-            release.validate_core(candidate, "server-v0.0.1-rc.1", source)
+            release.validate_core(candidate, "server-v0.0.1-rc.3", source)
 
     def resign_inventory(self):
         manifest = release.read_json(self.output / "server-manifest.json")
