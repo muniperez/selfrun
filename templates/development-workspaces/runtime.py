@@ -27,9 +27,10 @@ T3_ENVIRONMENT_PROTOCOL = 2
 
 
 class Blocked(Exception):
-    def __init__(self, reason, state="Blocked"):
+    def __init__(self, reason, state="Blocked", diagnostic=None):
         super().__init__(reason)
         self.state = state
+        self.diagnostic = diagnostic if isinstance(diagnostic, dict) else None
 
 
 DIAGNOSTIC_STAGES = frozenset({
@@ -90,6 +91,36 @@ def failure_response(error, stage="request"):
 def require(condition, reason):
     if not condition:
         raise Blocked(reason)
+
+
+WORK_INVENTORY_REASON_CODES = frozenset({
+    "outside_work_slice", "unregistered_coding_process", "inventory_changed",
+    "service_identity", "other_idle_blocker",
+})
+WORK_INVENTORY_ROLES = ("scratch-watch", "scratch-mounts", "t3", "preview", "coding", "other")
+
+
+def inventory_evidence(code="other_idle_blocker", *, role_counts=None, coding_count=0,
+                       outside_count=0, first_count=None, second_count=None,
+                       inventory_stable=None, blocked_role=None, blocked_coding_owned=None):
+    if not isinstance(code, str) or code not in WORK_INVENTORY_REASON_CODES:
+        code = "other_idle_blocker"
+    bounded = lambda value: min(value, 128) if type(value) is int and value >= 0 else 0
+    role_counts = role_counts if isinstance(role_counts, dict) else {}
+    counts = {role: bounded((role_counts or {}).get(role, 0)) for role in WORK_INVENTORY_ROLES}
+    evidence = dict(reasonCode=code, roleCounts=counts, codingProcessCount=bounded(coding_count),
+                    outsideWorkSliceCount=bounded(outside_count))
+    if first_count is not None:
+        evidence["firstInventoryCount"] = bounded(first_count)
+    if second_count is not None:
+        evidence["secondInventoryCount"] = bounded(second_count)
+    if inventory_stable is not None:
+        evidence["inventoryStable"] = type(inventory_stable) is bool and inventory_stable
+    if isinstance(blocked_role, str) and blocked_role in WORK_INVENTORY_ROLES:
+        evidence["blockedRole"] = blocked_role
+    if type(blocked_coding_owned) is bool:
+        evidence["blockedCodingOwned"] = blocked_coding_owned
+    return evidence
 
 
 def read_image_manifest():
@@ -1132,40 +1163,95 @@ class Linux:
                 allowed[int(pid)] = unit
                 (t3_pids if unit == "minicloud-t3.service" else preview_pids).add(int(pid))
         inventory = self.processes.inventory()
+        role_counts = {role: 0 for role in WORK_INVENTORY_ROLES}
+        outside_count = 0
+        coding_count = 0
+
+        def role_for(process):
+            group = process.get("cgroup", "")
+            if group == "0::/system.slice/minicloud-scratch-watch.service":
+                return "scratch-watch"
+            if group == "0::/system.slice/minicloud-scratch-mounts.service":
+                return "scratch-mounts"
+            if group == "0::/minicloudwork.slice/minicloud-t3.service":
+                return "t3"
+            if any(group == value or group.startswith(value + "/") for value in preview_groups):
+                return "preview"
+            if self.config["uid"] in process.get("uids", ()):
+                return "coding"
+            return "other"
+
+        def observe(values):
+            nonlocal outside_count, coding_count
+            for process in values.values():
+                role = role_for(process)
+                role_counts[role] += 1
+                if self.config["uid"] in process.get("uids", ()):
+                    coding_count += 1
+                    if not process.get("cgroup", "").startswith("0::/minicloudwork.slice/"):
+                        outside_count += 1
+
+        observe(inventory)
+
+        def block(reason, code="other_idle_blocker", process=None):
+            raise Blocked(reason, diagnostic=inventory_evidence(
+                code, role_counts=role_counts, coding_count=coding_count,
+                outside_count=outside_count, first_count=len(inventory),
+                blocked_role=role_for(process) if process is not None else None,
+                blocked_coding_owned=(self.config["uid"] in process["uids"])
+                if process is not None else None))
+
         for pid, unit in allowed.items():
-            require(pid in inventory and inventory[pid]["uids"] == (self.config["uid"],) * 4 and
-                    inventory[pid]["cgroup"] == "0::/minicloudwork.slice/" + unit,
-                    ("T3" if unit == "minicloud-t3.service" else "Preview") +
-                    " service identity is unknown or outside its owned cgroup")
+            if not (pid in inventory and inventory[pid]["uids"] == (self.config["uid"],) * 4 and
+                    inventory[pid]["cgroup"] == "0::/minicloudwork.slice/" + unit):
+                block(("T3" if unit == "minicloud-t3.service" else "Preview") +
+                      " service identity is unknown or outside its owned cgroup", "service_identity")
         def verify_preview_children(values):
-            require(not any(p["ppid"] in preview_pids or
-                            (p["pid"] not in preview_pids and any(
-                                p["cgroup"] == group or p["cgroup"].startswith(group + "/")
-                                for group in preview_groups)) for p in values.values()),
-                    "Preview service has unregistered children or leftover cgroup processes")
+            if any(p["ppid"] in preview_pids or
+                   (p["pid"] not in preview_pids and any(
+                       p["cgroup"] == group or p["cgroup"].startswith(group + "/")
+                       for group in preview_groups)) for p in values.values()):
+                block("Preview service has unregistered children or leftover cgroup processes",
+                      "unregistered_coding_process")
         verify_preview_children(inventory)
         for process in inventory.values():
             if self.config["uid"] not in process["uids"]:
                 continue
-            require("/minicloudwork.slice/" in process["cgroup"],
-                    "Coding process escaped supervised work slice")
-            if process["pid"] not in allowed and self.processes.t3_resource_monitor(process, inventory, t3_pids):
-                allowed[process["pid"]] = "pinned-t3-resource-monitor"
-            if process["pid"] not in allowed and self.processes.t3_relay_client(process, inventory, t3_pids):
-                allowed[process["pid"]] = "pinned-t3-relay-client"
+            if "/minicloudwork.slice/" not in process["cgroup"]:
+                block("Coding process escaped supervised work slice", "outside_work_slice", process)
+            try:
+                if process["pid"] not in allowed and self.processes.t3_resource_monitor(process, inventory, t3_pids):
+                    allowed[process["pid"]] = "pinned-t3-resource-monitor"
+                if process["pid"] not in allowed and self.processes.t3_relay_client(process, inventory, t3_pids):
+                    allowed[process["pid"]] = "pinned-t3-relay-client"
+            except Blocked as error:
+                raise Blocked(str(error), diagnostic=inventory_evidence(
+                    "other_idle_blocker", role_counts=role_counts, coding_count=coding_count,
+                    outside_count=outside_count, first_count=len(inventory))) from error
             if process["pid"] not in allowed:
-                require(self.config.get("observedTerminalInputs") is True,
-                        "Unregistered live coding process; terminal input observation is not qualified")
-                self.processes.idle_shell(process, inventory, t3_pids)
+                if self.config.get("observedTerminalInputs") is not True:
+                    block("Unregistered live coding process; terminal input observation is not qualified",
+                          "unregistered_coding_process", process)
+                try:
+                    self.processes.idle_shell(process, inventory, t3_pids)
+                except Blocked as error:
+                    raise Blocked(str(error), diagnostic=inventory_evidence(
+                        "unregistered_coding_process", role_counts=role_counts,
+                        coding_count=coding_count, outside_count=outside_count,
+                        first_count=len(inventory))) from error
         after = self.processes.inventory()
         verify_preview_children(after)
         identity = lambda values: {pid: (p["start"], p["ppid"], p["pgrp"], p["session"], p["uids"], p["cgroup"])
                                    for pid, p in values.items() if self.config["uid"] in p["uids"]}
-        require(identity(inventory) == identity(after), "Coding process inventory changed during inspection")
+        if identity(inventory) != identity(after):
+            raise Blocked("Coding process inventory changed during inspection", diagnostic=inventory_evidence(
+                "inventory_changed", role_counts=role_counts, coding_count=coding_count,
+                outside_count=outside_count, first_count=len(inventory), second_count=len(after),
+                inventory_stable=False))
         for process in inventory.values():
             if process["pid"] not in allowed and self.config["uid"] in process["uids"]:
-                require(not any(p["ppid"] == process["pid"] for p in after.values()),
-                        "Shell acquired children during idle inspection")
+                if any(p["ppid"] == process["pid"] for p in after.values()):
+                    block("Shell acquired children during idle inspection", "unregistered_coding_process")
 
     def verify_t3_snapshot(self, expected_sequence):
         path = self.workspace / "t3/userdata/statev2.sqlite"
@@ -1505,9 +1591,21 @@ class Runtime:
                 except Blocked as error:
                     result["workInventory"] = dict(state="BusyOrUnknown", authoritative=False,
                                                    reason=str(error))
+                    diagnostic = error.diagnostic or inventory_evidence()
+                    result["workInventory"]["evidence"] = inventory_evidence(
+                            diagnostic.get("reasonCode", "other_idle_blocker"),
+                            role_counts=diagnostic.get("roleCounts"),
+                            coding_count=diagnostic.get("codingProcessCount", 0),
+                            outside_count=diagnostic.get("outsideWorkSliceCount", 0),
+                            first_count=diagnostic.get("firstInventoryCount"),
+                            second_count=diagnostic.get("secondInventoryCount"),
+                            inventory_stable=diagnostic.get("inventoryStable"),
+                            blocked_role=diagnostic.get("blockedRole"),
+                            blocked_coding_owned=diagnostic.get("blockedCodingOwned"))
                 except (OSError, ValueError, subprocess.SubprocessError):
                     result["workInventory"] = dict(state="BusyOrUnknown", authoritative=False,
-                                                   reason="Cannot enumerate all live work")
+                                                   reason="Cannot enumerate all live work",
+                                                   evidence=inventory_evidence())
             result["capabilities"] = self.capabilities()
             try:
                 result["resources"] = self.resources.sample(self.c)

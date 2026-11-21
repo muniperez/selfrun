@@ -29,6 +29,68 @@ native = load("generic_native_qualification", "native.py")
 
 
 class ImageTests(unittest.TestCase):
+    def test_native_work_inventory_evidence_is_allowlisted_and_bounded(self):
+        status = {"workInventory": {"state": "BusyOrUnknown", "evidence": {
+            "reasonCode": "outside_work_slice",
+            "roleCounts": {"scratch-mounts": 2, "other": 999, "secret": "sentinel"},
+            "codingProcessCount": 3, "outsideWorkSliceCount": 1,
+            "firstInventoryCount": 4, "secondInventoryCount": 5,
+            "inventoryStable": False, "secret": "sentinel",
+        }, "reason": "sentinel"}}
+        evidence = native.work_inventory_evidence(status)
+        encoded = json.dumps(evidence)
+        self.assertEqual("outside_work_slice", evidence["reasonCode"])
+        self.assertEqual(0, evidence["roleCounts"]["other"])
+        self.assertNotIn("secret", encoded)
+        self.assertNotIn("sentinel", encoded)
+
+    def test_native_work_inventory_missing_or_malformed_status_is_safe(self):
+        for status in ({}, {"workInventory": "sentinel"},
+                       {"workInventory": {"evidence": {"reasonCode": "sentinel"}}},
+                       {"workInventory": {"evidence": {"reasonCode": ["sentinel"],
+                            "blockedRole": {"sentinel": True}, "blockedCodingOwned": "sentinel",
+                            "codingProcessCount": True, "inventoryStable": "sentinel"}}}):
+            with self.subTest(status=status):
+                evidence = native.work_inventory_evidence(status)
+                self.assertEqual({"reasonCode": "other_idle_blocker"}, evidence)
+
+    def test_common_t3_recovery_keeps_busy_unknown_fail_closed_with_safe_evidence(self):
+        probe = native.Native.__new__(native.Native)
+        probe.client = None
+        probe.directory = Path("/synthetic-native-only")
+        probe.t3_project_id = "synthetic-project"
+        probe.environment_id = "synthetic-environment"
+        probe.snapshot = 7
+        probe.run_id = "synthetic-run"
+        probe.config = {"volume": {"filesystemUuid": "synthetic-filesystem"}}
+        status = dict(vmId=probe.run_id, generation=1, phase="Ready")
+        inventory = dict(state="BusyOrUnknown", reason="secret-sentinel",
+                         evidence=dict(reasonCode="outside_work_slice",
+                                       blockedRole="scratch-watch", blockedCodingOwned=True))
+        for value in (inventory, {"state": "BusyOrUnknown"}, None, "secret-sentinel",
+                      {"state": "IdleCandidate"}):
+            with self.subTest(inventory=value), \
+                    patch.object(probe, "t3_ready") as ready, \
+                    patch.object(probe, "wait") as wait, \
+                    patch.object(native, "command", return_value="synthetic-filesystem"), \
+                    patch.object(native, "T3Client") as client, \
+                    patch.object(probe, "control", return_value=status | {"workInventory": value}) as control:
+                client.return_value.call.return_value = dict(
+                    environmentId=probe.environment_id, realTicketWebSocketOpened=True, snapshotSequence=7)
+                if isinstance(value, dict) and value.get("state") == "IdleCandidate":
+                    self.assertIsNone(probe.t3_recovered(100))
+                else:
+                    with self.assertRaisesRegex(native.ProbeError, "T3_RESTART_LEFT_UNKNOWN_WORK") as caught:
+                        probe.t3_recovered(100)
+                    self.assertNotIn("secret-sentinel", json.dumps(caught.exception.evidence))
+                    if value is inventory:
+                        self.assertEqual(dict(reasonCode="outside_work_slice",
+                                              blockedRole="scratch-watch", blockedCodingOwned=True),
+                                         caught.exception.evidence)
+                ready.assert_called_once_with(100)
+                wait.assert_called_once()
+                control.assert_called_once_with("status", includeWorkInventory=True)
+
     def test_t3_restart_timer_is_distinct_from_a_start_job(self):
         probe = native.Native.__new__(native.Native)
         delay = dict(ActiveState="activating", SubState="auto-restart", Result="signal",

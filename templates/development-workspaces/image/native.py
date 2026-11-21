@@ -85,6 +85,37 @@ def check(condition, code):
         raise ProbeError(code)
 
 
+def work_inventory_evidence(status):
+    inventory = status.get("workInventory") if isinstance(status, dict) else None
+    evidence = inventory.get("evidence") if isinstance(inventory, dict) else None
+    if not isinstance(evidence, dict):
+        return {"reasonCode": "other_idle_blocker"}
+    codes = {"outside_work_slice", "unregistered_coding_process", "inventory_changed",
+             "service_identity", "other_idle_blocker"}
+    roles = ("scratch-watch", "scratch-mounts", "t3", "preview", "coding", "other")
+    code = evidence.get("reasonCode")
+    safe = {"reasonCode": code if isinstance(code, str) and code in codes else "other_idle_blocker"}
+    counts = evidence.get("roleCounts")
+    if isinstance(counts, dict):
+        safe["roleCounts"] = {
+            role: counts.get(role, 0) if type(counts.get(role, 0)) is int and
+            0 <= counts.get(role, 0) <= 128 else 0 for role in roles
+        }
+    for key in ("codingProcessCount", "outsideWorkSliceCount", "firstInventoryCount",
+                "secondInventoryCount"):
+        value = evidence.get(key)
+        if type(value) is int and 0 <= value <= 128:
+            safe[key] = value
+    if type(evidence.get("inventoryStable")) is bool:
+        safe["inventoryStable"] = evidence["inventoryStable"]
+    role = evidence.get("blockedRole")
+    if isinstance(role, str) and role in roles:
+        safe["blockedRole"] = role
+    if type(evidence.get("blockedCodingOwned")) is bool:
+        safe["blockedCodingOwned"] = evidence["blockedCodingOwned"]
+    return safe
+
+
 def sha(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -1126,7 +1157,9 @@ class Native:
         status = self.control("status", includeWorkInventory=True)
         check(status["vmId"] == self.run_id and status["generation"] == 1 and status["phase"] == "Ready",
               "VM_GENERATION_CHANGED_DURING_T3_RECOVERY")
-        check(status["workInventory"]["state"] == "IdleCandidate", "T3_RESTART_LEFT_UNKNOWN_WORK")
+        inventory = status.get("workInventory")
+        if not isinstance(inventory, dict) or inventory.get("state") != "IdleCandidate":
+            raise ProbeError("T3_RESTART_LEFT_UNKNOWN_WORK", work_inventory_evidence(status))
 
     def t3_frozen_stop(self, adapter, stop_at):
         before = self.t3_ready()
