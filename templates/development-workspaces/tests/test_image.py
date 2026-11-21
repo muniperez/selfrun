@@ -1267,6 +1267,86 @@ class NativeRestoreTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
+    def test_version_helpers_remain_on_retained_tree_and_roundtrip_as_metadata(self):
+        workspace = self.root / "workspace"
+        (workspace / "home/.codex").mkdir(parents=True)
+        binary = self.root / "vendor/codex"
+        binary.parent.mkdir()
+        binary.write_bytes(b"vendor target must not enter archive")
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        environment = {"TMPDIR": str(scratch), "XDG_CACHE_HOME": str(scratch)}
+        real_stat, real_lstat = Path.stat, Path.lstat
+
+        def scratch_stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            if path == scratch:
+                values = list(info)
+                values[stat.ST_DEV] += 1
+                return os.stat_result(values)
+            return info
+
+        def coding_lstat(path):
+            values = list(real_lstat(path))
+            values[stat.ST_UID] = values[stat.ST_GID] = 2000
+            return os.stat_result(values)
+
+        def version(argv, **kwargs):
+            self.assertEqual(argv[:6], ["setpriv", "--reuid=2000", "--regid=2000",
+                                       "--clear-groups", "env", "-i"])
+            self.assertEqual(argv[-2:], ["codex", "--version"])
+            self.assertIn("CODEX_HOME=" + str(workspace / "home/.codex"), argv)
+            self.assertIn("TMPDIR=" + str(scratch), argv)
+            self.assertEqual(kwargs["cwd"], workspace)
+            group = workspace / "home/.codex/tmp/arg0-linux/codex-arg0synthetic"
+            group.mkdir(parents=True)
+            for name in ("codex-linux-sandbox", "apply_patch", "applypatch"):
+                (group / name).symlink_to(binary)
+            return "codex-cli 0.169.0"
+
+        with patch.object(native, "native_codex_binary", return_value=binary), \
+                patch.object(native, "command", side_effect=version) as command, \
+                patch.object(Path, "stat", autospec=True, side_effect=scratch_stat), \
+                patch.object(Path, "lstat", autospec=True, side_effect=coding_lstat):
+            evidence = native.codex_version_helpers(workspace, environment)
+        command.assert_called_once()
+        self.assertTrue(evidence["remainedAfterCleanCliExit"])
+        self.assertFalse(evidence["observedWhileCliRunning"])
+        self.assertFalse(evidence["removedOnCleanCliExit"])
+        expected, links, directories = native.retained_manifest(restore_runtime, workspace)
+        self.assertEqual(expected, {})
+        self.assertEqual(len(links), 3)
+        output = io.BytesIO()
+        restore_runtime.write_backup_archive(workspace, output)
+        with tarfile.open(fileobj=io.BytesIO(output.getvalue())) as archive:
+            for name, target in links.items():
+                member = archive.getmember("data/" + name)
+                self.assertTrue(member.issym())
+                self.assertEqual((member.linkname, member.size), (target, 0))
+        target = self.root / "restored"
+        target.mkdir()
+        config = dict(vmId="synthetic-helpers", generation=1, kind="primary", uid=2000, gid=2000,
+                      workspace=str(target), volume={"providerVolumeId": "synthetic-target"})
+        runtime = restore_runtime.Runtime(config, self.root / "state", Mock(), Mock())
+        runtime.s.update(phase="RestoreReady", restoreOperation="synthetic-import",
+                         restoreSource=dict(receiptId="synthetic-local-import", representativeHashes=expected))
+        with patch.object(restore_runtime.os, "chown"), patch.object(restore_runtime.os, "sync"):
+            runtime.restore_import("synthetic-import", io.BytesIO(output.getvalue()))
+        self.assertEqual(native.retained_manifest(restore_runtime, target), (expected, links, directories))
+
+    def test_retained_codex_path_detects_intermediate_alias_omitted_by_source_walk(self):
+        workspace = self.root / "workspace"
+        (workspace / "home/.codex").mkdir(parents=True)
+        scratch = self.root / "scratch"
+        group = scratch / "arg0-linux/codex-arg0synthetic"
+        group.mkdir(parents=True)
+        (group / "apply_patch").symlink_to("/synthetic/vendor/codex")
+        (workspace / "home/.codex/tmp").symlink_to(scratch, target_is_directory=True)
+        _, links, _ = native.retained_manifest(restore_runtime, workspace)
+        self.assertEqual(links, {"home/.codex/tmp": str(scratch)})
+        with self.assertRaisesRegex(native.ProbeError, "CODEX_HELPER_PATH_ALIASED"):
+            native.retained_codex_temporary(workspace)
+
     def test_normal_codex_initialization_observes_helpers_before_clean_exit_with_scratch_environment(self):
         binary = Mock()
         binary.is_file.return_value = True

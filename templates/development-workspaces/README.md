@@ -124,13 +124,15 @@ Focused offline verification:
 `python3 -B -m unittest discover -s templates/development-workspaces/tests -p test_image.py`.
 The broader affected checks are available through `templates/development-workspaces/test.sh`.
 
-The workspace batch observes actual normal Codex `app-server` initialization without
-credentials, with the image's scratch environment and retained `CODEX_HOME`. In pinned
+Immediately before quiescence, after other Codex invocations have exited, the workspace
+batch runs normal `codex --version` as coding UID 2000 without credentials, with the
+image's scratch environment and retained `CODEX_HOME`. In pinned
 [Codex 0.169.0](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/arg0/src/lib.rs),
 the three absolute helper symlinks live under `CODEX_HOME/tmp/arg0-linux/codex-arg0*`,
-not `TMPDIR`, and their session directory is removed on clean CLI exit. The batch
-requires live helper evidence and clean-exit removal; it never copies helpers, redirects
-`CODEX_HOME` to scratch, or expects exited CLI helpers in a later backup.
+not `TMPDIR`, and remain after this command exits. The batch requires fresh complete
+helper evidence on the actual retained filesystem without intermediate symlink aliases,
+then verifies those same links are encrypted and restored as metadata, never target
+contents. It never copies helpers or redirects `CODEX_HOME` to scratch.
 Encrypted restore verifies every retained regular file's hash, all retained symlink
 metadata, and source directories, rather than only selected representative files.
 Scratch cache targets and nested scratch mounts remain outside the archive; root
