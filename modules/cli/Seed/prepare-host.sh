@@ -40,7 +40,10 @@ if test -e /opt/containerd || test -L /opt/containerd; then
     test -z "$(find "$directory" -mindepth 1 -print -quit)"
   done
 fi
-test -z "$(find /opt -mindepth 1 -maxdepth 1 ! -name minicloud.installation.lock ! -name minicloud.seed-operation ! -name containerd -print -quit)"
+if test -e /opt/digitalocean || test -L /opt/digitalocean; then
+  python3 -B -c __SEED_PROVIDER_LAYOUT__ "${5:-}"
+fi
+test -z "$(find /opt -mindepth 1 -maxdepth 1 ! -name minicloud.installation.lock ! -name minicloud.seed-operation ! -name containerd ! -name digitalocean -print -quit)"
 test ! -e /opt/minicloud.seed-operation.pending && test ! -L /opt/minicloud.seed-operation.pending
 base=/var/lib/minicloud-seed
 if test ! -e "$base"; then mkdir -m 700 "$base"; fi

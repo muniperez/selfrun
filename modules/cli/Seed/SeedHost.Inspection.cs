@@ -13,13 +13,14 @@ internal sealed partial class SeedHost : ISeedInspector
         {
             using var stream = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.inspect-host.py")!;
             using var reader = new StreamReader(stream);
-            return reader.ReadToEnd();
+            return reader.ReadToEnd().Replace("# __SEED_PROVIDER_LAYOUT__", ProviderLayoutScript);
         }
     }
 
     public async Task<SeedObservation> InspectAsync(SeedState state, string directory, CancellationToken ct)
     {
-        var result = await SshAsync(state, directory, "python3 -B -c " + Quote(InspectionScript) + " " + Quote(state.Id), null, ct);
+        var result = await SshAsync(state, directory, "python3 -B -c " + Quote(InspectionScript) + " " + Quote(state.Id)
+            + " " + Quote(state.Plan.Selection.Provider), null, ct);
         if (result.ExitCode != 0) return new("unavailable", "unknown");
         using var json = JsonDocument.Parse(result.Output);
         var root = json.RootElement;

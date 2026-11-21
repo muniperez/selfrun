@@ -580,6 +580,46 @@ public sealed class SeedPortableTests : IDisposable
     }
 
     [Fact]
+    public async Task Provider_context_reaches_inspection_and_embedded_preparation()
+    {
+        foreach (var provider in new[] { "digitalocean", "hetzner", "vultr" })
+        {
+            var state = State();
+            state.Plan = state.Plan with { Selection = state.Plan.Selection with { Provider = provider } };
+            state.Server = new("synthetic", state.Id, "region", "size", "42", "203.0.113.1");
+            var calls = 0;
+            var host = new SeedHost(process: (executable, arguments, input, ct, agent) =>
+            {
+                calls++;
+                Assert.Equal("ssh", executable);
+                Assert.EndsWith(" '" + provider + "'", arguments.Last());
+                if (input is null)
+                    return Task.FromResult(new SeedProcessResult(0, """{"state":"empty","progress":"pending"}"""));
+                var script = Encoding.UTF8.GetString(input);
+                Assert.Contains(SeedHost.ProviderLayoutScript.Replace("'", "'\\''"), script);
+                Assert.DoesNotContain("__SEED_PROVIDER_LAYOUT__", script);
+                return Task.FromResult(new SeedProcessResult(0, ""));
+            });
+            Assert.Equal("empty", (await host.InspectAsync(state, home, default)).State);
+            await host.PrepareAsync(state, home, default);
+            Assert.Equal(2, calls);
+        }
+    }
+
+    [Fact]
+    public async Task Python_provider_layout_and_preparation_use_installed_package_authorities()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "AGENTS.md"))) root = root.Parent;
+        Assert.NotNull(root);
+        Directory.CreateDirectory(home);
+        var result = await SeedProcess.RunAsync("python3", ["-B",
+            Path.Combine(root.FullName, "modules/cli/Seed/tests/test_inspect_host.py"), home, "ProviderLayoutTests"], null, default);
+        Assert.True(result.ExitCode == 0, result.Output);
+    }
+
+    [Fact]
     public async Task Python_inspector_observes_real_metadata_without_modifying_any_fixture_bytes()
     {
         if (OperatingSystem.IsWindows()) return;
