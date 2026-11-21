@@ -2,6 +2,8 @@
 
 MiniCloud is a self-hosted platform for **agentic cloud coding environments and application hosting**. Work alongside a coding agent in a browser workspace, or give your agent a CLI to provision infrastructure, deploy an app, and inspect the running services on your own servers.
 
+![MiniCloud console showing an application environment, its runtime status, and global navigation](docs/assets/screenshots/console.png)
+
 ## How MiniCloud works
 
 1. **Run your own instance.** Your MiniCloud dashboard and API run on a dedicated VPS. You and your agents connect the CLI to that instance to manage projects.
@@ -9,11 +11,28 @@ MiniCloud is a self-hosted platform for **agentic cloud coding environments and 
 3. **Use your own domains.** For example, host the dashboard at `cloud.example.com`, the API at `api.cloud.example.com`, and give public services addresses under `apps.example.com`. You can also attach a custom domain to an individual service.
 4. **Bring your AI subscriptions.** Choose a workspace image with the coding agent you want. Sign in with your own account for that agent and use the models your provider makes available to you.
 
+![MiniCloud connects the browser and CLI to a self-hosted control plane, which deploys services and provisions coding workspaces](docs/assets/minicloud-architecture.svg)
+
 [Self-host MiniCloud](#self-host-minicloud) · [Open your first workspace](#open-your-first-workspace) · [Deploy your first app](#deploy-your-first-app)
+
+### Open-source components
+
+| [PostgreSQL](https://www.postgresql.org/) | [OpenBao](https://openbao.org/) | [OpenTelemetry](https://opentelemetry.io/) |
+| :---: | :---: | :---: |
+| <img src="docs/assets/projects/postgresql.svg" alt="PostgreSQL logo" height="40"> | <img src="docs/assets/projects/openbao.svg" alt="OpenBao logo" height="40"> | <img src="docs/assets/projects/opentelemetry.svg" alt="OpenTelemetry logo" height="40"> |
+| Platform state and deployment jobs | Secrets storage | Optional telemetry collection |
+
+<!-- Artwork: https://wiki.postgresql.org/wiki/Logo
+     https://github.com/openbao/artwork
+     https://github.com/cncf/artwork/blob/main/examples/graduated.md#opentelemetry-logos -->
+
+The control plane also uses [Ory Kratos](https://github.com/ory/kratos) for identity and [Caddy](https://caddyserver.com/) for HTTPS. Application services run in Docker containers, and browser workspaces use [T3 Code](https://github.com/pingdotgg/t3code).
 
 ## Agentic cloud coding environments
 
 Open T3 Code in your browser to work on a repository with a terminal and your coding agent. Your primary workspace keeps projects and session data on a retained volume so you can stop compute and pick up where you left off. The image lists its installed agents, which can include Codex, Claude Code, and GitHub Copilot CLI. Open a registered development preview from the dashboard to try the app while you work. [First workspace guide](docs/first-workspace.md)
+
+![A running dev environment with T3 and preview controls, resource usage, and a CPU history chart](docs/assets/screenshots/coding-workspace.png)
 
 For an independent task, launch a temporary VM from a specific Git commit. It gets its own checkout and disk. Save work you want to keep to the remote branch. Set an idle timeout to stop unused machines, or select **Keep running** for longer sessions. Retained storage continues to incur charges while compute is stopped. [Workspace controls](docs/cli.md#coding-workspaces) · [Optional T3 account linking](docs/t3-connect.md)
 
@@ -33,6 +52,24 @@ With the project configured, your agent can run `minicloud deploy --environment 
 | Files and assets | Keep uploaded files on expandable Hetzner volumes across deployments. Publish versioned assets separately and pin a release when a service needs a specific version. [Durable storage](docs/durable-storage.md#customer-configuration) · [Asset publishing](docs/cli.md#publish-versioned-assets) |
 | Secrets and automation | Set environment variables per service, store secrets in OpenBao, and give automation scoped API keys. Deploy from the CLI or a reusable GitHub Actions workflow. [Secrets](docs/cli.md#runtime-environment-variables-and-secrets) · [GitHub Actions](docs/github-actions.md) · [API](docs/api.md) |
 | Logs and operations | Follow a deployment, cancel it, or filter runtime logs by service and time. Enable OpenTelemetry log ingestion and explore application logs in Grafana. [Status and logs](docs/cli.md#status-logs-and-apps) · [Observability](observability/README.md) |
+
+### From app to deployment
+
+**Browse your apps and environments.** The Apps view shows each environment and its latest deployment status.
+
+![Apps table with production and staging environments and deployment status](docs/assets/screenshots/apps.png)
+
+**Run multiple services in one app.** See which services have a public address, which stay internal, and whether they are running.
+
+![Services table with public and private services and running status](docs/assets/screenshots/services.png)
+
+**Add a custom domain.** Start in the Domains tab, then verify ownership by DNS before attaching the domain to a public service.
+
+![Add your domain dialog with a domain field and a DNS verification step](docs/assets/screenshots/domains.png)
+
+**Monitor deployments.** Compare status, service and endpoint counts, and duration across environments.
+
+![Deployment history with status, service and endpoint counts, and duration](docs/assets/screenshots/deployments.png)
 
 ## Get started
 
