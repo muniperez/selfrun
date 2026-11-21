@@ -62,77 +62,42 @@
       <ol class="setup-list">
         <li id="self-host">
           <h3>Install MiniCloud on a VPS</h3>
-          <p>The current installer is for testing from source. On Linux (x64 or ARM64) or Apple Silicon macOS, install Git, Python 3.11 or later, the .NET 10 SDK, and OpenSSH. You also need a VPS provider account, an SSH key, and DNS access. After installation, export the one-time setup token and use it at the dashboard’s <code>/setup</code> page to create the first account.</p>
+          <p>Run the MiniCloud CLI with OpenSSH, your own SSH private key, a funded VPS provider account, and DNS access. The current guided setup is for <strong>test installations</strong>, not production. Choose either CLI path below; neither requires Python, editing JSON, or writing a wrapper.</p>
           <section>
-            <h4>Build and install a test server</h4>
+            <h4>Download or build the CLI</h4>
             <ol class="install-list">
               <li>
-                <p><strong>Install the CLI.</strong> Use the installer in the checkout so the CLI matches the server code you’re about to package.</p>
+                <p><strong>Download for ARM64 Linux.</strong> Sign in to GitHub and open a successful <a href="https://github.com/muniventures/minicloud/actions?query=workflow%3A%22CLI+seed+review%22">CLI seed review run</a> for the commit you reviewed. Download and unzip <strong>minicloud-seed-linux-arm64</strong> in a directory you own. This is an unsigned review build, not a published release. Compare the source revision and SHA-256 with the run summary before running it.</p>
+                <pre tabindex="0"><code>sha256sum --check checksums.txt
+tar -xzf minicloud-seed-linux-arm64.tar.gz
+./minicloud help seed
+./minicloud seed</code></pre>
+              </li>
+              <li>
+                <p><strong>Or publish from a clean clone.</strong> On Linux, use Git and the .NET 10 SDK. Check out a reviewed commit that contains the <code>Seed</code> profile. The profile embeds that exact commit and builds the standalone CLI for your platform.</p>
                 <pre tabindex="0"><code>git clone https://github.com/muniventures/minicloud.git
 cd minicloud
-export PATH="$HOME/.local/bin:$PATH"
-MINICLOUD_INSTALL_MODE=source MINICLOUD_VERSION="$(git rev-parse HEAD)" \
-  MINICLOUD_INSTALL_DIR="$HOME/.local/bin" sh install.sh</code></pre>
-                <p><strong>Package the server for a test install.</strong> There is no published server release yet. The Python command creates the archive the CLI will send to the VPS. Save the printed <code>sha256</code> for the deployment plan, and the seed ID for the next step.</p>
-                <pre tabindex="0"><code>umask 077
-seed_dir="$PWD/.local/artifacts/local-seed"
-mkdir -p "$seed_dir/reports"
-python3 -B scripts/self-hosting/local_source.py package \
-  --version 0.0.1-local.1 --output "$seed_dir/source.tar.gz"
-minicloud seed new-id</code></pre>
-                <p>To resume in a new terminal, return to this checkout, restore <code>PATH</code> and <code>seed_dir</code> as shown above, and restore the variables and <code>seed_local</code> function in the VPS creation step. Keep the original archive and seed ID.</p>
-              </li>
-              <li>
-                <p><strong>Set the provider and domains.</strong> Save this DigitalOcean example to <code>$seed_dir/seed-config.json</code>. Set <code>providerAccount</code> to <code>DigitalOcean account </code> followed by <code>account.uuid</code> from your provider’s authenticated <code>GET /v2/account</code> response. Fill in the seed ID, region, size, and domains. Keep the seed ID if you need to resume. Put the provider token in <code>$seed_dir/provider-token</code>. Both files need mode <code>0600</code>. <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#protected-configuration-and-user-owned-key">Hetzner and Vultr account formats</a> are in the seed guide.</p>
-                <pre tabindex="0"><code>{
-  "schemaVersion": 1,
-  "seedId": "REPLACE_WITH_SEED_ID",
-  "provider": "digitalocean",
-  "providerAccount": "DigitalOcean account REPLACE_WITH_ACCOUNT_UUID",
-  "region": "nyc3",
-  "size": "s-2vcpu-2gb",
-  "domain": "cloud.example.com",
-  "appDomain": "apps.example.com",
-  "serverVersion": "server-v0.0.1-local.1",
-  "architecture": "linux/amd64",
-  "initialCreationIntent": "one-authorized-creator-no-unresolved-create"
-}</code></pre>
-              </li>
-              <li>
-                <p><strong>Review the cost and create the VPS.</strong> Set the archive hash and SSH key path. If your key has a passphrase, use <code>ssh-add</code> and add <code>--use-ssh-agent</code> to the seed commands. The plan shows the account, region, size, and cost. Copy its approval digest into the apply command. If the create request times out, check the provider before retrying.</p>
-                <pre tabindex="0"><code>archive_hash='REPLACE_WITH_ARCHIVE_SHA256'
-ssh_key="$HOME/.ssh/id_ed25519"
-provider_token="$seed_dir/provider-token"
-
-seed_local() {
-  minicloud seed "$@" --config "$seed_dir/seed-config.json" \
-    --report "$seed_dir/reports/seed-report.json" --ssh-key "$ssh_key" \
-    --local-source "$seed_dir/source.tar.gz" --source-sha256 "$archive_hash"
-}
-
-seed_local plan --credential-file "$provider_token" --new-seed
-seed_local apply --credential-file "$provider_token" --new-seed \
-  --approve REVIEWED_CREATION_DIGEST</code></pre>
-              </li>
-              <li>
-                <p><strong>Verify the VPS and finish the install.</strong> Get the VPS's ed25519 SSH host fingerprint independently through the provider console. In the same config, remove <code>initialCreationIntent</code> and add <code>target</code> with the server ID and IPv4 from the create report and the verified fingerprint. Use the new plan's digest to continue on that VPS.</p>
-                <pre tabindex="0"><code>"target": {
-  "serverId": "REPLACE_WITH_SERVER_ID",
-  "ipv4": "203.0.113.10",
-  "hostFingerprint": "SHA256:REPLACE_WITH_VERIFIED_ED25519_FINGERPRINT"
-}</code></pre>
-                <pre tabindex="0"><code>seed_local plan --credential-file "$provider_token"
-seed_local apply --credential-file "$provider_token" \
-  --approve REVIEWED_CONTINUATION_DIGEST</code></pre>
-              </li>
-              <li>
-                <p><strong>Open the dashboard.</strong> Follow the report's DNS instructions for <code>cloud.example.com</code> and <code>api.cloud.example.com</code>. Confirm both respond over HTTPS. Export the recovery files and setup token, then open <code>https://cloud.example.com/setup</code>. Enter the token, create your account, and sign in. Keep the recovery files encrypted off the VPS.</p>
-                <pre tabindex="0"><code>minicloud seed export --config "$seed_dir/seed-config.json" \
-  --report "$seed_dir/reports/seed-report.json" --ssh-key "$ssh_key" \
-  --recovery-dir "$seed_dir/private-recovery" --setup-token</code></pre>
+git checkout --detach &lt;reviewed-commit&gt;
+dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
+.local/artifacts/seed-cli/Minicloud.Cli seed</code></pre>
               </li>
             </ol>
-            <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md">Source installation and recovery guide</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/operator-setup.md">First operator account</a></p>
+            <h4>Seed, resume, and open the dashboard</h4>
+            <ol class="install-list">
+              <li>
+                <p><strong>Choose the source and review the plan.</strong> In the wizard, choose <code>local</code> to explicitly trust the executable’s embedded TEST source. Enter your provider, region, size, architecture, dashboard hostname, separate app DNS suffix, and SSH key path. Enter the provider token only at the hidden prompt. Review the source revision, account, and quote before typing <code>create</code>. Your provider bills you once the VPS is created, including while setup is paused.</p>
+              </li>
+              <li>
+                <p><strong>Verify the VPS and approve installation.</strong> Confirm the original server ID in your authenticated provider console. In that server’s console, run <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> and paste its fingerprint into the wizard. Review the pinned-host plan before typing <code>install</code>.</p>
+              </li>
+              <li>
+                <p><strong>Resume with the same command.</strong> After a pause or interruption, rerun the same executable with <code>seed</code>. Keep the protected state directory, archive, and SSH key. If a create request was interrupted, reconcile the original server with your provider; do not start a replacement.</p>
+              </li>
+              <li>
+                <p><strong>Open the dashboard.</strong> Add the two DNS records the wizard prints for the dashboard and API, then rerun <code>seed</code> to verify HTTPS. Use the wizard’s private recovery export and enter the one-time token manually at the printed HTTPS <code>/setup</code> URL. Create your first account, sign in, and keep an encrypted copy of the recovery files off the VPS.</p>
+              </li>
+            </ol>
+            <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#guided-installation">Guided seed and recovery guide</a> · <a href="https://github.com/muniventures/minicloud/blob/main/docs/operator-setup.md">First operator account</a></p>
           </section>
           <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
         </li>
