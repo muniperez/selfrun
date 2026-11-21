@@ -161,7 +161,12 @@ function AuthorizedCreateWorkspaceDialog({ organizationId, onCreated }: Omit<Pro
   </div>;
 
   return <Dialog open={open} onOpenChange={changeOpen}>
-    <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" aria-hidden="true" />Create dev environment</Button></DialogTrigger>
+    <DialogTrigger asChild>
+      <Button className="ml-auto shrink-0 max-lg:size-11 max-lg:p-0">
+        <Plus aria-hidden="true" />
+        <span className="sr-only lg:not-sr-only">Create dev environment</span>
+      </Button>
+    </DialogTrigger>
     <DialogContent className="gap-0 overflow-y-auto p-0 sm:max-w-xl">
       <DialogHeader className="px-6 pb-5 pt-6 text-left">
         <DialogTitle>Create dev environment</DialogTitle>
