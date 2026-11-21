@@ -262,11 +262,25 @@ class ProviderLayoutTests(unittest.TestCase):
     def test_stock_monitoring_nonroot_modes_and_root_console_are_verified(self):
         before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in self.vendor.rglob("*") if p.is_file()}
         self.validate()
-        self.assertEqual(2, sum(args[:2] == ["dpkg", "--verify"] for args in self.commands))
+        self.assertEqual(2, sum(args[:2] == ["dpkg-query", "--control-show"] for args in self.commands))
         self.monitoring_owner = (0, 0)
         self.validate()
         self.assertEqual(before, {p: (p.stat().st_mtime_ns, p.read_bytes())
                                   for p in self.vendor.rglob("*") if p.is_file()})
+
+    def test_missing_legacy_upstart_conffile_does_not_reject_verified_provider_payload(self):
+        status = self.db / "status"
+        status.write_text(status.read_text().replace(
+            "Package: do-agent\n",
+            "Package: do-agent\nConffiles:\n /etc/init/do-agent.conf "
+            + hashlib.md5(b"synthetic legacy Upstart configuration\n").hexdigest() + "\n", 1))
+        inventory = self.db / "info/do-agent.list"
+        inventory.write_text(inventory.read_text() + "/etc/init/do-agent.conf\n")
+        result = self.package_command(["dpkg", "--verify", "do-agent"], capture_output=True, check=False)
+        self.assertEqual(0, result.returncode)
+        self.assertFalse(result.stderr)
+        self.assertEqual(["missing", "c", "/etc/init/do-agent.conf"], result.stdout.decode().split())
+        self.validate()
 
     def test_observation_accepts_stock_layout_but_not_workloads_bindings_or_unknown_opt(self):
         # Model trusted ancestors without changing permissions on this shared VM.
