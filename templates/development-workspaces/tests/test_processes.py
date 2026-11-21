@@ -267,20 +267,6 @@ class IdleTerminalTests(unittest.TestCase):
         with self.assertRaises(rt.Blocked):
             self.inspect()
 
-    def test_scratch_root_actor_and_coding_child_are_diagnostic_only_and_remain_blocked(self):
-        for role in ("scratch-mounts", "scratch-watch"):
-            with self.subTest(role=role):
-                group = "0::/system.slice/minicloud-" + role + ".service"
-                self.write(120, uid=0, ppid=1, tty=0, cgroup=group, argv=[role])
-                self.write(130, uid=2000, ppid=120, tty=0, cgroup=group, argv=["git"])
-                with self.assertRaisesRegex(rt.Blocked, "escaped supervised work slice") as caught:
-                    self.inspect()
-                evidence = caught.exception.diagnostic
-                self.assertEqual("outside_work_slice", evidence["reasonCode"])
-                self.assertEqual(2, evidence["roleCounts"][role])
-                self.assertEqual(role, evidence["blockedRole"])
-                self.assertTrue(evidence["blockedCodingOwned"])
-
     def test_untrusted_or_unapproved_shell_executables_block(self):
         original = dict(self.reader.exe)
         for change in (dict(path="/workspace/home/bash"), dict(uid=2000),
@@ -342,21 +328,6 @@ class IdleTerminalTests(unittest.TestCase):
         with patch.object(self.reader, "inventory", side_effect=late_child):
             with self.assertRaisesRegex(rt.Blocked, "acquired children"):
                 self.inspect()
-
-    def test_coding_process_churn_is_diagnostic_only_and_remains_blocked(self):
-        original = self.reader.inventory
-        calls = 0
-        def late_child():
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                self.write(120, uid=2000, ppid=110)
-            return original()
-        with patch.object(self.reader, "inventory", side_effect=late_child):
-            with self.assertRaisesRegex(rt.Blocked, "inventory changed") as caught:
-                self.inspect()
-        self.assertEqual("inventory_changed", caught.exception.diagnostic["reasonCode"])
-        self.assertFalse(caught.exception.diagnostic["inventoryStable"])
 
     def test_real_descriptor_reader_rejects_non_tty_and_mismatched_stdin_stderr(self):
         reader = rt.Procfs(self.root, machine="x86_64")

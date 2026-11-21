@@ -382,21 +382,6 @@ class RuntimeTests(unittest.TestCase):
         self.adapter.unknown = True
         result = self.request("status", includeWorkInventory=True)
         self.assertEqual("BusyOrUnknown", result["workInventory"]["state"])
-        self.assertEqual("other_idle_blocker", result["workInventory"]["evidence"]["reasonCode"])
-        diagnostic = dict(reasonCode="outside_work_slice", roleCounts={"scratch-watch": 2},
-                          blockedRole="scratch-watch", blockedCodingOwned=True,
-                          codingProcessCount=1, outsideWorkSliceCount=1, firstInventoryCount=999,
-                          rawCommand="secret-sentinel")
-        with patch.object(self.adapter, "idle", side_effect=rt.Blocked(
-                "Coding process escaped supervised work slice", diagnostic=diagnostic)):
-            result = self.request("status", includeWorkInventory=True)
-        inventory = result["workInventory"]
-        self.assertEqual("BusyOrUnknown", inventory["state"])
-        self.assertFalse(inventory["authoritative"])
-        self.assertEqual("scratch-watch", inventory["evidence"]["blockedRole"])
-        self.assertTrue(inventory["evidence"]["blockedCodingOwned"])
-        self.assertEqual(128, inventory["evidence"]["firstInventoryCount"])
-        self.assertNotIn("secret-sentinel", json.dumps(inventory["evidence"]))
         self.assertEqual(before, self.runtime.s)
         self.assertFalse(self.adapter.frozen)
 

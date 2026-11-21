@@ -22,16 +22,11 @@ failure handling. This is not a real ext4, systemd-freezer, age, or live restore
 ### Safe native qualification diagnostics
 
 If a disposable native qualification stops at `T3_RESTART_LEFT_UNKNOWN_WORK`, retain only
-the probe/source identity and the predefined work-inventory reason/classification code,
-typed bounded process counts and fixed service role/state, first/second inventory outcome,
-mount and ready-state booleans, and cleanup outcome. Do not retain runtime logs, process
-arguments or executable paths, cgroup paths, SQL, usernames, or secrets. The evidence
-distinguishes an observed blocker from a plausible scratch-service cause; repeat a clean
-native qualification before capturing an image.
-Counts saturate at 128; roles describe observed cgroup membership, not trusted process
-identity. Scratch helpers run as root outside the work slice, but their Git probes run as
-the coding user in that same cgroup. Such a probe remains busy/unknown, as does inventory
-churn; neither a scratch role nor T3 readiness permits idle admission.
+the probe/source identity and the short allowlisted work-inventory reason code. Do not retain
+runtime logs, process arguments, executable or cgroup paths, SQL, usernames, or secrets.
+The native probe polls only this advisory signal for a bounded interval and rechecks VM,
+T3, retained-volume, and Ready identities on every observation. Repeat a clean native
+qualification before capturing an image.
 
 Optional [T3 Connect enrollment](../../docs/t3-connect.md) uses the existing
 primary VM and managed T3 unit, a private memory-only approval page on loopback

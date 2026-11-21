@@ -87,33 +87,18 @@ def check(condition, code):
 
 def work_inventory_evidence(status):
     inventory = status.get("workInventory") if isinstance(status, dict) else None
-    evidence = inventory.get("evidence") if isinstance(inventory, dict) else None
-    if not isinstance(evidence, dict):
-        return {"reasonCode": "other_idle_blocker"}
-    codes = {"outside_work_slice", "unregistered_coding_process", "inventory_changed",
-             "service_identity", "other_idle_blocker"}
-    roles = ("scratch-watch", "scratch-mounts", "t3", "preview", "coding", "other")
-    code = evidence.get("reasonCode")
-    safe = {"reasonCode": code if isinstance(code, str) and code in codes else "other_idle_blocker"}
-    counts = evidence.get("roleCounts")
-    if isinstance(counts, dict):
-        safe["roleCounts"] = {
-            role: counts.get(role, 0) if type(counts.get(role, 0)) is int and
-            0 <= counts.get(role, 0) <= 128 else 0 for role in roles
-        }
-    for key in ("codingProcessCount", "outsideWorkSliceCount", "firstInventoryCount",
-                "secondInventoryCount"):
-        value = evidence.get(key)
-        if type(value) is int and 0 <= value <= 128:
-            safe[key] = value
-    if type(evidence.get("inventoryStable")) is bool:
-        safe["inventoryStable"] = evidence["inventoryStable"]
-    role = evidence.get("blockedRole")
-    if isinstance(role, str) and role in roles:
-        safe["blockedRole"] = role
-    if type(evidence.get("blockedCodingOwned")) is bool:
-        safe["blockedCodingOwned"] = evidence["blockedCodingOwned"]
-    return safe
+    reason = inventory.get("reason") if isinstance(inventory, dict) else None
+    reasons = {
+        "Coding process escaped supervised work slice": "outside_work_slice",
+        "Unregistered live coding process; terminal input observation is not qualified":
+            "unregistered_coding_process",
+        "Coding process inventory changed during inspection": "inventory_changed",
+        "T3 service identity is unknown or outside its owned cgroup": "service_identity",
+        "Preview service identity is unknown or outside its owned cgroup": "service_identity",
+        "Cannot enumerate all live work": "other_idle_blocker",
+    }
+    return {"reasonCode": reasons.get(reason, "other_idle_blocker")} if isinstance(reason, str) \
+        else {"reasonCode": "other_idle_blocker"}
 
 
 def sha(path):
@@ -552,12 +537,12 @@ class Native:
                 "postgresAccountAbsent": True, "databaseDirectoriesAbsent": True,
                 "defaultWorkload": "T3-and-coding-environment-only"}
 
-    def control(self, action, operation="native-control", expect_ok=True, **extra):
+    def control(self, action, operation="native-control", expect_ok=True, timeout=600, **extra):
         self.fresh_authorization()
         request = dict(vmId=self.run_id, generation=1, operationId=operation, action=action)
         request.update(extra)
         response = json.loads(command(["python3", "-B", str(RUNTIME), "call"],
-                                      input=json.dumps(request) + "\n", timeout=600))
+                                      input=json.dumps(request) + "\n", timeout=timeout))
         if response.get("ok") is not expect_ok:
             match = re.fullmatch(r"Tool unavailable or failed: ([a-zA-Z0-9._-]{1,64})",
                                  response.get("reason", ""))
@@ -1146,20 +1131,46 @@ class Native:
         if self.client is not None:
             self.client.close()
         self.client = T3Client(self.directory)
-        result = self.client.call("init", projectId=self.t3_project_id,
-                                  tokenFiles={name: str(self.directory / (name + ".secret"))
-                                              for name in ("operate", "readonly")})
-        check(result.pop("environmentId") == self.environment_id, "T3_ENVIRONMENT_IDENTITY_CHANGED")
-        check(result["realTicketWebSocketOpened"] is True and
-              result["snapshotSequence"] >= self.snapshot, "T3_STATE_NOT_RETAINED_AFTER_RESTART")
-        check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"]) ==
-              self.config["volume"]["filesystemUuid"], "RETAINED_VOLUME_CHANGED_DURING_T3_RECOVERY")
-        status = self.control("status", includeWorkInventory=True)
-        check(status["vmId"] == self.run_id and status["generation"] == 1 and status["phase"] == "Ready",
-              "VM_GENERATION_CHANGED_DURING_T3_RECOVERY")
-        inventory = status.get("workInventory")
-        if not isinstance(inventory, dict) or inventory.get("state") != "IdleCandidate":
-            raise ProbeError("T3_RESTART_LEFT_UNKNOWN_WORK", work_inventory_evidence(status))
+        token_files = {name: str(self.directory / (name + ".secret"))
+                       for name in ("operate", "readonly")}
+        result = self.client.call("init", projectId=self.t3_project_id, tokenFiles=token_files)
+        check(result.get("environmentId") == self.environment_id, "T3_ENVIRONMENT_IDENTITY_CHANGED")
+        check(result.get("realTicketWebSocketOpened") is True and
+              result.get("snapshotSequence", -1) >= self.snapshot,
+              "T3_STATE_NOT_RETAINED_AFTER_RESTART")
+        deadline = time.monotonic() + 30
+        evidence = {"reasonCode": "other_idle_blocker"}
+        def remaining():
+            seconds = deadline - time.monotonic()
+            if seconds <= 0:
+                raise ProbeError("T3_RESTART_LEFT_UNKNOWN_WORK", evidence)
+            return seconds
+
+        while True:
+            check(dt.datetime.now(dt.timezone.utc) < self.expires, "AUTHORIZATION_EXPIRED")
+            status = self.control("status", includeWorkInventory=True, timeout=remaining())
+            check(isinstance(status, dict) and
+                  status.get("vmId") == self.run_id and status.get("generation") == 1 and
+                  status.get("phase") == "Ready", "VM_GENERATION_CHANGED_DURING_T3_RECOVERY")
+            evidence = work_inventory_evidence(status)
+            client = http.client.HTTPConnection("127.0.0.1", 3773, timeout=min(5, remaining()))
+            try:
+                client.request("GET", "/.well-known/t3/environment")
+                response = client.getresponse()
+                descriptor = json.loads(response.read())
+                check(response.status == 200 and descriptor.get("environmentId") == self.environment_id,
+                      "T3_ENVIRONMENT_IDENTITY_CHANGED")
+            finally:
+                client.close()
+            check(command(["findmnt", "-rn", "-M", "/workspace", "-o", "UUID"],
+                          timeout=min(5, remaining())) ==
+                  self.config["volume"]["filesystemUuid"],
+                  "RETAINED_VOLUME_CHANGED_DURING_T3_RECOVERY")
+            inventory = status.get("workInventory")
+            seconds = remaining()
+            if isinstance(inventory, dict) and inventory.get("state") == "IdleCandidate":
+                return
+            time.sleep(min(0.2, seconds))
 
     def t3_frozen_stop(self, adapter, stop_at):
         before = self.t3_ready()
