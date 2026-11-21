@@ -46,6 +46,20 @@ public sealed class CliEnvironmentDeploymentTests
         Assert.Null(fixture.Handler.SubmittedEnvironment);
     }
 
+    [Fact]
+    public async Task Scoped_private_deploy_checks_the_selected_environments_active_services()
+    {
+        await using var fixture = await Fixture.CreateAsync(new Handler(true), isPublic: false);
+
+        var exitCode = await fixture.Cli.RunAsync(
+            ["deploy", "web", "--no-publish", "--environment", "staging", "--config", fixture.Config],
+            default);
+
+        Assert.Equal(CliExitCodes.Success, exitCode);
+        Assert.Equal("app_staging", fixture.Handler.ServicesTarget);
+        Assert.Equal("app_staging", fixture.Handler.SubmittedEnvironment);
+    }
+
     [Theory]
     [InlineData("list", 0)]
     [InlineData("deploy", 2)]
@@ -76,11 +90,14 @@ public sealed class CliEnvironmentDeploymentTests
         public Handler Handler { get; } = handler;
         public Console Console { get; } = console;
         public CliApplication Cli { get; } = cli;
-        public static async Task<Fixture> CreateAsync(Handler handler, string applicationId = "application_demo")
+        public static async Task<Fixture> CreateAsync(
+            Handler handler,
+            string applicationId = "application_demo",
+            bool isPublic = true)
         {
             var directory = Directory.CreateTempSubdirectory("environment-deployment-");
             var config = Path.Combine(directory.FullName, "minicloud.yml");
-            await File.WriteAllTextAsync(config, $"app: demo\nappId: {applicationId}\ndatabase: sqlite\nservices:\n  web:\n    image: example/web:latest\n    port: 8080\n    public: true\n    path: /\n    healthPath: /health\n");
+            await File.WriteAllTextAsync(config, $"app: demo\nappId: {applicationId}\ndatabase: sqlite\nservices:\n  web:\n    image: example/web:latest\n    port: 8080\n    public: {isPublic.ToString().ToLowerInvariant()}\n    path: /\n    healthPath: /health\n");
             var console = new Console();
             var environment = CliEnvironment.ForTests("https://api.example", directory.FullName);
             var tokens = new TokenStore(environment); tokens.SaveToken("mc_test");
@@ -92,7 +109,7 @@ public sealed class CliEnvironmentDeploymentTests
 
     private sealed class Handler(bool multiple, bool empty = false) : HttpMessageHandler
     {
-        public string? SubmittedApplication, SubmittedEnvironment;
+        public string? SubmittedApplication, SubmittedEnvironment, ServicesTarget;
         public bool Created;
         public List<string> Requests { get; } = [];
         public List<string> SecretTargets { get; } = [];
@@ -128,6 +145,23 @@ public sealed class CliEnvironmentDeploymentTests
             {
                 SecretTargets.Add(System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query)["appId"]!);
                 response = Array.Empty<object>();
+            }
+            else if (path == "/api/domains/services")
+            {
+                ServicesTarget = System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query)["appId"];
+                response = new[]
+                {
+                    new
+                    {
+                        name = "route",
+                        image = "example/route:latest",
+                        port = 8080,
+                        @public = true,
+                        path = "/",
+                        healthPath = "/health",
+                        domains = Array.Empty<object>()
+                    }
+                };
             }
             else if (path == "/api/deployments")
             {

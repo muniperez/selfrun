@@ -70,8 +70,10 @@ public sealed class CliDeploymentChangeDetectionTests
         }
     }
 
-    [Fact]
-    public async Task Deploy_deploys_only_changed_services()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Deploy_deploys_only_changed_services(bool privateServiceChanged)
     {
         var directory = Directory.CreateTempSubdirectory("minicloud-change-detect-");
         try
@@ -110,17 +112,17 @@ public sealed class CliDeploymentChangeDetectionTests
 
             var configResult = MinicloudConfigLoader.Load(configPath);
             var apiHash = ServiceChecksumCalculator.Compute("api", configResult.Config!.Services["api"]);
+            var webHash = ServiceChecksumCalculator.Compute("web", configResult.Config.Services["web"]);
 
             var console = new TestConsole();
             var environment = CliEnvironment.ForTests("https://api.example", directory.FullName);
             var tokens = new TokenStore(environment);
             tokens.SaveToken("mc_test");
 
-            // api is unchanged, but web is changed (or not yet recorded)
             var handler = new ChangeDetectionHandler(new Dictionary<string, string>
             {
-                ["api"] = apiHash,
-                ["web"] = "old_web_hash_123"
+                ["api"] = privateServiceChanged ? "old_api_hash_123" : apiHash,
+                ["web"] = privateServiceChanged ? webHash : "old_web_hash_123"
             });
             var client = new MinicloudApiClient(environment, tokens, new HttpClient(handler));
             var app = new CliApplication(console, environment, tokens, client);
@@ -128,10 +130,12 @@ public sealed class CliDeploymentChangeDetectionTests
             var exitCode = await app.RunAsync(["deploy", "--config", configPath], CancellationToken.None);
 
             Assert.True(exitCode == CliExitCodes.Success, console.Output);
-            Assert.Contains("Deploying changed services: web (skipping unchanged: api)", console.Output);
+            var changedService = privateServiceChanged ? "api" : "web";
+            var unchangedService = privateServiceChanged ? "web" : "api";
+            Assert.Contains($"Deploying changed services: {changedService} (skipping unchanged: {unchangedService})", console.Output);
             Assert.Equal(1, handler.DeploymentsCreatedCount);
             Assert.Single(handler.LastCreatedRequest!.Services);
-            Assert.Equal("web", handler.LastCreatedRequest.Services[0].Name);
+            Assert.Equal(changedService, handler.LastCreatedRequest.Services[0].Name);
             var timingTracePath = Environment.GetEnvironmentVariable("MINICLOUD_CLI_TIMING_TRACE_OUTPUT");
             if (!string.IsNullOrWhiteSpace(timingTracePath))
             {
@@ -198,6 +202,170 @@ public sealed class CliDeploymentChangeDetectionTests
         }
     }
 
+    [Theory]
+    [InlineData("local", false)]
+    [InlineData("local", true)]
+    [InlineData("source", false)]
+    public async Task Deploy_rejects_private_only_new_app_before_build_or_upload(string buildMode, bool explicitSelection)
+    {
+        var directory = Directory.CreateTempSubdirectory("minicloud-private-preflight-");
+        try
+        {
+            var serviceDir = Directory.CreateDirectory(Path.Combine(directory.FullName, "worker"));
+            await File.WriteAllTextAsync(Path.Combine(serviceDir.FullName, "Dockerfile"), "FROM node:20\nCMD [\"node\", \"worker.js\"]");
+            await File.WriteAllTextAsync(Path.Combine(serviceDir.FullName, "worker.js"), "console.log('worker');");
+            var configPath = Path.Combine(directory.FullName, "minicloud.yml");
+            await File.WriteAllTextAsync(configPath, $$"""
+                app: demo
+                appId: app_main
+                database: sqlite
+                services:
+                  worker:
+                    buildMode: {{buildMode}}
+                    sourcePath: {{serviceDir.FullName}}
+                    port: 3000
+                    public: false
+                    path: /
+                    healthPath: /health
+                """);
+
+            var console = new TestConsole();
+            var environment = CliEnvironment.ForTests("https://api.example", directory.FullName);
+            var tokens = new TokenStore(environment);
+            tokens.SaveToken("mc_test");
+            var handler = new ChangeDetectionHandler(new Dictionary<string, string>());
+            var app = new CliApplication(console, environment, tokens,
+                new MinicloudApiClient(environment, tokens, new HttpClient(handler)));
+
+            string[] args = explicitSelection
+                ? ["deploy", "worker", "--config", configPath]
+                : ["deploy", "--config", configPath];
+            var exitCode = await app.RunAsync(args, CancellationToken.None);
+
+            Assert.Equal(CliExitCodes.ValidationError, exitCode);
+            Assert.Contains("services.worker.public: At least one public service is required", console.Output);
+            Assert.Equal(0, handler.ImageBuildTargetsRequestedCount);
+            Assert.Equal(0, handler.ArtifactsCreatedCount);
+            Assert.Equal(0, handler.DeploymentsCreatedCount);
+        }
+        finally
+        {
+            directory.Delete(true);
+        }
+    }
+
+    [Theory]
+    [InlineData("web", false, CliExitCodes.Success)]
+    [InlineData("web", true, CliExitCodes.Success)]
+    [InlineData("worker", true, CliExitCodes.ValidationError)]
+    [InlineData(null, true, CliExitCodes.ValidationError)]
+    public async Task Scoped_private_deploy_requires_another_active_public_service(
+        string? activePublicService,
+        bool includePublicServiceInConfig,
+        int expectedExitCode)
+    {
+        var directory = Directory.CreateTempSubdirectory("minicloud-private-scoped-");
+        try
+        {
+            var configPath = Path.Combine(directory.FullName, "minicloud.yml");
+            var yaml = """
+                app: demo
+                appId: app_main
+                database: sqlite
+                services:
+                  worker:
+                    image: example/worker:latest
+                    port: 3000
+                    public: false
+                    path: /
+                    healthPath: /health
+                """;
+            if (includePublicServiceInConfig)
+            {
+                yaml += "\n" + """
+                      web:
+                        image: example/web:latest
+                        port: 3000
+                        public: true
+                        path: /
+                        healthPath: /health
+                    """;
+            }
+            await File.WriteAllTextAsync(configPath, yaml);
+
+            var console = new TestConsole();
+            var environment = CliEnvironment.ForTests("https://api.example", directory.FullName);
+            var tokens = new TokenStore(environment);
+            tokens.SaveToken("mc_test");
+            var activeHashes = new Dictionary<string, string>();
+            if (activePublicService is not null)
+            {
+                activeHashes[activePublicService] = "active-public-hash";
+            }
+            var handler = new ChangeDetectionHandler(activeHashes);
+            var app = new CliApplication(console, environment, tokens,
+                new MinicloudApiClient(environment, tokens, new HttpClient(handler)));
+
+            var exitCode = await app.RunAsync(["deploy", "worker", "--no-publish", "--config", configPath], CancellationToken.None);
+
+            Assert.Equal(expectedExitCode, exitCode);
+            if (expectedExitCode == CliExitCodes.Success)
+            {
+                Assert.Single(handler.LastCreatedRequest!.Services);
+                Assert.Equal("worker", handler.LastCreatedRequest.Services[0].Name);
+            }
+            else
+            {
+                Assert.Equal(0, handler.DeploymentsCreatedCount);
+                Assert.Contains("services.worker.public: At least one public service is required", console.Output);
+            }
+        }
+        finally
+        {
+            directory.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task Deployment_validation_prints_field_details_and_returns_validation_error()
+    {
+        var directory = Directory.CreateTempSubdirectory("minicloud-validation-details-");
+        try
+        {
+            var configPath = Path.Combine(directory.FullName, "minicloud.yml");
+            await File.WriteAllTextAsync(configPath, """
+                app: demo
+                appId: app_main
+                database: sqlite
+                services:
+                  web:
+                    image: example/web:latest
+                    port: 3000
+                    public: true
+                    path: /
+                    healthPath: /health
+                """);
+
+            var console = new TestConsole();
+            var environment = CliEnvironment.ForTests("https://api.example", directory.FullName);
+            var tokens = new TokenStore(environment);
+            tokens.SaveToken("mc_test");
+            var handler = new ChangeDetectionHandler(new Dictionary<string, string>(), failDeploymentValidation: true);
+            var app = new CliApplication(console, environment, tokens,
+                new MinicloudApiClient(environment, tokens, new HttpClient(handler)));
+
+            var exitCode = await app.RunAsync(["deploy", "web", "--no-publish", "--config", configPath], CancellationToken.None);
+
+            Assert.Equal(CliExitCodes.ValidationError, exitCode);
+            Assert.Contains("API error (validation_failed): Deployment request is invalid.", console.Output);
+            Assert.Contains("services[0].port: Port must be between 1 and 65535.", console.Output);
+        }
+        finally
+        {
+            directory.Delete(true);
+        }
+    }
+
     [Fact]
     public async Task Deploy_does_not_submit_when_artifact_upload_fails()
     {
@@ -217,7 +385,7 @@ public sealed class CliDeploymentChangeDetectionTests
                     buildMode: source
                     sourcePath: {{webDir.FullName}}
                     port: 3000
-                    public: false
+                    public: true
                     path: /
                     healthPath: /health
                 """);
@@ -265,7 +433,7 @@ public sealed class CliDeploymentChangeDetectionTests
                     buildMode: source
                     sourcePath: {{firstDir.FullName}}
                     port: 3000
-                    public: false
+                    public: true
                     path: /
                     healthPath: /health
                   second:
@@ -299,10 +467,12 @@ public sealed class CliDeploymentChangeDetectionTests
 
     private sealed class ChangeDetectionHandler(
         IReadOnlyDictionary<string, string> deployedHashes,
-        bool failArtifactUpload = false) : HttpMessageHandler
+        bool failArtifactUpload = false,
+        bool failDeploymentValidation = false) : HttpMessageHandler
     {
         public int DeploymentsCreatedCount { get; private set; }
         public int ArtifactsCreatedCount { get; private set; }
+        public int ImageBuildTargetsRequestedCount { get; private set; }
         public CreateDeploymentRequest? LastCreatedRequest { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -344,6 +514,15 @@ public sealed class CliDeploymentChangeDetectionTests
                 };
             }
 
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/api/environments/app_main/image-build-target")
+            {
+                ImageBuildTargetsRequestedCount++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { registry = "registry.example", repository = "example", platform = "linux/amd64" })
+                };
+            }
+
             if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/api/domains/services")
             {
                 var services = deployedHashes.Select(kvp => new
@@ -351,7 +530,7 @@ public sealed class CliDeploymentChangeDetectionTests
                     name = kvp.Key,
                     image = "ghcr.io/example/" + kvp.Key + ":latest",
                     port = 3000,
-                    @public = true,
+                    @public = kvp.Key != "api",
                     path = "/",
                     healthPath = "/health",
                     domains = Array.Empty<object>(),
@@ -368,6 +547,24 @@ public sealed class CliDeploymentChangeDetectionTests
             {
                 DeploymentsCreatedCount++;
                 LastCreatedRequest = await request.Content!.ReadFromJsonAsync<CreateDeploymentRequest>(cancellationToken: cancellationToken);
+                if (failDeploymentValidation)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = JsonContent.Create(new
+                        {
+                            error = new
+                            {
+                                code = "validation_failed",
+                                message = "Deployment request is invalid.",
+                                details = new[]
+                                {
+                                    new { field = "services[0].port", message = "Port must be between 1 and 65535." }
+                                }
+                            }
+                        })
+                    };
+                }
                 return new HttpResponseMessage(HttpStatusCode.Created)
                 {
                     Content = JsonContent.Create(new
