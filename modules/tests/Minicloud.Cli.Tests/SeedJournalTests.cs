@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
+using System.Formats.Tar;
+using System.IO.Compression;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
 using Minicloud.Cli;
 using Minicloud.Cli.Api;
 using Minicloud.Cli.Auth;
@@ -26,6 +31,23 @@ public sealed class SeedJournalTests : IDisposable
         using var journal = new SeedJournal(home, new string('a', 32), true);
         SeedFiles.WriteNew(Path.Combine(journal.DirectoryPath, "operation.pending"), "{}"u8.ToArray());
         Assert.Throws<CliCommandException>(() => journal.Load());
+    }
+
+    [Fact]
+    public void Publishing_guided_state_never_replaces_a_committed_dispatch_marker()
+    {
+        SeedFiles.Directory(home);
+        var dispatch = Path.Combine(home, "create-dispatched.json");
+        var first = dispatch + ".pending-original";
+        var later = dispatch + ".pending-later";
+        SeedFiles.WriteNew(first, "original dispatch"u8.ToArray());
+        SeedJournal.PublishDurably(first, dispatch, overwrite: false);
+        SeedFiles.WriteNew(later, "later dispatch"u8.ToArray());
+
+        Assert.Throws<CliCommandException>(() => SeedJournal.PublishDurably(later, dispatch, overwrite: false));
+        SeedFiles.Check(dispatch);
+        Assert.Equal("original dispatch", File.ReadAllText(dispatch));
+        Assert.Equal("later dispatch", File.ReadAllText(later));
     }
 
     [Fact]
@@ -81,6 +103,64 @@ public sealed class SeedJournalTests : IDisposable
         File.WriteAllText(path, "{}");
         File.AppendAllText(Path.Combine(home, "checksums.txt"), $"{digest}  server-manifest.json\n");
         Assert.Throws<CliCommandException>(() => SeedRelease.VerifyInventory(home, new HashSet<string> { "server-manifest.json" }));
+    }
+
+    [Theory]
+    [InlineData("minicloud-release")]
+    [InlineData("minicloud")]
+    public void Signed_archive_preserves_current_and_historical_image_bindings(string family)
+    {
+        SeedFiles.Directory(home);
+        var images = new[] { "api", "dashboard", "worker" }.ToDictionary(
+            name => name, name => $"ghcr.io/muniventures/{family}-{name}@sha256:{new string('b', 64)}");
+        var core = JsonSerializer.Serialize(new { schemaVersion = 1, images });
+        var files = new Dictionary<string, string>
+        {
+            ["server-release.json"] = core, ["server_install.py"] = "# synthetic fixture"
+        };
+        var bundleName = "minicloud-server-1.2.3-rc.1.tar.gz";
+        using var buffer = new MemoryStream();
+        using (var gzip = new GZipStream(buffer, CompressionMode.Compress, true))
+        using (var tar = new TarWriter(gzip))
+            foreach (var (name, text) in files)
+            {
+                using var data = new MemoryStream(Encoding.UTF8.GetBytes(text));
+                tar.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, name) { DataStream = data });
+            }
+        SeedFiles.WriteNew(Path.Combine(home, bundleName), buffer.ToArray());
+        var hashes = files.ToDictionary(pair => pair.Key, pair => SeedGuard.Hash(pair.Value));
+        var verifier = typeof(SeedRelease).GetMethod("VerifyArchive", BindingFlags.NonPublic | BindingFlags.Static)!;
+        JsonDocument Manifest() => JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1, images, bundle = new { name = bundleName }, files = hashes
+        }));
+        using (var manifest = Manifest()) verifier.Invoke(null, [home, manifest.RootElement]);
+
+        var original = images["api"];
+        images["api"] = images["worker"];
+        using (var manifest = Manifest())
+        {
+            var error = Assert.Throws<TargetInvocationException>(() => verifier.Invoke(null, [home, manifest.RootElement]));
+            Assert.IsType<CliCommandException>(error.InnerException);
+            Assert.Contains("Runtime manifest differs", error.InnerException!.Message);
+        }
+        images["api"] = original;
+        hashes["server_install.py"] = new string('c', 64);
+        using (var manifest = Manifest())
+        {
+            var error = Assert.Throws<TargetInvocationException>(() => verifier.Invoke(null, [home, manifest.RootElement]));
+            Assert.IsType<CliCommandException>(error.InnerException);
+            Assert.Contains("member digest mismatch", error.InnerException!.Message);
+        }
+    }
+
+    [Fact]
+    public void Release_compatibility_refuses_an_unlisted_source_without_a_version_range()
+    {
+        using var compatibility = JsonDocument.Parse("""
+            {"protocolVersion":1,"minimumVersion":null,"maximumExclusiveVersion":null,"sourceRevisions":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}
+            """);
+        Assert.Throws<CliCommandException>(() => SeedRelease.RequireCompatible(compatibility.RootElement));
     }
 
     [Theory]

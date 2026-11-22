@@ -65,16 +65,13 @@ With the project configured, your agent can run `minicloud deploy --environment 
 
 ### Self-host MiniCloud
 
-The available installation path is a **test installation built from source**. A signed production server release and a migration path from test installations are still pending.
+Run **`minicloud seed`** to set up a dedicated Ubuntu VPS. Use a [CLI test build for your computer](docs/stateless-seed.md#download-a-candidate) or [publish the CLI from a clean clone](docs/stateless-seed.md#publish-from-a-clone), including from your own local commit. The candidate runs without Python, Git, or .NET installed on your workstation. These are **test installations**: no compatible signed server release or production migration path is available yet. Do not treat a historical CLI release as this candidate.
 
-1. On your workstation, prepare Git, Python 3, the .NET 10 SDK, and OpenSSH. Have a funded provider account, a user-owned SSH key, and DNS access for your dashboard, API, and application domain.
-2. From a clean checkout, package the server source and build the CLI from the same revision. Create the protected seed configuration with your provider, region, size, and domains. The [source installation guide](docs/stateless-seed.md#explicit-local-source-alternative) includes the commands and an example configuration.
-3. Run `minicloud seed plan` with the local archive and its reviewed hash. Review the server and cost, then approve that plan with `minicloud seed apply`. After allocation, verify the SSH fingerprint in your provider console and approve the continuation plan to install on the dedicated Ubuntu VPS. [Provisioning walkthrough](docs/stateless-seed.md#initial-creation-and-the-pre-host-uncertainty-limit)
-4. Point the dashboard and API hostnames at the new server, confirm HTTPS, and keep recovery material off-host. Open `/setup` on your dashboard and use the one-time setup token to create your operator account. Sign in, connect a provider account under **Plans**, and create your first plan. [Browser setup](docs/operator-setup.md) · [Provider accounts and plans](docs/providers.md)
+Have OpenSSH, a funded provider account, and DNS access. In the wizard, choose **`local`** to explicitly trust the executable's matching source for a test install. Review the provider quote before creating anything. The wizard creates a local SSH identity, verifies the VPS automatically, and guides you through installation, DNS, and `/setup`. Rerun the same command after a pause or interruption. [Guided setup and resume](docs/stateless-seed.md#guided-installation) · [Browser setup](docs/operator-setup.md)
 
 ### Deploy your first app
 
-Use the matching CLI you built for your test instance. For an existing compatible instance, you can install the CLI from its pinned source revision with Git and the .NET 10 SDK. [Installation and Windows instructions](docs/cli-distribution.md)
+Use the matching CLI you downloaded or built for your test instance. For an existing compatible instance, you can install the CLI from its pinned source revision with Git and the .NET 10 SDK. [Installation and Windows instructions](docs/cli-distribution.md)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh |

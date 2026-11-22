@@ -116,6 +116,15 @@ public sealed partial class CliApplication
             _console.WriteError($"API error ({ex.Code}): {ex.Message}");
             return CliExitCodes.ValidationError;
         }
+        catch (ApiException ex) when (ex.Code == "validation_failed")
+        {
+            _console.WriteError($"API error ({ex.Code}): {ex.Message}");
+            foreach (var detail in ex.Details)
+            {
+                _console.WriteError($"{detail.Field}: {detail.Message}");
+            }
+            return CliExitCodes.ValidationError;
+        }
         catch (ApiException ex) when (ex.StatusCode is 400 or 409 && (ex.Code.StartsWith("plan_", StringComparison.Ordinal)
             || ex.Code.StartsWith("provider_", StringComparison.Ordinal) || ex.Code == "revision_conflict"))
         {

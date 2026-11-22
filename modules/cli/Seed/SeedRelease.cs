@@ -97,11 +97,19 @@ internal sealed class SeedRelease
     internal static bool SafeMember(string name) => !string.IsNullOrEmpty(name) && !name.Contains('\\') && !name.Contains(':')
         && name.Split('/').All(x => x is not ("" or "." or "..") && x.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'));
 
+    internal static string CliSourceRevision
+    {
+        get
+        {
+            var informational = typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+            return Regex.Match(informational, @"(?:sha\.|\+)([0-9a-f]{40})$").Groups[1].Value;
+        }
+    }
+
     internal static void RequireCompatible(JsonElement compatibility)
     {
         SeedGuard.Require(compatibility.GetProperty("protocolVersion").GetInt32() == 1, "Unsupported server CLI protocol.");
-        var informational = typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
-        var revision = Regex.Match(informational, @"(?:sha\.|\+)([0-9a-f]{40})$").Groups[1].Value;
+        var revision = CliSourceRevision;
         var sources = compatibility.GetProperty("sourceRevisions").EnumerateArray().Select(x => x.GetString()).ToArray();
         var minimum = compatibility.GetProperty("minimumVersion");
         var maximum = compatibility.GetProperty("maximumExclusiveVersion");

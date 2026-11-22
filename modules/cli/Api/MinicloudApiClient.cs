@@ -386,7 +386,7 @@ public sealed class MinicloudApiClient
             var error = await response.Content.ReadFromJsonAsync<ErrorResponse>(JsonOptions, cancellationToken);
             if (error is not null)
             {
-                throw new ApiException((int)response.StatusCode, error.Error.Code, error.Error.Message);
+                throw new ApiException((int)response.StatusCode, error.Error.Code, error.Error.Message, error.Error.Details);
             }
         }
         catch (JsonException)

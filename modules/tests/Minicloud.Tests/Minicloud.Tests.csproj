@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <EmbeddedResource Include="Fixtures/Sqlite-feb8073.sql" />
   </ItemGroup>
 
   <ItemGroup>

@@ -25,7 +25,10 @@ public static class MinicloudApplicationExtensions
 
             if (app.Configuration.GetValue("Database:RunMigrationsOnStartup", app.Environment.IsDevelopment()))
             {
-                await db.Database.MigrateAsync();
+                if (db.Database.IsSqlite())
+                    await SqliteDatabaseInitializer.InitializeAsync(db);
+                else
+                    await db.Database.MigrateAsync();
             }
         }
 

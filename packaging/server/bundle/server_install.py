@@ -160,7 +160,7 @@ def configuration(path):
     value = read_json(path)
     required = {"apiUrl", "consoleUrl", "apiHostname", "consoleHostname", "appDomain"}
     require(isinstance(value, dict) and required <= value.keys()
-            and value.keys() <= required | {"manageDnsRecords", "sourceUrl", "recovery", "googleOidc", "portalSessions"},
+            and value.keys() <= required | {"manageDnsRecords", "sourceUrl", "recovery", "googleOidc", "portalSessions", "emailRecovery"},
             "Unknown/missing configuration fields.")
     for key in ("apiHostname", "consoleHostname", "appDomain"):
         hostname(value[key])
@@ -189,6 +189,17 @@ def configuration(path):
                 and not source.password and not source.fragment, "Invalid HTTPS source URL.")
     if "portalSessions" in value:
         portal_sessions(value)
+    if "emailRecovery" in value:
+        email = value["emailRecovery"]
+        require(isinstance(email, dict) and type(email.get("enabled")) is bool
+                and email.keys() <= {"enabled", "smtpFile", "allowInsecureSmtp"},
+                "Invalid emailRecovery configuration.")
+        require((email["enabled"] and "smtpFile" in email
+                 and isinstance(email["smtpFile"], str) and email["smtpFile"]
+                 and Path(email["smtpFile"]).is_absolute()
+                 and type(email.get("allowInsecureSmtp", False)) is bool)
+                or (not email["enabled"] and email.keys() == {"enabled"}),
+                "Email recovery requires smtpFile only when explicitly enabled; insecure SMTP is opt-in.")
     if "recovery" in value:
         recovery = value["recovery"]
         require(isinstance(recovery, dict)
@@ -252,6 +263,62 @@ def google_provider(config, root, recovery_dir, assets_dir):
         "mapper_url": "file:///etc/config/google-oidc.mapper.jsonnet",
         "scope": ["openid", "email", "profile"],
     }], separators=(",", ":"))
+
+
+EMAIL_RECOVERY_FILES = ("compose.email-recovery.yml", "identity.recovery.schema.json")
+
+
+def smtp_courier(config, root, recovery_dir, assets_dir):
+    email = config.get("emailRecovery", {})
+    if not email.get("enabled", False):
+        return {}
+    path = Path(email["smtpFile"])
+    require(path == path.resolve() and not any(path.is_relative_to(directory)
+            for directory in (root, recovery_dir, assets_dir)),
+            "Keep SMTP input at a canonical protected path outside installation, recovery and release assets.")
+    protected(path.parent, True)
+    protected(path)
+    require(path.stat().st_size <= 8192, "SMTP input exceeds 8 KiB.")
+    try:
+        value = read_json(path)
+        require(isinstance(value, dict) and value.keys() == {"connectionUri", "fromAddress", "fromName"}
+                and all(isinstance(item, str) for item in value.values()), "Invalid SMTP input.")
+        uri = value["connectionUri"]
+        require(0 < len(uri) <= 4096 and re.fullmatch(r"[\x21-\x7e]+", uri)
+                and not any(char in uri for char in "'\"\\$#")
+                and not re.search(r"%(?![0-9A-Fa-f]{2})", uri), "Invalid SMTP URI.")
+        parsed = urllib.parse.urlsplit(uri)
+        require(parsed.scheme in ("smtp", "smtps") and parsed.hostname
+                and parsed.port is not None and 1 <= parsed.port <= 65535
+                and parsed.path in ("", "/") and not parsed.fragment, "Invalid SMTP URI.")
+        require((len(parsed.hostname) <= 253
+                 and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                         for label in parsed.hostname.split(".")))
+                or ipaddress.ip_address(parsed.hostname).version == 6, "Invalid SMTP host.")
+        query = no_duplicates(urllib.parse.parse_qsl(parsed.query, strict_parsing=True))
+        require(query.keys() <= {"disable_starttls"}
+                and all(item in ("true", "false") for item in query.values())
+                and (not query or parsed.scheme == "smtp"), "Invalid SMTP TLS options.")
+        require((parsed.username is None and parsed.password is None)
+                or (parsed.username and parsed.password), "Supply both SMTP username and password, or neither.")
+        require(all(not any(ord(char) < 32 or ord(char) == 127 for char in urllib.parse.unquote(item))
+                    for item in (parsed.username, parsed.password) if item is not None),
+                "Invalid SMTP credentials.")
+        if query.get("disable_starttls") == "true":
+            require(email.get("allowInsecureSmtp", False) and parsed.username is None,
+                    "Plaintext SMTP requires explicit opt-in and must not carry authentication credentials.")
+        require(re.fullmatch(r"[A-Za-z0-9._+-]{1,64}@[a-z0-9.-]{1,253}", value["fromAddress"])
+                and value["fromAddress"].count("@") == 1, "Invalid SMTP sender.")
+        hostname(value["fromAddress"].split("@")[1])
+        require(re.fullmatch(r"[A-Za-z0-9 ._-]{1,100}", value["fromName"])
+                and value["fromName"] == value["fromName"].strip(), "Invalid SMTP sender name.")
+    except (ValueError, InstallError):
+        raise InstallError("Invalid protected SMTP input; check URI, TLS opt-in and sender fields. Values are not logged.") from None
+    return {
+        "COURIER_SMTP_CONNECTION_URI": uri,
+        "COURIER_SMTP_FROM_ADDRESS": value["fromAddress"],
+        "COURIER_SMTP_FROM_NAME": value["fromName"],
+    }
 
 
 def version_at_least(text, minimum):
@@ -397,8 +464,11 @@ class Installer:
         require(not args.config.is_relative_to(self.root)
                 and not args.config.is_relative_to(args.recovery_dir), "Keep operator input outside installation/recovery output.")
         self.google_provider = google_provider(self.config, self.root, args.recovery_dir, args.assets_dir)
+        self.smtp_courier = smtp_courier(self.config, self.root, args.recovery_dir, args.assets_dir)
         self.manifest = read_json(args.assets_dir / "server-manifest.json")
         require(self.manifest["releaseTag"] == args.tag, "Selected release differs from manifest.")
+        require(not self.smtp_courier or set(EMAIL_RECOVERY_FILES) <= self.manifest["files"].keys(),
+                "Selected signed release does not support packaged email recovery.")
         self.manifest["bundleBytes"] = (args.assets_dir / self.manifest["bundle"]["name"]).stat().st_size
         # The release whose bundle is installed; differs from the selected release only during upgrade.
         self.installed = self.manifest
@@ -588,7 +658,8 @@ class Installer:
             + "@postgres:5432/kratos?sslmode=disable\nSECRETS_COOKIE=" + secrets.token_urlsafe(48)
             + "\nSECRETS_CIPHER=" + secrets.token_hex(16) + "\n"
             + ("SELFSERVICE_METHODS_OIDC_CONFIG_PROVIDERS=" + self.google_provider + "\n"
-               if self.google_provider is not None else "")).encode())
+               if self.google_provider is not None else "")
+            + "".join(key + "=" + value + "\n" for key, value in self.smtp_courier.items())).encode())
         self.validate_kratos_credentials()
         key = directory / "ssh/deploy-key"
         if not key.exists():
@@ -669,6 +740,8 @@ class Installer:
             "MINICLOUD_HOST_ID": self.host_id(),
             "MINICLOUD_GOOGLE_OIDC_ENABLED": str(self.google_provider is not None).lower(),
         })
+        if self.smtp_courier:
+            env["MINICLOUD_EMAIL_RECOVERY_ENABLED"] = "true"
         sessions = portal_sessions(self.config)
         env.update({
             "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED": str(sessions["keepSignedInEnabled"]).lower(),
@@ -696,6 +769,7 @@ class Installer:
         keys = {"DSN", "SECRETS_COOKIE", "SECRETS_CIPHER"}
         if self.google_provider is not None:
             keys.add("SELFSERVICE_METHODS_OIDC_CONFIG_PROVIDERS")
+        keys.update(self.smtp_courier)
         protected(directory / "kratos-db-password")
         expected_dsn = ("postgres://kratos:" + urllib.parse.quote((directory / "kratos-db-password").read_text(), safe="")
                         + "@postgres:5432/kratos?sslmode=disable")
@@ -703,7 +777,8 @@ class Installer:
                 and kratos["DSN"] == expected_dsn and len(kratos["SECRETS_COOKIE"]) >= 32
                 and len(kratos["SECRETS_CIPHER"]) == 32
                 and (self.google_provider is None
-                     or kratos["SELFSERVICE_METHODS_OIDC_CONFIG_PROVIDERS"] == self.google_provider),
+                     or kratos["SELFSERVICE_METHODS_OIDC_CONFIG_PROVIDERS"] == self.google_provider)
+                and all(kratos[key] == value for key, value in self.smtp_courier.items()),
                 "Incomplete/inconsistent Kratos credentials; preserve and reconcile.")
 
     def compose_invocation(self, *arguments, root_token=None):
@@ -717,9 +792,13 @@ class Installer:
             env["OPENBAO_ROOT_TOKEN_FILE"] = str(root_token)
         if arguments[0] in ("up", "run"):
             arguments = (arguments[0], "--pull", "never", *arguments[1:])
-        return ["docker", "compose", "--project-name", "minicloud", "--project-directory", str(bundle),
-                "--env-file", str(bundle / "images.env"), "-f", str(bundle / "compose.yml"),
-                "--profile", "maintenance", *arguments], env
+        command = ["docker", "compose", "--project-name", "minicloud", "--project-directory", str(bundle),
+                   "--env-file", str(bundle / "images.env"), "-f", str(bundle / "compose.yml")]
+        if self.smtp_courier:
+            require(set(EMAIL_RECOVERY_FILES) <= self.installed["files"].keys(),
+                    "Installed signed release does not support packaged email recovery.")
+            command += ["-f", str(bundle / "compose.email-recovery.yml")]
+        return [*command, "--profile", "maintenance", *arguments], env
 
     def compose(self, *arguments, input=None, allowed=(0,), root_token=None):
         command, env = self.compose_invocation(*arguments, root_token=root_token)
@@ -845,6 +924,10 @@ class Installer:
             instance = https_json(self.config["apiUrl"] + "/api/instance")
             remote = https_json(self.config["apiUrl"] + "/api/account/setup", no_store=True)
             dashboard = https_json(self.config["consoleUrl"] + "/runtime-config.json")
+            if self.smtp_courier:
+                capabilities = https_json(self.config["apiUrl"] + "/api/account/capabilities", no_store=True)
+                require(capabilities.get("emailRecovery") is True and capabilities.get("password") is True,
+                        "HTTPS API email recovery capability differs from this opted-in installation.")
             require(dashboard.get("apiBaseUrl") == self.config["apiUrl"]
                     and dashboard.get("appDomain") == self.config["appDomain"]
                     and dashboard.get("auth") == {

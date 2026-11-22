@@ -647,7 +647,9 @@ class Maintenance:
         with tarfile.open(fileobj=io.BytesIO(small["installation.tar"]), mode="r:") as archive:
             for member in archive:
                 name = member.name
-                self.need(member.isfile() and name not in installation and 0 < member.size <= MAX_FILE
+                self.need(member.isfile() and name not in installation
+                          and (0 < member.size <= MAX_FILE
+                               or (name == "secrets/ssh/host-pins" and member.size == 0))
                           and (name == "installation.json" or name.startswith("secrets/"))
                           and not Path(name).is_absolute() and ".." not in Path(name).parts,
                           "Unsafe installation component member.")

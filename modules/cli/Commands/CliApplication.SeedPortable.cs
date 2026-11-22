@@ -6,7 +6,11 @@ namespace Minicloud.Cli.Commands;
 
 public sealed partial class CliApplication
 {
-    private async Task<int> RunPortableSeedAsync(string[] args, CancellationToken ct)
+    private sealed record GuidedSeedInputs(SeedPortableConfig Config, string KeyFingerprint, string? Credential, bool Local,
+        string? HetznerCredentialScope, SeedVerifiedRelease? ExpectedRelease = null, Func<SeedPortableReport, string>? BeforeCreate = null,
+        Action<SeedResource>? AfterCreate = null);
+
+    private async Task<int> RunPortableSeedAsync(string[] args, CancellationToken ct, GuidedSeedInputs? guided = null)
     {
         if (args is ["generate-id"] or ["new-id"])
         {
@@ -16,6 +20,7 @@ public sealed partial class CliApplication
         SeedPortableReport? report = null;
         SeedState? state = null;
         string? reportPath = null, scratch = null, credential = null, embeddedCredential = null;
+        var checkingDigitalOceanAccount = false;
         try
         {
             var action = args.FirstOrDefault();
@@ -50,7 +55,8 @@ public sealed partial class CliApplication
             var configPath = Path.GetFullPath(Option("--config")!);
             SeedFiles.Check(configPath);
             SeedGuard.Require(new FileInfo(configPath).Length is > 0 and < 1048576, "Invalid configuration size.");
-            var config = SeedPortableConfig.Parse(await File.ReadAllTextAsync(configPath, ct));
+            var config = guided?.Config ?? SeedPortableConfig.Parse(await File.ReadAllTextAsync(configPath, ct));
+            if (guided is not null) config.Validate();
             credential = config.ProviderCredential;
             embeddedCredential = config.ProviderCredential;
             reportPath = Path.GetFullPath(Option("--report")!);
@@ -97,19 +103,27 @@ public sealed partial class CliApplication
             SeedGuard.Require(!useAgent || keyPath is not null, "--use-ssh-agent requires the explicit user-owned --ssh-key.");
             var publicKey = keyPath is null ? "" : await SeedUserKey.ReadAsync(keyPath, useAgent, ct);
             if (keyPath is not null)
-                report.RootKeyFingerprint = "SHA256:" + Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(
-                    Convert.FromBase64String(publicKey.Split(' ')[1]))).TrimEnd('=');
+                report.RootKeyFingerprint = SeedUserKey.Fingerprint(publicKey);
+            SeedGuard.Require(guided is null || report.RootKeyFingerprint == guided.KeyFingerprint,
+                "The user-owned SSH key differs from the original selection. Restore the original key.");
             scratch = Path.Combine(Path.GetDirectoryName(reportPath)!, ".seed-session-" + Guid.NewGuid().ToString("N"));
             SeedFiles.Directory(scratch);
             var host = new SeedHost(keyPath, useAgent, localSource: localSource is not null);
-            credential = Option("--credential-file") is { } credentialPath ? SeedFiles.Credential(credentialPath, _console) : config.ProviderCredential;
+            credential = guided?.Credential ?? (Option("--credential-file") is { } credentialPath
+                ? SeedFiles.Credential(credentialPath, _console) : config.ProviderCredential);
             using var provider = string.IsNullOrEmpty(credential) ? null : new SeedProvider(config.Selection.Provider, credential);
             if (provider is not null)
             {
+                if (guided is not null) RequireGuidedCredentialScope(config, provider, guided.HetznerCredentialScope);
+                checkingDigitalOceanAccount = config.Provider == "digitalocean";
                 var account = await provider.GetAccountIdentityAsync(ct);
-                SeedGuard.Require(config.Selection.Provider == "hetzner"
-                    ? config.ProviderAccount.StartsWith("hetzner-project:", StringComparison.Ordinal)
-                    : account == config.ProviderAccount, "Authorized provider account differs from explicit providerAccount scope.");
+                checkingDigitalOceanAccount = false;
+                if (SeedPortable.ProviderAccountMismatch(config, account) is { } mismatch)
+                {
+                    report.Reasons = [mismatch];
+                    report.NextActions = ["Read docs/stateless-seed.md account-scope migration guidance. Preserve the original seed, target and host binding; no provider or host mutation was attempted."];
+                    return SeedPortable.ExitCode(report);
+                }
                 var found = await provider.FindServerAsync(state.Id, ct);
                 if (found is not null)
                 {
@@ -152,6 +166,8 @@ public sealed partial class CliApplication
             {
                 SeedGuard.Require(observation.State == "installed" && observation.Release == config.Selection.ServerVersion,
                     "Export requires this exact installed target; inspect installed identity/release first.");
+                if (guided?.ExpectedRelease is { } original)
+                    RequireGuidedInstallation(observation, config, original, guided.Local);
                 state.Plan = state.Plan with { ReleaseSource = observation.Source! };
                 var destination = Option("--recovery-dir");
                 var reportDirectory = Path.GetDirectoryName(reportPath)! + Path.DirectorySeparatorChar;
@@ -161,6 +177,8 @@ public sealed partial class CliApplication
                     "Select a separate protected --recovery-dir, never the public report directory.");
                 await host.ExportAsync(state, scratch, destination!, options.ContainsKey("--setup-token"), ct);
                 report.NextActions = ["Private recovery files exported separately. Verify independent encrypted custody; enter any setup token manually at the verified HTTPS setup origin."];
+                if (guided is not null && state.SetupTokenExportPath is { } tokenPath)
+                    _console.WriteLine("Protected setup token file: " + tokenPath);
                 return CliExitCodes.Success;
             }
             // Observation precedes release comparison/verification. Never run the installer to discover installed identity.
@@ -168,6 +186,13 @@ public sealed partial class CliApplication
                 ? await new SeedRelease().VerifyAsync(config.Selection.ServerVersion, Path.Combine(scratch, "release"), ct)
                 : SeedLocalSource.Verify(Path.GetFullPath(localSource), Option("--source-sha256")!,
                     config.Selection.ServerVersion, Path.Combine(scratch, "release"));
+            SeedGuard.Require(guided?.Local != true || release.Source == SeedRelease.CliSourceRevision,
+                "Guided TEST plans require the exact embedded CLI source revision.");
+            if (guided?.ExpectedRelease is { } expected)
+            {
+                SeedGuard.Require(release == expected, "The server release or source archive changed since creation. Restore the original build and trust inputs.");
+                RequireGuidedInstallation(observation, config, expected, guided.Local);
+            }
             var refresh = options.ContainsKey("--refresh-partial-source");
             SeedGuard.Require(!refresh || observation.State == "installed" && observation.Progress == "prepared"
                 && observation.ArtifactTrust == SeedLocalSource.Trust
@@ -180,8 +205,13 @@ public sealed partial class CliApplication
                 ? await provider!.QuoteAsync(config.Selection, state.Id, ct)
                 : state.Plan.Quote;
             if (state.Server is null)
+            {
                 SeedGuard.Require(quote.Architecture == config.Architecture, "Approved architecture differs from provider image.");
-            quote = quote with { Account = config.ProviderAccount, CredentialScope = "authorized-account-access" };
+                var mismatch = SeedPortable.ProviderAccountMismatch(config, quote.Account);
+                SeedGuard.Require(mismatch is null, mismatch ?? "");
+            }
+            var boundScope = provider is not null && config.Provider == "hetzner" ? guided?.HetznerCredentialScope : null;
+            quote = quote with { Account = config.ProviderAccount, CredentialScope = boundScope ?? "authorized-account-access" };
             state.Plan = new(config.Selection, quote, release.Digest, release.Source)
             {
                 OperatorPublicKeys = config.OperatorPublicKeys,
@@ -192,11 +222,12 @@ public sealed partial class CliApplication
             if (observation.State == "installed" && observation.Release == config.Selection.ServerVersion)
                 SeedGuard.Require(observation.Source == release.Source || refresh,
                     "Installed source differs from exact selected source; reconcile or explicitly review a pre-initialization local refresh.");
-            report.Plan = state.Plan;
+            report.Plan = boundScope is null ? state.Plan
+                : state.Plan with { Quote = quote with { CredentialScope = "original-hetzner-credential-bound" } };
             var newSeed = options.ContainsKey("--new-seed");
             report.Approval = SeedPortable.Approval(config, state, report.Classification, publicKey, newSeed);
             _console.WriteLine("Classification: " + report.Classification);
-            var displayedPlan = JsonSerializer.Serialize(state.Plan, SeedJournal.Json);
+            var displayedPlan = JsonSerializer.Serialize(report.Plan, SeedJournal.Json);
             SeedGuard.Require(string.IsNullOrEmpty(credential) || !displayedPlan.Contains(credential, StringComparison.Ordinal),
                 "Plan withheld because it contained supplied secret material.");
             SeedGuard.Require(string.IsNullOrEmpty(embeddedCredential) || !displayedPlan.Contains(embeddedCredential, StringComparison.Ordinal),
@@ -210,23 +241,37 @@ public sealed partial class CliApplication
             if (report.Classification == "new_seed")
             {
                 await host.CheckPrerequisitesAsync(ct);
-                await SeedPortable.CreateAsync(config, state, provider!, publicKey, newSeed, Option("--approve"), report.Classification, ct);
+                await SeedPortable.CreateAsync(config, state, provider!, publicKey, newSeed, Option("--approve"), report.Classification, ct,
+                    guided?.BeforeCreate is { } beforeCreate ? () => beforeCreate(report) : null);
+                guided?.AfterCreate?.Invoke(state.Server!);
                 SeedPortable.Observe(report, state, new("awaiting_trust", "awaiting_independent_ssh_trust"));
-                report.NextActions = ["Retain this resource ID in explicit target configuration. Obtain its host fingerprint independently through provider console, replan and continue; never repeat initial creation."];
+                report.NextActions = guided is null
+                    ? ["Retain this resource ID in explicit target configuration. Obtain its host fingerprint independently through provider console, replan and continue; never repeat initial creation."]
+                    : ["Rerun the same guided seed to verify the original server through first-boot SSH enrollment; never repeat initial creation."];
                 return 10;
             }
             // Host-only continuation needs no provider token or creation permissions.
-            SeedPortable.Observe(report, state, await SeedPortable.ContinueAsync(state, scratch, host, host, observation, ct));
+            var continued = await SeedPortable.ContinueAsync(state, scratch, host, host, observation, ct);
+            if (guided is not null) RequireGuidedInstallation(continued, config, release, guided.Local);
+            SeedPortable.Observe(report, state, continued);
             return SeedPortable.ExitCode(report);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
+            if (guided is not null && ex is CliCommandException
+                && (string.IsNullOrEmpty(credential ?? guided.Credential)
+                    || !ex.Message.Contains((credential ?? guided.Credential)!, StringComparison.Ordinal)))
+                _console.WriteError(ex.Message);
             if (report is not null)
             {
                 report.Result = ex is OperationCanceledException ? "unknown" : "failed";
                 report.Classification = "reconciliation_required";
-                report.Reasons = ["Operation did not establish a safe verified result. Secret-bearing diagnostics suppressed; no automatic create retry or rollback."];
-                report.NextActions = [state?.KeyCreateStarted == true || state?.ServerCreateStarted == true
+                report.Reasons = [checkingDigitalOceanAccount
+                    ? "DigitalOcean authorized account/team identity could not be established. Missing or invalid supplied team data never falls back to individual scope. No inventory or host mutation was attempted."
+                    : "Operation did not establish a safe verified result. Secret-bearing diagnostics suppressed; no automatic create retry or rollback."];
+                report.NextActions = [checkingDigitalOceanAccount
+                    ? "Independently reconcile the selected account/team and historical approval using docs/stateless-seed.md. Preserve the original config and host binding; no automatic migration."
+                    : state?.KeyCreateStarted == true || state?.ServerCreateStarted == true
                     ? "Creation may be uncertain even if inventory is empty. Retain the same seedId; reconcile provider console/support before any new initial-create assertion."
                     : "Check protected inputs, host trust, identity and metadata. Resolve incomplete maintenance without reinstalling."];
             }
@@ -260,6 +305,16 @@ public sealed partial class CliApplication
             }
             finally { if (scratch is not null && Directory.Exists(scratch)) Directory.Delete(scratch, true); }
         }
+    }
+
+    private static void RequireGuidedInstallation(SeedObservation observation, SeedPortableConfig config, SeedVerifiedRelease expected, bool local)
+    {
+        if (observation.State == "installed" && observation.Release == config.ServerVersion)
+            SeedGuard.Require(observation.Source == expected.Source
+                && (local
+                    ? observation.ArtifactTrust == SeedLocalSource.Trust && observation.SourceArchiveSha256 == expected.Digest
+                    : observation.ArtifactTrust != SeedLocalSource.Trust),
+                "Installed release source or artifact trust differs from the original reviewed plan. Do not reinstall.");
     }
 
     private static async Task<SeedObservation> ObservePortableHostAsync(SeedHost host, SeedState state, string scratch, CancellationToken ct)

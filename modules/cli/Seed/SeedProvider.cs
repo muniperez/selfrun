@@ -25,9 +25,27 @@ internal sealed partial class SeedProvider : ISeedProvider
     private string AccountIdentity(JsonElement account) => provider switch
     {
         "hetzner" => "Hetzner project scoped by the supplied credential (scope fingerprint binds approval)",
-        "digitalocean" => "DigitalOcean account " + Text(account, "uuid"),
+        "digitalocean" => DigitalOceanAccountIdentity(account),
         _ => "Vultr account " + SeedGuard.Hash(Text(account, "email"))
     };
+
+    private static string DigitalOceanAccountIdentity(JsonElement account)
+    {
+        SeedGuard.Require(account.ValueKind == JsonValueKind.Object,
+            "DigitalOcean account data is invalid; reconcile the authorized scope.");
+        if (account.TryGetProperty("team", out var team))
+            return "DigitalOcean team " + AccountUuid(team, "team");
+        return "DigitalOcean account " + AccountUuid(account, "user");
+    }
+
+    private static string AccountUuid(JsonElement value, string scope)
+    {
+        SeedGuard.Require(value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty("uuid", out var uuid) && uuid.ValueKind == JsonValueKind.String
+            && System.Text.RegularExpressions.Regex.IsMatch(uuid.GetString()!, "^[A-Za-z0-9-]{1,100}$"),
+            $"DigitalOcean {scope} identity is missing or invalid; reconcile the authorized scope. No individual-only fallback is permitted for supplied team data.");
+        return value.GetProperty("uuid").GetString()!;
+    }
 
     public async Task<string> GetAccountIdentityAsync(CancellationToken ct)
     {
@@ -156,7 +174,7 @@ internal sealed partial class SeedProvider : ISeedProvider
         return matches.Length == 0 ? null : Text(matches[0], "id");
     }
 
-    public async Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct)
+    public async Task<SeedResource> CreateServerAsync(SeedState state, CancellationToken ct, string? userData = null)
     {
         var s = state.Plan.Selection;
         var q = state.Plan.Quote;
@@ -175,6 +193,12 @@ internal sealed partial class SeedProvider : ISeedProvider
                 tags = new[] { Name(state.Id) }, enable_ipv6 = false, disable_public_ipv4 = false, enable_vpc = false,
                 backups = "disabled", ddos_protection = false, activation_email = false, user_scheme = "root" }
         };
+        if (userData is not null)
+        {
+            var request = JsonSerializer.SerializeToNode(body)!.AsObject();
+            request.Add("user_data", provider == "vultr" ? Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(userData)) : userData);
+            body = request;
+        }
         var value = (await SendAsync(HttpMethod.Post, Servers, body, ct)).GetProperty(ServerObject);
         SeedGuard.Require(Owned(value, state.Id), "Created server response lacks ownership; resume for reconciliation.");
         state.Server = new(Text(value, "id"), state.Id, s.Region, s.Size, q.Image, null);

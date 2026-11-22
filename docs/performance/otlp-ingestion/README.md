@@ -79,17 +79,32 @@ production guarantees.
 - **Auth before admission.** Authentication runs before the ingestion
   concurrency limiter, so requests rejected with 503 under overload still pay
   the PBKDF2 cost.
-- **Quota service lifetime.** `TelemetryQuotaService` is registered as scoped,
-  so its in-memory per-app token buckets and daily-counter gate are recreated
-  for every request. The per-request burst cap and the persisted daily
-  reservation still run. However, sustained-rate state does not carry over
-  between requests, and concurrent daily reservations are not serialized
-  in-process. This is a
-  correctness issue, not a cost issue, so it needs its own change.
 - **Logging volume.** Per request, the gateway logs one Loki forward message.
   Framework and EF command logs account for about 18 more events at the default
   `Information` level. Successful-ingest logs do not dominate, so no log
   aggregation was added.
+
+### Quota coordination correction (#276)
+
+The gateway now shares `TelemetryQuotaService` across request scopes in one
+process. Per-app sustained-rate buckets persist across requests; the daily
+reservation gate serializes app, organization and whole-stack accounting.
+Each daily reservation still obtains and disposes a fresh scoped database
+context, supporting SQLite and PostgreSQL without a singleton context.
+
+Rate state retains at most 4,096 apps. New apps reclaim only fully replenished
+buckets under the same lock as lookup and debit. If all retained buckets are
+depleted, new apps are denied with `Retry-After` until safe reclamation is
+possible; existing apps retain their remaining quota. No background cleanup
+task is used.
+
+These guarantees are process-local. Restarting clears rate state, not persisted
+daily usage. Independent gateway processes do **not** coordinate token buckets
+or atomically reserve daily budgets across the read/sum/write sequence. The
+existing retry handles a day-row insert conflict only, not distributed quota
+enforcement. This defensive correctness fix is independent of the allocation
+optimization measurements above; those historical results are not measurements
+of this correction.
 
 ### Reproduce locally
 

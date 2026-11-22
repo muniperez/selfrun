@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: MPL-2.0
+name: CLI seed review
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/cli-seed-review.yml
+      - modules/cli/**
+      - docs/stateless-seed.md
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }}
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-24.04
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+          - rid: osx-arm64
+            runner: macos-15
+          - rid: win-x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      RID: ${{ matrix.rid }}
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      REVIEW_DIR: .local/artifacts/cli-seed-review
+      ARCHIVE: minicloud-seed-${{ matrix.rid }}.${{ matrix.rid == 'win-x64' && 'zip' || 'tar.gz' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.404'
+      - name: Build, package, and verify unsigned CLI candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
+          git check-ignore "$REVIEW_DIR/probe"
+          dotnet publish modules/cli/Minicloud.Cli.csproj --runtime "$RID" \
+            -p:PublishProfile=Seed -o "$REVIEW_DIR/payload"
+          test "$(find "$REVIEW_DIR/payload" -mindepth 1 | wc -l)" -eq 1
+          suffix=""
+          python=python3
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            suffix=.exe
+            python=python
+          fi
+          exe="minicloud$suffix"
+          mv "$REVIEW_DIR/payload/Minicloud.Cli$suffix" "$REVIEW_DIR/payload/$exe"
+          "$python" -B scripts/package-cli-notices.py "$REVIEW_DIR/payload" "$GITHUB_REPOSITORY" "$SOURCE_REVISION"
+          cd "$REVIEW_DIR"
+          mkdir extracted
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            (cd payload && "$python" -m zipfile -c "../$ARCHIVE" "$exe" LICENSE.txt SOURCE.txt licenses)
+            "$python" -m zipfile -e "$ARCHIVE" extracted
+          else
+            tar -czf "$ARCHIVE" -C payload "$exe" LICENSE.txt SOURCE.txt licenses
+            tar -xzf "$ARCHIVE" -C extracted
+          fi
+          checksum=(sha256sum)
+          if [[ "$RUNNER_OS" == macOS ]]; then checksum=(shasum -a 256); fi
+          "${checksum[@]}" "$ARCHIVE" > checksums.txt
+          "${checksum[@]}" -c checksums.txt
+          "./extracted/$exe" --version | tr -d '\r' | grep -Fx "source $SOURCE_REVISION"
+          "./extracted/$exe" help seed | tr -d '\r' | grep -Fx "Embedded TEST source: server-v0.0.1-local.$SOURCE_REVISION"
+      - name: Upload review artifact
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: minicloud-seed-${{ matrix.rid }}
+          path: |
+            ${{ env.REVIEW_DIR }}/${{ env.ARCHIVE }}
+            ${{ env.REVIEW_DIR }}/checksums.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Write candidate handoff
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        shell: bash
+        run: |
+          {
+            printf '[Download unsigned %s review candidate](%s) (30-day retention)\n\n' "$RID" "$ARTIFACT_URL"
+            printf 'Source commit: `%s`\n\n' "$SOURCE_REVISION"
+            printf '```text\n'
+            cat "$REVIEW_DIR/checksums.txt"
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -112,6 +112,7 @@ public sealed partial class CliApplication
             ? config.Services.Where(x => requestedServiceNames.Contains(x.Key, StringComparer.Ordinal))
             : config.Services;
         var hasLocalCandidate = !noPublish && candidates.Any(x => x.Value.BuildMode == ServiceBuildModes.Local && !string.IsNullOrWhiteSpace(x.Value.SourcePath));
+        var activeServiceSetValidated = false;
 
         var me = await _apiClient.GetMeAsync(cancellationToken);
         var application = await GetApplicationContextAsync(config.AppId!, cancellationToken);
@@ -142,6 +143,21 @@ public sealed partial class CliApplication
         {
             app = await _apiClient.SelectPlanAsync(app.Id, selectedPlan ?? app.Plan, cancellationToken);
             _console.WriteLine($"Plan: {app.Plan}");
+        }
+
+        var hasKnownExplicitSelection = requestedServiceNames.Count > 0 &&
+            requestedServiceNames.All(name => config.Services.ContainsKey(name));
+        if (hasKnownExplicitSelection || deployAll || (requestedServiceNames.Count == 0 && config.Services.Count == 1))
+        {
+            var candidateNames = candidates.Select(x => x.Key).ToArray();
+            var candidateConfig = FilterConfigServices(config, candidateNames);
+            var activeServiceDiagnostics = await ValidateActiveServiceSetAsync(app.Id, candidateConfig, cancellationToken);
+            if (activeServiceDiagnostics.Count > 0)
+            {
+                PrintDiagnostics(activeServiceDiagnostics);
+                return CliExitCodes.ValidationError;
+            }
+            activeServiceSetValidated = true;
         }
 
         ImageBuildTarget? buildTarget = null;
@@ -177,6 +193,16 @@ public sealed partial class CliApplication
         }
 
         config = FilterConfigServices(config, selectedServiceNames);
+
+        if (!activeServiceSetValidated)
+        {
+            var activeServiceDiagnostics = await ValidateActiveServiceSetAsync(app.Id, config, cancellationToken);
+            if (activeServiceDiagnostics.Count > 0)
+            {
+                PrintDiagnostics(activeServiceDiagnostics);
+                return CliExitCodes.ValidationError;
+            }
+        }
 
         if (!noPublish)
         {
@@ -595,6 +621,34 @@ public sealed partial class CliApplication
         }
 
         return changed;
+    }
+
+    private async Task<IReadOnlyList<ConfigDiagnostic>> ValidateActiveServiceSetAsync(
+        string appId,
+        MinicloudConfig selectedConfig,
+        CancellationToken cancellationToken)
+    {
+        if (selectedConfig.Services.Values.Any(x => x.Public == true))
+        {
+            return [];
+        }
+
+        var activeServices = await _apiClient.GetAppServicesAsync(appId, cancellationToken);
+        var selectedNames = selectedConfig.Services.Keys.ToHashSet(StringComparer.Ordinal);
+        if (activeServices.Any(x => x.Public && !selectedNames.Contains(x.Name)))
+        {
+            return [];
+        }
+
+        var field = selectedConfig.Services.Count == 1
+            ? $"services.{selectedConfig.Services.Keys.Single()}.public"
+            : "services";
+        return
+        [
+            new ConfigDiagnostic(
+                field,
+                "At least one public service is required across the app's active services. Set public: true on a selected service, or deploy a private service only after another public service is active in this environment.")
+        ];
     }
 
     internal static MinicloudConfig FilterConfigServices(MinicloudConfig config, IReadOnlyList<string> selectedServiceNames)

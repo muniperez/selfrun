@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc.ApplicationModels;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using Minicloud.Api.Auth;
@@ -96,8 +95,7 @@ public static class MinicloudApiServiceCollectionExtensions
 
             if (databaseProvider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
             {
-                options.UseSqlite(SqliteDatabaseConfigurator.ConfigureConnectionString(connectionString ?? "Data Source=minicloud-dev.db"))
-                    .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+                options.UseSqlite(SqliteDatabaseConfigurator.ConfigureConnectionString(connectionString ?? "Data Source=minicloud-dev.db"));
                 return;
             }
 
