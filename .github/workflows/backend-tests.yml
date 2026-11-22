@@ -49,6 +49,20 @@ jobs:
           age --version
       - name: Verify self-hosting initialization scripts
         run: python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -q
+      - name: Provision PostgreSQL 16 for the upgrade rehearsal
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          curl -fsSL --retry 3 https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/keyrings/minicloud-pgdg.asc >/dev/null
+          printf 'deb [signed-by=/usr/share/keyrings/minicloud-pgdg.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\n' \
+            "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/minicloud-pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-16 postgresql-client-16
+      - name: Rehearse the retired-workspace PostgreSQL upgrade
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+        run: python3 -u scripts/self-hosting/test-workspace-upgrade.py
       - name: Run backend, worker, CLI and deployment integration tests
         run: dotnet test Minicloud.slnx --configuration Release -m:1
       - name: Publish and smoke-test the source-built CLI

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Minicloud.Api.Auth;
+using Minicloud.Api.Services;
 using Minicloud.Common.Data;
 using Minicloud.Api.Providers;
 
@@ -27,6 +28,8 @@ public static class MinicloudApplicationExtensions
             {
                 if (db.Database.IsSqlite())
                     await SqliteDatabaseInitializer.InitializeAsync(db);
+                else if (db.Database.IsNpgsql())
+                    await DatabaseMigrationCommand.MigratePostgresAsync(db);
                 else
                     await db.Database.MigrateAsync();
             }

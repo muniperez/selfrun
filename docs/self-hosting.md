@@ -341,8 +341,9 @@ disabled as described in the gateway README.
    owners and elevated/inherited service-role privileges before creating state.
 2. `kratos-migrate` and `api-migrate` run once, then exit. `api-migrate` holds a
    PostgreSQL advisory lock, so concurrent runs serialize. It refuses a
-   populated database that has no Minicloud migration history, and a database
-   migrated by a newer release.
+   populated database that has no Minicloud migration history or has unknown
+   migrations. The only exception is the complete, recognized history of
+   [permanently retired workspaces](../packaging/server/bundle/upgrade-prerequisites.md#retire-workspaces-before-upgrading-in-place).
 3. `kratos`, `api`, `worker`, `dashboard` and `caddy` start after their
    dependencies are healthy or complete. They start in that order.
 
