@@ -36,3 +36,13 @@ Keep changes focused. Never push code unless explicitly asked.
 - This includes screenshots and browser recordings, benchmark results, SQL dumps and execution plans, logs, traces, coverage/build reports, and agent implementation/validation/handoff reports. Never put these outputs in `docs/`, source folders, or the Git index; never force-add ignored artifacts.
 - Keep reusable scripts/tests and concise, maintained documentation in source control. Deliberately authored product assets and explicitly requested deliverables are not intermediate execution output.
 - Before finishing, check `git status` and `git check-ignore` to ensure generated outputs cannot enter the change set. Move any misplaced outputs into `.local/artifacts/` and update producers and references.
+
+## Disk cleanup
+
+Agent worktrees share one limited disk volume. Each checkout's `node_modules`, `bin`/`obj`, and artifacts can grow to several gigabytes.
+
+- Reuse one fixed directory per check, such as `.local/artifacts/<check>/`, and clear it before rerunning. Don't create a new artifact directory for every attempt.
+- Delete bulky intermediate output, such as publish folders, package archives, extracted install trees, and copied build output, once its result is recorded. Keep only the small logs and reports cited on the issue or PR.
+- Check free space with `df -h` before heavy builds, test runs, or package smokes. If less than about 5 GB is free, clean up your own artifacts first. If that isn't enough, record a blocker on the issue instead of deleting other agents' checkouts.
+- When your PR is merged or your assignment ends, delete `.local/artifacts/`, `bin/`, `obj/`, and `node_modules/` in your worktree.
+- After a child PR is merged or closed and its agent has stopped, the coordinator removes the child's worktree with `git worktree remove` and runs `git worktree prune`. Never remove a worktree that has uncommitted or unpushed work. Push it or record it on the issue first.
