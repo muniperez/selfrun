@@ -37,10 +37,22 @@ def build_api(source, output):
     return output / "Minicloud.Api.dll"
 
 
+def postgres16_bin():
+    bin_dir = Path(os.environ.get("PG_BIN") or run("pg_config", "--bindir", capture_output=True).stdout.strip())
+    for executable in ("postgres", "initdb", "pg_ctl", "psql", "pg_dump"):
+        if not (bin_dir / executable).is_file() or not os.access(bin_dir / executable, os.X_OK):
+            raise SystemExit(f"Missing executable {bin_dir / executable}. Install PostgreSQL 16 and set PG_BIN.")
+    version = run(bin_dir / "postgres", "--version", capture_output=True).stdout.strip()
+    if not version.startswith("postgres (PostgreSQL) 16."):
+        raise SystemExit(f"Expected PostgreSQL 16 in {bin_dir}, got {version}. Set PG_BIN to its versioned bin directory.")
+    print(f"Rehearsal server: {version}", flush=True)
+    return bin_dir
+
+
 class Postgres:
-    def __init__(self, path):
+    def __init__(self, path, bin_dir):
         self.path = path
-        self.bin = Path(os.environ.get("PG_BIN") or run("pg_config", "--bindir", capture_output=True).stdout.strip())
+        self.bin = bin_dir
         self.port = loopback_port()
         self.password = secrets.token_hex(24)
         self.pg_env = {
@@ -185,6 +197,7 @@ def rehearse(pg, legacy_api, target_api):
 
 
 def main():
+    pg_bin = postgres16_bin()
     installed = MANIFEST["installed"]
     revision = installed["sourceRevision"]
     if subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], cwd=ROOT, capture_output=True).returncode:
@@ -202,7 +215,7 @@ def main():
             source.extractall(path / "legacy", filter="data")
         legacy_api = build_api(path / "legacy", path / "legacy-api")
         target_api = build_api(ROOT, path / "target-api")
-        with Postgres(path) as pg:
+        with Postgres(path, pg_bin) as pg:
             rehearse(pg, legacy_api, target_api)
 
 
