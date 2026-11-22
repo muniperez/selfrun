@@ -35,7 +35,7 @@ export function ProviderPlanGuide() {
         </div> : null}
         {counts ? <p role="status">{counts.accounts} provider account(s), {counts.plans} plan(s) in this workspace.</p> : null}
         <ol className="list-inside list-decimal space-y-3">
-          <li><Link className="underline" to="/plans/accounts">Connect a provider account</Link> using the existing provider screen. Choose Hetzner, DigitalOcean or Vultr and validate its credential there. Do not enter provider credentials into setup.</li>
+          <li><Link className="underline" to="/plans/accounts">Connect a provider account</Link> using the existing provider screen. Choose Hetzner, DigitalOcean, Vultr or experimental Scaleway and validate its credential there. Scaleway provisioning is disabled until live qualification. Do not enter provider credentials into setup.</li>
           <li><Link className="underline" to="/plans">Create a named plan</Link> mapped to that account, region and server size. Account and plan changes require the workspace permissions shown by those screens.</li>
           <li><Link className="underline" to="/apps">Open Apps</Link>, then create an app, choose an environment, and configure its services. Choose placement deliberately before deploying; deployment can allocate billable VPS resources.</li>
         </ol>

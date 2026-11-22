@@ -658,7 +658,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
             PlanId = plan.Id, ProviderAccountId = account.Id };
     }
 
-    private sealed class AccountFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)
+    private sealed class AccountFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!)
     {
         public List<string> RequestedAccounts { get; } = [];
         public override Task<IVpsProviderClient> CreateAsync(string organizationId, string providerAccountId, CancellationToken ct, bool allowDisabled = true)

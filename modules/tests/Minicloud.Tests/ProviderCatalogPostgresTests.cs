@@ -227,7 +227,7 @@ public sealed class ProviderCatalogPostgresTests
     }
 
     private static ProviderCatalogService Catalog(MinicloudDbContext db) => new(db, new IdGenerator(), TimeProvider.System);
-    private sealed class PausedImportFactory(bool released = false) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)
+    private sealed class PausedImportFactory(bool released = false) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!)
     {
         public TaskCompletionSource Locked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -262,7 +262,8 @@ public sealed class ProviderCatalogPostgresTests
     }
 
     private sealed class EmptyFactory(MinicloudDbContext db, ISecretStore secrets) : ProviderAccountClientFactory(db, secrets, null!,
-        Options.Create(new HetznerOptions()), Options.Create(new DigitalOceanOptions()), Options.Create(new VultrOptions()), NullLoggerFactory.Instance)
+        Options.Create(new HetznerOptions()), Options.Create(new DigitalOceanOptions()), Options.Create(new VultrOptions()),
+        Options.Create(new Minicloud.Common.Providers.Scaleway.ScalewayOptions()), NullLoggerFactory.Instance)
     {
         public override IVpsProviderClient CreateCandidate(ProviderAccount account, string credential) => new EmptyClient();
     }

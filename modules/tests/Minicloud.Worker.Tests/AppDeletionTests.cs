@@ -295,7 +295,7 @@ public sealed class AppDeletionTests
         Assert.Empty(await db.Deployments.ToListAsync());
     }
 
-    private sealed class AccountFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)
+    private sealed class AccountFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!)
     {
         public List<string> Accounts { get; } = [];
         public override Task<IVpsProviderClient> CreateAsync(string organizationId, string providerAccountId, CancellationToken ct, bool allowDisabled = true)

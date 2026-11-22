@@ -21,7 +21,8 @@ public sealed class ProvidersController(MinicloudDbContext db, ControlPlaneAutho
     {
         new ProviderTypeResponse("hetzner", "Hetzner", true, "ubuntu-24.04"),
         new ProviderTypeResponse("digital-ocean", "DigitalOcean", false, "ubuntu-24-04-x64"),
-        new ProviderTypeResponse("vultr", "Vultr", false, null, 2284)
+        new ProviderTypeResponse("vultr", "Vultr", false, null, 2284),
+        new ProviderTypeResponse("scaleway", "Scaleway (experimental; qualification required)", true, "ubuntu_noble")
     });
 
     [HttpGet]

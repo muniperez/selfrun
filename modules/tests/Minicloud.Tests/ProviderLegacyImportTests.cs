@@ -357,7 +357,7 @@ public sealed class ProviderLegacyImportTests : IAsyncLifetime
         volume.SizeGb, volume.Region, server, new Dictionary<string, string> { ["managed-by"] = "minicloud",
             ["app-id"] = volume.AppId, ["storage-name"] = volume.Name, ["purpose"] = "customer-storage" });
 
-    private sealed class Factory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)
+    private sealed class Factory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!)
     {
         public override Task<IVpsProviderClient> CreateAsync(string organizationId, string providerAccountId, CancellationToken ct, bool allowDisabled = true) => Task.FromResult(client);
     }

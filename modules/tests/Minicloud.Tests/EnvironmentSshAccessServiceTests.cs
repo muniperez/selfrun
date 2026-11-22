@@ -9,6 +9,7 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Scaleway;
 using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Vultr;
@@ -165,7 +166,7 @@ public sealed class EnvironmentSshAccessServiceTests
         public EnvironmentSshAccessService CreateService() =>
             new(Db, new ControlPlaneAuthorization(Db),
                 new ProviderAccountClientFactory(Db, null!, null!, Options.Create(new HetznerOptions()),
-                    Options.Create(new DigitalOceanOptions()), Options.Create(new VultrOptions()), null!),
+                    Options.Create(new DigitalOceanOptions()), Options.Create(new VultrOptions()), Options.Create(new ScalewayOptions()), null!),
                 new IdGenerator(), TimeProvider.System);
 
         public async ValueTask DisposeAsync()

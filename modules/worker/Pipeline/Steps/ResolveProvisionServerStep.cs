@@ -8,6 +8,7 @@ using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Worker.Pipeline;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Scaleway;
 using Minicloud.Common.Providers.Models;
 using Minicloud.Common.Services;
 using Minicloud.Common.Providers.Common;
@@ -131,6 +132,9 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                 {
                     throw new PipelineStepException(FailureCode, "Discovered server identity does not match this app; refusing deployment.");
                 }
+                if (client is IScalewayBootstrapDataClient scalewayBootstrap)
+                    await scalewayBootstrap.SetCloudInitDataAsync(found.Id,
+                        BuildCloudInit(orgSlug, appSlug, _options.SshPublicKey), cancellationToken);
                 if (context.ProviderAccountId is not null)
                 {
                     // A discovered resource is real even if readiness/SSH later
@@ -203,6 +207,10 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             throw;
         }
         catch (ProviderSshKeyException ex)
+        {
+            throw new PipelineStepException(ex.Code, ex.Message);
+        }
+        catch (ProviderCatalogException ex)
         {
             throw new PipelineStepException(ex.Code, ex.Message);
         }

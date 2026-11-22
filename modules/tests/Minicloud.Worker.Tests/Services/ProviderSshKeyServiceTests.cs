@@ -93,7 +93,7 @@ public sealed class ProviderSshKeyServiceTests
             db.Deployments.Add(deployment);
             await db.SaveChangesAsync();
 
-            var clientFactory = new ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!);
+            var clientFactory = new ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!);
             var service = new ProviderSshKeyService(db, clientFactory, new ControlPlaneAuthorization(db),
                 new IdGenerator(), TimeProvider.System);
 

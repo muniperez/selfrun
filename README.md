@@ -7,7 +7,7 @@ MiniCloud is a self-hosted platform for **application hosting and deployment**. 
 ## How MiniCloud works
 
 1. **Run your own instance.** Your MiniCloud dashboard and API run on a dedicated VPS. You and your agents connect the CLI to that instance to manage projects.
-2. **Bring your VPS provider.** Connect a Hetzner, DigitalOcean, or Vultr account. Choose a region and server size, save them as a named plan, and MiniCloud provisions machines in that account. Your provider bills you directly.
+2. **Bring your VPS provider.** Connect a Hetzner, DigitalOcean, or Vultr account. Choose a region and server size, save them as a named plan, and MiniCloud provisions machines in that account. Your provider bills you directly. Scaleway support is experimental, disabled by default, and not qualified for live deployments yet. [Provider setup and limitations](docs/providers.md#scaleway-experimental-live-qualification-required)
 3. **Use your own domains.** For example, host the dashboard at `cloud.example.com`, the API at `api.cloud.example.com`, and give public services addresses under `apps.example.com`. You can also attach a custom domain to an individual service.
 ![MiniCloud connects the browser and CLI to a self-hosted control plane, which deploys application services](docs/assets/minicloud-architecture.svg)
 
