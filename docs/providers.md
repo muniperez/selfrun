@@ -1,7 +1,7 @@
 # Providers and plans
 
 Each organization owns its provider accounts and named plans. You can connect
-multiple Hetzner, DigitalOcean, and Vultr accounts at the same time, including
+multiple Hetzner, DigitalOcean, Vultr, and Google Cloud accounts at the same time, including
 several accounts of one provider.
 
 CLI plan listing and app creation require an API key with `plans:read`.
@@ -14,8 +14,47 @@ provider credentials requires the separate `providers:write` operator scope.
 Open **Plans** in the dashboard and select **Provider accounts** (or **Add plan**
 and **Connect account**). Add an account name, select a supported
 provider, and enter its API credential. DigitalOcean accounts can also specify a
-project; Vultr accounts can specify an OS ID. Credentials are write-only and
+project; Vultr accounts can specify an OS ID. Google Cloud accounts require an
+explicit GCP project ID. Credentials are write-only and
 stored in OpenBao. An organization Owner or Admin manages accounts and plans.
+
+### Google Cloud Platform
+
+The GCP adapter uses the Compute Engine REST API with an explicit project
+boundary. The supported credential payload is a Google service-account JSON
+document or an external-account JSON document for Workload Identity Federation.
+Store the complete JSON as the provider credential; do not put it in YAML,
+environment manifests, or source control. A short-lived OAuth access token is
+accepted only by synthetic HTTP tests and is not a supported production setup.
+
+Grant the account only the permissions needed by the selected lifecycle. The
+minimum practical custom role includes `compute.instances.get`,
+`compute.instances.list`, `compute.instances.create`,
+`compute.instances.delete`, `compute.zoneOperations.get`, and
+`compute.subnetworks.use`; grant `compute.images.get` for images in another
+project and `compute.projects.get` if the installation probes project metadata.
+The default network and an ephemeral external IPv4 address are used for new
+instances. Boot disks are marked `autoDelete`; Minicloud does not create or
+retain standalone persistent disks, reserve static addresses, or create custom
+VPC networks.
+
+For a GCP plan, use a Compute Engine zone such as `us-central1-a`, a machine
+type such as `e2-micro`, and an image resource such as
+`debian-cloud/global/images/family/debian-12` (or a full
+`projects/.../global/images/...` URI). The image family must be readable by the
+project. GCP machine types and native architectures are validated by the
+Compute Engine API; no paid allocation or live quota is implied by catalog
+display. The adapter waits for insert/delete zone operations, discovers only
+an exact instance name in the configured project, and refuses to operate on an
+instance ID from another project or zone.
+
+GCP lifecycle support is currently experimental pending disposable live
+qualification. Before advertising it as production-supported, qualify amd64
+and any available arm64 machine types, bootstrap and redeploy readiness, quota
+rejection/reconciliation, deletion, and retained-volume behavior (the latter
+is intentionally unsupported). Google Cloud billing, quota availability,
+regional IP policy, image licensing, and API enablement remain operator
+responsibilities.
 
 The connection check uses read-only provider requests. It does not allocate a
 server or guarantee available quota. Accounts with identical provider types

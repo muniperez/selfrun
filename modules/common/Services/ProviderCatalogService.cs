@@ -233,7 +233,8 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
     }
     public static string? DefaultImage(CloudProvider type) => type switch
     {
-        CloudProvider.Hetzner => "ubuntu-24.04", CloudProvider.DigitalOcean => "ubuntu-24-04-x64", _ => null
+        CloudProvider.Hetzner => "ubuntu-24.04", CloudProvider.DigitalOcean => "ubuntu-24-04-x64",
+        CloudProvider.GoogleCloud => "debian-cloud/global/images/family/debian-12", _ => null
     };
 
     private static void ValidatePlacement(string region, string sku, string platform, string? image, CloudProvider provider)

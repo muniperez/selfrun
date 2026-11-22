@@ -15,6 +15,7 @@ using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Dns;
 using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Providers.Vultr;
+using Minicloud.Common.Providers.GoogleCloud;
 using Minicloud.Worker.Queue;
 using Minicloud.Worker.Ssh;
 using Minicloud.Worker.Storage;
@@ -125,6 +126,14 @@ builder.Services.PostConfigure<VultrOptions>(options =>
             ?? builder.Configuration["VULTR_KEY"]
             ?? string.Empty;
     }
+});
+
+builder.Services.PostConfigure<GoogleCloudOptions>(options =>
+{
+    if (string.IsNullOrWhiteSpace(options.CredentialJson))
+        options.CredentialJson = builder.Configuration["GOOGLE_APPLICATION_CREDENTIALS_JSON"] ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(options.ProjectId))
+        options.ProjectId = builder.Configuration["GOOGLE_CLOUD_PROJECT"] ?? builder.Configuration["GCLOUD_PROJECT"];
 });
 
 builder.Services.PostConfigure<CloudflareOptions>(options =>

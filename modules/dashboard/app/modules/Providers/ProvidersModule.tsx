@@ -100,6 +100,7 @@ function formatProviderName(type: string, types: ProviderType[]) {
   if (type === "hetzner") return "Hetzner";
   if (type === "digital-ocean") return "DigitalOcean";
   if (type === "vultr") return "Vultr";
+  if (type === "google-cloud") return "Google Cloud";
   return type;
 }
 
@@ -114,6 +115,7 @@ function regionExample(type: string) {
   if (type === "hetzner") return "nbg1";
   if (type === "digital-ocean") return "nyc3";
   if (type === "vultr") return "ewr";
+  if (type === "google-cloud") return "us-central1-a";
   return "nbg1";
 }
 
@@ -121,6 +123,7 @@ function skuExample(type: string) {
   if (type === "hetzner") return "cx23";
   if (type === "digital-ocean") return "s-1vcpu-1gb";
   if (type === "vultr") return "vc2-1c-1gb";
+  if (type === "google-cloud") return "e2-micro";
   return "cx23";
 }
 
