@@ -40,10 +40,25 @@ scope before running it.
    string, and set `OpenBao__Address`, `OpenBao__MountPath`,
    `OpenBao__EnvironmentPrefix`, `OpenBao__TokenFile` and, for the packaged
    private CA, `OpenBao__CaCertificateFile` to the corresponding trusted
-   deployment settings. Use a short-lived OpenBao token that can read the
-   recorded provider credential version and delete metadata only for the
-   target workspace VM generation paths. Do not pass an ad hoc Hetzner token.
-   The DB role needs appropriate read/write and table-lock privileges.
+   deployment settings. Mount an owner-readable file containing a short-lived,
+   restricted OpenBao operation token. Grant `read` only on the exact
+   `<mount>/data/<provider-credential-path>` (the command requests the recorded
+   version) and `delete` only on the exact
+   `<mount>/metadata/<workspace-integration-path>` entries for `bootstrap`,
+   `t3` and `connect` for this workspace's recorded start generations and any
+   current VM generation greater than zero. A check-only token needs no delete
+   permissions. Do not use a root token, a general service token or an ad hoc
+   Hetzner token. Revoke the operation token after the final check. The DB role
+   needs appropriate read/write and table-lock privileges.
+
+   HTTPS is the default. For the legacy HTTP install only, run the command
+   inside a short-lived operator container on the existing **private Docker
+   network** where `openbao` resolves to the trusted OpenBao service. Set
+   `OpenBao__Address` to exactly `http://openbao:8200` (no trailing slash),
+   omit `OpenBao__CaCertificateFile`, and append
+   `--allow-legacy-openbao-http` after the scope path on each invocation below.
+   HTTP is unencrypted; never use this flag from a public or untrusted network.
+   The HTTP exception disables both redirects and proxies.
 
    From the worktree root:
 

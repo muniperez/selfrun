@@ -6,9 +6,11 @@ using Minicloud.Common.Services;
 using Npgsql;
 using WorkspaceReconciliation;
 
-if (args.Length != 2 || args[0] is not ("--check" or "--apply-offline"))
+const string legacyHttpFlag = "--allow-legacy-openbao-http";
+if (args.Length is < 2 or > 3 || args[0] is not ("--check" or "--apply-offline")
+    || (args.Length == 3 && args[2] != legacyHttpFlag))
 {
-    Console.Error.WriteLine("Usage: WorkspaceReconciliation (--check | --apply-offline) PRIVATE_SCOPE.json");
+    Console.Error.WriteLine($"Usage: WorkspaceReconciliation (--check | --apply-offline) PRIVATE_SCOPE.json [{legacyHttpFlag}]");
     return 2;
 }
 
@@ -37,12 +39,7 @@ try
         CaCertificateFile = Environment.GetEnvironmentVariable("OpenBao__CaCertificateFile") ?? "",
         MountPath = Required("OpenBao__MountPath"), EnvironmentPrefix = Required("OpenBao__EnvironmentPrefix")
     };
-    if (!Uri.TryCreate(baoOptions.Address, UriKind.Absolute, out var baoUri) || baoUri.Scheme != "https"
-        || baoUri.UserInfo.Length != 0 || baoUri.Query.Length != 0 || baoUri.Fragment.Length != 0 || baoUri.AbsolutePath != "/")
-        throw new RecoveryRefused("OpenBao requires an explicit HTTPS origin.");
-
-    using var baoHandler = OpenBaoHttpHandler.Create(baoOptions);
-    if (baoHandler is SocketsHttpHandler sockets) sockets.AllowAutoRedirect = false;
+    using var baoHandler = OpenBaoEndpoint.CreateHandler(baoOptions, allowLegacyHttp: args.Length == 3);
     using var baoHttp = new HttpClient(baoHandler);
     var bao = new OpenBaoSecretStore(baoHttp, Options.Create(baoOptions));
     using var providerHttp = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
