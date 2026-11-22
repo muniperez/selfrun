@@ -49,6 +49,10 @@ jobs:
           age --version
       - name: Verify self-hosting initialization scripts
         run: python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -q
+      - name: Rehearse the retired-workspace PostgreSQL upgrade
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+        run: python3 -u scripts/self-hosting/test-workspace-upgrade.py
       - name: Run backend, worker, CLI and deployment integration tests
         run: dotnet test Minicloud.slnx --configuration Release -m:1
       - name: Publish and smoke-test the source-built CLI

@@ -34,6 +34,36 @@ API keys or CLI sessions. Rehearse the normal `api-migrate` path on a
 sanctioned copy of the existing instance database before activation; a
 disposable synthetic database rehearsal is not a substitute.
 
+## Upgrading from a workspace-bearing release
+
+The in-place PostgreSQL path is tested from `server-v0.0.1-rc.4`
+(`7502b06e5f8d378d61245075edbb7d9bc6944e52`). Before the maintenance window,
+export any workspace data you need using the old release. Stop all workspace
+VMs, wait for their cleanup, then permanently delete the workspaces using
+that release and verify that provider resources are gone. Stopped, failed,
+or deleting workspaces are not retired. Ensure no workspace-era processes can
+write to PostgreSQL when the target migrations run.
+
+Use the normal installer upgrade with verified assets for a **newer app-only
+release** containing the compatibility change. Its `api-migrate` service must
+use the target API image and that release's declared `applicationMigration`,
+not the old workspace-bearing image. The migrator recognizes the complete
+seven-entry workspace history only after retirement; it still rejects partial
+workspace history and all other unknown migrations. Do not edit EF history to
+bypass a refusal. If the history is incomplete, finish the migration with a
+compatible workspace-bearing release before retrying.
+
+The upgrade leaves application data, existing migration entries, and legacy
+workspace records and constraints in the same PostgreSQL database. Legacy
+tombstones can still restrict deletion of referenced organizations, provider
+accounts, or plans. Nothing is imported into Municode, and fresh app-only
+installs do not create workspace tables. The disposable rehearsal and its
+target selection are in `scripts/self-hosting/test-workspace-upgrade.py` and
+`scripts/self-hosting/workspace-upgrade.json` in the source checkout. Run it
+with .NET 10, Python 3.12+, and PostgreSQL 16 binaries (`PG_BIN` if needed).
+
+## Recovery
+
 Restore needs the exact release that created the backup, the original root
 path and the original configuration file. After a restore or transfer, an old
 host is revoked only when it next reaches this database. Shut down any old
