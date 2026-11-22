@@ -177,6 +177,8 @@ public sealed partial class SshDeployStep : IPipelineStep
             throw new PipelineStepException(FailureCode, $"SSH deployment to {context.ServerIp} failed: {ex.Message}", ex);
         }
 
+        await MarkStorageFilesystemsInitializedAsync(context, result.OutputLines, cancellationToken);
+
         if (result.ExitCode != 0 || !result.CompletionMarkerFound)
         {
             var failureCode = ResolveFailureCode(result.OutputLines);
@@ -477,7 +479,16 @@ public sealed partial class SshDeployStep : IPipelineStep
                 health_path = string.IsNullOrWhiteSpace(s.HealthPath) ? "/health" : s.HealthPath,
                 hosts = ResolveServiceHosts(context, s),
                 asset_mounts = assetMounts.GetValueOrDefault(s.Name, []),
-                storage_mounts = storageMounts.GetValueOrDefault(s.Name, []).Select(m => new { name = m.Name, volume_id = m.VolumeId, mount_path = m.MountPath, uid = m.Uid, gid = m.Gid }).ToArray(),
+                storage_mounts = storageMounts.GetValueOrDefault(s.Name, []).Select(m => new
+                {
+                    name = m.Name,
+                    volume_id = m.VolumeId,
+                    mount_path = m.MountPath,
+                    uid = m.Uid,
+                    gid = m.Gid,
+                    device_path = m.DevicePath,
+                    initialize_filesystem_if_blank = m.InitializeFilesystemIfBlank
+                }).ToArray(),
                 managed_database_binding = databaseBindings.ContainsKey(s.Name),
                 env = MergeEnvironment(MergeEnvironment(DeserializeEnv(s.EnvJson), resolvedSecrets.GetValueOrDefault(s.Name)), databaseBindings.GetValueOrDefault(s.Name)),
             })

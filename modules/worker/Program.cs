@@ -14,6 +14,7 @@ using Minicloud.Common.Providers;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Dns;
 using Minicloud.Common.Providers.Hetzner;
+using Minicloud.Common.Providers.Linode;
 using Minicloud.Common.Providers.Vultr;
 using Minicloud.Worker.Queue;
 using Minicloud.Worker.Ssh;
@@ -125,6 +126,14 @@ builder.Services.PostConfigure<VultrOptions>(options =>
             ?? builder.Configuration["VULTR_KEY"]
             ?? string.Empty;
     }
+});
+
+builder.Services.PostConfigure<LinodeOptions>(options =>
+{
+    if (string.IsNullOrWhiteSpace(options.ApiToken))
+        options.ApiToken = builder.Configuration["LINODE_API_TOKEN"]
+            ?? builder.Configuration["LINODE_TOKEN"]
+            ?? string.Empty;
 });
 
 builder.Services.PostConfigure<CloudflareOptions>(options =>

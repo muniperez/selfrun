@@ -4,6 +4,7 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Models;
 
 namespace Minicloud.Common.Services;
 
@@ -14,7 +15,7 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     {
         ValidateName(request.Name);
         if (!TryParseType(request.ProviderType, out var type))
-            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean or Vultr.");
+            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean, Vultr or Akamai Connected Cloud (Linode).");
         if (request.DefaultOsId is <= 0 || request.ProjectId is { Length: > 128 } || request.ProjectId?.Any(char.IsControl) == true)
             throw new ProviderCatalogException("provider_settings_invalid", "The provider account settings are invalid.");
         var now = clock.GetUtcNow();
@@ -162,8 +163,10 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         {
             if (stored.ProviderVolumeId is null) throw ScopeUnverified();
             var observed = await ((IStorageVolumeProvider)candidate).GetVolumeAsync(stored.ProviderVolumeId, ct);
-            if (observed is null || observed.Name != AppStorageService.VolumeName(stored.AppId, stored.Name)
-                || observed.Region != stored.Region || !observed.Labels.TryGetValue("app-id", out var appId) || appId != stored.AppId) throw ScopeUnverified();
+            var labels = AppStorageService.VolumeLabels(stored.AppId, stored.Name);
+            var labelsMatch = observed is not null && labels.All(x => observed.Labels.TryGetValue(x.Key, out var value) && value == x.Value);
+            var tagsMatch = observed?.Tags?.Contains(ProviderStorageVolume.OwnershipTag(labels), StringComparer.Ordinal) == true;
+            if (observed is null || observed.Region != stored.Region || (!labelsMatch && !tagsMatch)) throw ScopeUnverified();
         }
         if (await db.Deployments.AnyAsync(x => x.ProviderAccountId == account.Id && x.ProviderCreationAttempted
             && !db.ServerInstances.Any(s => s.ProviderAccountId == account.Id && s.AppId == x.AppId), ct)) throw ScopeUnverified();
@@ -199,10 +202,24 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
 
     public static bool TryParseType(string value, out CloudProvider type)
     {
-        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, _ => (CloudProvider)(-1) };
+        type = value?.ToLowerInvariant() switch
+        {
+            "hetzner" => CloudProvider.Hetzner,
+            "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean,
+            "vultr" => CloudProvider.Vultr,
+            "linode" or "akamai" or "akamai-connected-cloud" => CloudProvider.Linode,
+            _ => (CloudProvider)(-1)
+        };
         return Enum.IsDefined(type);
     }
-    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
+    public static string WireType(CloudProvider type) => type switch
+    {
+        CloudProvider.Hetzner => "hetzner",
+        CloudProvider.DigitalOcean => "digital-ocean",
+        CloudProvider.Vultr => "vultr",
+        CloudProvider.Linode => "linode",
+        _ => throw new ArgumentOutOfRangeException(nameof(type))
+    };
     private static string ServerName(string orgSlug, string appSlug) => ManagedServerName.ForApp(orgSlug, appSlug);
     private static ProviderCatalogException ScopeUnverified() => new("provider_scope_unverified", "Credentials could not be verified against all existing resources. Restore access to the original cloud scope before replacing credentials.");
     private static void ValidateName(string name)

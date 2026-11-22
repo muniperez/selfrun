@@ -1,8 +1,8 @@
 # Providers and plans
 
 Each organization owns its provider accounts and named plans. You can connect
-multiple Hetzner, DigitalOcean, and Vultr accounts at the same time, including
-several accounts of one provider.
+multiple Hetzner, DigitalOcean, Vultr, and Akamai Connected Cloud (Linode)
+accounts at the same time, including several accounts of one provider.
 
 CLI plan listing and app creation require an API key with `plans:read`.
 Existing keys do not gain new permissions automatically. Refresh an older CLI
@@ -14,12 +14,54 @@ provider credentials requires the separate `providers:write` operator scope.
 Open **Plans** in the dashboard and select **Provider accounts** (or **Add plan**
 and **Connect account**). Add an account name, select a supported
 provider, and enter its API credential. DigitalOcean accounts can also specify a
-project; Vultr accounts can specify an OS ID. Credentials are write-only and
-stored in OpenBao. An organization Owner or Admin manages accounts and plans.
+project; Vultr accounts can specify an OS ID. Linode uses an Akamai Cloud
+personal access token. Credentials are write-only and stored in OpenBao. An
+organization Owner or Admin manages accounts and plans.
 
 The connection check uses read-only provider requests. It does not allocate a
 server or guarantee available quota. Accounts with identical provider types
 remain independent entries with separate credentials and plans.
+
+### Akamai Connected Cloud (Linode)
+
+Use the `linode` provider type and a scoped, expiring personal access token.
+The read-only connection check lists Linodes and does not create resources; it
+requires the `linodes:read_only` token scope. Create-instance and delete-instance
+operations require the `linodes:read_write` token scope and the corresponding account permissions. If Minicloud manages
+provider SSH keys, listing requires `account:read_only` and registering a new
+key requires `account:read_write`. Creating instances and volumes also requires
+`tags:read_write`; Minicloud tags resources with an ownership marker and refuses
+to discover or mutate matching resources without it. Public region, type, and image catalogs do not
+need token access; private images additionally require `images:read_only`.
+
+For durable Block Storage, grant `volumes:read_write` and `linodes:read_write`
+plus the account's volume create/attach/resize permissions. Block volumes are
+created in the server's region, tagged with a Minicloud ownership marker, grown
+only, and retained after app/server deletion. Attached disks use Linode's
+provider-reported `/dev/disk/by-id/scsi-0Linode_Volume_<label>` path. Volume
+quota and attachment limits depend on account and Linode type; Minicloud does
+not preflight or rebalance quota.
+
+Plans use the exact Linode region ID (for example `us-east`), type ID (for
+example `g6-standard-1`), and image ID (for example `linode/ubuntu24.04`).
+Use the current [regions](https://techdocs.akamai.com/linode-api/reference/get-regions),
+[types](https://techdocs.akamai.com/linode-api/reference/get-linode-types), and
+[images](https://techdocs.akamai.com/linode-api/reference/get-images) catalogs;
+they change over time and type pricing can differ by region. Minicloud does not
+quote or guarantee pricing, instance/IP/storage quota, or image/type
+architecture compatibility. The Linode API's public image data includes
+architecture and cloud-init capabilities; choose an image compatible with the
+selected type and `linux/amd64` or `linux/arm64` build platform. This adapter has
+not been live-qualified for native arm64.
+
+Instances use Linode's assigned public IPv4 and IPv6 for SSH and public
+endpoints. Minicloud does not request private addresses or configure VPCs,
+firewalls, reserved IPs, or additional addresses. Linode restricts outbound SMTP ports 25, 465, and 587.
+All instance and Block Storage charges are billed by Akamai; review the current
+regional prices and quotas in Cloud Manager before enabling a plan. The
+implementation has synthetic API-contract coverage only; live provisioning,
+bootstrap/redeploy, first-use filesystem initialization, volume retention and
+deletion qualification remain outstanding.
 
 Add a plan in **Plans** and select an enabled provider account. Configure the
 provider's exact location (region code) and server type (SKU), and under
@@ -119,12 +161,13 @@ Add an account in the portal, or import an existing locally configured credentia
 without passing its value in a command argument:
 
 ```sh
-minicloud providers add --organization org_example --name "Original Hetzner" --provider hetzner
+minicloud providers add --organization org_example --name "Original Linode" --provider linode
 ```
 
 The command reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`,
-`DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`, or
-`VULTR_API_KEY`/`VULTR_KEY` from the operator process environment. Optional
+`DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`,
+`VULTR_API_KEY`/`VULTR_KEY`, or `LINODE_API_TOKEN`/`LINODE_TOKEN` from the
+operator process environment. Optional
 `--project-id` and `--os-id` are non-secret account settings. Do not put provider
 credentials in the manifest, source control, or ordinary workflow inputs.
 

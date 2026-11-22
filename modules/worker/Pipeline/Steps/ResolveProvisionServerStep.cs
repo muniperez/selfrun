@@ -178,7 +178,8 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                         ["env"] = "production",
                     },
                     [$"minicloud-customer-{orgSlug}", $"minicloud-app-{appSlug}", "minicloud-env-production"],
-                    Image: context.ProviderImage),
+                    Image: context.ProviderImage,
+                    SshPublicKey: _options.SshPublicKey),
                         cancellationToken);
                 }
                 catch (ProviderApiException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or

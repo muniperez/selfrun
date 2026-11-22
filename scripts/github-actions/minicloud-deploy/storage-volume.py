@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mount preformatted Hetzner volumes; never format, detach, or delete storage."""
+"""Mount provider volumes; initialize only provider-marked, new Linode disks."""
 import json
 import os
 from pathlib import Path
@@ -54,15 +54,34 @@ def prepare(mount, root=ROOT, fstab=Path('/etc/fstab'), command=run, wait=time.s
         raise ValueError('Invalid storage ownership')
     target = root / volume_id
     safe_directory(target)
-    device = Path('/dev/disk/by-id/scsi-0HC_Volume_' + volume_id)
+    device_path = mount.get('device_path')
+    if device_path is None:
+        device_path = '/dev/disk/by-id/scsi-0HC_Volume_' + volume_id
+    elif not re.fullmatch(r'/dev/disk/by-id/scsi-0Linode_Volume_[A-Za-z0-9_-]+', str(device_path)):
+        raise ValueError('Invalid provider block device path')
+    device = Path(device_path)
     for attempt in range(60):
         if block_device(device):
             break
         wait(1)
     else:
-        raise ValueError('Expected Hetzner block device is missing')
-    if command('blkid', '-s', 'TYPE', '-o', 'value', str(device)) != 'ext4':
-        raise ValueError('Storage must already contain ext4; refusing to format')
+        raise ValueError('Expected provider block device is missing')
+    filesystem = command('blkid', '-s', 'TYPE', '-o', 'value', str(device))
+    initialize_if_blank = mount.get('initialize_filesystem_if_blank') is True
+    if filesystem != 'ext4':
+        if filesystem or not initialize_if_blank or device_path is None:
+            raise ValueError('Storage must already contain ext4; refusing to format')
+        try:
+            command('findmnt', '--source', str(device))
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError('Refusing to format a mounted storage device')
+        command('mkfs.ext4', '-F', str(device))
+        if command('blkid', '-s', 'TYPE', '-o', 'value', str(device)) != 'ext4':
+            raise ValueError('Could not verify the new ext4 filesystem')
+    elif initialize_if_blank and device_path is None:
+        raise ValueError('Filesystem initialization is only allowed for a Linode device')
     uuid = command('blkid', '-s', 'UUID', '-o', 'value', str(device))
     if not re.fullmatch(r'[0-9a-fA-F-]{36}', uuid):
         raise ValueError('Invalid filesystem UUID')
@@ -99,6 +118,7 @@ def prepare(mount, root=ROOT, fstab=Path('/etc/fstab'), command=run, wait=time.s
     if not marker.exists():
         marker.write_text(json.dumps(expected))
         marker.chmod(0o600)
+    return initialize_if_blank
 
 
 def main(payload):
@@ -110,7 +130,8 @@ def main(payload):
                 raise ValueError('Shared storage ownership differs')
             mounts[identity] = mount
     for mount in mounts.values():
-        prepare(mount)
+        if prepare(mount):
+            print('__MINICLOUD_STORAGE_FORMATTED__=' + str(mount['volume_id']))
 
 
 if __name__ == '__main__':

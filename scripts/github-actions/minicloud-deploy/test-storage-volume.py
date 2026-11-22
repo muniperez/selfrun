@@ -31,6 +31,8 @@ class StorageTests(unittest.TestCase):
         self.calls.append(args)
         if args[0] == 'blkid':
             return self.fs if args[2] == 'TYPE' else '12345678-1234-1234-1234-123456789abc'
+        if args[0] == 'mkfs.ext4':
+            self.fs = 'ext4'
         if args[0] == 'findmnt':
             if not self.mounted:
                 raise subprocess.CalledProcessError(1, args)
@@ -59,6 +61,38 @@ class StorageTests(unittest.TestCase):
                             wait=lambda _: None, block_device=lambda _: False)
         self.assertFalse((self.root / '901/data').exists())
         self.assertEqual(self.calls, [])
+
+    def test_linodes_reported_device_path_is_used_and_validated(self):
+        self.mount['device_path'] = '/dev/disk/by-id/scsi-0Linode_Volume_mc-example'
+        self.device = self.mount['device_path']
+        self.source = self.device
+        self.prepare()
+        self.assertIn(('blkid', '-s', 'TYPE', '-o', 'value', self.device), self.calls)
+        self.mount['device_path'] = '/dev/disk/by-id/scsi-0Linode_Volume_../../etc'
+        with self.assertRaisesRegex(ValueError, 'Invalid provider block device path'):
+            self.prepare()
+
+    def test_only_provider_marked_new_linode_disks_are_formatted(self):
+        self.mount['device_path'] = '/dev/disk/by-id/scsi-0Linode_Volume_mc-example'
+        self.mount['initialize_filesystem_if_blank'] = True
+        self.device = self.mount['device_path']
+        self.source = self.device
+        self.fs = ''
+
+        self.prepare()
+
+        self.assertEqual(self.fs, 'ext4')
+        self.assertEqual(sum(call[0] == 'mkfs.ext4' for call in self.calls), 1)
+
+    def test_existing_unformatted_volumes_are_never_formatted(self):
+        self.mount['device_path'] = '/dev/disk/by-id/scsi-0Linode_Volume_mc-example'
+        self.device = self.mount['device_path']
+        self.fs = ''
+
+        with self.assertRaisesRegex(ValueError, 'refusing to format'):
+            self.prepare()
+
+        self.assertFalse(any(call[0] == 'mkfs.ext4' for call in self.calls))
 
     def test_wrong_filesystem_is_never_formatted(self):
         self.fs = 'xfs'

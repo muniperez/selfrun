@@ -5,6 +5,7 @@ using Minicloud.Common.Providers.Common;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Dns;
 using Minicloud.Common.Providers.Hetzner;
+using Minicloud.Common.Providers.Linode;
 using Minicloud.Common.Providers.Vultr;
 using System.Net.Http;
 
@@ -19,6 +20,7 @@ public static class ProviderServiceCollectionExtensions
         services.Configure<HetznerOptions>(configuration.GetSection(HetznerOptions.SectionName));
         services.Configure<DigitalOceanOptions>(configuration.GetSection(DigitalOceanOptions.SectionName));
         services.Configure<VultrOptions>(configuration.GetSection(VultrOptions.SectionName));
+        services.Configure<LinodeOptions>(configuration.GetSection(LinodeOptions.SectionName));
         services.Configure<CloudflareOptions>(configuration.GetSection(CloudflareOptions.SectionName));
 
         services.TryAddTransient<ResilientHttpRetryHandler>();
@@ -41,6 +43,11 @@ public static class ProviderServiceCollectionExtensions
             .AddHttpMessageHandler<ResilientHttpRetryHandler>();
         services.AddKeyedScoped<IVpsProviderClient, VultrClient>(CloudProvider.Vultr);
 
+        // Akamai Connected Cloud (Linode)
+        services.AddHttpClient<LinodeClient>()
+            .AddHttpMessageHandler<ResilientHttpRetryHandler>();
+        services.AddKeyedScoped<IVpsProviderClient, LinodeClient>(CloudProvider.Linode);
+
         services.AddHttpClient<ICustomDomainDnsResolver, CustomDomainDnsResolver>(http => http.Timeout = TimeSpan.FromSeconds(10));
         services.AddScoped<Minicloud.Common.Services.CustomDomainVerificationService>();
         services.AddScoped<Minicloud.Common.Services.CustomDomainRegistrationService>();
@@ -55,6 +62,7 @@ public static class ProviderServiceCollectionExtensions
             CloudProvider.Hetzner => sp.GetRequiredService<HetznerClient>(),
             CloudProvider.DigitalOcean => sp.GetRequiredService<DigitalOceanClient>(),
             CloudProvider.Vultr => sp.GetRequiredService<VultrClient>(),
+            CloudProvider.Linode => sp.GetRequiredService<LinodeClient>(),
             _ => throw new NotSupportedException($"VPS provider {provider} is not supported.")
         });
 

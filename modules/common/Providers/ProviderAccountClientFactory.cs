@@ -5,6 +5,7 @@ using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Hetzner;
+using Minicloud.Common.Providers.Linode;
 using Minicloud.Common.Providers.Vultr;
 using Minicloud.Common.Services;
 
@@ -15,7 +16,7 @@ namespace Minicloud.Common.Providers;
 public class ProviderAccountClientFactory(
     MinicloudDbContext db, ISecretStore secrets, IHttpClientFactory http,
     IOptions<HetznerOptions> hetzner, IOptions<DigitalOceanOptions> digitalOcean,
-    IOptions<VultrOptions> vultr, ILoggerFactory logs)
+    IOptions<VultrOptions> vultr, ILoggerFactory logs, IOptions<LinodeOptions>? linode = null)
 {
     public const string HttpClientName = "provider-accounts";
 
@@ -46,6 +47,8 @@ public class ProviderAccountClientFactory(
                 { ApiToken = credential, BaseUrl = digitalOcean.Value.BaseUrl, ProjectId = account.ProjectId }, logs.CreateLogger<DigitalOceanClient>()),
             CloudProvider.Vultr => new VultrClient(client, new VultrOptions
                 { ApiKey = credential, BaseUrl = vultr.Value.BaseUrl, DefaultOsId = account.DefaultOsId }, logs.CreateLogger<VultrClient>()),
+            CloudProvider.Linode => new LinodeClient(client, new LinodeOptions
+                { ApiToken = credential, BaseUrl = linode?.Value.BaseUrl ?? "https://api.linode.com/v4/" }, logs.CreateLogger<LinodeClient>()),
             _ => throw new ProviderCatalogException("provider_type_unsupported", "This VPS provider type is not supported.")
         };
     }

@@ -100,6 +100,7 @@ function formatProviderName(type: string, types: ProviderType[]) {
   if (type === "hetzner") return "Hetzner";
   if (type === "digital-ocean") return "DigitalOcean";
   if (type === "vultr") return "Vultr";
+  if (type === "linode") return "Akamai Connected Cloud (Linode)";
   return type;
 }
 
@@ -107,6 +108,7 @@ function providerShortMark(type: string) {
   if (type === "hetzner") return { text: "H", className: "bg-destructive/15 text-destructive" };
   if (type === "digital-ocean") return { text: "DO", className: "bg-info-surface text-info" };
   if (type === "vultr") return { text: "V", className: "bg-secondary text-foreground" };
+  if (type === "linode") return { text: "L", className: "bg-info-surface text-info" };
   return { text: type.slice(0, 1).toUpperCase() || "P", className: "bg-muted text-muted-foreground" };
 }
 
@@ -114,6 +116,7 @@ function regionExample(type: string) {
   if (type === "hetzner") return "nbg1";
   if (type === "digital-ocean") return "nyc3";
   if (type === "vultr") return "ewr";
+  if (type === "linode") return "us-east";
   return "nbg1";
 }
 
@@ -121,6 +124,7 @@ function skuExample(type: string) {
   if (type === "hetzner") return "cx23";
   if (type === "digital-ocean") return "s-1vcpu-1gb";
   if (type === "vultr") return "vc2-1c-1gb";
+  if (type === "linode") return "g6-standard-1";
   return "cx23";
 }
 
@@ -392,6 +396,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
           { value: "hetzner", label: "Hetzner" },
           { value: "digital-ocean", label: "DigitalOcean" },
           { value: "vultr", label: "Vultr" },
+          { value: "linode", label: "Akamai Connected Cloud (Linode)" },
         ];
     return knownTypes;
   }, [types]);
@@ -1215,7 +1220,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               }
             >
               {canManage
-                ? "Connect a Hetzner, DigitalOcean, or Vultr account to create named deployment plans."
+                ? "Connect a Hetzner, DigitalOcean, Vultr, or Akamai Connected Cloud account to create named deployment plans."
                 : "No provider accounts are configured yet. An organization owner or admin can connect provider accounts."}
             </EmptyState>
           ) : null}
@@ -1473,7 +1478,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                 <p>
                   {accounts.length > 0
                     ? "All configured provider accounts are currently disabled. Connect a new provider account or enable an existing account to create a plan."
-                    : "No provider accounts are connected to this organization yet. Connect a Hetzner, DigitalOcean, or Vultr account first."}
+                    : "No provider accounts are connected to this organization yet. Connect a Hetzner, DigitalOcean, Vultr, or Akamai Connected Cloud account first."}
                 </p>
               </div>
               <DialogFooter className="gap-2 sm:justify-end">
@@ -2162,6 +2167,7 @@ function AccountDialogForm({
         { type: "hetzner", name: "Hetzner", supportsStorage: true, defaultImage: "ubuntu-24.04" },
         { type: "digital-ocean", name: "DigitalOcean", supportsStorage: false, defaultImage: "ubuntu-24-04-x64" },
         { type: "vultr", name: "Vultr", supportsStorage: false, defaultImage: null, defaultOsId: 2284 },
+        { type: "linode", name: "Akamai Connected Cloud (Linode)", supportsStorage: true, defaultImage: "linode/ubuntu24.04" },
       ];
 
   const [name, setName] = useState(account?.name ?? "");
