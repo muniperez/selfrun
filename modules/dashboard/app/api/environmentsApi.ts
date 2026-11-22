@@ -124,23 +124,3 @@ export function verifyAppDomain(appId: string, domainId: string) {
 export function listAppStorage(appId: string, signal?: AbortSignal) {
   return apiRequest<import("../models/controlPlane").AppStorageVolume[]>(`/api/environments/${encodeURIComponent(appId)}/storage`, { signal });
 }
-
-export function listDevelopmentWorkspaces(organizationId: string, signal?: AbortSignal) {
-  return apiRequest<import("../models/controlPlane").DevelopmentWorkspace[]>(
-    `/api/development-workspaces?organizationId=${encodeURIComponent(organizationId)}`, { signal });
-}
-
-export function createDevelopmentWorkspace(request: {
-  organizationId: string; name: string; imageId: string; profile: string; planId: string;
-  volumeSizeGb: number; idempotencyKey: string; startPrimaryVm?: boolean;
-}) {
-  return apiRequest<import("../models/controlPlane").DevelopmentWorkspace>("/api/development-workspaces", {
-    method: "POST", body: request
-  });
-}
-
-export function mutateDevelopmentWorkspace(id: string, organizationId: string, action: "start" | "stop" | "cancel-idle-stop") {
-  return apiRequest<import("../models/controlPlane").DevelopmentWorkspace>(
-    `/api/development-workspaces/${encodeURIComponent(id)}/${action}?organizationId=${encodeURIComponent(organizationId)}`,
-    { method: "POST" });
-}

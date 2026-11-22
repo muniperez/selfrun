@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="480" viewBox="0 0 1120 480" role="img" aria-labelledby="title description">
   <title id="title">MiniCloud components and workflows</title>
-  <desc id="description">Operators and agents use the dashboard or CLI to reach the self-hosted control plane. The worker deploys app services to runtime servers and provisions separate coding VMs. Service users connect through HTTPS and developers connect through the Workspace Gateway.</desc>
+  <desc id="description">Operators and agents use the dashboard or CLI to reach the self-hosted control plane. The worker provisions runtime servers and deploys application services. Service users connect through HTTPS.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10Z" fill="#51637d"/>
@@ -35,25 +35,15 @@
   <text x="835" y="161" class="small">Operator identity</text>
   <path d="M263 92H313" class="connector"/>
 
-  <path d="M446 201V233H265V263" class="connector"/>
-  <path d="M446 201V233H834V263" class="connector"/>
-  <rect x="287" y="219" width="125" height="28" rx="5" fill="#fff"/>
-  <text x="299" y="239" class="small">Deploy services</text>
-  <rect x="601" y="219" width="162" height="28" rx="5" fill="#fff"/>
-  <text x="613" y="239" class="small">Provision workspace</text>
+  <path d="M446 201V263" class="connector"/>
+  <rect x="383" y="219" width="125" height="28" rx="5" fill="#fff"/>
+  <text x="395" y="239" class="small">Deploy services</text>
 
-  <rect x="40" y="265" width="490" height="125" rx="11" class="boundary"/>
-  <text x="61" y="302" class="heading">Application runtime VPS</text>
-  <text x="61" y="333" class="label">Docker runs public and private services</text>
-  <text x="61" y="360" class="small">Caddy routes public service domains over HTTPS</text>
+  <rect x="190" y="265" width="512" height="125" rx="11" class="boundary"/>
+  <text x="211" y="302" class="heading">Application runtime VPS</text>
+  <text x="211" y="333" class="label">Docker runs public and private services</text>
+  <text x="211" y="360" class="small">Caddy routes public service domains over HTTPS</text>
 
-  <rect x="590" y="265" width="490" height="125" rx="11" class="boundary"/>
-  <text x="611" y="302" class="heading">Coding workspace VM</text>
-  <text x="611" y="333" class="label">T3 Code, terminal and coding agents</text>
-  <text x="611" y="360" class="small">Retained primary workspace volume</text>
-
-  <path d="M265 423V392" class="connector"/>
-  <path d="M834 423V392" class="connector"/>
-  <text x="265" y="449" class="label" text-anchor="middle">App visitors connect over HTTPS</text>
-  <text x="834" y="449" class="label" text-anchor="middle">Developers connect through the Workspace Gateway</text>
+  <path d="M446 423V392" class="connector"/>
+  <text x="446" y="449" class="label" text-anchor="middle">App visitors connect over HTTPS</text>
 </svg>

@@ -164,16 +164,6 @@ public sealed class MaintenanceAuthorityService(MinicloudDbContext db, TimeProvi
              !completedTargets.Any(c => c.DatabaseId == x.DatabaseId && c.ServerId == x.ServerId && c.UpdatedAt > x.UpdatedAt)))
             .Select(x => x.Id), true);
 
-        var workspaceOperations = await db.DevelopmentWorkspaceOperations.AsNoTracking()
-            .Where(x => x.Status == "pending" || x.Status == "running" || x.Status == "blocked")
-            .Select(x => new { x.Id, x.Status, x.LeaseExpiresAt }).ToListAsync(ct);
-        Add(work, "development_workspace_operations", "queued", workspaceOperations.Where(x => x.Status == "pending").Select(x => x.Id), true);
-        Add(work, "development_workspace_operations", "leased", workspaceOperations.Where(x => x.Status == "running" && x.LeaseExpiresAt > now).Select(x => x.Id), true);
-        Add(work, "development_workspace_operations", "uncertain", workspaceOperations.Where(x =>
-            x.Status == "blocked" || x.Status == "running" && (x.LeaseExpiresAt is null || x.LeaseExpiresAt <= now)).Select(x => x.Id), true);
-        Add(work, "development_workspace_starts", "queued", await db.DevelopmentWorkspaceVms.AsNoTracking()
-            .Where(x => x.StartAfterStop).Select(x => x.Id).ToListAsync(ct), true);
-
         var deletions = await db.Apps.AsNoTracking()
             .Where(x => x.DeletionStatus == "queued" || x.DeletionStatus == "preparing")
             .Select(x => new { x.Id, x.DeletionStatus }).ToListAsync(ct);

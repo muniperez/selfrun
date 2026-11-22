@@ -273,11 +273,11 @@ opt in; a different appropriately scoped credential can be supplied:
 
 ```sh
 minicloud seed register-provider <operation> --register-provider \
-  --organization <workspace-id> --provider-name <name> \
+  --organization <organization-id> --provider-name <name> \
   --credential-file <protected-local-file>
 ```
 
-This performs ordinary browser-consent login and checks the existing workspace
+This performs ordinary browser-consent login and checks the existing organization
 authorization policy through authenticated `GET /api/providers/permissions`.
 Default browser-login scopes intentionally **do not** include provider
 management, so use the existing dashboard flow, or explicitly select an

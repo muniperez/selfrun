@@ -181,22 +181,6 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "canonical"):
             self.package()
 
-    def test_optional_workspace_assets_are_included_and_hashed_without_changing_default_images(self):
-        source = Path(__file__).resolve().parents[2] / "packaging/server/bundle"
-        names = ("compose.workspaces.yml", "Caddyfile.workspaces",
-                 "development-workspaces.example.json", "development-workspaces.md")
-        for name in names:
-            (self.payload / name).write_bytes((source / name).read_bytes())
-
-        manifest = self.package()
-
-        with tarfile.open(self.output / manifest["bundle"]["name"]) as archive:
-            for name in names:
-                data = archive.extractfile(name).read()
-                self.assertEqual((source / name).read_bytes(), data)
-                self.assertEqual(release.sha256(data), manifest["files"][name])
-        self.assertEqual(set(release.COMPONENTS), set(manifest["images"]))
-
     def test_current_payload_packages_email_recovery_in_signed_inventory_without_new_images(self):
         root = Path(__file__).resolve().parents[2]
         config = root / "packaging/server/release.json"

@@ -163,30 +163,6 @@ independent random values:
   `host-pins` line is `<host> SHA256:<fingerprint>`, and the worker refuses
   unpinned hosts.
 
-### Coding workspace idle timeout
-
-Upgrade the database and roll out the API and workspace worker together before
-reopening workspace operations. Existing and new workspaces without a saved
-override inherit the operator's `DevelopmentWorkspaces:IdleGraceMinutes`
-(`DevelopmentWorkspaces__IdleGraceMinutes` in the API and worker environment).
-Configure the same value in both services. Keep a deliberate override (including
-30 minutes) to preserve that behavior; otherwise omit it to use 360 minutes
-(6 hours). The migration leaves existing rows unset rather than writing a new
-value over them. Existing positive operator values are preserved as defaults,
-even outside the supported user range of 1–10,080 whole minutes.
-
-A saved workspace override takes precedence over that operator default for both
-primary and ephemeral VMs. Resetting the setting restores inheritance. See the
-[API contract](api.md#development-workspace-idle-timeout) for countdown and cost
-behavior.
-
-Users can also choose **Keep running** per dev environment, which turns
-automatic idle stop off; manual stop and VM concurrency limits and provider
-quotas still apply. Projected costs are informational: the former
-`MaxEstimatedMonthlySpend` and `MaxEstimatedMonthlySpendPerOrganization`
-settings are ignored if still present and can be removed. The additive `keep_running` column defaults existing rows to
-idle stop. Roll it out with the API and worker together like the idle timeout.
-
 ### Dashboard sign-in sessions
 
 Dashboard sessions end after an inactivity timeout or an absolute lifetime,
@@ -298,7 +274,7 @@ The prior disposable Kratos v1.3.1 checks are not a live Google qualification.
 
 ### Optional operator diagnostics
 
-The API, worker, telemetry service and workspace gateway default to
+The API, worker and telemetry service default to
 `OperatorDiagnostics__Enabled=false`. To opt in on each process, set it to
 `true` and configure a private OTLP collector with the standard
 `OTEL_EXPORTER_OTLP_ENDPOINT` and, if needed, `OTEL_EXPORTER_OTLP_PROTOCOL`.
@@ -365,8 +341,9 @@ disabled as described in the gateway README.
    owners and elevated/inherited service-role privileges before creating state.
 2. `kratos-migrate` and `api-migrate` run once, then exit. `api-migrate` holds a
    PostgreSQL advisory lock, so concurrent runs serialize. It refuses a
-   populated database that has no Minicloud migration history, and a database
-   migrated by a newer release.
+   populated database that has no Minicloud migration history or has unknown
+   migrations. The only exception is the complete, recognized history of
+   [permanently retired workspaces](../packaging/server/bundle/upgrade-prerequisites.md#retire-workspaces-before-upgrading-in-place).
 3. `kratos`, `api`, `worker`, `dashboard` and `caddy` start after their
    dependencies are healthy or complete. They start in that order.
 

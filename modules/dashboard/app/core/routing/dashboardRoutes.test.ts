@@ -9,10 +9,9 @@ describe("dashboardRoutes", () => {
   });
 
   it("exposes primary navigation routes", () => {
-    expect(navigationRoutes.map((route) => route.key)).toEqual(["apps", "databases", "workspaces", "plans", "deployments"]);
+    expect(navigationRoutes.map((route) => route.key)).toEqual(["apps", "databases", "plans", "deployments"]);
     expect(dashboardRoutes.databases.path).toBe("/databases");
     expect(dashboardRoutes.plans.path).toBe("/plans");
     expect(dashboardRoutes.providerAccounts.path).toBe("/plans/accounts");
-    expect(buildDashboardPath(dashboardRoutes.workspaceDetail, { workspaceId: "workspace 1" })).toBe("/workspaces/workspace%201");
   });
 });

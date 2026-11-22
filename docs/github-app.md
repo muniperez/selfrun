@@ -1,6 +1,6 @@
 # Connect your own GitHub App
 
-An organization owner or administrator can open **GitHub** in workspace
+An organization owner or administrator can open **GitHub** in organization
 administration and select **Set up GitHub**. Alternatively:
 
 ```sh
@@ -42,30 +42,6 @@ mandatory Metadata read. It does not request Issues or Workflows permissions.
 Installation lifecycle webhooks are delivered automatically by GitHub.
 No Marketplace publication, central credential service or hand-copied private
 key, client secret, webhook secret or environment variable is needed.
-
-Development workspaces can use this connection only when an operator explicitly
-selects its connection ID as `GitHubConnectionId` in the exact organization's
-`DevelopmentWorkspaces:Repositories` push policy. The repository must be a
-canonical `https://github.com/owner/repository.git` URL and remain accessible in
-the connected installation. Git access receives a freshly verified, single
-repository Contents-write token expiring within one hour; the App key and
-installation-wide credentials never enter the workspace. Do not configure
-`Credential` alongside `GitHubConnectionId`; the latter is renewable authority,
-not a stored token, so it does not require `CredentialExpiresAt`.
-Disconnecting or removing repository access stops renewal. Existing tokens may
-remain valid until GitHub revokes them or their returned expiry. This does not
-authenticate `gh`, Codex or Claude accounts.
-
-Workspace token rotation reads the current credential through pinned SSH/SFTP
-and revokes it with GitHub's `DELETE /installation/token` before replacing it.
-Failed rotation also attempts to revoke the newly issued token. Teardown revokes
-the final token after the last Git receipt validation and durably records that
-confirmation before committing compute deletion. Revocation failures retain
-compute and its reservation; only GitHub success or an unauthorized response
-(expired/already revoked) confirms retirement. Tokens stay in memory and the
-workspace's `/run/minicloud-git/credential.json`, never operation evidence or logs.
-Externally supplied OpenBao credentials have no provider-revocation integration:
-their rotation/teardown cannot claim revocation and fails closed.
 
 ## Status, recovery and credential rotation
 

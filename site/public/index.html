@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Self-hosted agentic coding and app hosting. Start Linux VMs for coding agents and deploy Docker services in your cloud account.">
-  <title>MiniCloud | Self-hosted agentic coding and app hosting</title>
+  <meta name="description" content="Self-hosted application hosting. Deploy and manage Docker services in your own cloud account.">
+  <title>MiniCloud | Self-hosted application hosting</title>
   <link rel="icon" href="./mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
 </head>
@@ -13,7 +13,6 @@
   <header class="frame header">
     <a class="brand" href="./"><img src="./mark.svg" alt="" width="30" height="30">MiniCloud</a>
     <nav aria-label="Main">
-      <a href="#coding">Coding VMs</a>
       <a href="#deployments">Deployments</a>
       <a href="#setup">Setup</a>
       <a href="https://github.com/muniventures/minicloud">GitHub</a>
@@ -22,24 +21,12 @@
 
   <main class="frame" id="main">
     <section class="hero" aria-labelledby="headline">
-      <h1 id="headline">MiniCloud runs coding agents and hosts apps on your servers</h1>
-      <p>Work on a Git repository with Codex or Claude Code in a Linux VM you control. You or your agent can use the MiniCloud CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
+      <h1 id="headline">MiniCloud hosts apps on your servers</h1>
+      <p>Use the MiniCloud CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
       <div class="actions">
         <a class="primary" href="#setup">Set up MiniCloud</a>
         <a class="secondary" href="https://github.com/muniventures/minicloud">View source on GitHub</a>
       </div>
-    </section>
-
-    <section class="feature" id="coding" aria-labelledby="coding-title">
-      <div>
-        <h2 id="coding-title">Run coding agents on a Linux VM</h2>
-        <p>Enable <strong>Dev Environments</strong> to start coding VMs. Open T3 Code, the browser interface for the agent and terminal running on the VM. Clone a repo and run your tests. VM images can include Codex, Claude Code, or GitHub Copilot CLI. Use your own account to sign in to the agent.</p>
-        <p>Stop the VM and resume later with your repo and T3 sessions on its disk. To open a development preview in your browser, ask your administrator to register the service and its port in the workspace configuration.</p>
-        <a href="#first-workspace">Start a coding VM</a>
-      </div>
-      <figure>
-        <a href="./media/coding-workspace.png"><img src="./media/coding-workspace.png" width="1679" height="1020" alt="MiniCloud dashboard showing a running VM, the Connect to T3 and Open preview buttons, and CPU usage" loading="lazy"></a>
-      </figure>
     </section>
 
     <section class="feature" id="deployments" aria-labelledby="deployments-title">
@@ -56,7 +43,7 @@
 
     <section class="section" id="setup" aria-labelledby="setup-title">
       <h2 id="setup-title">Set up MiniCloud</h2>
-      <p class="intro">A <strong>MiniCloud instance</strong> is your installation of MiniCloud. Its dashboard, API, container registry, and deployment worker run together on one virtual private server (VPS). It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for coding and app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
+      <p class="intro">A <strong>MiniCloud instance</strong> is your installation of MiniCloud. Its dashboard, API, container registry, and deployment worker run together on one virtual private server (VPS). It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
       <p class="intro">If someone already runs MiniCloud for your team, get the dashboard address and sign-in details from them and <a href="#cli-login">sign in from your terminal</a>.</p>
 
       <ol class="setup-list">
@@ -112,20 +99,14 @@ minicloud login</code></pre>
           <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#status-logs-and-apps">Deployment status and runtime logs</a></p>
         </li>
 
-        <li id="first-workspace">
-          <h3>Start a coding VM</h3>
-          <p>The person who runs MiniCloud must <a href="https://github.com/muniventures/minicloud/blob/main/packaging/server/bundle/development-workspaces.md">enable Dev Environments</a> and configure a qualified provider image, a plan, and the workspace gateway. Then open <strong>Dev Environments → Create dev environment</strong>, choose a size and location, and create it.</p>
-          <p>When the VM is running, choose <strong>Connect to T3 → Open T3</strong>. In T3, sign in to your agent under <strong>Settings → Providers</strong> and open a project. Stop the VM from the dashboard when you're done. Retained disks still incur storage charges.</p>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/first-workspace.md">Create a workspace, open a preview, and set idle shutdown</a></p>
-        </li>
       </ol>
     </section>
 
     <section class="section" id="architecture" aria-labelledby="architecture-title">
       <h2 id="architecture-title">What runs on each server</h2>
-      <p class="intro">The instance VPS hosts the dashboard, API, registry, and worker. PostgreSQL stores control-plane state, and OpenBao stores secrets. An app VPS runs your containers. A separate coding VM runs T3 Code and the agents on its image. The workspace gateway routes browser sessions to that VM. OpenTelemetry log ingestion is optional.</p>
+      <p class="intro">The instance VPS hosts the dashboard, API, registry, and worker. PostgreSQL stores control-plane state, and OpenBao stores secrets. A separate app VPS runs your containers. OpenTelemetry log ingestion is optional.</p>
       <figure class="diagram">
-        <a href="./media/minicloud-architecture.svg"><img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI call the MiniCloud API on the control plane. The worker deploys Docker services to app servers and provisions coding VMs, which developers reach through the workspace gateway." width="1120" height="480" loading="lazy"></a>
+        <a href="./media/minicloud-architecture.svg"><img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI call the MiniCloud API on the control plane. The worker deploys Docker services to app servers." width="1120" height="480" loading="lazy"></a>
       </figure>
       <ul class="projects" aria-label="Open-source components">
         <li><a href="https://www.postgresql.org/"><img src="./media/postgresql.svg" alt="" width="28" height="28">PostgreSQL</a></li>

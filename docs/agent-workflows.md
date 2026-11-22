@@ -1,6 +1,6 @@
 # Deploy and validate with a coding agent
 
-Give the agent a target, a change to make, and a way to tell whether it worked. The same workflow works from an agentic cloud coding environment or a local checkout with the MiniCloud CLI.
+Give the agent a target, a change to make, and a way to tell whether it worked. The same workflow works from an agent-enabled development environment or a local checkout with the MiniCloud CLI.
 
 ## Prepare the project once
 
@@ -21,7 +21,7 @@ Supply the actual environment name, test fixture, and expected result with the t
 
 ## Deploy and check the result
 
-In these examples, set `TARGET_ENV` to your chosen environment. Run the project's tests, then deploy from the checkout containing the changes. For a standard workspace image, build on the server:
+In these examples, set `TARGET_ENV` to your chosen environment. Run the project's tests, then deploy from the checkout containing the changes. To build on the server:
 
 ```sh
 minicloud deploy --environment "$TARGET_ENV" --build-mode source

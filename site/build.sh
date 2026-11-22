@@ -13,7 +13,6 @@ assets=(
     projects/openbao.svg
     projects/opentelemetry.svg
     projects/postgresql.svg
-    screenshots/coding-workspace.png
     screenshots/services.png
 )
 for asset in "${assets[@]}"; do

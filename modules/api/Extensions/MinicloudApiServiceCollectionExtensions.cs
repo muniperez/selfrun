@@ -137,8 +137,6 @@ public static class MinicloudApiServiceCollectionExtensions
         services.AddScoped<ProviderAccountService>();
         services.AddScoped<ProviderCatalogService>();
         services.Configure<ProviderCatalogOptions>(configuration.GetSection("Providers"));
-        services.Configure<DevelopmentWorkspaceOptions>(configuration.GetSection(DevelopmentWorkspaceOptions.SectionName));
-        services.AddScoped<DevelopmentWorkspaceService>();
         services.AddScoped<ProviderLegacyImportService>();
         services.AddScoped<IRuntimeTokenService, RuntimeTokenService>();
         services.AddHttpClient<IKratosSessionValidator, KratosSessionValidator>(client =>
