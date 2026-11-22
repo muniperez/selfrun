@@ -73,6 +73,10 @@ accounts, or plans. Nothing is imported into Municode. The disposable rehearsal
 and its target selection are in `scripts/self-hosting/test-workspace-upgrade.py` and
 `scripts/self-hosting/workspace-upgrade.json` in the source checkout. Run it
 with .NET 10, Python 3.12+, and PostgreSQL 16 binaries (`PG_BIN` if needed).
+The rehearsal compares PostgreSQL dumps before and after the migration and
+its replay. API startup runs on a disposable clone so normal maintenance
+registration cannot change the database being compared. Any mismatch leaves
+a unified diff of synthetic data in `.local/artifacts/workspace-upgrade-diffs/`.
 
 ## Recovery
 

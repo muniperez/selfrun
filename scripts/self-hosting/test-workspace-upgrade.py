@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Rehearse the workspace extraction against a private, synthetic PostgreSQL cluster."""
 
+from difflib import unified_diff
 import http.client
 import json
 import os
 from pathlib import Path
 import secrets
-import shutil
 import socket
 import subprocess
 import tarfile
@@ -85,6 +85,18 @@ class Postgres:
         dump = self.command("pg_dump", database, "--no-owner", "--no-privileges")
         return [line for line in dump.splitlines() if not line.startswith(("\\restrict ", "\\unrestrict "))]
 
+    def assert_preserved(self, database, before, message):
+        after = self.snapshot(database)
+        if after != before:
+            diff = "\n".join(unified_diff(before, after, f"{database}/before.sql", f"{database}/after.sql",
+                                          lineterm="")) + "\n"
+            evidence = self.path.parent / "workspace-upgrade-diffs"
+            evidence.mkdir(exist_ok=True)
+            path = evidence / f"{self.path.name}-{database}.diff"
+            path.write_text(diff, encoding="utf-8")
+            print(diff, end="", flush=True)
+            raise AssertionError(f"{message}; synthetic dump diff: {path}")
+
     def api_env(self, database):
         return {
             key: os.environ[key] for key in ("PATH", "DOTNET_ROOT", "LD_LIBRARY_PATH") if key in os.environ
@@ -110,7 +122,11 @@ class Postgres:
         else:
             assert result.returncode != 0 and error in result.stderr, result.stdout + result.stderr
 
-    def check_api(self, api, database):
+    def check_api_on_clone(self, api, source):
+        # Startup writes a maintenance participant row. Exercise that write without
+        # letting it race the migration-only comparison on the source fixture.
+        database = f"{source}_api"
+        self.sql("postgres", f"CREATE DATABASE {database} TEMPLATE {source}")
         port = loopback_port()
         with tempfile.TemporaryFile(mode="w+", dir=self.path) as log:
             with subprocess.Popen(["dotnet", api], cwd=api.parent, stdout=log, stderr=log,
@@ -121,7 +137,9 @@ class Postgres:
                         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
                         try:
                             connection.request("GET", "/health")
-                            if connection.getresponse().status == 200:
+                            if connection.getresponse().status == 200 and self.sql(database, """
+                                SELECT EXISTS (SELECT 1 FROM maintenance_participants WHERE role = 'api')
+                                """) == "t":
                                 return
                         except OSError:
                             pass
@@ -153,14 +171,17 @@ def rehearse(pg, legacy_api, target_api):
     before = pg.snapshot("upgraded")
 
     pg.migrate(target_api, "upgraded", command)
-    pg.check_api(target_api, "upgraded")
+    pg.assert_preserved("upgraded", before, "Upgrade changed schema, rows, sequences or migration history")
+    pg.check_api_on_clone(target_api, "upgraded")
     pg.migrate(target_api, "upgraded", command)
-    assert pg.snapshot("upgraded") == before, "Upgrade changed schema, rows or migration history"
-    print("PASS: retired-workspace upgrade, API health, replay and full database preservation")
+    pg.assert_preserved("upgraded", before, "Upgrade replay changed schema, rows, sequences or migration history")
+    print("PASS: retired-workspace upgrade, API health and registration on a clone, replay and full database preservation")
 
     pg.migrate(target_api, "fresh", command)
-    pg.check_api(target_api, "fresh")
+    before = pg.snapshot("fresh")
+    pg.check_api_on_clone(target_api, "fresh")
     pg.migrate(target_api, "fresh", command)
+    pg.assert_preserved("fresh", before, "Fresh replay changed schema, rows, sequences or migration history")
     fresh_history = pg.sql("fresh", HISTORY).splitlines()
     assert fresh_history[-1] == latest, f"{target['migrationService']} did not apply {latest}"
     assert pg.sql("fresh", """
@@ -168,7 +189,7 @@ def rehearse(pg, legacy_api, target_api):
             OR EXISTS (SELECT 1 FROM pg_proc WHERE proname ~ '^development_workspace')
         """) == "f", "Fresh target created legacy workspace objects"
     assert len(set(legacy_history) - set(fresh_history)) == 7
-    print(f"PASS: fresh app-only migration to {latest}, API health and replay")
+    print(f"PASS: fresh app-only migration to {latest}, API health and registration on a clone, and replay")
 
     # Guard probes intentionally corrupt only the disposable fixture, never an existing installation.
     pg.sql("postgres", "CREATE DATABASE active TEMPLATE upgraded")
@@ -192,7 +213,7 @@ def rehearse(pg, legacy_api, target_api):
         pg.migrate(target_api, db, command, error=error)
         if db == "upgraded":
             pg.migrate(target_api, db, None, error=error)
-        assert pg.snapshot(db) == before, f"Rejected database {db} was changed"
+        pg.assert_preserved(db, before, f"Rejected database {db} was changed")
         print(f"PASS: rejected {db} guard probe without mutation ({error})")
 
 
