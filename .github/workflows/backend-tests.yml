@@ -60,9 +60,18 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-16 postgresql-client-16
       - name: Rehearse the retired-workspace PostgreSQL upgrade
+        id: workspace-upgrade
         env:
           PG_BIN: /usr/lib/postgresql/16/bin
         run: python3 -u scripts/self-hosting/test-workspace-upgrade.py
+      - name: Preserve synthetic upgrade dump diffs
+        if: failure() && steps.workspace-upgrade.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workspace-upgrade-diffs
+          path: .local/artifacts/workspace-upgrade-diffs/*.diff
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Run backend, worker, CLI and deployment integration tests
         run: dotnet test Minicloud.slnx --configuration Release -m:1
       - name: Publish and smoke-test the source-built CLI
