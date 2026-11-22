@@ -45,14 +45,15 @@ public sealed partial class CliApplication
         var organizationId = GetOption(args, "--organization");
         var name = GetOption(args, "--name");
         var provider = GetOption(args, "--provider")?.ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr"))
-            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr.");
+        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr" or "aws"))
+            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr|aws.");
         if (args.Any(x => x.StartsWith("--token", StringComparison.Ordinal) || x.StartsWith("--credential", StringComparison.Ordinal) || x.StartsWith("--api-key", StringComparison.Ordinal)))
             throw new CliCommandException(CliExitCodes.ValidationError, "Cloud credentials must be supplied through provider environment variables, never command arguments.");
         var credential = provider switch
         {
             "hetzner" => FirstEnvironmentValue("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
             "vultr" => FirstEnvironmentValue("VULTR_API_KEY", "VULTR_KEY"),
+            "aws" => AwsCredentialFromEnvironment(),
             _ => FirstEnvironmentValue("DIGITALOCEAN_ACCESS_TOKEN", "DIGITALOCEAN_TOKEN")
         };
         if (credential is null)
@@ -60,8 +61,15 @@ public sealed partial class CliApplication
             {
                 "hetzner" => "Set HCLOUD_TOKEN or HETZNER_API_TOKEN before adding this account.",
                 "vultr" => "Set VULTR_API_KEY or VULTR_KEY before adding this account.",
+                "aws" => "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY before adding this account.",
                 _ => "Set DIGITALOCEAN_ACCESS_TOKEN or DIGITALOCEAN_TOKEN before adding this account."
             });
+        var awsRegion = GetOption(args, "--region");
+        var awsSubnet = GetOption(args, "--subnet-id");
+        var awsSecurityGroup = GetOption(args, "--security-group-id");
+        if (provider == "aws" && (string.IsNullOrWhiteSpace(awsRegion) || string.IsNullOrWhiteSpace(awsSubnet) || string.IsNullOrWhiteSpace(awsSecurityGroup)))
+            throw new CliCommandException(CliExitCodes.ValidationError,
+                "AWS accounts require --region, --subnet-id and --security-group-id. The subnet must be public and in the selected region.");
         var osValue = GetOption(args, "--os-id");
         if (args.Any(x => x == "--os-id" || x.StartsWith("--os-id=", StringComparison.Ordinal)) && string.IsNullOrWhiteSpace(osValue))
             throw new CliCommandException(CliExitCodes.ValidationError, "--os-id requires a positive integer.");
@@ -73,7 +81,8 @@ public sealed partial class CliApplication
             osId = parsed;
         }
         var account = await _apiClient.CreateProviderAsync(new(organizationId, name, provider == "digitalocean" ? "digital-ocean" : provider,
-            credential, GetOption(args, "--project-id") ?? (provider is "digital-ocean" or "digitalocean" ? FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID") : null), osId), ct);
+            credential, GetOption(args, "--project-id") ?? (provider is "digital-ocean" or "digitalocean" ? FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID") : null),
+            osId, awsRegion, awsSubnet, awsSecurityGroup), ct);
         _console.WriteLine($"Provider added: {account.Name} ({account.Id}, {account.ProviderType}).");
         return CliExitCodes.Success;
     }
@@ -126,4 +135,18 @@ public sealed partial class CliApplication
         && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString());
 
     private static string? FirstEnvironmentValue(params string[] names) => names.Select(Environment.GetEnvironmentVariable).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+    private static string? AwsCredentialFromEnvironment()
+    {
+        var accessKeyId = FirstEnvironmentValue("AWS_ACCESS_KEY_ID");
+        var secretAccessKey = FirstEnvironmentValue("AWS_SECRET_ACCESS_KEY");
+        if (accessKeyId is null || secretAccessKey is null) return null;
+        var sessionToken = FirstEnvironmentValue("AWS_SESSION_TOKEN");
+        return JsonSerializer.Serialize(new
+        {
+            accessKeyId,
+            secretAccessKey,
+            sessionToken
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
 }

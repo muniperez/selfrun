@@ -4,6 +4,7 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Aws;
 
 namespace Minicloud.Common.Services;
 
@@ -14,19 +15,31 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     {
         ValidateName(request.Name);
         if (!TryParseType(request.ProviderType, out var type))
-            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean or Vultr.");
+            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean, Vultr or AWS.");
         if (request.DefaultOsId is <= 0 || request.ProjectId is { Length: > 128 } || request.ProjectId?.Any(char.IsControl) == true)
             throw new ProviderCatalogException("provider_settings_invalid", "The provider account settings are invalid.");
+        if (type == CloudProvider.Aws)
+        {
+            if (!AwsVpsProviderClient.IsRegion(request.AwsRegion ?? "")
+                || !AwsVpsProviderClient.IsSubnetId(request.AwsSubnetId ?? "")
+                || !AwsVpsProviderClient.IsSecurityGroupId(request.AwsSecurityGroupId ?? ""))
+                throw new ProviderCatalogException("provider_settings_invalid", "AWS accounts require a valid region, subnet ID and security group ID.");
+        }
+        else if (request.AwsRegion is not null || request.AwsSubnetId is not null || request.AwsSecurityGroupId is not null)
+            throw new ProviderCatalogException("provider_settings_invalid", "AWS network settings are only valid for AWS accounts.");
         var now = clock.GetUtcNow();
         var account = new ProviderAccount
         {
             Id = ids.NewId("provider"), OrganizationId = request.OrganizationId, Name = request.Name.Trim(), ProviderType = type,
             ProjectId = request.ProjectId, DefaultOsId = request.DefaultOsId ?? (type == CloudProvider.Vultr ? 2284 : null),
+            AwsRegion = request.AwsRegion, AwsSubnetId = request.AwsSubnetId, AwsSecurityGroupId = request.AwsSecurityGroupId,
             CreatedAt = now, UpdatedAt = now
         };
         var reference = await WriteCandidateAsync(account, request.Credential, ct);
-        await ProbeAsync(clients.CreateCandidate(account, request.Credential), ct);
-        await RejectKnownScopeAliasAsync(account, clients.CreateCandidate(account, request.Credential), ct);
+        var candidate = clients.CreateCandidate(account, request.Credential);
+        await ProbeAsync(candidate, ct);
+        await VerifyExistingScopeAsync(account, candidate, ct);
+        await RejectKnownScopeAliasAsync(account, candidate, ct);
         AssignCredential(account, reference);
         account.ValidationStatus = "valid"; account.LastValidatedAt = now;
         db.ProviderAccounts.Add(account);
@@ -141,11 +154,22 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         account.CredentialStoreProvider = reference.Provider; account.CredentialPath = reference.Path; account.CredentialVersion = reference.Version;
     }
 
-    private static Task ProbeAsync(IVpsProviderClient client, CancellationToken ct) =>
-        client.FindServerAsync("minicloud-credential-check-" + Guid.NewGuid().ToString("N"), ct);
+    private static async Task ProbeAsync(IVpsProviderClient client, CancellationToken ct)
+    {
+        if (client is IAwsAccountValidator aws)
+            await aws.ValidateAccountConfigurationAsync(ct);
+        await client.FindServerAsync("minicloud-credential-check-" + Guid.NewGuid().ToString("N"), ct);
+    }
 
     private async Task VerifyExistingScopeAsync(ProviderAccount account, IVpsProviderClient candidate, CancellationToken ct)
     {
+        if (candidate is IProviderScopeIdentity scoped)
+        {
+            var observedScope = await scoped.GetScopeIdentityAsync(ct);
+            if (account.ProviderScopeId is not null && !string.Equals(account.ProviderScopeId, observedScope, StringComparison.Ordinal))
+                throw ScopeUnverified();
+            account.ProviderScopeId = observedScope;
+        }
         var servers = await db.ServerInstances.Include(x => x.App).ThenInclude(x => x.Organization)
             .Where(x => x.ProviderAccountId == account.Id).ToListAsync(ct);
         var runtimes = await db.RuntimeServers.Where(x => x.ProviderAccountId == account.Id).ToListAsync(ct);
@@ -175,6 +199,13 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
 
     private async Task RejectKnownScopeAliasAsync(ProviderAccount account, IVpsProviderClient candidate, CancellationToken ct)
     {
+        if (candidate is IProviderScopeIdentity scoped)
+        {
+            var scopeId = await scoped.GetScopeIdentityAsync(ct);
+            if (await db.ProviderAccounts.AnyAsync(x => x.OrganizationId == account.OrganizationId && x.Id != account.Id
+                && x.ProviderType == account.ProviderType && x.ProviderScopeId == scopeId, ct))
+                throw new ProviderCatalogException("provider_scope_already_registered", "This cloud account is already registered for this organization. Use its existing provider entry.");
+        }
         var otherServers = await db.ServerInstances.Include(x => x.App).ThenInclude(x => x.Organization)
             .Where(x => x.ProviderAccountId != null && x.ProviderAccountId != account.Id && x.Provider == account.ProviderType.ToString()).ToListAsync(ct);
         foreach (var server in otherServers)
@@ -199,10 +230,10 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
 
     public static bool TryParseType(string value, out CloudProvider type)
     {
-        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, _ => (CloudProvider)(-1) };
+        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, "aws" or "amazon-web-services" => CloudProvider.Aws, _ => (CloudProvider)(-1) };
         return Enum.IsDefined(type);
     }
-    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
+    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", CloudProvider.Aws => "aws", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
     private static string ServerName(string orgSlug, string appSlug) => ManagedServerName.ForApp(orgSlug, appSlug);
     private static ProviderCatalogException ScopeUnverified() => new("provider_scope_unverified", "Credentials could not be verified against all existing resources. Restore access to the original cloud scope before replacing credentials.");
     private static void ValidateName(string name)

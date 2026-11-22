@@ -27,6 +27,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.5" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="AWSSDK.EC2" Version="4.1.5" />
+    <PackageReference Include="AWSSDK.SecurityToken" Version="4.1.1.1" />
   </ItemGroup>
 
   <ItemGroup>

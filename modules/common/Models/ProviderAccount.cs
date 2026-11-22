@@ -12,6 +12,10 @@ public sealed class ProviderAccount
     public bool Enabled { get; set; } = true;
     public string? ProjectId { get; set; }
     public int? DefaultOsId { get; set; }
+    public string? AwsRegion { get; set; }
+    public string? AwsSubnetId { get; set; }
+    public string? AwsSecurityGroupId { get; set; }
+    public string? ProviderScopeId { get; set; }
     public string CredentialStoreProvider { get; set; } = "openbao";
     public string CredentialPath { get; set; } = default!;
     public string? CredentialVersion { get; set; }

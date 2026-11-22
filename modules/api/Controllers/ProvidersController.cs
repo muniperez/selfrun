@@ -21,7 +21,8 @@ public sealed class ProvidersController(MinicloudDbContext db, ControlPlaneAutho
     {
         new ProviderTypeResponse("hetzner", "Hetzner", true, "ubuntu-24.04"),
         new ProviderTypeResponse("digital-ocean", "DigitalOcean", false, "ubuntu-24-04-x64"),
-        new ProviderTypeResponse("vultr", "Vultr", false, null, 2284)
+        new ProviderTypeResponse("vultr", "Vultr", false, null, 2284),
+        new ProviderTypeResponse("aws", "Amazon Web Services", true, null)
     });
 
     [HttpGet]
@@ -160,7 +161,8 @@ public sealed class ProvidersController(MinicloudDbContext db, ControlPlaneAutho
 
     public static ProviderAccountResponse ToResponse(ProviderAccount account) => new(account.Id, account.OrganizationId,
         account.Name, ProviderAccountService.WireType(account.ProviderType), account.Enabled, account.ProjectId, account.DefaultOsId,
-        account.ValidationStatus, account.LastValidatedAt, account.Revision, account.Plans.Count);
+        account.ValidationStatus, account.LastValidatedAt, account.Revision, account.Plans.Count,
+        account.AwsRegion, account.AwsSubnetId, account.AwsSecurityGroupId);
 }
 
 internal static class ProviderEndpointResults

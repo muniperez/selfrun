@@ -2878,6 +2878,21 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("id");
 
+                    b.Property<string>("AwsRegion")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("aws_region");
+
+                    b.Property<string>("AwsSecurityGroupId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("aws_security_group_id");
+
+                    b.Property<string>("AwsSubnetId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("aws_subnet_id");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -2927,6 +2942,11 @@ namespace Minicloud.Common.Migrations
                     b.Property<string>("ProjectId")
                         .HasColumnType("text")
                         .HasColumnName("project_id");
+
+                    b.Property<string>("ProviderScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_scope_id");
 
                     b.Property<string>("ProviderType")
                         .IsRequired()

@@ -4,5 +4,6 @@ public enum CloudProvider
 {
     Hetzner,
     DigitalOcean,
-    Vultr
+    Vultr,
+    Aws
 }

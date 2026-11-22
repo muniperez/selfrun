@@ -4,6 +4,7 @@ public sealed record ProviderStorageVolume(string Id, string Name, int SizeGb, s
 
 public interface IStorageVolumeProvider
 {
+    CloudProvider Provider => CloudProvider.Hetzner;
     Task<ProviderStorageVolume?> FindVolumeAsync(string name, CancellationToken ct);
     Task<ProviderStorageVolume?> GetVolumeAsync(string id, CancellationToken ct);
     Task<ProviderStorageVolume> CreateVolumeAsync(string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct);

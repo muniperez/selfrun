@@ -180,6 +180,10 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.OrganizationId, x.Id });
             entity.Property(x => x.ProviderType).HasConversion<string>();
+            entity.Property(x => x.AwsRegion).HasMaxLength(32);
+            entity.Property(x => x.AwsSubnetId).HasMaxLength(64);
+            entity.Property(x => x.AwsSecurityGroupId).HasMaxLength(64);
+            entity.Property(x => x.ProviderScopeId).HasMaxLength(128);
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.Property(x => x.Name).HasMaxLength(128);
             entity.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);

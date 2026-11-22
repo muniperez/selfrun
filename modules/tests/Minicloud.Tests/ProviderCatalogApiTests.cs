@@ -287,9 +287,10 @@ public sealed class ProviderCatalogApiTests : IAsyncLifetime
     {
         using var client = Client();
         var types = (await client.GetFromJsonAsync<ProviderTypeResponse[]>("/api/provider-types"))!;
-        Assert.Equal(new[] { "digital-ocean", "hetzner", "vultr" }, types.Select(x => x.Type).OrderBy(x => x).ToArray());
+        Assert.Equal(new[] { "aws", "digital-ocean", "hetzner", "vultr" }, types.Select(x => x.Type).OrderBy(x => x).ToArray());
         Assert.True(types.Single(x => x.Type == "hetzner").SupportsStorage);
-        Assert.All(types.Where(x => x.Type != "hetzner"), type => Assert.False(type.SupportsStorage));
+        Assert.True(types.Single(x => x.Type == "aws").SupportsStorage);
+        Assert.All(types.Where(x => x.Type is not ("hetzner" or "aws")), type => Assert.False(type.SupportsStorage));
         await ErrorAsync(await client.PostAsJsonAsync("/api/providers", new CreateProviderRequest(OrganizationId, "Unsupported", "arbitrary-provider", "synthetic-token")), "provider_type_unsupported");
         Assert.Empty(_factory.Secrets.Values);
         Assert.Empty(_factory.Cloud.Requests);
