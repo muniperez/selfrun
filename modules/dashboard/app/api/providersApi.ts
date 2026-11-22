@@ -4,6 +4,7 @@ export type ProviderType = { type: string; name: string; supportsStorage: boolea
 export type ProviderAccount = {
   id: string; organizationId: string; name: string; providerType: string; enabled: boolean;
   projectId?: string | null; defaultOsId?: number | null; validationStatus: string;
+  tenantId?: string | null; subscriptionId?: string | null; resourceGroupName?: string | null;
   lastValidatedAt?: string | null; revision: number; planCount: number;
 };
 export type ProviderPlan = {
@@ -11,7 +12,10 @@ export type ProviderPlan = {
   providerName: string; providerType: string; region: string; sku: string; image?: string | null;
   buildPlatform: string; enabled: boolean; accountEnabled: boolean; revision: number; provisioningLocked: boolean;
 };
-export type CreateProvider = { organizationId: string; name: string; providerType: string; credential: string; projectId?: string; defaultOsId?: number };
+export type CreateProvider = {
+  organizationId: string; name: string; providerType: string; credential: string;
+  projectId?: string; defaultOsId?: number; tenantId?: string; subscriptionId?: string; resourceGroupName?: string;
+};
 export type PlanInput = { name?: string; region: string; sku: string; image?: string | null; buildPlatform: string; enabled?: boolean };
 
 export function listProviderTypes(signal?: AbortSignal) { return apiRequest<ProviderType[]>("/api/provider-types", { signal }); }

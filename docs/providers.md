@@ -1,8 +1,8 @@
 # Providers and plans
 
 Each organization owns its provider accounts and named plans. You can connect
-multiple Hetzner, DigitalOcean, and Vultr accounts at the same time, including
-several accounts of one provider.
+multiple Hetzner, DigitalOcean, Vultr, and Microsoft Azure accounts at the same
+time, including several accounts of one provider.
 
 CLI plan listing and app creation require an API key with `plans:read`.
 Existing keys do not gain new permissions automatically. Refresh an older CLI
@@ -14,8 +14,11 @@ provider credentials requires the separate `providers:write` operator scope.
 Open **Plans** in the dashboard and select **Provider accounts** (or **Add plan**
 and **Connect account**). Add an account name, select a supported
 provider, and enter its API credential. DigitalOcean accounts can also specify a
-project; Vultr accounts can specify an OS ID. Credentials are write-only and
-stored in OpenBao. An organization Owner or Admin manages accounts and plans.
+project; Vultr accounts can specify an OS ID. Azure accounts require a tenant ID,
+subscription ID, an existing resource-group name, and a Microsoft Entra service
+principal client ID and client secret. Credentials are write-only and stored in
+OpenBao; Azure tenant/subscription/resource-group values are non-secret account
+scope metadata. An organization Owner or Admin manages accounts and plans.
 
 The connection check uses read-only provider requests. It does not allocate a
 server or guarantee available quota. Accounts with identical provider types
@@ -34,6 +37,79 @@ install Docker Engine, Compose and Buildx from Docker's signed Debian repository
 Ubuntu images retain their distribution packages.
 Fresh-server deployments wait for cloud-init and activate Docker group membership
 before using the Docker socket. A fatal bootstrap failure stops deployment.
+
+### Microsoft Azure
+
+Azure accounts are explicitly scoped to one Entra tenant, subscription, and
+existing resource group. The adapter authenticates only with a service
+principal's client ID and client secret using the OAuth 2.0 client-credentials
+flow and the Azure Resource Manager `.default` scope. It does not use a local
+developer login, Azure CLI credential, managed identity, certificate, or
+workload-identity federation. The provider connection check reads the selected
+subscription, resource group, and VM inventory; it does not allocate resources
+or verify that quota is available.
+
+The service principal needs a custom Azure RBAC role scoped to the target
+resource group, plus subscription read access to verify its tenant/scope. Its
+resource-group actions must cover:
+
+- `Microsoft.Compute/virtualMachines/{read,write,delete,instanceView/read}`
+- `Microsoft.Compute/disks/{read,write,delete}`
+- `Microsoft.Network/networkInterfaces/{read,write,delete}`
+- `Microsoft.Network/publicIPAddresses/{read,write,delete}`
+- `Microsoft.Network/networkSecurityGroups/{read,write,delete}`
+- `Microsoft.Network/virtualNetworks/{read,write,delete}` and
+  `Microsoft.Network/virtualNetworks/subnets/{read,write,delete}`
+- `Microsoft.Resources/subscriptions/resourceGroups/read`
+
+Grant `Microsoft.Resources/subscriptions/read` at subscription scope. Avoid
+assigning Owner or subscription-wide Contributor. Azure's custom-role model and
+operation names can change; verify the role's actions against the target
+subscription's provider operations before assigning it. The adapter never
+creates a resource group and does not change role assignments.
+
+Azure plans use the exact Azure region name (for example `eastus`), VM SKU
+(for example `Standard_B2s`), and a Marketplace image URN in
+`publisher:offer:sku:version` form. The default image is
+`Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest`. This integration does
+not yet discover or quote regional SKU/image availability. Azure `linux/arm64`
+plans are gated pending native image/SKU validation.
+
+Each VM receives a dedicated VNet/subnet, NSG, NIC, and Standard static IPv4
+address. The NSG permits inbound TCP 22, 80, and 443 from any IPv4 source;
+restrict SSH access further with network controls outside MiniCloud when
+required. Other inbound ports and IPv6 are not configured. VM deletion also
+removes the VM's managed OS disk, NIC, public IP, VNet, and NSG. Azure durable
+data volumes, private networks, snapshots, and provider SSH-key inventory are
+not supported; app data stored only on the VM is not retained after deletion.
+Standard public IPv4 addresses, VM compute, managed OS disks, outbound transfer,
+and any other Azure services are billed by Azure. Regional/family vCPU quotas,
+SKU availability, and capacity vary by subscription and region; quota or
+capacity errors do not trigger account failover.
+
+Add Azure credentials without placing the client secret in command arguments:
+
+```sh
+AZURE_CLIENT_ID=<application-client-id> \
+AZURE_CLIENT_SECRET=<service-principal-secret> \
+minicloud providers add --organization org_example --name "Azure production" \
+  --provider azure --tenant-id <tenant-guid> --subscription-id <subscription-guid> \
+  --resource-group <existing-resource-group>
+```
+
+This integration has synthetic HTTP contract coverage only. It has not been
+qualified against a disposable live Azure subscription. Before treating Azure
+as a generally supported provider, qualify native amd64 and arm64 image/SKU
+combinations where available, cloud-init/bootstrap, redeploy and discovery,
+quota/API failure recovery, credential rotation/scope preservation, and full
+deletion of VM, managed OS disk, NIC, public IP, VNet, and NSG.
+
+Azure API references: [service principal authentication for .NET](https://learn.microsoft.com/en-us/dotnet/azure/sdk/authentication/),
+[VM create/update](https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/create-or-update?view=rest-compute-2024-03-01),
+[VM instance view](https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/instance-view?view=rest-compute-2024-03-01),
+[network interface create/update](https://learn.microsoft.com/en-us/rest/api/virtualnetwork/network-interfaces/create-or-update?view=rest-virtualnetwork-2026-03-01),
+[Azure custom roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/custom-roles), and
+[VM quotas](https://learn.microsoft.com/en-us/azure/virtual-machines/quotas).
 
 ```yaml
 app: example-api
@@ -124,7 +200,9 @@ minicloud providers add --organization org_example --name "Original Hetzner" --p
 
 The command reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`,
 `DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`, or
-`VULTR_API_KEY`/`VULTR_KEY` from the operator process environment. Optional
+`VULTR_API_KEY`/`VULTR_KEY` from the operator process environment. For Azure it
+reads `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; pass the non-secret
+`--tenant-id`, `--subscription-id`, and `--resource-group` scope values. Optional
 `--project-id` and `--os-id` are non-secret account settings. Do not put provider
 credentials in the manifest, source control, or ordinary workflow inputs.
 

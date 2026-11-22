@@ -180,6 +180,9 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.OrganizationId, x.Id });
             entity.Property(x => x.ProviderType).HasConversion<string>();
+            entity.Property(x => x.TenantId).HasColumnName("tenant_id");
+            entity.Property(x => x.SubscriptionId).HasColumnName("subscription_id");
+            entity.Property(x => x.ResourceGroupName).HasColumnName("resource_group_name");
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.Property(x => x.Name).HasMaxLength(128);
             entity.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
