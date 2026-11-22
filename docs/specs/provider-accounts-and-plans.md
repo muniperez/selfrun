@@ -23,7 +23,7 @@ Paths below are relative to the product repository. These observations describe 
 
 | Current behavior | Source |
 | --- | --- |
-| VPS provider types are Hetzner, DigitalOcean, and Vultr. Cloudflare is a separate DNS integration. | `modules/common/Providers/CloudProvider.cs:3`; `modules/common/Providers/ProviderServiceCollectionExtensions.cs:46` |
+| VPS provider types are Hetzner, DigitalOcean, Vultr, and OVHcloud. Cloudflare is a separate DNS integration. | `modules/common/Providers/CloudProvider.cs`; `modules/common/Providers/ProviderServiceCollectionExtensions.cs` |
 | Clients resolve by provider type, with one global options object per type. Several types can coexist, but multiple accounts of one type cannot be selected. | `modules/common/Providers/ProviderServiceCollectionExtensions.cs:15`, `:19`, `:51`; `modules/worker/Program.cs:84` |
 | Provider-specific account settings also exist: DigitalOcean project ID and Vultr default OS ID. | `modules/common/Providers/DigitalOcean/DigitalOceanOptions.cs:3`; `modules/common/Providers/Vultr/VultrOptions.cs:3` |
 | Apps persist a fixed `AppPlan` enum. A switch maps its codes to global provider/region/SKU settings, including a default fallback. | `modules/common/Models/ControlPlaneModels.cs:59`, `:320`; `modules/common/Services/ProviderPlanMapping.cs:25` |
@@ -44,7 +44,7 @@ Conclusion: adding a second API key alone is insufficient. Account identity must
 
 Include account CRUD, credential replacement, account validation, custom plan CRUD, portal management, name-based CLI/YAML selection, account-aware provisioning and lifecycle operations, and migration of existing installations.
 
-Keep the supported VPS types to Hetzner, DigitalOcean, and Vultr. The type selector is a server-owned allowlist, not a user-entered plugin or arbitrary API endpoint. Adapter capability metadata must continue to identify Hetzner-only durable storage; adding multiple accounts does not add volume support to other providers.
+Keep the supported VPS types to Hetzner, DigitalOcean, Vultr, and OVHcloud. The type selector is a server-owned allowlist, not a user-entered plugin or arbitrary API endpoint. Adapter capability metadata must continue to identify Hetzner-only durable storage; adding multiple accounts does not add volume support to other providers. OVHcloud Public Cloud and dedicated servers are separate capabilities; `baremetal:` intent is gated and never triggers VM reinstall or unowned-server adoption.
 
 Exclude automatic quota balancing, account pools, cross-account failover, cross-account migration, server resizing, provider billing, automatic price comparison, and new provider adapters. Cloudflare DNS configuration, control-plane hosting, and the deployment SSH private key remain separate installation concerns.
 
@@ -54,7 +54,7 @@ Add **Providers** to the organization navigation.
 
 The list shows account display name, provider type, enabled state, credential-validation result and timestamp, and plan count. Two Hetzner accounts appear as two independent entries. An empty organization is guided to add an account and then a plan before creating an app.
 
-**Add provider** asks for a name, one supported provider type, an API token/key, and the non-secret settings required by that adapter. DigitalOcean project selection belongs to this account's settings. Credentials are write-only. No provider token is returned to the browser after submission.
+**Add provider** asks for a name, one supported provider type, an API token/key, and the non-secret settings required by that adapter. DigitalOcean and OVHcloud project selection belongs to this account's settings. Credentials are write-only. No provider token is returned to the browser after submission.
 
 **Provider detail** offers metadata editing, credential replacement, an explicit read-only connection check, disable/enable, and its plans. Connection checks must not create a billable server or volume. Store their result as an observation, not a guarantee that the next allocation has quota. Invalid or unavailable credentials are shown distinctly from a disabled account.
 

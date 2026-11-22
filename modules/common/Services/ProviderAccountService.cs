@@ -14,7 +14,9 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     {
         ValidateName(request.Name);
         if (!TryParseType(request.ProviderType, out var type))
-            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean or Vultr.");
+            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean, Vultr or OVHcloud.");
+        if (type == CloudProvider.Ovhcloud && string.IsNullOrWhiteSpace(request.ProjectId))
+            throw new ProviderCatalogException("provider_settings_invalid", "OVHcloud accounts require the Public Cloud project or dedicated service identifier.");
         if (request.DefaultOsId is <= 0 || request.ProjectId is { Length: > 128 } || request.ProjectId?.Any(char.IsControl) == true)
             throw new ProviderCatalogException("provider_settings_invalid", "The provider account settings are invalid.");
         var now = clock.GetUtcNow();
@@ -199,10 +201,10 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
 
     public static bool TryParseType(string value, out CloudProvider type)
     {
-        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, _ => (CloudProvider)(-1) };
+        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, "ovhcloud" or "ovh" => CloudProvider.Ovhcloud, _ => (CloudProvider)(-1) };
         return Enum.IsDefined(type);
     }
-    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
+    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", CloudProvider.Ovhcloud => "ovhcloud", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
     private static string ServerName(string orgSlug, string appSlug) => ManagedServerName.ForApp(orgSlug, appSlug);
     private static ProviderCatalogException ScopeUnverified() => new("provider_scope_unverified", "Credentials could not be verified against all existing resources. Restore access to the original cloud scope before replacing credentials.");
     private static void ValidateName(string name)
