@@ -18,7 +18,7 @@ public sealed class GoogleCloudClient : IVpsProviderClient
     private readonly GoogleCloudOptions _options;
     private readonly ILogger<GoogleCloudClient>? _logger;
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
-    private string? _accessToken;
+    private GoogleCredential? _credential;
 
     public CloudProvider Provider => CloudProvider.GoogleCloud;
 
@@ -43,20 +43,30 @@ public sealed class GoogleCloudClient : IVpsProviderClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
         var project = Project();
-        using var request = await CreateRequestAsync(HttpMethod.Get,
-            $"projects/{Uri.EscapeDataString(project)}/aggregated/instances?filter=name%20%3D%20%22{Uri.EscapeDataString(serverName)}%22",
-            cancellationToken);
-        using var response = await SendAsync(request, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        await EnsureSuccessAsync(response, cancellationToken);
-        var result = await response.Content.ReadFromJsonAsync<AggregatedInstancesResponse>(cancellationToken: cancellationToken);
-        foreach (var scoped in result?.Items?.Values ?? Enumerable.Empty<InstanceScope>())
+        string? pageToken = null;
+        ProviderServerInfo? match = null;
+        do
         {
-            var instance = scoped.Instances?.FirstOrDefault(x =>
-                string.Equals(x.Name, serverName, StringComparison.Ordinal));
-            if (instance is not null) return MapInstance(instance, project);
-        }
-        return null;
+            var path = $"projects/{Uri.EscapeDataString(project)}/aggregated/instances?filter=name%20%3D%20%22{Uri.EscapeDataString(serverName)}%22";
+            if (!string.IsNullOrEmpty(pageToken)) path += $"&pageToken={Uri.EscapeDataString(pageToken)}";
+            using var request = await CreateRequestAsync(HttpMethod.Get, path, cancellationToken);
+            using var response = await SendAsync(request, cancellationToken);
+            await EnsureSuccessAsync(response, cancellationToken);
+            var result = await response.Content.ReadFromJsonAsync<AggregatedInstancesResponse>(cancellationToken: cancellationToken)
+                ?? throw new ProviderApiException("Google Cloud returned an empty instance list.", provider: Provider);
+            foreach (var scoped in result.Items?.Values ?? Enumerable.Empty<InstanceScope>())
+            {
+                foreach (var instance in scoped.Instances ?? [])
+                {
+                    if (!string.Equals(instance.Name, serverName, StringComparison.Ordinal)) continue;
+                    if (match is not null)
+                        throw new ProviderApiException("Multiple Google Cloud instances match the managed server name.", provider: Provider);
+                    match = MapInstance(instance, project);
+                }
+            }
+            pageToken = result.NextPageToken;
+        } while (!string.IsNullOrEmpty(pageToken));
+        return match;
     }
 
     public async Task<ProviderServerInfo> CreateServerAsync(CreateServerRequest request,
@@ -142,8 +152,9 @@ public sealed class GoogleCloudClient : IVpsProviderClient
         using var response = await SendAsync(request, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return;
         await EnsureSuccessAsync(response, cancellationToken);
-        var operation = await response.Content.ReadFromJsonAsync<Operation>(cancellationToken: cancellationToken);
-        if (operation is not null) await WaitForOperationAsync(project, zone, operation, cancellationToken);
+        var operation = await response.Content.ReadFromJsonAsync<Operation>(cancellationToken: cancellationToken)
+            ?? throw new ProviderApiException("Google Cloud returned an empty delete operation.", provider: Provider);
+        await WaitForOperationAsync(project, zone, operation, cancellationToken);
         _logger?.LogInformation("Deleted Google Cloud instance {InstanceId}", serverId);
     }
 
@@ -192,17 +203,15 @@ public sealed class GoogleCloudClient : IVpsProviderClient
 
     private async Task<string> GetAccessTokenAsync(CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(_accessToken)) return _accessToken;
         await _tokenLock.WaitAsync(ct);
         try
         {
-            if (!string.IsNullOrWhiteSpace(_accessToken)) return _accessToken;
             if (string.IsNullOrWhiteSpace(_options.CredentialJson))
                 throw new ProviderApiException("Google Cloud credentials are empty.", provider: Provider);
             if (!_options.CredentialJson.TrimStart().StartsWith('{'))
-                return _accessToken = _options.CredentialJson.Trim();
-            var credential = GoogleCredential.FromJson(_options.CredentialJson).CreateScoped(ComputeScope);
-            return _accessToken = await credential.UnderlyingCredential.GetAccessTokenForRequestAsync(cancellationToken: ct);
+                return _options.CredentialJson.Trim();
+            _credential ??= GoogleCredential.FromJson(_options.CredentialJson).CreateScoped(ComputeScope);
+            return await _credential.UnderlyingCredential.GetAccessTokenForRequestAsync(cancellationToken: ct);
         }
         finally { _tokenLock.Release(); }
     }
@@ -232,6 +241,8 @@ public sealed class GoogleCloudClient : IVpsProviderClient
         var parts = id.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 6 || parts[0] != "projects" || parts[2] != "zones" || parts[4] != "instances")
             throw new ArgumentException("Google Cloud server IDs must be projects/{project}/zones/{zone}/instances/{name}.", nameof(id));
+        if (!string.Equals(parts[1], Project(), StringComparison.Ordinal))
+            throw new ProviderApiException("Google Cloud server ID belongs to a different project.", provider: Provider);
         return (parts[1], parts[3], parts[5]);
     }
 
@@ -248,6 +259,7 @@ public sealed class GoogleCloudClient : IVpsProviderClient
     private sealed class AggregatedInstancesResponse
     {
         [JsonPropertyName("items")] public Dictionary<string, InstanceScope>? Items { get; set; }
+        [JsonPropertyName("nextPageToken")] public string? NextPageToken { get; set; }
     }
     private sealed class InstanceScope
     {

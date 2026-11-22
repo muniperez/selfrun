@@ -53,6 +53,57 @@ public sealed class GoogleCloudClientTests
     }
 
     [Fact]
+    public async Task FindServerAsync_FollowsPagesBeforeReportingNoMatch()
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse("""{"items":{},"nextPageToken":"next-page"}""");
+        handler.QueueJsonResponse("""{"items":{"zones/us-central1-a":{"instances":[{"name":"mc-app","zone":"us-central1-a","status":"RUNNING"}]}}}""");
+
+        var result = await Create(handler).FindServerAsync("mc-app");
+
+        Assert.Equal("projects/project-1/zones/us-central1-a/instances/mc-app", result?.Id);
+        Assert.Contains("pageToken=next-page", handler.RecordedRequests[1].Uri);
+    }
+
+    [Fact]
+    public async Task FindServerAsync_RejectsAmbiguousMatchesAcrossZones()
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse("""{"items":{"zones/us-central1-a":{"instances":[{"name":"mc-app","zone":"us-central1-a"}]}},"nextPageToken":"next-page"}""");
+        handler.QueueJsonResponse("""{"items":{"zones/us-central1-b":{"instances":[{"name":"mc-app","zone":"us-central1-b"}]}}}""");
+
+        await Assert.ThrowsAsync<Minicloud.Common.Providers.Common.ProviderApiException>(() =>
+            Create(handler).FindServerAsync("mc-app"));
+    }
+
+    [Fact]
+    public async Task FindServerAsync_WhenProjectIsMissingDoesNotReportAnAbsentServer()
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueJsonResponse("""{"error":{"message":"project not found"}}""", HttpStatusCode.NotFound);
+
+        await Assert.ThrowsAsync<Minicloud.Common.Providers.Common.ProviderApiException>(() =>
+            Create(handler).FindServerAsync("mc-app"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ServerOperations_RejectOtherProjectsBeforeSendingRequests(bool delete)
+    {
+        var handler = new TestHttpMessageHandler();
+        var client = Create(handler);
+        const string id = "projects/other-project/zones/us-central1-a/instances/mc-app";
+
+        await Assert.ThrowsAsync<Minicloud.Common.Providers.Common.ProviderApiException>(async () =>
+        {
+            if (delete) await client.DeleteServerAsync(id);
+            else await client.GetServerStatusAsync(id);
+        });
+        Assert.Empty(handler.RecordedRequests);
+    }
+
+    [Fact]
     public async Task DeleteServerAsync_WhenOperationFailsSurfacesProviderError()
     {
         var handler = new TestHttpMessageHandler();
