@@ -443,6 +443,16 @@ agents, rewrite package records, or weaken permissions to make seed proceed.
 The existing empty `/opt/containerd/bin` and `/opt/containerd/lib` exception
 remains separate.
 
+### Stock Vultr helper layout
+
+Vultr's stock Ubuntu 24.04 image ships `/opt/vultr` with two helper scripts
+that no package owns. For a Vultr target only, seed observation and preparation
+admit that directory when it is a root-owned 0755 directory containing only
+`find_candidate_nics.sh` and/or `version.sh`. Each one must be a root-owned
+regular file of at most 64 KiB with no setuid/setgid/sticky bit and no group or
+world write permission. Links, other entries, or the directory on another
+provider still require reconciliation. Seed never runs or changes these files.
+
 Local validation uses synthetic fixtures; #289 records independent read-only
 stock DigitalOcean Ubuntu 24.04 evidence, not qualification of corrected signed
 CLI/server preparation on a live host. There is no change to exact-source compatibility,

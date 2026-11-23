@@ -511,5 +511,92 @@ pathlib.Path.lstat=fixture_lstat
         self.vendor.unlink()
 
 
+class VultrLayoutTests(unittest.TestCase):
+    """Stock Vultr helper scripts are root-owned and not package-managed."""
+
+    def setUp(self):
+        self.root = artifacts / ("vultr-layout-" + uuid.uuid4().hex)
+        self.vendor = self.root / "opt/vultr"
+        self.vendor.mkdir(parents=True)
+        for name, mode in (("find_candidate_nics.sh", 0o540), ("version.sh", 0o555)):
+            p = self.vendor / name
+            p.write_text("#!/bin/sh\n")
+            p.chmod(mode)
+        self.vendor.chmod(0o755)
+        self.real_lstat = pathlib.Path.lstat
+
+    def tearDown(self):
+        for p in self.vendor.iterdir():
+            p.chmod(0o600)
+        shutil.rmtree(self.root)
+
+    def metadata(self, p, *args, **kwargs):
+        info = self.real_lstat(p, *args, **kwargs)
+        if p == self.vendor or self.vendor in p.parents:
+            values = list(info)
+            values[4], values[5] = 0, 0
+            return os.stat_result(values)
+        return info
+
+    def validate(self, provider="vultr"):
+        with patch.object(pathlib.Path, "lstat", lambda p, *args, **kwargs: self.metadata(p, *args, **kwargs)):
+            inspector.validate_provider_layout(provider, self.root, lambda *args, **kwargs: self.fail("no commands"))
+
+    def test_stock_layout_is_admitted_only_for_vultr(self):
+        before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in self.vendor.iterdir()}
+        self.validate()
+        for provider in ("digitalocean", "hetzner", None):
+            with self.assertRaises(AssertionError):
+                self.validate(provider)
+        self.assertEqual(before, {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in self.vendor.iterdir()})
+
+    def test_unknown_unsafe_or_linked_entries_are_rejected(self):
+        extra = self.vendor / "agent"
+        extra.write_text("unknown\n")
+        with self.assertRaises(AssertionError):
+            self.validate()
+        extra.unlink()
+        version = self.vendor / "version.sh"
+        version.chmod(0o557)
+        with self.assertRaises(AssertionError):
+            self.validate()
+        version.chmod(0o4555)
+        with self.assertRaises(AssertionError):
+            self.validate()
+        version.chmod(0o555)
+        version.unlink()
+        version.symlink_to(self.vendor / "find_candidate_nics.sh")
+        with self.assertRaises(AssertionError):
+            self.validate()
+        version.unlink()
+        (self.vendor / "find_candidate_nics.sh").chmod(0o600)
+        (self.vendor / "find_candidate_nics.sh").unlink()
+        with self.assertRaises(AssertionError):
+            self.validate()
+
+    def test_preparation_accepts_stock_vultr_opt_only_for_vultr(self):
+        source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
+        prefix = source[source.index("if test -e /opt/containerd"):
+                        source.index("test ! -e /opt/minicloud.seed-operation.pending")]
+        python = ("import os,pathlib,sys\nreal_lstat=pathlib.Path.lstat\n"
+                  "def fixture_lstat(p,*args,**kwargs):\n"
+                  " values=list(real_lstat(p,*args,**kwargs))\n"
+                  " values[4],values[5]=0,0\n"
+                  " return os.stat_result(values)\n"
+                  "pathlib.Path.lstat=fixture_lstat\n"
+                  "namespace={}\nexec(" + repr(helper) + ",namespace)\n"
+                  "namespace['validate_provider_layout'](sys.argv[1],pathlib.Path(" + repr(str(self.root)) + "))\n")
+        quote = lambda value: "'" + value.replace("'", "'\\''") + "'"
+        script = "set -euo pipefail\n" + prefix.replace("/opt", str(self.root / "opt")).replace(
+            "__SEED_PROVIDER_LAYOUT__", quote(python))
+        run = lambda provider: subprocess.run(["bash", "-s", "--", seed, "linux/amd64", "", "local-source", provider],
+                                              input=script.encode(), capture_output=True)
+        result = run("vultr")
+        self.assertEqual(0, result.returncode, result.stderr.decode())
+        self.assertNotEqual(0, run("hetzner").returncode)
+        (self.root / "opt/customer-data").mkdir()
+        self.assertNotEqual(0, run("vultr").returncode)
+
+
 if __name__ == "__main__":
     unittest.main()

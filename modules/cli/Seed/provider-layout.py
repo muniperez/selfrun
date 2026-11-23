@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Bounded stock DigitalOcean package inventory; never execute vendor files."""
+"""Bounded stock DigitalOcean and Vultr vendor layouts; never execute vendor files."""
 import pathlib
 import re
 import stat
@@ -7,7 +7,30 @@ import subprocess
 import sys
 
 
+VULTR_FILES = {"find_candidate_nics.sh", "version.sh"}
+
+
+def validate_vultr_layout(provider, base):
+    # Stock Vultr images ship small root-owned helper scripts that no package
+    # owns, so admit only their exact names and safe metadata.
+    root = base / "opt/vultr"
+    if not root.exists() and not root.is_symlink():
+        return
+    assert provider == "vultr"
+    info = root.lstat()
+    assert stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o755
+    assert (info.st_uid, info.st_gid) == (0, 0)
+    children = {p.name: p for p in root.iterdir()}
+    assert children and set(children) <= VULTR_FILES
+    for p in children.values():
+        info = p.lstat()
+        assert stat.S_ISREG(info.st_mode) and (info.st_uid, info.st_gid) == (0, 0)
+        assert not stat.S_IMODE(info.st_mode) & 0o7022
+        assert info.st_size <= 65536
+
+
 def validate_provider_layout(provider, base=pathlib.Path("/"), run=subprocess.run):
+    validate_vultr_layout(provider, base)
     root = base / "opt/digitalocean"
     if not root.exists() and not root.is_symlink():
         return

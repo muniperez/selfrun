@@ -126,7 +126,8 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
                 for directory in (containerd / "bin", containerd / "lib"):
                     protected(directory, True)
                     assert not any(directory.iterdir())
-            assert not any(p.name not in ("minicloud.seed-operation", "minicloud.installation.lock", "containerd", "digitalocean")
+            assert not any(p.name not in ("minicloud.seed-operation", "minicloud.installation.lock", "containerd", "digitalocean",
+                                         "vultr")
                            for p in path("/opt").iterdir())
 
         services = {}
