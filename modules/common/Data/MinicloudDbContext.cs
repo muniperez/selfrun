@@ -571,6 +571,9 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.Property(x => x.ProviderServerId).HasColumnName("provider_server_id");
             entity.Property(x => x.IpAddress).HasColumnName("ip_address");
             entity.Property(x => x.BootstrapStatus).HasColumnName("bootstrap_status");
+            entity.Property(x => x.HostKeyFingerprint).HasColumnName("host_key_fingerprint");
+            entity.Property(x => x.HostKeyVerifiedAt).HasColumnName("host_key_verified_at");
+            entity.Property(x => x.HostKeyEnrollmentSecret).HasColumnName("host_key_enrollment_secret");
             entity.Property(x => x.CreatedAt).HasColumnName("created_at");
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
         });

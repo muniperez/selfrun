@@ -18,20 +18,24 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
     internal const short PrivatePayloadFileMode = 600;
     private readonly SshDeploymentOptions _options;
     private readonly ILogger<SshDeploymentClient>? _logger;
+    private readonly ISshHostKeyPinSource? _pinSource;
 
     public SshDeploymentClient(
         IOptions<SshDeploymentOptions> options,
-        ILogger<SshDeploymentClient>? logger = null)
-        : this(options.Value, logger)
+        ILogger<SshDeploymentClient>? logger = null,
+        ISshHostKeyPinSource? pinSource = null)
+        : this(options.Value, logger, pinSource)
     {
     }
 
     public SshDeploymentClient(
         SshDeploymentOptions options,
-        ILogger<SshDeploymentClient>? logger = null)
+        ILogger<SshDeploymentClient>? logger = null,
+        ISshHostKeyPinSource? pinSource = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger;
+        _pinSource = pinSource;
     }
 
     public async Task<SshDeploymentResult> ExecuteDeploymentAsync(
@@ -50,6 +54,23 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        var trust = await ResolveTrustAsync(request.Host, cancellationToken);
+        try
+        {
+            return await ExecuteDeploymentCoreAsync(request, trust, onLogLine, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not SshHostKeyTrustException && trust.RejectedFingerprint is not null)
+        {
+            throw trust.MismatchException();
+        }
+    }
+
+    private async Task<SshDeploymentResult> ExecuteDeploymentCoreAsync(
+        SshDeploymentRequest request,
+        HostKeyTrust trust,
+        Func<string, string, Task> onLogLine,
+        CancellationToken cancellationToken)
+    {
         var remoteDir = request.RemoteDirectory.TrimEnd('/');
         var remotePayloadPath = $"{remoteDir}/payload.json";
         var remoteScriptPath = $"{remoteDir}/remote-deploy.sh";
@@ -94,7 +115,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         var artifactBytes = request.Artifacts.Sum(item => item.SizeBytes);
         try
         {
-            await UploadPayloadAsync(request, remoteDir, remotePayloadPath, remoteScriptPath, cancellationToken);
+            await UploadPayloadAsync(request, trust, remoteDir, remotePayloadPath, remoteScriptPath, cancellationToken);
             transferTimer.Stop();
             await onLogLine("timing",
                 $"TIMING phase=sftp_transfer deployment_id={DeploymentIdFromPayload(request.PayloadJson)} " +
@@ -132,7 +153,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         var leaseFailure = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var leaseConnection = string.IsNullOrWhiteSpace(ownershipToken)
             ? null
-            : new WorkerLeaseConnection(() => CreateClient(request.Host,
+            : new WorkerLeaseConnection(() => CreateClient(trust,
                 () => new SshClient(BuildConnectionInfo(request.Host, request.Username, request.PrivateKeyContent))),
                 leasePath, ownershipToken!);
         var leaseMonitor = leaseConnection is null ? null : new WorkerLeaseMonitor(leaseConnection.RefreshAsync);
@@ -151,6 +172,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                 leaseTask = leaseMonitor.RunAsync(leaseFailure, leaseCts.Token);
             }
             exitCode = await RunRemoteCommandAsync(
+            trust,
             request.Host,
             request.Username,
             request.PrivateKeyContent,
@@ -186,8 +208,8 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         {
             await StopLeaseAndCleanupAsync(leaseCts, leaseTask, () => Task.Run(() =>
             {
-                TryDeleteRemoteFile(request, leasePath);
-                TryDeleteRemoteFile(request, leasePath + ".lock");
+                TryDeleteRemoteFile(request, trust, leasePath);
+                TryDeleteRemoteFile(request, trust, leasePath + ".lock");
             }, CancellationToken.None));
         }
 
@@ -228,7 +250,11 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         ArgumentNullException.ThrowIfNull(onLogLine);
 
-        return await RunRemoteCommandAsync(
+        var trust = await ResolveTrustAsync(host, cancellationToken);
+        try
+        {
+            return await RunRemoteCommandAsync(
+            trust,
             host,
             username,
             privateKeyContent,
@@ -237,10 +263,16 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
             onLogLine,
             cancellationToken,
             remoteProcessPath: null);
+        }
+        catch (Exception ex) when (ex is not SshHostKeyTrustException && trust.RejectedFingerprint is not null)
+        {
+            throw trust.MismatchException();
+        }
     }
 
     private async Task UploadPayloadAsync(
         SshDeploymentRequest request,
+        HostKeyTrust trust,
         string remoteDir,
         string remotePayloadPath,
         string remoteScriptPath,
@@ -249,7 +281,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         await Task.Run(() =>
         {
             var connectionInfo = BuildConnectionInfo(request.Host, request.Username, request.PrivateKeyContent);
-            using var sftp = CreateClient(request.Host, () => new SftpClient(connectionInfo));
+            using var sftp = CreateClient(trust, () => new SftpClient(connectionInfo));
             sftp.ConnectionInfo.Timeout = _options.ConnectionTimeout;
             sftp.Connect();
             try
@@ -292,7 +324,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
             async (artifact, ct) =>
             {
                 var artifactConnection = BuildConnectionInfo(request.Host, request.Username, request.PrivateKeyContent);
-                using var artifactSftp = CreateClient(request.Host, () => new SftpClient(artifactConnection));
+                using var artifactSftp = CreateClient(trust, () => new SftpClient(artifactConnection));
                 artifactSftp.ConnectionInfo.Timeout = _options.ConnectionTimeout;
                 var remoteArtifactPath = $"{remoteDir}/{artifact.RemoteFileName}";
                 try
@@ -308,12 +340,12 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                 }
                 catch (Exception) when (ct.IsCancellationRequested)
                 {
-                    _ = Task.Run(() => TryDeleteRemoteFile(request, remoteArtifactPath), CancellationToken.None);
+                    _ = Task.Run(() => TryDeleteRemoteFile(request, trust, remoteArtifactPath), CancellationToken.None);
                     throw new OperationCanceledException(ct);
                 }
                 catch
                 {
-                    TryDeleteRemoteFile(request, remoteArtifactPath);
+                    TryDeleteRemoteFile(request, trust, remoteArtifactPath);
                     throw;
                 }
             });
@@ -321,7 +353,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         await Task.Run(() =>
         {
             var readyConnection = BuildConnectionInfo(request.Host, request.Username, request.PrivateKeyContent);
-            using var readySftp = CreateClient(request.Host, () => new SftpClient(readyConnection));
+            using var readySftp = CreateClient(trust, () => new SftpClient(readyConnection));
             readySftp.ConnectionInfo.Timeout = _options.ConnectionTimeout;
             readySftp.Connect();
             try
@@ -356,35 +388,82 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         };
     }
 
-    private T CreateClient<T>(string host, Func<T> factory) where T : BaseClient
+    /// <summary>
+    /// Trusted keys for <paramref name="host"/>: the pin verified when this worker provisioned the server,
+    /// plus any operator entries in the static host-pins file for manually added or pre-enrollment servers.
+    /// Only a development worker with neither source configured connects without a pin.
+    /// </summary>
+    private async Task<HostKeyTrust> ResolveTrustAsync(string host, CancellationToken cancellationToken)
     {
+        var pins = new HashSet<string>(StringComparer.Ordinal);
+        if (_pinSource is not null &&
+            await _pinSource.GetPinnedFingerprintAsync(host, cancellationToken) is { Length: > 0 } enrolled)
+        {
+            pins.Add(enrolled);
+        }
+
         if (string.IsNullOrWhiteSpace(_options.HostKeyPinsFile))
         {
-            return factory();
+            if (pins.Count == 0) { return new HostKeyTrust(host, null); }
         }
-
-        var expected = File.ReadLines(_options.HostKeyPinsFile)
-            .Select(line => line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-            .Where(fields => fields.Length == 2 && fields[0].Equals(host, StringComparison.OrdinalIgnoreCase) &&
-                fields[1].StartsWith("SHA256:", StringComparison.Ordinal))
-            .Select(fields => fields[1])
-            .ToHashSet(StringComparer.Ordinal);
-        if (expected.Count == 0)
+        else if (File.Exists(_options.HostKeyPinsFile))
         {
-            throw new InvalidOperationException($"No trusted SSH host key is configured for {host}. Verify the server key and add it before retrying.");
+            pins.UnionWith(File.ReadLines(_options.HostKeyPinsFile)
+                .Select(line => line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+                .Where(fields => fields.Length == 2 && fields[0].Equals(host, StringComparison.OrdinalIgnoreCase) &&
+                    fields[1].StartsWith("SHA256:", StringComparison.Ordinal))
+                .Select(fields => fields[1]));
         }
 
+        if (pins.Count == 0)
+        {
+            throw new SshHostKeyTrustException(SshHostKeyTrustException.UntrustedFailureCode,
+                $"No trusted SSH host key is configured for {host}. Servers provisioned by this worker are enrolled " +
+                "automatically during first boot; a manually added, discovered or pre-upgrade server needs its verified " +
+                $"Ed25519 key in the worker host-pins file as '{host} SHA256:<fingerprint>' before retrying.");
+        }
+
+        return new HostKeyTrust(host, pins);
+    }
+
+    private static T CreateClient<T>(HostKeyTrust trust, Func<T> factory) where T : BaseClient
+    {
         var client = factory();
-        client.HostKeyReceived += (_, key) => key.CanTrust = expected.Contains("SHA256:" + key.FingerPrintSHA256);
+        if (trust.Pins is { } expected)
+        {
+            client.HostKeyReceived += (_, key) =>
+            {
+                var fingerprint = "SHA256:" + key.FingerPrintSHA256;
+                key.CanTrust = expected.Contains(fingerprint);
+                if (!key.CanTrust) { trust.RejectedFingerprint = fingerprint; }
+            };
+        }
         return client;
     }
 
-    private void TryDeleteRemoteFile(SshDeploymentRequest request, string remotePath)
+    private sealed class HostKeyTrust(string host, IReadOnlySet<string>? pins)
+    {
+        private string? _rejected;
+
+        public IReadOnlySet<string>? Pins { get; } = pins;
+
+        public string? RejectedFingerprint
+        {
+            get => Volatile.Read(ref _rejected);
+            set => Volatile.Write(ref _rejected, value);
+        }
+
+        public SshHostKeyTrustException MismatchException() => new(SshHostKeyTrustException.MismatchFailureCode,
+            $"SSH host key {RejectedFingerprint} presented by {host} does not match its trusted pin; refusing to connect. " +
+            "Verify the server out of band. If it was legitimately rebuilt, update its pin before retrying.");
+    }
+
+    private void TryDeleteRemoteFile(SshDeploymentRequest request, HostKeyTrust trust, string remotePath)
     {
         try
         {
             var connectionInfo = BuildConnectionInfo(request.Host, request.Username, request.PrivateKeyContent);
-            using var cleanup = CreateClient(request.Host, () => new SftpClient(connectionInfo));
+            using var cleanup = CreateClient(trust, () => new SftpClient(connectionInfo));
             cleanup.ConnectionInfo.Timeout = _options.ConnectionTimeout;
             cleanup.Connect();
             if (cleanup.Exists(remotePath))
@@ -408,6 +487,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
     }
 
     private async Task<int> RunRemoteCommandAsync(
+        HostKeyTrust trust,
         string host,
         string username,
         string privateKeyContent,
@@ -421,7 +501,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
 
         return await Task.Run(async () =>
         {
-            using var client = CreateClient(host, () => new SshClient(connectionInfo));
+            using var client = CreateClient(trust, () => new SshClient(connectionInfo));
             await client.ConnectAsync(cancellationToken);
             try
             {

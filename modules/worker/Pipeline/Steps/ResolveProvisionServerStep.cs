@@ -12,6 +12,7 @@ using Minicloud.Common.Providers.Models;
 using Minicloud.Common.Services;
 using Minicloud.Common.Providers.Common;
 using System.Net;
+using Minicloud.Worker.Ssh;
 using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
 
 namespace Minicloud.Worker.Pipeline.Steps;
@@ -20,11 +21,16 @@ namespace Minicloud.Worker.Pipeline.Steps;
 /// Step 1: resolve the existing <c>ServerInstance</c> for the app or provision
 /// a new VPS via <see cref="IVpsProviderClient"/>. Polls until an IP is
 /// allocated and SSH is reachable, then persists the server record.
-/// Failure code: <c>provider_provision_failed</c>.
+/// Newly created servers also prove their SSH host key through first-boot enrollment
+/// (<see cref="ServerHostKeyEnrollment"/>) before the worker records the per-server pin.
+/// Failure codes: <c>provider_provision_failed</c>, <c>ssh_host_key_unverified</c>.
 /// </summary>
 public sealed class ResolveProvisionServerStep : IPipelineStep
 {
     public const string FailureCode = "provider_provision_failed";
+    public const string HostKeyUnverifiedFailureCode = "ssh_host_key_unverified";
+    private static readonly TimeSpan HostKeyProbeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan HostKeyRetryDelay = TimeSpan.FromSeconds(5);
 
     public string Name => "resolve-provision";
 
@@ -34,6 +40,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ResolveProvisionServerStep>? _logger;
     private readonly Func<string, int, CancellationToken, Task<bool>>? _sshProbe;
+    private readonly IServerHostKeyProbe _hostKeyProbe;
 
     public ResolveProvisionServerStep(
         IServiceScopeFactory scopeFactory,
@@ -41,8 +48,9 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         IOptions<DeploymentPipelineOptions> options,
         TimeProvider timeProvider,
         ILogger<ResolveProvisionServerStep>? logger = null,
-        Func<string, int, CancellationToken, Task<bool>>? sshProbe = null)
-        : this(scopeFactory, providerResolver, options.Value, timeProvider, logger, sshProbe)
+        Func<string, int, CancellationToken, Task<bool>>? sshProbe = null,
+        IServerHostKeyProbe? hostKeyProbe = null)
+        : this(scopeFactory, providerResolver, options.Value, timeProvider, logger, sshProbe, hostKeyProbe)
     {
     }
 
@@ -52,7 +60,8 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         DeploymentPipelineOptions options,
         TimeProvider timeProvider,
         ILogger<ResolveProvisionServerStep>? logger = null,
-        Func<string, int, CancellationToken, Task<bool>>? sshProbe = null)
+        Func<string, int, CancellationToken, Task<bool>>? sshProbe = null,
+        IServerHostKeyProbe? hostKeyProbe = null)
     {
         ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(providerResolver);
@@ -65,6 +74,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         _timeProvider = timeProvider;
         _logger = logger;
         _sshProbe = sshProbe;
+        _hostKeyProbe = hostKeyProbe ?? new SshNetServerHostKeyProbe();
     }
 
     public async Task ExecuteAsync(PipelineStepContext context, CancellationToken cancellationToken)
@@ -104,6 +114,14 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                 throw new PipelineStepException(FailureCode, "Registered server is not ready; refusing replacement provisioning.");
             }
 
+            if (existing.Id is not null && existing.HostKeyFingerprint is null && existing.HostKeyEnrollmentSecret is not null)
+            {
+                // A prior deployment created this server but stopped before its host key was verified.
+                var deadline = DateTimeOffset.UtcNow + _options.SshReadyTimeout;
+                await WaitForSshAsync(status.Ipv4Address, deadline, cancellationToken);
+                await EnrollHostKeyAsync(context, existing.Id, status.Ipv4Address, deadline, cancellationToken);
+            }
+
             context.ServerInstanceId = await SaveServerInstanceAsync(context, mapping,
                 new ProviderServerInfo(existing.ProviderServerId, "", status.Ipv4Address, status.Status), cancellationToken);
             context.ServerIp = status.Ipv4Address;
@@ -116,6 +134,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         var serverName = BuildServerName(orgSlug, appSlug);
 
         ProviderServerInfo server;
+        string? enrollingInstanceId = null;
         try
         {
             var found = await client.FindServerAsync(serverName, cancellationToken);
@@ -161,6 +180,14 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                     cancellationToken);
 
                 await MarkCreationAttemptAsync(context, cancellationToken);
+                var hostEnrollmentId = Guid.NewGuid().ToString("N");
+                var hostEnrollmentSecret = ServerHostKeyEnrollment.CreateSecret();
+                string protectedEnrollmentSecret;
+                await using (var scope = _scopeFactory.CreateAsyncScope())
+                {
+                    protectedEnrollmentSecret = scope.ServiceProvider.GetRequiredService<SecretEncryptionService>()
+                        .Encrypt(Convert.ToHexString(hostEnrollmentSecret));
+                }
                 try
                 {
                     server = await client.CreateServerAsync(new CreateServerRequest(
@@ -169,7 +196,8 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                     mapping.Region,
                     // The public key is installed for minicloud by cloud-init, not a provider key ID.
                     sshKeyReferences,
-                    BuildCloudInit(orgSlug, appSlug, _options.SshPublicKey),
+                    BuildCloudInit(orgSlug, appSlug, _options.SshPublicKey,
+                        ServerHostKeyEnrollment.CloudInitScript(hostEnrollmentId, hostEnrollmentSecret)),
                     new Dictionary<string, string>
                     {
                         ["managed-by"] = "minicloud",
@@ -191,12 +219,18 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                 // Preserve the provider identity even when the deployment is canceled while waiting for readiness.
                 using (var registration = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
                 {
-                    await SaveServerInstanceAsync(context, mapping, server, registration.Token, ready: false);
+                    enrollingInstanceId = await SaveServerInstanceAsync(context, mapping, server, registration.Token, ready: false,
+                        new HostKeyEnrollmentRecord(hostEnrollmentId, protectedEnrollmentSecret));
                 }
             }
 
             server = await WaitForServerReadyAsync(client, server, cancellationToken);
-            await WaitForSshAsync(server.Ipv4Address, cancellationToken);
+            var sshDeadline = DateTimeOffset.UtcNow + _options.SshReadyTimeout;
+            await WaitForSshAsync(server.Ipv4Address, sshDeadline, cancellationToken);
+            if (enrollingInstanceId is not null)
+            {
+                await EnrollHostKeyAsync(context, enrollingInstanceId, server.Ipv4Address, sshDeadline, cancellationToken);
+            }
         }
         catch (PipelineStepException)
         {
@@ -217,6 +251,92 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         context.ServerIp = server.Ipv4Address;
         await RecordEventAsync(context.DeploymentId, EventLevel.Info,
             $"Server ready: {server.Id} ({server.Ipv4Address}).", cancellationToken);
+        if (enrollingInstanceId is null)
+        {
+            await RecordEventAsync(context.DeploymentId, EventLevel.Warning,
+                $"Discovered server {server.Id} was not enrolled by this worker; SSH requires an operator host-pins entry for {server.Ipv4Address}.",
+                cancellationToken);
+        }
+    }
+
+    private async Task EnrollHostKeyAsync(
+        PipelineStepContext context, string serverInstanceId, string ipAddress, DateTimeOffset deadline, CancellationToken cancellationToken)
+    {
+        if (_options.SshReadyTimeout <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        byte[] secret;
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var record = await db.ServerInstances.AsNoTracking().SingleAsync(s => s.Id == serverInstanceId, cancellationToken);
+            if (record.HostKeyFingerprint is not null || record.HostKeyEnrollmentSecret is null)
+            {
+                return;
+            }
+            secret = Convert.FromHexString(scope.ServiceProvider.GetRequiredService<SecretEncryptionService>()
+                .Decrypt(record.HostKeyEnrollmentSecret));
+        }
+
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                var observation = await _hostKeyProbe.ObserveAsync(ipAddress, 22,
+                    remaining > TimeSpan.Zero && remaining < HostKeyProbeTimeout ? remaining : HostKeyProbeTimeout,
+                    cancellationToken);
+                var fingerprint = ServerHostKeyEnrollment.Verify(serverInstanceId, secret, observation);
+                if (fingerprint is not null)
+                {
+                    await PersistHostKeyAsync(context, serverInstanceId, fingerprint, cancellationToken);
+                    return;
+                }
+
+                // Cloud-init publishes the proof late in first boot, after sshd already accepts connections.
+                remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    break;
+                }
+                await Task.Delay(remaining < HostKeyRetryDelay ? remaining : HostKeyRetryDelay, cancellationToken);
+            }
+        }
+        finally
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret);
+        }
+
+        throw new PipelineStepException(HostKeyUnverifiedFailureCode,
+            $"Server {ipAddress} did not publish a valid SSH host-key enrollment proof within " +
+            $"{_options.SshReadyTimeout.TotalMinutes:F0} minutes, so its host key was not trusted. Check the server's " +
+            "cloud-init log (/var/log/cloud-init-output.log) and retry the deployment; if first boot failed, replace the server " +
+            "or add its verified Ed25519 key to the worker host-pins file.");
+    }
+
+    private async Task PersistHostKeyAsync(
+        PipelineStepContext context, string serverInstanceId, string fingerprint, CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow();
+        await PipelineDb.ExecuteInTransactionAsync(_scopeFactory, async (db, ct) =>
+        {
+            var record = await db.ServerInstances.SingleAsync(s => s.Id == serverInstanceId, ct);
+            if (record.HostKeyFingerprint is not null && record.HostKeyFingerprint != fingerprint)
+            {
+                throw new PipelineStepException(HostKeyUnverifiedFailureCode,
+                    "Server already has a different verified SSH host key; refusing to replace its pin.");
+            }
+            record.HostKeyFingerprint = fingerprint;
+            record.HostKeyVerifiedAt = now;
+            record.HostKeyEnrollmentSecret = null;
+            record.UpdatedAt = now;
+            PipelineDb.AddEvent(db, context.DeploymentId, EventLevel.Info,
+                $"Verified SSH host key {fingerprint} for server {record.IpAddress}.", now);
+        }, cancellationToken);
+        _logger?.LogInformation("Enrolled SSH host key {Fingerprint} for server instance {ServerInstanceId}", fingerprint, serverInstanceId);
     }
 
     private async Task<(string OrgSlug, string AppSlug, PlanMapping Mapping)> LoadAppScopeAsync(
@@ -414,14 +534,13 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             $"Server {current.Id} did not become ready within {_options.ProvisionTimeout.TotalMinutes:F0} minutes.");
     }
 
-    private async Task WaitForSshAsync(string ipAddress, CancellationToken cancellationToken)
+    private async Task WaitForSshAsync(string ipAddress, DateTimeOffset deadline, CancellationToken cancellationToken)
     {
         if (_options.SshReadyTimeout <= TimeSpan.Zero)
         {
             return;
         }
 
-        var deadline = DateTimeOffset.UtcNow + _options.SshReadyTimeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -467,7 +586,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
 
     private async Task<string> SaveServerInstanceAsync(
         PipelineStepContext context, PlanMapping mapping, ProviderServerInfo server,
-        CancellationToken cancellationToken, bool ready = true)
+        CancellationToken cancellationToken, bool ready = true, HostKeyEnrollmentRecord? enrollment = null)
     {
         var now = _timeProvider.GetUtcNow();
         var instanceId = string.Empty;
@@ -501,13 +620,15 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                 existing.Status = ready ? "active" : "provisioning";
                 existing.BootstrapStatus = ready ? "ready" : "pending";
                 existing.UpdatedAt = now;
+                if (enrollment is not null)
+                { throw new PipelineStepException(FailureCode, "Server identity changed during provisioning; refusing replacement."); }
                 instanceId = existing.Id;
             }
             else
             {
                 var created = new ServerInstance
                 {
-                    Id = Guid.NewGuid().ToString("N"),
+                    Id = enrollment?.ServerInstanceId ?? Guid.NewGuid().ToString("N"),
                     OrganizationId = context.OrganizationId,
                     AppId = context.AppId,
                     ProviderAccountId = context.ProviderAccountId,
@@ -520,6 +641,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                     Region = mapping.Region,
                     Status = ready ? "active" : "provisioning",
                     BootstrapStatus = ready ? "ready" : "pending",
+                    HostKeyEnrollmentSecret = enrollment?.ProtectedSecret,
                     CreatedAt = now,
                     UpdatedAt = now,
                 };
@@ -562,7 +684,9 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         return ManagedServerName.ForApp(orgSlug, appSlug);
     }
 
-    internal static string BuildCloudInit(string orgSlug, string appSlug, string? sshPublicKey = null)
+    private sealed record HostKeyEnrollmentRecord(string ServerInstanceId, string ProtectedSecret);
+
+    internal static string BuildCloudInit(string orgSlug, string appSlug, string? sshPublicKey = null, string? hostEnrollmentScript = null)
     {
         var lines = new List<string>
         {
@@ -585,9 +709,27 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             lines.Add($"      - {sshPublicKey.Trim()}");
         }
 
+        if (hostEnrollmentScript is not null)
+        {
+            // write_files keeps the one-time secret out of the cloud-init runcmd log; runcmd deletes it after use.
+            lines.Add("write_files:");
+            lines.Add($"  - path: {ServerHostKeyEnrollment.ScriptPath}");
+            lines.Add("    owner: root:root");
+            lines.Add("    permissions: '0700'");
+            lines.Add("    content: |");
+            lines.AddRange(hostEnrollmentScript.Split('\n').Select(line => line.Length == 0 ? "" : "      " + line));
+        }
+
+        lines.Add("runcmd:");
+        if (hostEnrollmentScript is not null)
+        {
+            // runcmd runs after cloud-init's ssh module generated the host keys. Failure is reported by the
+            // worker as an unverified host key instead of aborting the rest of first boot.
+            lines.Add($"  - python3 {ServerHostKeyEnrollment.ScriptPath}; rm -f {ServerHostKeyEnrollment.ScriptPath}");
+        }
+
         lines.AddRange(new[]
         {
-            "runcmd:",
             "  - |",
             "    if [ ! -f /swapfile ]; then",
             "      fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048",

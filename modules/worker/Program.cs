@@ -195,6 +195,7 @@ if (!builder.Configuration.GetValue<bool>("Providers:AllowLegacyConfiguration"))
         throw new ProviderCatalogException("legacy_provider_import_required", "Import legacy resources into organization provider accounts before resuming cloud operations."));
 }
 builder.Services.AddHttpClient("pipeline-health");
+builder.Services.AddSingleton<IServerHostKeyProbe, SshNetServerHostKeyProbe>();
 builder.Services.AddScoped<ResolveProvisionServerStep>();
 builder.Services.Configure<ManagedDomainOptions>(builder.Configuration.GetSection(ManagedDomainOptions.SectionName));
 builder.Services.AddScoped<DnsSetupStep>();
@@ -228,6 +229,7 @@ builder.Services.AddScoped<HealthCheckFinalizeStep>(sp =>
         timeProvider,
         logger);
 });
+builder.Services.AddSingleton<ISshHostKeyPinSource, ServerHostKeyPinSource>();
 builder.Services.AddScoped<ISshDeploymentClient, SshDeploymentClient>();
 builder.Services.AddScoped<IDeploymentPipelineExecutor, DeploymentPipelineExecutor>();
 

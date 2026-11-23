@@ -3586,6 +3586,18 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("HostKeyEnrollmentSecret")
+                        .HasColumnType("text")
+                        .HasColumnName("host_key_enrollment_secret");
+
+                    b.Property<string>("HostKeyFingerprint")
+                        .HasColumnType("text")
+                        .HasColumnName("host_key_fingerprint");
+
+                    b.Property<DateTimeOffset?>("HostKeyVerifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("host_key_verified_at");
+
                     b.Property<string>("Image")
                         .HasColumnType("text")
                         .HasColumnName("image");

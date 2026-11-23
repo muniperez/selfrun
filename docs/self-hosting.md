@@ -159,9 +159,33 @@ independent random values:
   trust this CA only for OpenBao, and public HTTPS keeps the system trust store.
 - `openbao-approle/role-id`, `openbao-approle/secret-id`: written by
   `openbao-configure`.
-- `deploy-ssh-public-key`, plus `ssh/deploy-key` and `ssh/host-pins`. Each
-  `host-pins` line is `<host> SHA256:<fingerprint>`, and the worker refuses
-  unpinned hosts.
+- `deploy-ssh-public-key`, plus `ssh/deploy-key` and `ssh/host-pins`. The
+  worker refuses SSH to any host whose key is not pinned. See
+  [SSH host-key trust](#ssh-host-key-trust).
+
+### SSH host-key trust
+
+Servers that the worker provisions are enrolled automatically. The worker
+gives each new server a one-time random secret through its private cloud-init
+data. After first boot creates the server's Ed25519 host key, cloud-init
+publishes an HMAC-SHA256 proof of that key in an SSH pre-authentication
+banner. The worker reads the key and banner without offering any credential,
+verifies the proof and stores the key's `SHA256:` fingerprint on the server
+record in the database. It then clears the stored secret. A key scan without a
+valid proof never makes a host trusted.
+
+The worker waits for the proof within the same SSH-ready timeout as the rest
+of provisioning. If no valid proof appears, the deployment fails with
+`ssh_host_key_unverified`. Check the server's `/var/log/cloud-init-output.log`
+and retry; an interrupted enrollment resumes on the next deployment.
+
+`ssh/host-pins` is only for hosts that the worker did not enroll. These include
+manually added servers, servers created before this enrollment existed, and
+servers rediscovered by name after the worker lost its creation record. Each
+line is `<host> SHA256:<fingerprint>`; verify the fingerprint out of band before
+adding it. The worker trusts a host whose key matches its database pin or a
+`host-pins` line. It refuses a host with neither (`ssh_host_key_untrusted`) and
+a host that presents a different key (`ssh_host_key_mismatch`).
 
 ### Dashboard sign-in sessions
 

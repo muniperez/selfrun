@@ -398,6 +398,11 @@ public sealed class ServerInstance
     public string Region { get; set; } = default!;
     public string Status { get; set; } = default!;
     public string BootstrapStatus { get; set; } = default!;
+    // OpenSSH "SHA256:<base64>" fingerprint verified through first-boot enrollment.
+    public string? HostKeyFingerprint { get; set; }
+    public DateTimeOffset? HostKeyVerifiedAt { get; set; }
+    // Encrypted one-time enrollment secret; kept only until the host key is verified.
+    public string? HostKeyEnrollmentSecret { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
