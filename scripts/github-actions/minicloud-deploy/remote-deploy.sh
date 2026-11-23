@@ -128,6 +128,7 @@ LOCK_DIR="/opt/minicloud/locks"
 CADDY_APP="/opt/minicloud/caddy/apps/${APP_NAME}.caddy"
 CADDY_PREVIOUS="${APP_DIR}/shared/${APP_NAME}.caddy.previous"
 CADDY_NEXT="${APP_DIR}/shared/${APP_NAME}.caddy.next"
+CADDY_MAINTENANCE="${APP_DIR}/shared/${APP_NAME}.caddy.maintenance"
 INFRA_COMPOSE_FILE="${APP_DIR}/infra.compose.json"
 APP_COMPOSE_FILE="${APP_DIR}/app.compose.json"
 ROLLOUT_DIR="${APP_DIR}/.rollout.pending"
@@ -2164,6 +2165,25 @@ verify_local_health() {
   rm -rf "${health_dir}"
 }
 
+# The candidate reuses the previous host ports, so the live route would reach it
+# before local health passes. Serve a brief 503 on the existing hosts instead.
+# Replacement stops the previous container first, so a single writable volume
+# never has two writers. Rollback restores previous.caddy after the previous
+# services are running again.
+enter_maintenance_route() {
+  phase "maintenance_route"
+  [ -f "${CADDY_APP}" ] || return 0
+  local addresses
+  addresses="$(sed -nE 's/^([^[:space:]#{}].*[^[:space:]]) \{$/\1/p' "${CADDY_APP}")"
+  [ -n "${addresses}" ] || return 0
+  while IFS= read -r address; do
+    printf '%s {\n  header Retry-After 30\n  header Cache-Control no-store\n  respond "Deployment in progress. Try again shortly." 503\n}\n' "${address}"
+  done <<< "${addresses}" > "${CADDY_MAINTENANCE}"
+  worker_lease_valid || { echo "ERROR: worker_lease_expired: refusing maintenance route." >&2; exit 1; }
+  sudo install -m 0644 "${CADDY_MAINTENANCE}" "${CADDY_APP}"
+  reload_caddy
+}
+
 activate_caddy() {
   phase "activate_caddy"
   if jq -e '.managed_database_server == true and .database == "postgres" and (.services | type == "array" and length == 0)' "${PAYLOAD_FILE}" >/dev/null; then return; fi
@@ -2490,6 +2510,7 @@ main() {
   ensure_postgres_data_owner
   start_infra
   sync_postgres_password
+  enter_maintenance_route
   : > "${ROLLOUT_DIR}/services-started"
   start_app_services
   verify_local_health

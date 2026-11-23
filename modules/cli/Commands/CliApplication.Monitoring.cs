@@ -406,6 +406,7 @@ public sealed partial class CliApplication
                                 phase = "Verifying container health";
                                 break;
 
+                            case "maintenance_route":
                             case "activate_caddy":
                                 phase = "Configuring traffic routing";
                                 break;

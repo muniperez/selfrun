@@ -699,8 +699,12 @@ readiness timeout. CLI 2.0.1 requires the updated control API's
 
 If an app revision fails its health check on the server, the deployment stays
 failed with `health_check_failed`. Minicloud stops the candidate and restores the
-previous running revision when available. The public URL may briefly reach the
-candidate or be unavailable during the update. Named volumes are reused, not
+previous running revision when available. The public URL never reaches a
+candidate before it passes its health check. While an existing app's services are
+replaced, its hostnames return `503 Deployment in progress` with `Retry-After: 30`.
+The previous revision stops before the candidate starts, so one writable volume never
+has two writers. A healthy candidate then becomes public; a failed one is stopped
+and the previous revision and route return. Named volumes are reused, not
 reverted: writes made by the candidate before the failure remain. If there was no
 previous running revision, the failed candidate is stopped and no new route is
 activated. If recovery does not complete, check the deployment logs and resolve
