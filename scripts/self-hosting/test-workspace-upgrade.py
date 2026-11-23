@@ -85,7 +85,32 @@ class Postgres:
         dump = self.command("pg_dump", database, "--no-owner", "--no-privileges")
         return [line for line in dump.splitlines() if not line.startswith(("\\restrict ", "\\unrestrict "))]
 
-    def assert_preserved(self, database, before, message):
+    def catalog(self, database):
+        tables = set(self.sql(database, """SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_type = 'BASE TABLE'""").splitlines())
+        columns = {tuple(row.split("|")) for row in self.sql(database, """SELECT table_name, column_name
+            FROM information_schema.columns WHERE table_schema = 'public'""").splitlines()}
+        return tables, columns
+
+    def without_additions(self, database, catalog, added_migrations):
+        # Target migrations newer than the installed release may only add tables or columns.
+        # Remove exactly those additions on a clone so everything pre-existing must still match.
+        tables, columns = catalog
+        clone = f"{database}_preexisting"
+        self.sql("postgres", f"DROP DATABASE IF EXISTS {clone}")
+        self.sql("postgres", f"CREATE DATABASE {clone} TEMPLATE {database}")
+        now_tables, now_columns = self.catalog(clone)
+        for table in sorted(now_tables - tables):
+            self.sql(clone, f'DROP TABLE public."{table}" CASCADE')
+        for table, column in sorted(c for c in now_columns - columns if c[0] in tables):
+            self.sql(clone, f'ALTER TABLE public."{table}" DROP COLUMN "{column}"')
+        ids = ", ".join(f"'{migration}'" for migration in added_migrations)
+        self.sql(clone, f'DELETE FROM "__EFMigrationsHistory" WHERE "MigrationId" IN ({ids})')
+        return clone
+
+    def assert_preserved(self, database, before, message, catalog=None, added_migrations=()):
+        if added_migrations:
+            database = self.without_additions(database, catalog, added_migrations)
         after = self.snapshot(database)
         if after != before:
             diff = "\n".join(unified_diff(before, after, f"{database}/before.sql", f"{database}/after.sql",
@@ -169,12 +194,20 @@ def rehearse(pg, legacy_api, target_api):
     pg.command("psql", "upgraded", "-X", "-v", "ON_ERROR_STOP=1", "-f", HERE / "workspace-upgrade-fixture.sql")
     legacy_history = pg.sql("upgraded", HISTORY).splitlines()
     before = pg.snapshot("upgraded")
+    catalog = pg.catalog("upgraded")
 
     pg.migrate(target_api, "upgraded", command)
-    pg.assert_preserved("upgraded", before, "Upgrade changed schema, rows, sequences or migration history")
+    upgraded_history = pg.sql("upgraded", HISTORY).splitlines()
+    added = [migration for migration in upgraded_history if migration not in legacy_history]
+    assert upgraded_history == legacy_history + added and all(m > legacy_history[-1] for m in added), \
+        f"Upgrade must only append migrations newer than the installed release: {added}"
+    assert not added or added[-1] == latest, f"{target['migrationService']} did not apply {latest}"
+    pg.assert_preserved("upgraded", before, "Upgrade changed schema, rows, sequences or migration history",
+                        catalog, added)
     pg.check_api_on_clone(target_api, "upgraded")
     pg.migrate(target_api, "upgraded", command)
-    pg.assert_preserved("upgraded", before, "Upgrade replay changed schema, rows, sequences or migration history")
+    pg.assert_preserved("upgraded", before, "Upgrade replay changed schema, rows, sequences or migration history",
+                        catalog, added)
     print("PASS: retired-workspace upgrade, API health and registration on a clone, replay and full database preservation")
 
     pg.migrate(target_api, "fresh", command)
