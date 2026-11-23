@@ -297,7 +297,9 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                 var remoteArtifactPath = $"{remoteDir}/{artifact.RemoteFileName}";
                 try
                 {
-                    await artifactSftp.ConnectAsync(ct);
+                    // SSH.NET's ConnectAsync pins a small socket send buffer, capping
+                    // uploads near 2 MB/s at ~100 ms RTT. Connect() requests a larger one.
+                    await Task.Run(artifactSftp.Connect, ct);
                     using var source = await artifact.OpenStream(ct);
                     await artifactSftp.UploadFileAsync(source, remoteArtifactPath, true, null, ct);
                     ct.ThrowIfCancellationRequested();
