@@ -1,8 +1,10 @@
 # Providers and plans
 
 Each organization owns its provider accounts and named plans. You can connect
-multiple Hetzner, DigitalOcean, and Vultr accounts at the same time, including
-several accounts of one provider.
+multiple Hetzner, DigitalOcean, Vultr, and experimental Scaleway accounts at
+the same time, including several accounts of one provider. Scaleway server
+provisioning is disabled by default until the operator completes live
+qualification; local contract tests do not qualify a cloud account.
 
 CLI plan listing and app creation require an API key with `plans:read`.
 Existing keys do not gain new permissions automatically. Refresh an older CLI
@@ -14,7 +16,7 @@ provider credentials requires the separate `providers:write` operator scope.
 Open **Plans** in the dashboard and select **Provider accounts** (or **Add plan**
 and **Connect account**). Add an account name, select a supported
 provider, and enter its API credential. DigitalOcean accounts can also specify a
-project; Vultr accounts can specify an OS ID. Credentials are write-only and
+project; Scaleway accounts require a project ID; Vultr accounts can specify an OS ID. Credentials are write-only and
 stored in OpenBao. An organization Owner or Admin manages accounts and plans.
 
 The connection check uses read-only provider requests. It does not allocate a
@@ -22,7 +24,7 @@ server or guarantee available quota. Accounts with identical provider types
 remain independent entries with separate credentials and plans.
 
 Add a plan in **Plans** and select an enabled provider account. Configure the
-provider's exact location (region code) and server type (SKU), and under
+provider's exact location (region or availability-zone code) and server type (SKU), and under
 **Advanced settings**, the image and `linux/amd64` or `linux/arm64`. For Vultr, the image field is an optional
 numeric OS ID override; omission uses the account default. The initial plan name
 is a UUID; replace it with a name you want to use. Names may contain spaces and
@@ -95,6 +97,60 @@ do not permit another allocation or a plan switch.
 Vultr discovery returns only a matching server label; unrelated instances in a
 provider response do not count as this application's server.
 
+## Scaleway (experimental; live qualification required)
+
+Scaleway accounts must be bound to one explicit project. Add a Scaleway API
+secret key and the project ID shown in the Scaleway console; both the dashboard
+and CLI require the project ID. The CLI accepts `SCW_SECRET_KEY` and
+`SCW_DEFAULT_PROJECT_ID` from the operator process environment or
+`--project-id`. Credentials remain write-only in OpenBao. The adapter sends the
+project ID on account-scoped list and create requests and checks returned
+resource ownership before status, attachment, or deletion operations.
+
+Create a project-scoped API key with only the required read/write access for
+Instances, Block Storage, and IAM project SSH keys. Scaleway API keys inherit
+their IAM principal's permissions; apply an IAM policy restricted to the
+selected project and do not use an organization-wide unrestricted key. The
+connection check is read-only and does not prove that the project has available
+quota or that a selected SKU/image can be provisioned.
+
+The plan location is a Scaleway availability zone, not a region. The adapter's
+current zone catalog is `fr-par-1` through `fr-par-3`, `nl-ams-1` through
+`nl-ams-3`, `pl-waw-1` through `pl-waw-3`, `it-mil-1` through `it-mil-3`, and
+`es-mad-1` through `es-mad-3`. Plan SKUs are Scaleway commercial instance type
+IDs such as `DEV1-S`; the available set and its architecture vary by zone and
+change over time. Use image labels supported by the selected type (the default
+is `ubuntu_noble`) and select a matching `linux/amd64` or `linux/arm64` build
+platform. Check the [Instance API](https://www.scaleway.com/en/developers/api/instance)
+for current zone, type, and image availability before saving a plan.
+
+Instance creation requests a zonal public IPv4 and IPv6 and supplies cloud-init
+through the Scaleway user-data API. Root disks use Scaleway Block Storage. App
+durable volumes use the 5,000-IOPS Block Storage class, support 1 GB increments
+up to the provider's 10 TB API maximum, and can only attach to an instance in
+the same availability zone. They are retained when an app or instance is
+deleted and remain billed until explicitly removed outside Minicloud; do not
+delete or move them to another project or zone. See the [Block Storage API](https://www.scaleway.com/en/developers/api/block/volume)
+for current rules and the [Scaleway pricing page](https://www.scaleway.com/en/pricing/)
+for current compute, IP, and storage costs. Prices and quota are provider-side
+and are not cached or guaranteed by MiniCloud. Quota, stock, and permission
+errors are surfaced; there is no fallback to another project or provider
+account.
+
+Scaleway has no Minicloud private-network adapter yet. Provider-native managed
+database networks and database repository VPS placement remain Hetzner-only.
+Scaleway project SSH keys are shared at project scope by the provider; use a
+dedicated project and review project key propagation before enabling an
+account. Additional and newly introduced zones require adapter qualification
+and an update to its zone catalog.
+
+Provisioning is gated off by default. Operators may set
+`Scaleway__Enabled=true` only after a separately authorized disposable live
+qualification verifies project and zone ownership, both offered architectures,
+fresh cloud-init bootstrap, reuse/redeployment, retained-volume attach/resize
+and deletion, quota/error recovery, and cleanup. No live Scaleway resources or
+credentials were used to validate this adapter.
+
 ## Upgrade from global provider credentials
 
 Stop new admissions and drain active deployments, preparations and deletion
@@ -125,8 +181,10 @@ minicloud providers add --organization org_example --name "Original Hetzner" --p
 The command reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`,
 `DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`, or
 `VULTR_API_KEY`/`VULTR_KEY` from the operator process environment. Optional
-`--project-id` and `--os-id` are non-secret account settings. Do not put provider
-credentials in the manifest, source control, or ordinary workflow inputs.
+`--project-id` and `--os-id` are non-secret account settings; Scaleway requires
+`--provider scaleway`, `SCW_SECRET_KEY` and `SCW_DEFAULT_PROJECT_ID` (or
+`--project-id`). Do not put provider credentials in the manifest, source
+control, or ordinary workflow inputs.
 
 Create an explicit, non-secret ownership manifest using the returned account ID:
 

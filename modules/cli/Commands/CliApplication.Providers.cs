@@ -45,14 +45,15 @@ public sealed partial class CliApplication
         var organizationId = GetOption(args, "--organization");
         var name = GetOption(args, "--name");
         var provider = GetOption(args, "--provider")?.ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr"))
-            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr.");
+        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr" or "scaleway"))
+            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr|scaleway.");
         if (args.Any(x => x.StartsWith("--token", StringComparison.Ordinal) || x.StartsWith("--credential", StringComparison.Ordinal) || x.StartsWith("--api-key", StringComparison.Ordinal)))
             throw new CliCommandException(CliExitCodes.ValidationError, "Cloud credentials must be supplied through provider environment variables, never command arguments.");
         var credential = provider switch
         {
             "hetzner" => FirstEnvironmentValue("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
             "vultr" => FirstEnvironmentValue("VULTR_API_KEY", "VULTR_KEY"),
+            "scaleway" => FirstEnvironmentValue("SCW_SECRET_KEY"),
             _ => FirstEnvironmentValue("DIGITALOCEAN_ACCESS_TOKEN", "DIGITALOCEAN_TOKEN")
         };
         if (credential is null)
@@ -60,6 +61,7 @@ public sealed partial class CliApplication
             {
                 "hetzner" => "Set HCLOUD_TOKEN or HETZNER_API_TOKEN before adding this account.",
                 "vultr" => "Set VULTR_API_KEY or VULTR_KEY before adding this account.",
+                "scaleway" => "Set SCW_SECRET_KEY before adding this account.",
                 _ => "Set DIGITALOCEAN_ACCESS_TOKEN or DIGITALOCEAN_TOKEN before adding this account."
             });
         var osValue = GetOption(args, "--os-id");
@@ -72,8 +74,16 @@ public sealed partial class CliApplication
                 throw new CliCommandException(CliExitCodes.ValidationError, "--os-id requires a positive integer.");
             osId = parsed;
         }
+        var projectId = GetOption(args, "--project-id") ?? (provider switch
+        {
+            "digital-ocean" or "digitalocean" => FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID"),
+            "scaleway" => FirstEnvironmentValue("SCW_DEFAULT_PROJECT_ID"),
+            _ => null
+        });
+        if (provider == "scaleway" && string.IsNullOrWhiteSpace(projectId))
+            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --project-id or set SCW_DEFAULT_PROJECT_ID for the Scaleway account.");
         var account = await _apiClient.CreateProviderAsync(new(organizationId, name, provider == "digitalocean" ? "digital-ocean" : provider,
-            credential, GetOption(args, "--project-id") ?? (provider is "digital-ocean" or "digitalocean" ? FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID") : null), osId), ct);
+            credential, projectId, osId), ct);
         _console.WriteLine($"Provider added: {account.Name} ({account.Id}, {account.ProviderType}).");
         return CliExitCodes.Success;
     }

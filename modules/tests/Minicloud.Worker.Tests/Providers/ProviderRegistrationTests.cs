@@ -32,6 +32,7 @@ public sealed class ProviderRegistrationTests
     [InlineData(CloudProvider.Hetzner)]
     [InlineData(CloudProvider.DigitalOcean)]
     [InlineData(CloudProvider.Vultr)]
+    [InlineData(CloudProvider.Scaleway)]
     public void ProductionRegistrationsResolveVpsClients(CloudProvider cloud)
     {
         using var provider = CreateProvider();

@@ -305,7 +305,7 @@ public sealed partial class CliApplication
                 _console.WriteLine("minicloud plans list [--organization <id>] [--config path]");
                 return CliExitCodes.Success;
             case "providers":
-                _console.WriteLine("minicloud providers add --organization <id> --name <name> --provider hetzner|digital-ocean|vultr [--project-id <id>] [--os-id <id>]");
+                _console.WriteLine("minicloud providers add --organization <id> --name <name> --provider hetzner|digital-ocean|vultr|scaleway [--project-id <id>] [--os-id <id>]");
                 _console.WriteLine("Reads the cloud token from the provider environment variable; tokens are never command arguments.");
                 _console.WriteLine("minicloud providers import-legacy --manifest <path>");
                 _console.WriteLine("minicloud providers ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");

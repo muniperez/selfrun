@@ -448,7 +448,7 @@ public sealed class ProviderSshKeyAllocationTests
         public async ValueTask DisposeAsync() => await Harness.DisposeAsync();
     }
 
-    internal sealed class StaticClientFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)
+    internal sealed class StaticClientFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!)
     {
         private int _created;
         public int Created => _created;

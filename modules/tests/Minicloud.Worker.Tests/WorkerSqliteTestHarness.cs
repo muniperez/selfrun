@@ -47,7 +47,7 @@ public sealed class WorkerSqliteTestHarness : IAsyncLifetime
         services.AddSingleton<IIdGenerator, IdGenerator>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<ProviderAccountClientFactory>(_ =>
-            new ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!));
+            new ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!, null!));
         services.AddScoped<ProviderSshKeyService>();
         configure?.Invoke(services);
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();

@@ -10,6 +10,7 @@ using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Hetzner;
+using Minicloud.Common.Providers.Scaleway;
 using Minicloud.Common.Providers.Vultr;
 using Minicloud.Common.Services;
 
@@ -49,6 +50,24 @@ public sealed class ProviderCredentialTests : IClassFixture<SqliteTestHarness>
         store.Unavailable = true;
         await Assert.ThrowsAsync<SecretStoreUnavailableException>(() => factory.CreateAsync(org.Id, a.Id, default));
         Assert.Equal(count, requests.Count);
+    }
+
+    [Fact]
+    public async Task ScalewayAccountRequiresExplicitProjectBeforeWritingCredentialsOrCallingProvider()
+    {
+        await using var db = harness.CreateDbContext();
+        var org = Organization();
+        db.Organizations.Add(org);
+        await db.SaveChangesAsync();
+        var store = new MemorySecrets();
+        var transport = new Transport((_, _) => throw new InvalidOperationException("No provider request is expected."));
+        var service = Accounts(db, store, Factory(db, store, transport));
+
+        var error = await Assert.ThrowsAsync<ProviderCatalogException>(() =>
+            service.CreateAsync(new CreateProviderRequest(org.Id, "Scaleway", "scaleway", "synthetic-secret"), default));
+
+        Assert.Equal("provider_settings_invalid", error.Code);
+        Assert.Empty(store.Values);
     }
 
     [Fact]
@@ -269,7 +288,7 @@ public sealed class ProviderCredentialTests : IClassFixture<SqliteTestHarness>
 
     private static ProviderAccountClientFactory Factory(MinicloudDbContext db, ISecretStore store, Transport transport) =>
         new(db, store, new HttpFactory(transport), Options.Create(new HetznerOptions()), Options.Create(new DigitalOceanOptions()),
-            Options.Create(new VultrOptions()), NullLoggerFactory.Instance);
+            Options.Create(new VultrOptions()), Options.Create(new ScalewayOptions()), NullLoggerFactory.Instance);
     private static ProviderAccountService Accounts(MinicloudDbContext db, ISecretStore store, ProviderAccountClientFactory factory) =>
         new(db, store, factory, new IdGenerator(), TimeProvider.System, Options.Create(new OpenBaoSecretStoreOptions { EnvironmentPrefix = "test" }));
     private static Organization Organization() => new() { Id = "org_" + Guid.NewGuid().ToString("N"), Name = "Org", Slug = "o" + Guid.NewGuid().ToString("N")[..8] };

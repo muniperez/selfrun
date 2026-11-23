@@ -103,7 +103,8 @@ public sealed class DatabaseNetworkLifecycleTests : IAsyncLifetime
     }
 
     private sealed class NetworkFactory(MinicloudDbContext db, NetworkProvider provider) : ProviderAccountClientFactory(db, null!, null!,
-        Options.Create(new HetznerOptions()), Options.Create(new DigitalOceanOptions()), Options.Create(new VultrOptions()), NullLoggerFactory.Instance)
+        Options.Create(new HetznerOptions()), Options.Create(new DigitalOceanOptions()), Options.Create(new VultrOptions()),
+        Options.Create(new Minicloud.Common.Providers.Scaleway.ScalewayOptions()), NullLoggerFactory.Instance)
     {
         public List<bool> AllowDisabledCalls { get; } = [];
         public override Task<IVpsProviderClient> CreateAsync(string org, string id, CancellationToken ct, bool allowDisabled = true)

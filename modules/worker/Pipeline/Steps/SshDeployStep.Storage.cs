@@ -15,12 +15,13 @@ public sealed partial class SshDeployStep
     {
         var result = new Dictionary<string, RuntimeStorageMount[]>(StringComparer.Ordinal);
         if (!deployment.Services.Any(x => StorageMounts.Read(x.StorageJson).Count > 0)) { return result; }
-        if (context.Provider != CloudProvider.Hetzner) { throw new PipelineStepException("storage_provider_unsupported", "Durable storage is currently supported only on Hetzner."); }
+        if (context.Provider is not (CloudProvider.Hetzner or CloudProvider.Scaleway))
+        { throw new PipelineStepException("storage_provider_unsupported", "Durable storage is currently supported only on Hetzner and Scaleway."); }
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
         var server = await db.ServerInstances.SingleAsync(x => x.Id == context.ServerInstanceId && x.AppId == context.AppId, ct);
         if (server.OrganizationId != context.OrganizationId || server.ProviderAccountId != context.ProviderAccountId ||
-            !string.Equals(server.Provider, "Hetzner", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
+            !string.Equals(server.Provider, context.Provider.ToString(), StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
         { throw new PipelineStepException("storage_server_conflict", "Storage server identity does not match the deployment."); }
         var client = server.ProviderAccountId is null
             ? scope.ServiceProvider.GetRequiredService<VpsProviderClientResolver>()(context.Provider)

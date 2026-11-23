@@ -99,7 +99,7 @@ public sealed class ProviderLegacyImportService(
                         var name = $"minicloud-{app.Organization.Slug}-production-{app.Slug}".ToLowerInvariant();
                         var found = await client.FindServerAsync(name, ct);
                         if (found is null || found.Id != resourceId || found.Name != name ||
-                            (account.ProviderType == CloudProvider.Hetzner && !HasLabels(found.Labels,
+                            (account.ProviderType is CloudProvider.Hetzner or CloudProvider.Scaleway && !HasLabels(found.Labels,
                                 ("managed-by", "minicloud"), ("customer", app.Organization.Slug), ("app", app.Slug), ("env", "production"))))
                             throw Error("legacy_import_resource_unverified", "The original server could not be verified in the selected account. No ownership was changed.");
                         var providerName = account.ProviderType.ToString().ToLowerInvariant();
@@ -177,7 +177,7 @@ public sealed class ProviderLegacyImportService(
                         ?? throw Error("legacy_import_volume_not_found", "A retained volume in the manifest was not found.");
                     if ((volume.OrganizationId is not null && volume.OrganizationId != request.OrganizationId) ||
                         (volume.ProviderAccountId is not null && volume.ProviderAccountId != account.Id) ||
-                        account.ProviderType != CloudProvider.Hetzner || client is not IStorageVolumeProvider storage)
+                        account.ProviderType is not (CloudProvider.Hetzner or CloudProvider.Scaleway) || client is not IStorageVolumeProvider storage)
                         throw Error("legacy_import_ownership_conflict", "A retained volume has conflicting account, organization or provider ownership.");
                     var app = await db.Apps.SingleOrDefaultAsync(x => x.Id == volume.AppId, ct);
                     if (app is not null && (app.OrganizationId != request.OrganizationId ||
