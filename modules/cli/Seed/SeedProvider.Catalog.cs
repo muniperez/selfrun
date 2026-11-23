@@ -83,7 +83,7 @@ internal sealed partial class SeedProvider
     private async Task<SeedQuote> VultrQuoteAsync(SeedSelection s, CancellationToken ct)
     {
         var account = (await SendAsync(HttpMethod.Get, "account", null, ct)).GetProperty("account");
-        SeedGuard.Require(account.GetProperty("acls").EnumerateArray().Any(x => x.GetString() == "provision"), "Vultr key requires provision ACL and workstation IP access.");
+        SeedGuard.Require(account.GetProperty("acls").EnumerateArray().Any(x => x.GetString() == "provisioning"), "Vultr key requires the provisioning ACL and workstation IP access.");
         await ListAsync("instances", "instances", ct);
         await ListAsync("ssh-keys", "ssh_keys", ct);
         One(await ListAsync("regions", "regions", ct), x => Text(x, "id") == s.Region, "Unknown Vultr region.");

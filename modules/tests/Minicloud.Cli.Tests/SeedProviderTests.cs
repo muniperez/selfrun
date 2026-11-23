@@ -110,6 +110,23 @@ public sealed class SeedProviderTests
     }
 
     [Theory]
+    [InlineData("provisioning", true)]
+    [InlineData("provision", false)]
+    [InlineData("subscriptions_view", false)]
+    public async Task Vultr_quote_requires_the_provisioning_ACL_reported_by_the_account_API(string acl, bool accepted)
+    {
+        var fixture = new Fixture("vultr");
+        fixture.Bodies["account"] = new { account = new { email = "synthetic@example.invalid", acls = new[] { acl } } };
+        using var provider = fixture.CreateProvider();
+        if (accepted)
+            Assert.NotNull(await provider.QuoteAsync(Selection("vultr"), Operation, default));
+        else
+            Assert.Contains("provisioning ACL", (await Assert.ThrowsAsync<CliCommandException>(
+                () => provider.QuoteAsync(Selection("vultr"), Operation, default))).Message);
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    [Theory]
     [InlineData("null")]
     [InlineData("{}")]
     [InlineData("{\"name\":\"team-without-id\"}")]
@@ -277,7 +294,7 @@ public sealed class SeedProviderTests
             Bodies["account"] = provider == "digitalocean"
                 ? (object)new { account = new { uuid = "synthetic-user", team = new { uuid = "synthetic-team", name = "Synthetic Team" },
                     status = "active", email_verified = true, droplet_limit = 5 } }
-                : new { account = new { email = "synthetic@example.invalid", acls = new[] { "provision" } } };
+                : new { account = new { email = "synthetic@example.invalid", acls = new[] { "provisioning" } } };
             Bodies["regions"] = provider == "digitalocean"
                 ? (object)new { regions = new[] { new { slug = "region", available = true } } }
                 : new { regions = new[] { new { id = "region" } } };
