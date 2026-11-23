@@ -84,6 +84,10 @@ elif args[0] == 'compose' and 'up' in args:
         if os.environ['RECOVERY'] == 'crash':
             (root / 'restoring').touch()
             time.sleep(60)
+    else:
+        route = Path(os.environ['ROUTE'])
+        with (root / 'routes-at-start').open('a') as log:
+            log.write((route.read_text() if route.exists() else '<none>\n') + '---\n')
     for name in names:
         revision = services[name]['image']
         running[name] = revision if revision.startswith('sha256:') else 'sha256:' + os.environ['VERSION']
@@ -130,6 +134,7 @@ class RolloutTests(unittest.TestCase):
         payload.write_text(json.dumps({'app_name': 'fixture', 'app_env': 'production', 'customer': 'test',
                                        'deployment_id': version, 'database': 'none', 'services': services}))
         env = {**os.environ, 'PATH': f'{self.root}:{os.environ["PATH"]}', 'FIXTURE': str(self.root),
+               'ROUTE': str(self.route),
                'VERSION': version, 'RECOVERY': recovery, 'RECOVER_ONLY': str(int(recover_only))}
         return subprocess.Popen(['bash', str(self.script), str(payload)], env=env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
@@ -163,9 +168,20 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual('durable marker\n', self.marker.read_text())
         self.assertFalse(self.journal.exists())
 
+    def routes_at_start(self):
+        return (self.root / 'routes-at-start').read_text().split('---\n')[:-1]
+
+    def assert_maintenance_while_candidate_starts(self):
+        route = self.routes_at_start()[-1]
+        self.assertIn('fixture.example.test {', route)
+        self.assertIn('respond "Deployment in progress. Try again shortly." 503', route)
+        self.assertIn('header Retry-After 30', route)
+        self.assertNotIn('reverse_proxy', route)
+
     def test_failed_candidate_restores_exact_previous_image_and_route(self):
         self.previous()
         status, output = self.deploy('broken')
+        self.assert_maintenance_while_candidate_starts()
         self.assertEqual(status, 1, output)
         self.assertIn('HTTP 503', output)
         self.assertIn('__MINICLOUD_DEPLOY_FAILURE__=health_check_failed', output)
@@ -173,8 +189,20 @@ class RolloutTests(unittest.TestCase):
         self.assertNotIn('__MINICLOUD_DEPLOY_COMPLETE__', output)
         self.assert_restored()
 
+    def test_healthy_replacement_becomes_public_only_after_health(self):
+        self.previous()
+        status, output = self.deploy('v3')
+        self.assertEqual(status, 0, output)
+        self.assertIn('__MINICLOUD_DEPLOY_COMPLETE__=v3', output)
+        self.assert_maintenance_while_candidate_starts()
+        self.assertEqual(json.loads(self.containers.read_text())['web'], 'sha256:v3')
+        self.assertEqual(self.route.read_text(), 'fixture.example.test {\n  reverse_proxy 127.0.0.1:18080\n}\n')
+        self.assertEqual('durable marker\n', self.marker.read_text())
+        self.assertFalse(self.journal.exists())
+
     def test_failed_first_deploy_stops_candidate_without_activating_routes(self):
         status, output = self.deploy('broken')
+        self.assertEqual(self.routes_at_start(), ['<none>\n'])
         self.assertEqual(status, 1, output)
         self.assertIn('__MINICLOUD_DEPLOY_FAILURE__=health_check_failed', output)
         self.assertIn('__MINICLOUD_DEPLOY_ROLLBACK__=no_previous', output)

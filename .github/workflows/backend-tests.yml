@@ -29,6 +29,8 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Verify runtime bootstrap ordering and argument handling
         run: python3 scripts/github-actions/minicloud-deploy/test-runtime-bootstrap.py
+      - name: Verify health-gated app rollout and rollback
+        run: python3 -B scripts/github-actions/minicloud-deploy/test-runtime-rollout.py
       - name: Build the disposable SSH bootstrap test fixture
         run: docker build --tag "$MINICLOUD_TEST_PREFLIGHT_SSH_IMAGE" --file modules/tests/Minicloud.Worker.Tests/Fixtures/SshBootstrap.Dockerfile .
       - name: Verify database capture, restore, retention and isolation
