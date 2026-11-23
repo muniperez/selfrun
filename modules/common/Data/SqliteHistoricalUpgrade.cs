@@ -37,7 +37,7 @@ internal static class SqliteHistoricalUpgrade
         IReadOnlyList<SchemaObject> source, IReadOnlyList<SchemaObject> target, CancellationToken cancellationToken)
     {
         await EnsureForeignKeysAsync(connection, transaction, cancellationToken);
-        var changed = new[] { "users", "apps", "deployments" };
+        var changed = new[] { "users", "apps", "deployments", "server_instances" };
         foreach (var entry in source.Where(entry => entry.Type == "table" && !changed.Contains(entry.Name)))
             if (!target.Contains(entry))
                 throw new InvalidOperationException("SQLite upgrade requires an explicit conversion for a changed table; changes rolled back.");
@@ -84,6 +84,13 @@ internal static class SqliteHistoricalUpgrade
                 ["ssh_registration_state"] = "NULL",
                 ["ssh_snapshot_taken_at"] = "NULL",
                 ["number"] = """(SELECT number FROM "__sqlite_upgrade_numbers" WHERE id = deployments.id)"""
+            }, [], cancellationToken);
+        await RebuildAsync(connection, transaction, reference, target, "server_instances",
+            new Dictionary<string, string>
+            {
+                ["host_key_fingerprint"] = "NULL",
+                ["host_key_verified_at"] = "NULL",
+                ["host_key_enrollment_secret"] = "NULL"
             }, [], cancellationToken);
         await ExecuteAsync(connection, transaction, """DROP TABLE "__sqlite_upgrade_numbers";""", cancellationToken);
 

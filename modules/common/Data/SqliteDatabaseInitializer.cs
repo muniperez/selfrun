@@ -30,7 +30,7 @@ public static class SqliteDatabaseInitializer
             await using var pragma = connection.CreateCommand();
             pragma.CommandText = "PRAGMA foreign_keys";
             foreignKeys = Convert.ToInt64(await pragma.ExecuteScalarAsync(cancellationToken)) != 0;
-            // Rebuilding the three changed tables must not cascade-delete their children.
+            // Rebuilding the changed tables must not cascade-delete their children.
             await ExecuteAsync(connection, null, "PRAGMA foreign_keys = OFF;", cancellationToken);
             // Reserve the writer before inspecting state so concurrent initializers cannot
             // both observe an empty database. DDL and seed inserts commit together.

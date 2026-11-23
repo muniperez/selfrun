@@ -166,6 +166,11 @@ public sealed partial class SshDeployStep : IPipelineStep
             await FlushFailureLogsAsync(logWriter, context.DeploymentId);
             throw;
         }
+        catch (SshHostKeyTrustException)
+        {
+            await FlushFailureLogsAsync(logWriter, context.DeploymentId);
+            throw;
+        }
         catch (OperationCanceledException)
         {
             await FlushFailureLogsAsync(logWriter, context.DeploymentId);

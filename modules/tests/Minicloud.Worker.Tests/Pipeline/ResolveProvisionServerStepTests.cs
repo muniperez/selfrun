@@ -13,6 +13,8 @@ using System.Net;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Worker.Tests.Providers;
 using Minicloud.Worker.Tests.Services;
+using Minicloud.Worker.Ssh;
+using System.Text.RegularExpressions;
 
 namespace Minicloud.Worker.Tests.Pipeline;
 
@@ -182,7 +184,8 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
             }),
             TimeProvider.System,
             NullLogger<ResolveProvisionServerStep>.Instance,
-            sshProbe: (_, _, _) => Task.FromResult(true));
+            sshProbe: (_, _, _) => Task.FromResult(true),
+            hostKeyProbe: new EnrollingHostKeyProbe(() => capturedRequest?.UserDataCloudInit));
 
         var context = new PipelineStepContext
         {
@@ -205,6 +208,97 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
             Assert.Equal("198.51.100.42", saved.IpAddress);
             Assert.Equal("srv-hetz-999", saved.ProviderServerId);
         }
+    }
+
+    [Fact]
+    public async Task FreshServerEnrollsHostKeyPinThatTheSshClientTrusts()
+    {
+        var (org, app) = await _harness.SeedOrgAndAppAsync("enroll");
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.Deployments.Add(new Deployment { Id = "dep-enroll", OrganizationId = org.Id, AppId = app.Id, Status = DeploymentStatus.Provisioning });
+            await db.SaveChangesAsync();
+        }
+        CreateServerRequest? created = null;
+        var provider = new MockVpsProviderClient(createServer: request =>
+        {
+            created = request;
+            return Task.FromResult(new ProviderServerInfo("srv-enroll", request.Name, "198.51.100.77", "running", null, request.Labels));
+        });
+        // The first observation predates cloud-init's banner; enrollment retries within the SSH-ready window.
+        var probe = new EnrollingHostKeyProbe(() => created?.UserDataCloudInit, unprovenObservations: 1);
+        var step = new ResolveProvisionServerStep(_harness.CreateScopeFactory(), _ => provider,
+            new DeploymentPipelineOptions { SshPublicKey = "ssh-ed25519 TEST", SshReadyTimeout = TimeSpan.FromSeconds(30) },
+            TimeProvider.System, sshProbe: (_, _, _) => Task.FromResult(true), hostKeyProbe: probe);
+
+        await step.ExecuteAsync(new PipelineStepContext { DeploymentId = "dep-enroll", OrganizationId = org.Id, AppId = app.Id }, CancellationToken.None);
+
+        Assert.Equal(2, probe.Calls);
+        var (serverId, secret) = EnrollingHostKeyProbe.Material(created!.UserDataCloudInit!);
+        await using (var db = _harness.CreateDbContext())
+        {
+            var saved = await db.ServerInstances.SingleAsync(s => s.AppId == app.Id);
+            Assert.Equal(serverId, saved.Id);
+            Assert.Equal(probe.Fingerprint, saved.HostKeyFingerprint);
+            Assert.NotNull(saved.HostKeyVerifiedAt);
+            Assert.Null(saved.HostKeyEnrollmentSecret);
+            var events = await db.DeploymentEvents.Where(e => e.DeploymentId == "dep-enroll").Select(e => e.Message).ToListAsync();
+            Assert.Contains(events, message => message.Contains(probe.Fingerprint));
+            Assert.DoesNotContain(events, message => message.Contains(secret, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var pinSource = new ServerHostKeyPinSource(_harness.CreateScopeFactory());
+        Assert.Equal(probe.Fingerprint, await pinSource.GetPinnedFingerprintAsync("198.51.100.77", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task UnprovenHostKeyFailsWithSpecificCodeAndResumesOnRetry()
+    {
+        var (org, app) = await _harness.SeedOrgAndAppAsync("enroll-resume");
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.Deployments.Add(new Deployment { Id = "dep-enroll-resume-1", OrganizationId = org.Id, AppId = app.Id, Status = DeploymentStatus.Provisioning });
+            db.Deployments.Add(new Deployment { Id = "dep-enroll-resume-2", OrganizationId = org.Id, AppId = app.Id, Status = DeploymentStatus.Provisioning });
+            await db.SaveChangesAsync();
+        }
+        CreateServerRequest? created = null;
+        var provider = new MockVpsProviderClient(createServer: request =>
+        {
+            created = request;
+            return Task.FromResult(new ProviderServerInfo("srv-enroll-resume", request.Name, "198.51.100.78", "running", null, request.Labels));
+        }, getServerStatus: id => Task.FromResult(new ProviderServerStatus(id, "running", "198.51.100.78", null, true)));
+        var options = new DeploymentPipelineOptions { SshPublicKey = "ssh-ed25519 TEST", SshReadyTimeout = TimeSpan.FromMilliseconds(300) };
+        // A key without a valid proof (for example an interposed host) is never pinned.
+        var forged = new EnrollingHostKeyProbe(() => created?.UserDataCloudInit, unprovenObservations: int.MaxValue);
+        var first = new ResolveProvisionServerStep(_harness.CreateScopeFactory(), _ => provider, options, TimeProvider.System,
+            sshProbe: (_, _, _) => Task.FromResult(true), hostKeyProbe: forged);
+
+        var failure = await Assert.ThrowsAsync<PipelineStepException>(() => first.ExecuteAsync(
+            new PipelineStepContext { DeploymentId = "dep-enroll-resume-1", OrganizationId = org.Id, AppId = app.Id }, CancellationToken.None));
+
+        Assert.Equal("ssh_host_key_unverified", failure.FailureCode);
+        Assert.Contains("cloud-init", failure.Message);
+        await using (var db = _harness.CreateDbContext())
+        {
+            var pending = await db.ServerInstances.SingleAsync(s => s.AppId == app.Id);
+            Assert.Null(pending.HostKeyFingerprint);
+            Assert.NotNull(pending.HostKeyEnrollmentSecret);
+            Assert.DoesNotContain(EnrollingHostKeyProbe.Material(created!.UserDataCloudInit!).Secret, pending.HostKeyEnrollmentSecret,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Null(await new ServerHostKeyPinSource(_harness.CreateScopeFactory()).GetPinnedFingerprintAsync("198.51.100.78", CancellationToken.None));
+
+        var proven = new EnrollingHostKeyProbe(() => created?.UserDataCloudInit);
+        var retry = new ResolveProvisionServerStep(_harness.CreateScopeFactory(), _ => provider,
+            new DeploymentPipelineOptions { SshPublicKey = "ssh-ed25519 TEST", SshReadyTimeout = TimeSpan.FromSeconds(30) }, TimeProvider.System,
+            sshProbe: (_, _, _) => Task.FromResult(true), hostKeyProbe: proven);
+        await retry.ExecuteAsync(new PipelineStepContext { DeploymentId = "dep-enroll-resume-2", OrganizationId = org.Id, AppId = app.Id }, CancellationToken.None);
+
+        await using var verify = _harness.CreateDbContext();
+        var enrolled = await verify.ServerInstances.SingleAsync(s => s.AppId == app.Id);
+        Assert.Equal(proven.Fingerprint, enrolled.HostKeyFingerprint);
+        Assert.Null(enrolled.HostKeyEnrollmentSecret);
+        Assert.Equal("active", enrolled.Status);
     }
 
     [Fact]
@@ -656,6 +750,31 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         await db.SaveChangesAsync();
         return new PipelineStepContext { AppId = app.Id, OrganizationId = org.Id, DeploymentId = name + "-deployment",
             PlanId = plan.Id, ProviderAccountId = account.Id };
+    }
+
+    /// <summary>Simulates a server whose cloud-init proves its Ed25519 host key with the delivered enrollment secret.</summary>
+    private sealed class EnrollingHostKeyProbe(Func<string?> userData, int unprovenObservations = 0) : IServerHostKeyProbe
+    {
+        private readonly byte[] _key = ServerHostKeyEnrollmentTests.Ed25519Blob();
+
+        public int Calls { get; private set; }
+        public string Fingerprint => "SHA256:" + Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(_key)).TrimEnd('=');
+
+        public static (string ServerId, string Secret) Material(string cloudInit) => (
+            Regex.Match(cloudInit, "SERVER_ID = \"([0-9a-f]{32})\"").Groups[1].Value,
+            Regex.Match(cloudInit, "SECRET = bytes.fromhex\\(\"([0-9a-f]{64})\"\\)").Groups[1].Value);
+
+        public Task<SshHostKeyObservation?> ObserveAsync(string host, int port, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Calls <= unprovenObservations)
+            {
+                return Task.FromResult<SshHostKeyObservation?>(new("ssh-ed25519", _key, null));
+            }
+            var (serverId, secret) = Material(userData()!);
+            return Task.FromResult<SshHostKeyObservation?>(new("ssh-ed25519", _key,
+                ServerHostKeyEnrollmentTests.Banner(serverId, Convert.FromHexString(secret), _key)));
+        }
     }
 
     private sealed class AccountFactory(IVpsProviderClient client) : ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!)

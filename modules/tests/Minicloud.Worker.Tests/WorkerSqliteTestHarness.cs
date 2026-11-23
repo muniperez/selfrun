@@ -6,6 +6,7 @@ using Minicloud.Common.Models;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Services;
 using Minicloud.Common.Providers;
+using Microsoft.Extensions.Options;
 
 namespace Minicloud.Worker.Tests;
 
@@ -49,6 +50,7 @@ public sealed class WorkerSqliteTestHarness : IAsyncLifetime
         services.AddScoped<ProviderAccountClientFactory>(_ =>
             new ProviderAccountClientFactory(null!, null!, null!, null!, null!, null!, null!));
         services.AddScoped<ProviderSshKeyService>();
+        services.AddSingleton(new SecretEncryptionService(Options.Create(new SecretEncryptionOptions { EncryptionKey = "synthetic-worker-test-key" })));
         configure?.Invoke(services);
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }

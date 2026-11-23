@@ -228,6 +228,13 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         {
             throw;
         }
+        catch (SshHostKeyTrustException ex)
+        {
+            // No rollback: every remote action needs the same refused host identity.
+            _logger?.LogError(ex, "Deployment {DeploymentId} refused an untrusted SSH host key ({Code})", context.DeploymentId, ex.FailureCode);
+            await MarkFailedAsync(context.DeploymentId, context.OwnershipToken, ex.FailureCode, ex.Message, cancellationToken);
+            throw;
+        }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Deployment {DeploymentId} pipeline failed unexpectedly", context.DeploymentId);

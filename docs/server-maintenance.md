@@ -118,8 +118,9 @@ A backup runs in this order:
      its file storage is copied.
    - `installation.json` and `secrets/`.
      The stock empty `secrets/ssh/host-pins` file is preserved byte-for-byte
-     before any deployment host has been pinned; no other regular installation
-     member may be empty.
+     until an operator pins a manually added host; worker-provisioned servers
+     are pinned in the database instead. No other regular installation member
+     may be empty.
    - The independent OpenBao recovery material.
    - An encrypted manifest with the release, authority epoch and component
      digests.
