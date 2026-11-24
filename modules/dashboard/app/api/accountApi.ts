@@ -25,7 +25,7 @@ export type AccountSession = {
   keepSignedInPreference?: boolean;
 };
 
-export type FlowKind = "login" | "settings" | "recovery";
+export type FlowKind = "login" | "settings" | "recovery" | "reauthentication";
 export type FlowMessage = { id: number; text: string; type: string };
 export type FlowNode = {
   group: string;
@@ -128,7 +128,7 @@ export function safeReturnPath(value: unknown): string {
 }
 
 function flowPath(kind: FlowKind) {
-  if (!["login", "settings", "recovery"].includes(kind)) throw new Error("Unsupported account flow.");
+  if (!["login", "settings", "recovery", "reauthentication"].includes(kind)) throw new Error("Unsupported account flow.");
   return `/api/account/flows/${kind}`;
 }
 
@@ -153,7 +153,7 @@ function validatePasskey(passkey: FlowPasskey, kind: FlowKind) {
     }
   }
   if (passkey.loginOptions != null) {
-    if (kind !== "login" || typeof passkey.loginOptions?.publicKey?.challenge !== "string" ||
+    if (kind !== "login" && kind !== "reauthentication" || typeof passkey.loginOptions?.publicKey?.challenge !== "string" ||
         !passkey.loginOptions.publicKey.challenge) {
       throw new Error("Invalid passkey login options.");
     }
@@ -213,7 +213,7 @@ export async function startProviderRedirect(flow: BrowserFlow, provider: "google
       keepSignedInQuery(flow.kind === "login" ? keepSignedIn : undefined), {
       method: "POST",
       body: { csrf_token: flowCsrfToken(flow), provider },
-      browserFlow: flow.kind !== "settings",
+      browserFlow: flow.kind === "login" || flow.kind === "recovery",
       notifyAuth: false
     });
   if (result.provider !== provider) throw new Error("Invalid account provider destination.");
@@ -259,13 +259,13 @@ export function submitAccountFlow(flow: BrowserFlow, fields: Record<string, stri
   return readEnvelope(apiRequest<FlowResponse>(`${flowPath(flow.kind)}?flow=${flowId(flow.id)}${query}`, {
     method: "POST",
     body: fields,
-    browserFlow: flow.kind !== "settings",
+    browserFlow: flow.kind === "login" || flow.kind === "recovery",
     notifyAuth: false
   }), flow.kind);
 }
 
 export function submitPasskeyLogin(flow: BrowserFlow, passkeyLoginJson: string, keepSignedIn?: boolean) {
-  if (flow.kind !== "login") throw new Error("Invalid account form destination.");
+  if (flow.kind !== "login" && flow.kind !== "reauthentication") throw new Error("Invalid account form destination.");
   return submitAccountFlow(flow, {
     csrf_token: flowCsrfToken(flow),
     method: "passkey",

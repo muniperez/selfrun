@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -1380,15 +1381,21 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
 
         // In-place re-authentication via refresh login flow with passkey, then retry enrollment.
         _factory.Upstream.SettingsPasskeyError = null;
-        using var reauthStart = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/login/browser?returnTo=%2Fsettings%2Faccount");
+        using var reauthStart = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/reauthentication/browser?returnTo=%2Fsettings%2Faccount");
         reauthStart.Headers.Add("Cookie", cookie + "; ory_kratos_session=synthetic-ory-session");
-        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(reauthStart)).StatusCode);
+        var started = await _client.SendAsync(reauthStart);
+        Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+        var binding = started.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-reauthentication=")).Split(';')[0];
         Assert.Contains("refresh=true", _factory.Upstream.Requests.Last().Uri.Query);
 
-        using var reauthSubmit = Submit("login", new
+        using (var noCsrf = Submit("reauthentication", LoginFields(), cookie + "; " + binding))
+            Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(noCsrf)).StatusCode);
+
+        using var reauthSubmit = Submit("reauthentication", new
         {
             csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = SyntheticPasskeyAssertionJson()
-        }, cookie);
+        }, cookie + "; " + binding);
+        reauthSubmit.Headers.Add("X-Minicloud-CSRF", csrf);
         var reauthed = await _client.SendAsync(reauthSubmit);
         Assert.Equal(HttpStatusCode.OK, reauthed.StatusCode);
         var refreshedCookie = LocalCookie(reauthed);
@@ -1400,6 +1407,81 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         }, refreshedCookie);
         retry.Headers.Add("X-Minicloud-CSRF", refreshedCsrf);
         Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(retry)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ReauthenticationIsBoundToTheInitiatingSessionAndUser(bool otherSession, bool otherUser)
+    {
+        var (cookie, csrf) = await Login();
+        using var start = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/reauthentication/browser");
+        start.Headers.Add("Cookie", cookie);
+        var started = await _client.SendAsync(start);
+        Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+        var binding = started.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-reauthentication=")).Split(';')[0];
+        if (otherUser)
+        {
+            await using var scope = _factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            db.Users.Add(new User { Id = "user-2", KratosIdentityId = "44444444-2222-4333-8444-555555555555", Email = "other@example.test" });
+            await db.SaveChangesAsync();
+            _factory.Upstream.Identity = "44444444-2222-4333-8444-555555555555";
+        }
+        if (otherSession)
+        {
+            _factory.Upstream.UpstreamSessionId = "55555555-2222-4333-8444-555555555555";
+            (cookie, csrf) = await Login();
+        }
+        _factory.Upstream.Requests.Clear();
+        using var submit = Submit("reauthentication", LoginFields(), cookie + (otherSession ? "; " + binding : ""));
+        submit.Headers.Add("X-Minicloud-CSRF", csrf);
+        var rejected = await _client.SendAsync(submit);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.False(rejected.Headers.Contains("Set-Cookie"));
+        Assert.Empty(_factory.Upstream.Requests);
+        await using var check = _factory.Services.CreateAsyncScope();
+        Assert.All(await check.ServiceProvider.GetRequiredService<MinicloudDbContext>().BrowserSessions.ToListAsync(),
+            session => Assert.Null(session.RevokedAt));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReauthenticationChecksReturnedIdentityBeforeReplacingStateAndPreservesRememberMe(bool differentIdentity)
+    {
+        using var login = Submit("login", LoginFields(), keepSignedIn: true);
+        var loggedIn = await _client.SendAsync(login);
+        var cookie = LocalCookie(loggedIn);
+        var csrf = (await loggedIn.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.CsrfToken;
+        using var start = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/reauthentication/browser");
+        start.Headers.Add("Cookie", cookie);
+        var started = await _client.SendAsync(start);
+        var binding = started.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-reauthentication=")).Split(';')[0];
+        if (differentIdentity)
+        {
+            await using var scope = _factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            db.Users.Add(new User { Id = "user-2", KratosIdentityId = "44444444-2222-4333-8444-555555555555", Email = "other@example.test" });
+            await db.SaveChangesAsync();
+            _factory.Upstream.Identity = "44444444-2222-4333-8444-555555555555";
+        }
+        using var submit = Submit("reauthentication", LoginFields(), cookie + "; " + binding, keepSignedIn: false);
+        submit.Headers.Add("X-Minicloud-CSRF", csrf);
+        var response = await _client.SendAsync(submit);
+        Assert.Equal(differentIdentity ? HttpStatusCode.Forbidden : HttpStatusCode.OK, response.StatusCode);
+        if (differentIdentity)
+        {
+            Assert.False(response.Headers.Contains("Set-Cookie"));
+            await using var scope = _factory.Services.CreateAsyncScope();
+            Assert.Null((await scope.ServiceProvider.GetRequiredService<MinicloudDbContext>().BrowserSessions.SingleAsync()).RevokedAt);
+        }
+        else
+        {
+            Assert.True((await response.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.KeepSignedIn);
+            Assert.NotEqual(cookie, LocalCookie(response));
+        }
     }
 
     [Fact]
@@ -1502,6 +1584,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             }));
             builder.ConfigureTestServices(services =>
             {
+                services.AddDataProtection().UseEphemeralDataProtectionProvider();
                 services.UseSharedSqliteConnection(connection);
                 services.RemoveAll<IKratosSessionValidator>();
                 services.AddSingleton<IKratosSessionValidator>(Kratos);

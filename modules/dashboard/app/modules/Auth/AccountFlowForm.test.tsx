@@ -604,10 +604,13 @@ describe("passkey sign-in and settings", () => {
     const enrolled = { id: "6372656431", displayName: "Passkey", addedAt: null, canRemove: true };
     const refreshedSettings = passkeySettingsFlow([], "22222222-3333-4444-8555-666666666666");
     const enrolledSettings = passkeySettingsFlow([enrolled], "33333333-4444-4555-8666-777777777777");
+    const reauthentication = passkeyLoginFlow("44444444-5555-4666-8777-888888888888");
+    reauthentication.kind = "reauthentication";
+    reauthentication.ui.action = `/api/account/flows/reauthentication?flow=${reauthentication.id}`;
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ flow: passkeySettingsFlow([]), session: null }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: "session_refresh_required", message: "Refresh required" } }, 403))
-      .mockResolvedValueOnce(jsonResponse({ flow: passkeyLoginFlow("44444444-5555-4666-8777-888888888888"), session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: reauthentication, session: null }))
       .mockResolvedValueOnce(jsonResponse({ flow: null, session: { ...accountSession, keepSignedIn: true } }))
       .mockResolvedValueOnce(jsonResponse({ flow: refreshedSettings, session: null }))
       .mockResolvedValueOnce(jsonResponse({ flow: null, session: { ...accountSession, keepSignedIn: true } }))
@@ -629,7 +632,8 @@ describe("passkey sign-in and settings", () => {
     fireEvent.click(confirmPasskey);
     expect(await screen.findByText("Identity confirmed. You can now update account settings.")).toBeInTheDocument();
     expect(get).toHaveBeenCalledOnce();
-    expect(fetcher.mock.calls[3][0]).toContain("keepSignedIn=true");
+    expect(fetcher.mock.calls[3][0]).toContain("/flows/reauthentication?");
+    expect(fetcher.mock.calls[3][1].headers).toHaveProperty("X-Minicloud-CSRF", "synthetic-csrf");
     expect(auth.refreshSession).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Add passkey" }));

@@ -300,7 +300,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     setReauthBusy(true);
     setReauthError(null);
     try {
-      const result = await startAccountFlow("login", returnTo);
+      const result = await startAccountFlow("reauthentication", returnTo);
       if (current !== generation.current) return;
       setReauthFlow(result.flow);
     } catch (loadError) {
@@ -349,7 +349,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
       if (submitError instanceof ApiError && (submitError.code === "auth_flow_expired" || submitError.code === "auth_flow_invalid")) {
         setReauthError(accountErrorMessage(submitError));
         try {
-          const fresh = await startAccountFlow("login", returnTo);
+          const fresh = await startAccountFlow("reauthentication", returnTo);
           if (current === generation.current) setReauthFlow(fresh.flow);
         } catch (reloadError) {
           if (current === generation.current) setReauthError(accountErrorMessage(reloadError));
@@ -387,7 +387,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
         ? "That passkey could not confirm your identity. Try another passkey or your password."
         : accountErrorMessage(submitError));
       try {
-        const fresh = await startAccountFlow("login", returnTo);
+        const fresh = await startAccountFlow("reauthentication", returnTo);
         if (current === generation.current) setReauthFlow(fresh.flow);
       } catch (reloadError) {
         if (current === generation.current) setReauthError(accountErrorMessage(reloadError));
