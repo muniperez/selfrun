@@ -31,6 +31,14 @@ selfservice:
   methods:
     oidc:
       enabled: false
+    passkey:
+      enabled: true
+      config:
+        rp:
+          display_name: Minicloud
+          id: localhost
+          origins:
+            - https://localhost
     password:
       enabled: true
   flows:

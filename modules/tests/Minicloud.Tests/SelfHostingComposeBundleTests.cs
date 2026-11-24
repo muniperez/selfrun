@@ -100,11 +100,16 @@ public sealed class SelfHostingComposeBundleTests
         Assert.Contains(Text(((YamlMappingNode)kratos["log"])["level"]), new[] { "trace", "debug", "info", "warning", "error", "fatal", "panic" });
         Assert.Equal("http://kratos:4434/", api["Kratos__AdminBaseUrl"]);
         Assert.Equal("${MINICLOUD_GOOGLE_OIDC_ENABLED:-false}", api["Kratos__GoogleEnabled"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_ENABLED:-true}", api["Kratos__PasskeyEnabled"]);
         Assert.Equal("false", api["Database__RunMigrationsOnStartup"]);
         Assert.DoesNotContain("kratos\", \"healthcheck", string.Join("\", \"", Sequence((YamlMappingNode)Service("kratos")["healthcheck"], "test")));
         var kratosEnvironment = Environment(Service("kratos"));
         Assert.Equal(api["Kratos__GoogleEnabled"], kratosEnvironment["SELFSERVICE_METHODS_OIDC_ENABLED"]);
         Assert.Equal("${API_URL:?set API_URL}/api/account/oidc", kratosEnvironment["SELFSERVICE_METHODS_OIDC_CONFIG_BASE_REDIRECT_URI"]);
+        Assert.Equal(api["Kratos__PasskeyEnabled"], kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_ENABLED"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_RP_DISPLAY_NAME:-Minicloud}", kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_DISPLAY_NAME"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_RP_ID:-${CONSOLE_HOSTNAME}}", kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ID"]);
+        Assert.Equal("${CONSOLE_URL:?set CONSOLE_URL}", kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ORIGINS"]);
         Assert.Equal("${CONSOLE_URL:?set CONSOLE_URL}/sign-in", kratosEnvironment["SELFSERVICE_FLOWS_LOGIN_UI_URL"]);
         Assert.Equal(kratosEnvironment, Environment(Service("kratos-migrate")));
         // The upstream Kratos lifespan defaults to the default remembered idle timeout so renewal can always extend it.
@@ -114,6 +119,17 @@ public sealed class SelfHostingComposeBundleTests
         foreach (var service in new[] { "kratos", "kratos-migrate" })
             Assert.Contains(Mounts(Service(service)), m => m == ("./google-oidc.mapper.jsonnet", "/etc/config/google-oidc.mapper.jsonnet", true));
         Assert.DoesNotMatch("(?m)^(SERVE|SELFSERVICE)_", File.ReadAllText(Path.Combine(Bundle, "secrets.env.example")));
+        var methods = (YamlMappingNode)((YamlMappingNode)kratos["selfservice"])["methods"];
+        Assert.Equal("true", Scalar((YamlMappingNode)methods["passkey"], "enabled"));
+        Assert.Equal("true", Scalar((YamlMappingNode)methods["password"], "enabled"));
+        foreach (var schemaFile in new[] { "identity.schema.json", "identity.recovery.schema.json" })
+        {
+            using var schema = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(Bundle, schemaFile)));
+            var creds = schema.RootElement.GetProperty("properties").GetProperty("traits").GetProperty("properties")
+                .GetProperty("email").GetProperty("ory.sh/kratos").GetProperty("credentials");
+            Assert.True(creds.GetProperty("password").GetProperty("identifier").GetBoolean());
+            Assert.True(creds.GetProperty("passkey").GetProperty("display_name").GetBoolean());
+        }
 
         var dashboard = Service("dashboard");
         Assert.Equal(["MINICLOUD_API_URL", "MINICLOUD_APP_DOMAIN", "MINICLOUD_SOURCE_URL"], Environment(dashboard).Keys.Order());
@@ -137,7 +153,9 @@ public sealed class SelfHostingComposeBundleTests
         Assert.Equal(
             ["API_HOSTNAME", "API_URL", "APP_DOMAIN", "CONSOLE_HOSTNAME", "CONSOLE_URL", "MANAGE_DNS_RECORDS",
              "MINICLOUD_GOOGLE_OIDC_ENABLED", "MINICLOUD_HOST_ID", "MINICLOUD_INSTALLATION_ID",
-             "MINICLOUD_KRATOS_SESSION_LIFESPAN", "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED",
+             "MINICLOUD_KRATOS_SESSION_LIFESPAN", "MINICLOUD_PASSKEY_ENABLED",
+             "MINICLOUD_PASSKEY_RP_DISPLAY_NAME", "MINICLOUD_PASSKEY_RP_ID",
+             "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED",
              "MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES", "MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES",
              "MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES", "MINICLOUD_PORTAL_STANDARD_MAX_MINUTES", "MINICLOUD_SECRETS_DIR",
              "MINICLOUD_SOURCE_URL", "OPENBAO_ROOT_TOKEN_FILE"],

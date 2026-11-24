@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Minicloud.Common.Contracts;
@@ -7,7 +8,8 @@ public sealed record AccountCapabilitiesResponse(
     bool Google,
     bool EmailRecovery,
     string BootstrapState,
-    bool KeepSignedIn = false);
+    bool KeepSignedIn = false,
+    bool Passkey = false);
 
 /// <param name="KeepSignedIn">Whether this session is a remembered ("Keep me signed in") session.</param>
 /// <param name="RenewAfter">Earliest time <c>POST /api/account/session/renew</c> extends the idle deadline; null at the cap.</param>
@@ -40,7 +42,23 @@ public sealed record AccountFlowUi(
     IReadOnlyList<AccountFlowMessage> Messages,
     // Omitted unless an enabled optional provider is offered by this flow.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<AccountFlowProvider>? Providers = null);
+    IReadOnlyList<AccountFlowProvider>? Providers = null,
+    // Omitted unless passkeys are enabled and offered by this flow.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    AccountFlowPasskey? Passkey = null);
+
+public sealed record AccountFlowPasskey(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    JsonElement? LoginOptions,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    JsonElement? RegistrationOptions,
+    IReadOnlyList<AccountFlowPasskeyCredential> Credentials);
+
+public sealed record AccountFlowPasskeyCredential(
+    string Id,
+    string DisplayName,
+    DateTimeOffset? AddedAt,
+    bool CanRemove);
 
 public sealed record AccountFlowProvider(
     string Id,

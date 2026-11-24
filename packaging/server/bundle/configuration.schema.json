@@ -69,6 +69,24 @@
         "rememberedMaxMinutes": { "type": "integer", "minimum": 1, "maximum": 129600, "default": 43200 }
       }
     },
+    "passkeys": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "WebAuthn passkey settings for the HTTPS dashboard origin. Omit to enable passkeys using consoleHostname as the relying-party ID.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "rpDisplayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "default": "Minicloud"
+        },
+        "rpId": {
+          "$ref": "#/$defs/hostname",
+          "description": "WebAuthn relying-party ID: must equal consoleHostname or be a dot-separated parent domain suffix of consoleHostname."
+        }
+      }
+    },
     "sourceUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/@\\s]+(?:/[^\\s]*)?$" },
     "recovery": {
       "type": "object",

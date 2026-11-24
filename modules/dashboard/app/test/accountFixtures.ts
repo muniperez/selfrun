@@ -1,9 +1,11 @@
 import type { ContextType } from "react";
 import type { AuthContext } from "../core/auth/AuthProvider";
-import type { BrowserFlow } from "../api/accountApi";
+import type { BrowserFlow, FlowPasskeyCredential } from "../api/accountApi";
 import { vi } from "vitest";
 
-export const accountCapabilities = { password: true, google: false, emailRecovery: false, bootstrapState: "ready" as const };
+export const accountCapabilities = {
+  password: true, google: false, emailRecovery: false, passkey: false, bootstrapState: "ready" as const
+};
 export const accountSession = {
   userId: "user-1", csrfToken: "synthetic-csrf",
   expiresAt: "2099-01-01T00:00:00Z", idleExpiresAt: "2099-01-01T00:00:00Z"
@@ -40,5 +42,50 @@ export const jsonResponse = (body: unknown, status = 200) =>
 export function googleFlow(kind: "login" | "settings" = "login"): BrowserFlow {
   const flow = browserFlow(kind);
   return { ...flow, ui: { ...flow.ui, providers: [{ id: "google", action: `/api/account/flows/${kind}/oidc?flow=${flow.id}`, method: "POST" }] } };
+}
+export function passkeyLoginFlow(id = "11111111-2222-4333-8444-555555555555"): BrowserFlow {
+  const flow = browserFlow("login");
+  return {
+    ...flow,
+    id,
+    ui: {
+      ...flow.ui,
+      action: `/api/account/flows/login?flow=${id}`,
+      passkey: {
+        loginOptions: {
+          publicKey: {
+            challenge: "c3ludGhldGljLWNoYWxsZW5nZQ",
+            rpId: "console.example.test",
+            timeout: 60000,
+            userVerification: "preferred"
+          }
+        },
+        credentials: []
+      }
+    }
+  };
+}
+export function passkeySettingsFlow(credentials: FlowPasskeyCredential[] = [], id = "11111111-2222-4333-8444-555555555555"): BrowserFlow {
+  const flow = browserFlow("settings");
+  return {
+    ...flow,
+    id,
+    ui: {
+      ...flow.ui,
+      action: `/api/account/flows/settings?flow=${id}`,
+      nodes: flow.ui.nodes.filter(node => node.name !== "identifier"),
+      passkey: {
+        registrationOptions: {
+          publicKey: {
+            challenge: "c3ludGhldGljLXJlZy1jaGFsbGVuZ2U",
+            rp: { name: "Minicloud", id: "console.example.test" },
+            user: { id: "dXNlci0x", name: "operator@example.test", displayName: "operator@example.test" },
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }]
+          }
+        },
+        credentials
+      }
+    }
+  };
 }
 export const googleUrl = "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic&response_type=code&state=synthetic-state";
