@@ -9,13 +9,14 @@ public sealed partial class CliApplication
     private sealed record GuidedSession(SeedPortableConfig Config, string KeyPath, bool UseAgent,
         string KeyFingerprint, string? SourceSha256, string? HetznerCredentialScope);
     private sealed record GuidedDispatch(string Image, SeedVerifiedRelease Release, bool EnrollSsh = false);
+    internal sealed record GuidedRecoveryExport(string? InstallationId, bool SetupTokenExported);
 
     private async Task<int> RunGuidedSeedAsync(string? stateDirectory, CancellationToken ct)
     {
         try
         {
             SeedGuard.Require(!_console.IsInputRedirected,
-                "Guided seed requires a terminal. For automation, see minicloud help seed.");
+                "Guided seed requires a terminal. For automation, see selfrun help seed.");
             var home = Path.GetFullPath(stateDirectory ?? Path.Combine(_environment.ConfigHome, "seed-guided"));
             SeedFiles.Directory(home);
             _console.WriteLine("Protected seed state: " + home + ". Preserve it and the original SSH key to resume.");
@@ -30,6 +31,8 @@ public sealed partial class CliApplication
             var resourcePath = Path.Combine(home, "resource.json");
             var targetPath = Path.Combine(home, "target.json");
             var enrollmentPath = Path.Combine(home, "ssh-enrollment.secret");
+            var recoveryExportPath = Path.Combine(home, "recovery-exported.json");
+            var recoveryDir = Path.Combine(home, "private-recovery");
             var reports = Path.Combine(home, "reports");
             SeedFiles.Directory(reports);
             var reportPath = Path.Combine(reports, "seed-report.json");
@@ -39,8 +42,9 @@ public sealed partial class CliApplication
             var dispatch = ReadGuided<GuidedDispatch>(dispatchPath);
             var resource = ReadGuided<SeedResource>(resourcePath);
             var target = ReadGuided<SeedPortableTarget>(targetPath);
+            var recoveryExport = ReadGuided<GuidedRecoveryExport>(recoveryExportPath);
             SeedGuard.Require((session is not null || dispatch is null)
-                && (dispatch is not null || resource is null && target is null),
+                && (dispatch is not null || resource is null && target is null && recoveryExport is null),
                 "Protected seed state is incomplete. Reconcile the original operation; do not start a replacement.");
             if (session is null)
             {
@@ -108,7 +112,7 @@ public sealed partial class CliApplication
                 if (localSource && action is "plan" or "apply")
                     args.AddRange(["--local-source", archive, "--source-sha256", saved.SourceSha256!]);
                 if (approval is not null) args.AddRange(["--approve", approval]);
-                if (action == "export") args.AddRange(["--recovery-dir", Path.Combine(home, "private-recovery")]);
+                if (action == "export") args.AddRange(["--recovery-dir", recoveryDir]);
                 if (setupToken) args.Add("--setup-token");
                 var config = initial ? configForRun with { InitialCreationIntent = SeedPortableConfig.CreationIntent } : configForRun;
                 return await RunPortableSeedAsync(args.ToArray(), ct, new(config, saved.KeyFingerprint,
@@ -155,7 +159,7 @@ public sealed partial class CliApplication
                 // Once dispatch is durable, inventory can recover the original target but can never authorize another create.
                 if (resource?.Address is null)
                 {
-                    _console.WriteLine("Creation was dispatched or interrupted. Reconcile the original operation in your authenticated provider console. No creation will be retried.");
+                    _console.WriteLine(FormatPostCreateLookupMessage(resource));
                     credential ??= SeedFiles.Credential(null, _console);
                     using var provider = new SeedProvider(configForRun.Provider, credential);
                     RequireGuidedCredentialScope(configForRun, provider, saved.HetznerCredentialScope);
@@ -165,7 +169,7 @@ public sealed partial class CliApplication
                     var candidate = await provider.FindServerAsync(configForRun.SeedId, ct);
                     if (candidate is null)
                     {
-                        _console.WriteLine("No uniquely identified server is visible yet. Reconcile with provider support; inventory absence never authorizes creation.");
+                        _console.WriteLine(FormatMissingInventoryMessage(resource));
                         return 10;
                     }
                     var expected = configForRun.State();
@@ -177,7 +181,7 @@ public sealed partial class CliApplication
                 }
                 if (resource.Address is null)
                 {
-                    _console.WriteLine($"Original server ID: {resource.Id}; public IPv4 is not ready. Rerun the same seed; billing continues.");
+                    _console.WriteLine(FormatAwaitingIpv4Message(resource.Id));
                     return 10;
                 }
                 _console.WriteLine($"Original server ID: {resource.Id}; public IPv4: {resource.Address}.");
@@ -248,18 +252,23 @@ public sealed partial class CliApplication
 
             var setup = observed.Observation.Browser == "pending";
             if (setup) _console.WriteLine($"Open https://{configForRun.Domain}/setup and enter the one-time token from the protected export.");
-            if (SeedConfirm("Export private recovery material to this workstation now? [y/N]: ", "y"))
-            {
-                var exported = await StepAsync("export", setupToken: setup);
-                if (exported != 0) return exported;
-                _console.WriteLine("Keep an independent encrypted copy of " + Path.Combine(home, "private-recovery") + ". Never share the setup token or recovery secrets.");
-            }
-            else _console.WriteLine("Rerun seed to export recovery material; do not leave your only copy on the server.");
+            var exportExit = await CompleteGuidedRecoveryExportAsync(
+                recoveryExport,
+                recoveryDir,
+                observed.Observation.InstallationId,
+                setup,
+                includeSetupToken => StepAsync("export", setupToken: includeSetupToken),
+                (updated, overwrite) =>
+                {
+                    WriteGuided(recoveryExportPath, updated, overwrite: overwrite);
+                    recoveryExport = updated;
+                });
+            if (exportExit != CliExitCodes.Success) return exportExit;
             if (setup || observed.Observation.Browser == "ready")
             {
                 _console.WriteLine("After creating your operator account, sign in at https://" + configForRun.Domain + "/, or connect this CLI (use its path if not on PATH):");
-                _console.WriteLine($"  minicloud instance add my-cloud https://{configForRun.Domain}");
-                _console.WriteLine("  minicloud login");
+                _console.WriteLine($"  selfrun instance add my-cloud https://{configForRun.Domain}");
+                _console.WriteLine("  selfrun login");
             }
             else _console.WriteLine("Browser setup state is not verified. Check the original host and rerun seed; never reinitialize it.");
             return SeedPortable.ExitCode(observed);
@@ -277,6 +286,131 @@ public sealed partial class CliApplication
             _console.WriteError("Could not read, lock or write protected seed state or input. Preserve the state and reconcile any dispatched creation; no diagnostics containing inputs were logged.");
         }
         return CliExitCodes.ValidationError;
+    }
+
+    internal static string FormatPostCreateLookupMessage(SeedResource? resource) =>
+        resource is null
+            ? "Creation was dispatched without a recorded server ID (the previous run may have been interrupted). Checking provider inventory for the original server; no creation will be retried."
+            : $"Server {resource.Id} is still starting; checking provider inventory for its public IPv4. No creation will be retried.";
+
+    internal static string FormatMissingInventoryMessage(SeedResource? resource) =>
+        resource is null
+            ? "No uniquely identified server is visible yet. Reconcile the original operation in your authenticated provider console or with provider support; inventory absence never authorizes creation."
+            : $"Server {resource.Id} is not visible in provider inventory yet. Wait a moment and rerun the same seed command, or reconcile in your authenticated provider console; inventory absence never authorizes creation.";
+
+    internal static string FormatAwaitingIpv4Message(string serverId) =>
+        $"Server {serverId} is still starting; public IPv4 is not ready yet. Rerun the same seed command to continue; billing continues.";
+
+    internal static string FormatAlreadyExportedRecoveryMessage(string recoveryDir, bool directoryExists) =>
+        directoryExists
+            ? $"Private recovery material is already exported at {recoveryDir}. Keep an independent encrypted copy; never share the setup token or recovery secrets."
+            : "Private recovery material was already exported from this guided state. Keep your independent encrypted copy; never share the setup token or recovery secrets.";
+
+    internal static string FormatDeclinedRecoveryExportMessage(bool setupTokenOnly, string recoveryDir) =>
+        setupTokenOnly
+            ? $"Setup token was not exported. Rerun seed to export it to {recoveryDir}; private recovery material was already exported."
+            : "Rerun seed to export recovery material; do not leave your only copy on the server.";
+
+    internal async Task<int> CompleteGuidedRecoveryExportAsync(
+        GuidedRecoveryExport? recorded,
+        string recoveryDir,
+        string? installationId,
+        bool setupTokenRequired,
+        Func<bool, Task<int>> exportAsync,
+        Action<GuidedRecoveryExport, bool> recordExport)
+    {
+        var coreExported = IsGuidedRecoveryExported(recorded, recoveryDir, installationId, setupTokenRequired: false);
+        if (coreExported && (!setupTokenRequired || IsGuidedRecoveryExported(recorded, recoveryDir, installationId, setupTokenRequired: true)))
+        {
+            _console.WriteLine(FormatAlreadyExportedRecoveryMessage(recoveryDir, Directory.Exists(recoveryDir)));
+            return CliExitCodes.Success;
+        }
+
+        var setupTokenOnly = coreExported && setupTokenRequired;
+        var prompt = setupTokenOnly
+            ? "Recovery material is already exported, but the one-time setup token has not been exported yet. Export it to this workstation now? [y/N]: "
+            : "Export private recovery material to this workstation now? [y/N]: ";
+        if (SeedConfirm(prompt, "y"))
+        {
+            var exported = await exportAsync(setupTokenRequired);
+            if (exported != CliExitCodes.Success) return exported;
+            var updated = new GuidedRecoveryExport(
+                installationId ?? recorded?.InstallationId,
+                setupTokenRequired || (recorded?.SetupTokenExported == true));
+            recordExport(updated, recorded is not null);
+            _console.WriteLine("Keep an independent encrypted copy of " + recoveryDir + ". Never share the setup token or recovery secrets.");
+        }
+        else
+        {
+            _console.WriteLine(FormatDeclinedRecoveryExportMessage(setupTokenOnly, recoveryDir));
+        }
+
+        return CliExitCodes.Success;
+    }
+
+    internal static bool IsGuidedRecoveryExported(
+        GuidedRecoveryExport? recorded, string recoveryDir, string? installationId, bool setupTokenRequired)
+    {
+        if (recorded is not null
+            && (installationId is null || recorded.InstallationId == installationId)
+            && (!setupTokenRequired || recorded.SetupTokenExported))
+        {
+            return true;
+        }
+
+        return HasCompleteRecoveryExportDirectory(recoveryDir, installationId, setupTokenRequired);
+    }
+
+    private static bool HasCompleteRecoveryExportDirectory(string recoveryDir, string? installationId, bool setupTokenRequired)
+    {
+        if (!Directory.Exists(recoveryDir)) return false;
+        try
+        {
+            if (File.GetAttributes(recoveryDir).HasFlag(FileAttributes.ReparsePoint)) return false;
+            string[] requiredFiles =
+            [
+                "openbao-recovery.json",
+                "openbao-root-token",
+                "openbao-ca.key",
+                "openbao-ca.crt",
+                "installation.json"
+            ];
+            foreach (var name in requiredFiles)
+            {
+                var path = Path.Combine(recoveryDir, name);
+                if (!File.Exists(path) || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                    return false;
+            }
+
+            using var metadata = SeedPortable.ReadDocument(File.ReadAllText(Path.Combine(recoveryDir, "installation.json")));
+            var root = metadata.RootElement;
+            if (installationId is not null
+                && (!root.TryGetProperty("installationId", out var id) || id.GetString() != installationId))
+            {
+                return false;
+            }
+
+            if (setupTokenRequired)
+            {
+                if (!root.TryGetProperty("setupTokenFile", out var tokenFile)) return false;
+                var tokenName = tokenFile.GetString();
+                if (string.IsNullOrWhiteSpace(tokenName)
+                    || tokenName.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
+                {
+                    return false;
+                }
+
+                var tokenPath = Path.Combine(recoveryDir, tokenName);
+                if (!File.Exists(tokenPath) || File.GetAttributes(tokenPath).HasFlag(FileAttributes.ReparsePoint))
+                    return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or CliCommandException)
+        {
+            return false;
+        }
     }
 
     private static void RequireGuidedCredentialScope(SeedPortableConfig config, SeedProvider provider, string? expectedScope)

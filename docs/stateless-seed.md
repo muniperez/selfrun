@@ -8,7 +8,7 @@ artifacts, or substitute an unqualified release just to make seed proceed.
 
 ## Guided installation
 
-Choose a CLI build and run `minicloud seed`. No JSON, Python, or helper
+Choose a CLI build and run `selfrun seed` (legacy alias `minicloud seed`). No JSON, Python, or helper
 script is needed on the workstation. Use a terminal with OpenSSH client tools
 installed; the wizard handles keys and host verification for new installations.
 Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
@@ -19,10 +19,11 @@ See [provider permissions and host requirements](seed.md#before-starting).
 The [CLI download page](https://muniventures.github.io/minicloud/downloads.html) has direct
 downloads for Windows x64, Apple silicon macOS, and glibc Linux on x64 or ARM64.
 Choose the build for the computer where you will run the CLI. Extract the
-archive and put `minicloud` (Windows: `minicloud.exe`) on your PATH.
+archive and put `minicloud` (Windows: `minicloud.exe`; installers also add the
+`selfrun` command alias) on your PATH.
 
 ```sh
-minicloud seed
+selfrun seed
 ```
 
 These are unsigned test builds. Each archive includes a `SOURCE.txt` file
@@ -75,13 +76,18 @@ natively using the existing installer (see the
    no unresolved request. Nothing is allocated until then. Billing continues
    through pauses, DNS propagation, and install failures.
 3. The wizard verifies the original VPS as it boots. Review the separate
-   pinned-host plan and type `install` to approve it. If first boot takes
-   longer than the wait, rerun the same command; do not create another VPS.
+   pinned-host plan and type `install` to approve it. If the provider has not
+   assigned the server's public IPv4 yet right after `create`, or if first boot
+   takes longer than the wait, the wizard reports that the server is still
+   starting and exits so rerunning the same command continues without creating
+   another VPS.
 4. Set the two printed A records for the dashboard and API and remove conflicting
    records. Do not point the application wildcard at the control-plane VPS.
    When HTTPS is verified, use the protected recovery export and enter the
    one-time token manually at the printed `/setup` URL. Keep an independent
-   encrypted copy of the recovery material. Then sign in or run the printed
+   encrypted copy of the recovery material. Guided `seed` records a completed
+   recovery export so rerunning `minicloud seed` does not prompt to export the
+   same recovery material again. Then sign in or run the printed
    `minicloud instance add` and `minicloud login` commands.
 
 Rerun `minicloud seed` in the same terminal environment to resume with the same
@@ -90,14 +96,16 @@ state and executable. The default protected directory is
 `minicloud seed --state-dir PATH` selects a separate owner-only state directory
 for an independent installation; do **not** use it to bypass an unresolved
 create. Preserve the seed ID, source archive, key and state. No provider token
-is saved. If the create response was lost or the address was not yet visible,
-resume may prompt for the token for a read-only inventory lookup. Empty
-inventory is not evidence that a create failed: reconcile with the provider,
-never delete the state or try another create. After the target is known and
-its fingerprint is verified, SSH continuation does not require the token.
-Keep guided state on a protected local filesystem (with hard links on Unix).
-Abandoned staging files do not block resume or authorize creation; a published
-dispatch marker always prevents another create.
+is saved. If the server's public IPv4 was not ready yet, resume checks provider
+inventory for the recorded server ID; if a prior create was interrupted before a
+server ID was recorded, resume checks inventory and directs you to reconcile the
+original operation in the provider console. In either case, resume may prompt for
+the token for a read-only inventory lookup, and empty inventory is never evidence
+that a create failed: never delete the state or try another create. After the
+target is known and its fingerprint is verified, SSH continuation does not
+require the token. Keep guided state on a protected local filesystem (with hard
+links on Unix). Abandoned staging files do not block resume or authorize
+creation; a published dispatch marker always prevents another create.
 
 For a TEST install, the wizard checks the archive against the executable's
 embedded source before planning and on resume. Canceling the initial credential

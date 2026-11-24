@@ -1,6 +1,33 @@
 namespace Minicloud.Common.Contracts;
 
-public sealed record ProviderTypeResponse(string Type, string Name, bool SupportsStorage, string? DefaultImage, int? DefaultOsId = null);
+public sealed record ProviderTypeCapabilitiesDto(
+    IReadOnlyList<string> ComputeFamilies,
+    IReadOnlyList<string> SupportedArchitectures,
+    string LocationGranularity,
+    bool SupportsSshKeyInventory,
+    bool SupportsCloudInit,
+    bool SupportsDurableVolumes,
+    bool SupportsVolumeResize,
+    bool SupportsSnapshots,
+    bool SupportsPrivateNetworks,
+    bool SupportsPublicIpv4,
+    bool SupportsPublicIpv6,
+    bool SupportsLabelsOrTags,
+    bool SupportsScopeIdentityDiscovery,
+    bool SupportsQuotaDiscovery,
+    bool SupportsCatalogDiscovery,
+    bool SupportsAsynchronousOperations,
+    bool SupportsIdempotencyTokens);
+
+public sealed record ProviderTypeResponse(
+    string Type,
+    string Name,
+    bool SupportsStorage,
+    string? DefaultImage,
+    int? DefaultOsId = null,
+    ProviderTypeCapabilitiesDto? Capabilities = null,
+    string QualificationState = "qualified",
+    bool RequiresProjectId = false);
 public sealed record CreateProviderRequest(string OrganizationId, string Name, string ProviderType, string Credential,
     string? ProjectId = null, int? DefaultOsId = null);
 public sealed record UpdateProviderRequest(long Revision, string? Name = null, bool? Enabled = null);

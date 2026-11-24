@@ -32,13 +32,31 @@ public sealed class ProviderRegistrationTests
     [InlineData(CloudProvider.Hetzner)]
     [InlineData(CloudProvider.DigitalOcean)]
     [InlineData(CloudProvider.Vultr)]
+    [InlineData(CloudProvider.Aws)]
+    [InlineData(CloudProvider.Azure)]
+    [InlineData(CloudProvider.GoogleCloud)]
+    [InlineData(CloudProvider.Ovhcloud)]
+    [InlineData(CloudProvider.Linode)]
+    [InlineData(CloudProvider.Scaleway)]
     public void ProductionRegistrationsResolveVpsClients(CloudProvider cloud)
     {
         using var provider = CreateProvider();
         using var scope = provider.CreateScope();
         var resolve = scope.ServiceProvider.GetRequiredService<ProviderServiceCollectionExtensions.VpsProviderClientResolver>();
-        Assert.NotNull(resolve(cloud));
+        var resolved = resolve(cloud);
+        Assert.NotNull(resolved);
+        Assert.Equal(cloud, resolved.Provider);
         Assert.NotNull(scope.ServiceProvider.GetRequiredKeyedService<IVpsProviderClient>(cloud));
+    }
+
+    [Fact]
+    public void ProductionRegistrationsResolveBareMetalClientForOvhcloud()
+    {
+        using var provider = CreateProvider();
+        using var scope = provider.CreateScope();
+        var bareMetal = scope.ServiceProvider.GetRequiredService<IBareMetalProviderClient>();
+        Assert.Equal(CloudProvider.Ovhcloud, bareMetal.Provider);
+        Assert.False(bareMetal.IsCommercialOrderingEnabled);
     }
 
     private static ServiceProvider CreateProvider()

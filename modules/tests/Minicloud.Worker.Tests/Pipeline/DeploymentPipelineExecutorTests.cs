@@ -351,14 +351,16 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
         var rollbackExecuted = false;
         List<string> outputLines = rollbackOutcome is null
             ? ["Build error"]
-            : ["ERROR: health_check_failed: Deployment aborted during phase verify_local_health.",
+            : ["Health check failed for web at http://127.0.0.1:18080/health",
+                "curl: (22) The requested URL returned error: 503",
+                "ERROR: health_check_failed: Deployment aborted during phase verify_local_health.",
                 "__MINICLOUD_DEPLOY_FAILURE__=health_check_failed"];
         if (rollbackOutcome is not (null or "missing-marker"))
         {
             outputLines.Add("__MINICLOUD_DEPLOY_ROLLBACK__=" + rollbackOutcome);
         }
-        // The structured outcome is still surfaced when it falls outside the output excerpt.
-        outputLines.AddRange(Enumerable.Repeat("Other remote output", 5));
+        // Raw proxy/runtime lines after rollback markers must not displace the rollback and health summary.
+        outputLines.AddRange(Enumerable.Repeat("● caddy.service - Caddy (active running)", 5));
         var mockSsh = new MockSshDeploymentClient(
             execDeploy: (_, _) => Task.FromResult(new SshDeploymentResult(1, false, null, outputLines)),
             execCmd: (ip, user, key, cmd) =>
@@ -419,6 +421,9 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 if (failureSummary is not null)
                 {
                     Assert.Contains(failureSummary, failed.FailureMessage);
+                    Assert.Contains("Health check failed for web at http://127.0.0.1:18080/health (curl: (22) The requested URL returned error: 503).", failed.FailureMessage);
+                    Assert.DoesNotContain("remote-deploy.sh failed", failed.FailureMessage);
+                    Assert.DoesNotContain("caddy.service", failed.FailureMessage);
                 }
                 else
                 {

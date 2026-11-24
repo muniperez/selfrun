@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Extensibility;
 using Minicloud.Common.Services;
 using Minicloud.Common.Validation;
 using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
@@ -15,20 +16,26 @@ public sealed partial class SshDeployStep
     {
         var result = new Dictionary<string, RuntimeStorageMount[]>(StringComparer.Ordinal);
         if (!deployment.Services.Any(x => StorageMounts.Read(x.StorageJson).Count > 0)) { return result; }
-        if (context.Provider != CloudProvider.Hetzner) { throw new PipelineStepException("storage_provider_unsupported", "Durable storage is currently supported only on Hetzner."); }
         await using var scope = _scopeFactory.CreateAsyncScope();
+        var registry = scope.ServiceProvider.GetService<IVpsProviderRegistry>();
+        var descriptor = registry is not null && registry.TryGet(context.Provider, out var registration)
+            ? registration.Descriptor
+            : BuiltInProviderDescriptors.ForBuiltIn(context.Provider);
+        if (!descriptor.Capabilities.SupportsDurableVolumes)
+        { throw new PipelineStepException("storage_provider_unsupported", "Durable storage is not supported by the selected provider."); }
         var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
         var server = await db.ServerInstances.SingleAsync(x => x.Id == context.ServerInstanceId && x.AppId == context.AppId, ct);
         if (server.OrganizationId != context.OrganizationId || server.ProviderAccountId != context.ProviderAccountId ||
-            !string.Equals(server.Provider, "Hetzner", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
+            !string.Equals(server.Provider, context.Provider.ToString(), StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
         { throw new PipelineStepException("storage_server_conflict", "Storage server identity does not match the deployment."); }
         var client = server.ProviderAccountId is null
             ? scope.ServiceProvider.GetRequiredService<VpsProviderClientResolver>()(context.Provider)
             : await scope.ServiceProvider.GetRequiredService<ProviderAccountClientFactory>().CreateAsync(context.OrganizationId, server.ProviderAccountId, ct);
         var provider = client as IStorageVolumeProvider
             ?? throw new PipelineStepException("storage_provider_unsupported", "Provider does not support customer storage.");
-        var allowAllocation = server.ProviderAccountId is null || await db.ProviderAccounts.AnyAsync(x => x.Id == server.ProviderAccountId &&
-            x.OrganizationId == context.OrganizationId && x.Enabled, ct);
+        var allowAllocation = ProviderQualificationGate.IsQualified(context.Provider) &&
+            (server.ProviderAccountId is null || await db.ProviderAccounts.AnyAsync(x => x.Id == server.ProviderAccountId &&
+            x.OrganizationId == context.OrganizationId && x.Enabled, ct));
         var service = new AppStorageService(db, provider);
         try
         {

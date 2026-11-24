@@ -63,7 +63,7 @@ internal sealed partial class SeedHost : ISeedInspector
             if (response.StatusCode != HttpStatusCode.OK) return observation with { Health = "unavailable" };
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             var value = json.RootElement;
-            if (value.GetProperty("product").GetString() != "minicloud" || value.GetProperty("protocolVersion").GetInt32() != 1
+            if (value.GetProperty("product").GetString() is not ("minicloud" or "selfrun") || value.GetProperty("protocolVersion").GetInt32() != 1
                 || "server-v" + value.GetProperty("serverVersion").GetString() != observation.Release
                 || value.GetProperty("sourceRevision").GetString() != observation.Source
                 || value.GetProperty("appDomain").GetString() != state.Plan.Selection.AppDomain)

@@ -54,6 +54,15 @@ public sealed class RuntimeAgentTests
     }
 
     [Fact]
+    public void JournalParsingSuppressesNoEntriesSentinel()
+    {
+        var records = LogParsing.ParseJournalLine("caddy", "caddy", 10,
+            "-- No entries --", DateTimeOffset.UnixEpoch);
+
+        Assert.Empty(records);
+    }
+
+    [Fact]
     public async Task CursorStore_ReloadsAcceptedCursors()
     {
         var path = Path.Combine(Path.GetTempPath(), $"minicloud-agent-state-{Guid.NewGuid():N}.json");
@@ -117,6 +126,62 @@ public sealed class RuntimeAgentTests
             var reloaded = new CursorStore(path);
             await reloaded.LoadAsync(CancellationToken.None);
             Assert.Equal("api:1", reloaded.Cursors["service:api"]);
+            Assert.Equal(1, store.WriteCount);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task CursorStore_TracksWritesSkipsByteIdenticalPayloadsAndPrunesInactiveSources()
+    {
+        var root = Directory.CreateTempSubdirectory("minicloud-agent-cursor-opt-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "state.json");
+            var store = new CursorStore(path);
+
+            await store.SaveAsync(new Dictionary<string, string>
+            {
+                ["service:web"] = "web:1",
+                ["caddy"] = "caddy:1",
+                ["service:old-gen"] = "old:9"
+            }, CancellationToken.None);
+            Assert.Equal(1, store.WriteCount);
+            Assert.Equal(0, store.SkippedWriteCount);
+            var bytesAfterFirst = await File.ReadAllBytesAsync(path);
+            Assert.Equal(bytesAfterFirst.Length, store.BytesWritten);
+
+            // Identical acknowledgement in a different key order must skip disk write.
+            await store.SaveAsync(new Dictionary<string, string>
+            {
+                ["caddy"] = "caddy:1",
+                ["service:old-gen"] = "old:9",
+                ["service:web"] = "web:1"
+            }, CancellationToken.None);
+            Assert.Equal(1, store.WriteCount);
+            Assert.Equal(1, store.SkippedWriteCount);
+
+            // Prune stale churn source and verify file shrinks cleanly while active cursors survive.
+            var pruned = store.PruneInactiveSources(new HashSet<string>(StringComparer.Ordinal) { "service:web", "caddy" });
+            Assert.Equal(1, pruned);
+            Assert.Equal(0, store.PruneInactiveSources(new HashSet<string>(StringComparer.Ordinal) { "service:web", "caddy" }));
+
+            await store.SaveAsync(new Dictionary<string, string>(), CancellationToken.None);
+            Assert.Equal(2, store.WriteCount);
+            var bytesAfterPrune = await File.ReadAllBytesAsync(path);
+            Assert.True(bytesAfterPrune.Length < bytesAfterFirst.Length);
+
+            var reloaded = new CursorStore(path);
+            await reloaded.LoadAsync(CancellationToken.None);
+            Assert.Equal(2, reloaded.Cursors.Count);
+            Assert.Equal("web:1", reloaded.Cursors["service:web"]);
+            Assert.Equal("caddy:1", reloaded.Cursors["caddy"]);
+            Assert.False(reloaded.Cursors.ContainsKey("service:old-gen"));
+
+            // Reloaded store must also skip identical acknowledgements.
+            await reloaded.SaveAsync(new Dictionary<string, string> { ["caddy"] = "caddy:1" }, CancellationToken.None);
+            Assert.Equal(0, reloaded.WriteCount);
+            Assert.Equal(1, reloaded.SkippedWriteCount);
         }
         finally { root.Delete(recursive: true); }
     }

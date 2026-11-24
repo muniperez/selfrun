@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Minicloud Customer Deploy
+name: Selfrun Customer Deploy (formerly MiniCloud)
 
 on:
   workflow_call:
@@ -11,6 +11,11 @@ on:
         required: false
         type: string
         default: sqlite
+      selfrun_environment:
+        description: "Hosted environment alias (prod or staging). Overrides minicloud_environment when set."
+        required: false
+        type: string
+        default: ""
       minicloud_environment:
         required: false
         type: string
@@ -18,12 +23,27 @@ on:
       services:
         required: true
         type: string
+      selfrun_version:
+        description: "Exact CLI commit SHA or CLI tag (for example v3.1.0). Overrides minicloud_version when set."
+        required: false
+        type: string
+        default: ""
       minicloud_version:
         required: false
         type: string
         default: 2a5ae0ccea6c3dd680b4146586ec0668c60c8b93
+      selfrun_api_url:
+        description: "HTTPS API origin for a self-hosted Selfrun instance. Overrides minicloud_api_url when set."
+        required: false
+        type: string
+        default: ""
       minicloud_api_url:
-        description: "HTTPS API origin for a self-hosted Minicloud instance."
+        description: "HTTPS API origin for a self-hosted Selfrun (formerly MiniCloud) instance."
+        required: false
+        type: string
+        default: ""
+      selfrun_app_domain:
+        description: "Generated application hostname suffix for a self-hosted instance. Overrides minicloud_app_domain when set."
         required: false
         type: string
         default: ""
@@ -33,8 +53,10 @@ on:
         type: string
         default: ""
     secrets:
+      selfrun_api_key:
+        required: false
       minicloud_api_key:
-        required: true
+        required: false
       postgres_password:
         required: false
 
@@ -54,26 +76,28 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Build Minicloud CLI from verified source
+      - name: Build Selfrun CLI from verified source
         env:
-          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          SELFRUN_VERSION_INPUT: ${{ inputs.selfrun_version }}
+          MINICLOUD_VERSION_INPUT: ${{ inputs.minicloud_version }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$MINICLOUD_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
-            expected_sha="$MINICLOUD_VERSION"
-            cli_version="0.0.0-source.sha${MINICLOUD_VERSION:0:12}"
-          elif [[ "$MINICLOUD_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            tag_ref="refs/tags/$MINICLOUD_VERSION"
+          CLI_VERSION_REF="${SELFRUN_VERSION_INPUT:-${MINICLOUD_VERSION_INPUT}}"
+          if [[ "$CLI_VERSION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            expected_sha="$CLI_VERSION_REF"
+            cli_version="0.0.0-source.sha${CLI_VERSION_REF:0:12}"
+          elif [[ "$CLI_VERSION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            tag_ref="refs/tags/$CLI_VERSION_REF"
             remote_before="$(git ls-remote https://github.com/muniventures/minicloud.git "$tag_ref" "$tag_ref^{}")"
             expected_sha="$(printf '%s\n' "$remote_before" | awk -v ref="$tag_ref" '$2 == ref { tag=$1 } $2 == ref "^{}" { peeled=$1 } END { if (peeled != "") print peeled; else print tag }')"
             if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "CLI tag $MINICLOUD_VERSION was not found in the canonical repository." >&2
+              echo "CLI tag $CLI_VERSION_REF was not found in the canonical repository." >&2
               exit 1
             fi
-            cli_version="${MINICLOUD_VERSION#v}"
+            cli_version="${CLI_VERSION_REF#v}"
           else
-            echo "minicloud_version must be a full lowercase commit SHA or exact CLI tag (for example v3.1.0); branches, latest, and server-v tags are not supported." >&2
+            echo "selfrun_version / minicloud_version must be a full lowercase commit SHA or exact CLI tag (for example v3.1.0); branches, latest, and server-v tags are not supported." >&2
             exit 1
           fi
 
@@ -88,7 +112,7 @@ jobs:
             remote_after="$(git ls-remote https://github.com/muniventures/minicloud.git "$tag_ref" "$tag_ref^{}")"
             remote_after_sha="$(printf '%s\n' "$remote_after" | awk -v ref="$tag_ref" '$2 == ref { tag=$1 } $2 == ref "^{}" { peeled=$1 } END { if (peeled != "") print peeled; else print tag }')"
             if [[ "$fetched_sha" != "$expected_sha" || "$remote_after_sha" != "$expected_sha" ]]; then
-              echo "CLI tag $MINICLOUD_VERSION changed while its source was being acquired; retry with a reviewed commit SHA." >&2
+              echo "CLI tag $CLI_VERSION_REF changed while its source was being acquired; retry with a reviewed commit SHA." >&2
               exit 1
             fi
           fi
@@ -102,7 +126,7 @@ jobs:
             echo "Resolved source revision did not match the selected revision." >&2
             exit 1
           fi
-          echo "Building Minicloud CLI from muniventures/minicloud at $resolved_sha"
+          echo "Building Selfrun CLI from muniventures/minicloud at $resolved_sha"
           cd "$source_dir"
           dotnet publish "$source_dir/modules/cli/Minicloud.Cli.csproj" \
             --configuration Release \
@@ -113,10 +137,11 @@ jobs:
             -p:SourceRevisionId="$resolved_sha" \
             -p:InformationalVersion="$cli_version+sha.$resolved_sha"
           mv "$publish_dir/Minicloud.Cli" "$publish_dir/minicloud"
+          ln -s minicloud "$publish_dir/selfrun"
           python3 "$source_dir/scripts/verify-cli-release.py" "$publish_dir/minicloud" "$cli_version"
           echo "$publish_dir" >> "$GITHUB_PATH"
 
-      - name: Generate Minicloud config
+      - name: Generate Selfrun config
         env:
           APP_ID: ${{ inputs.app_id }}
           DATABASE: ${{ inputs.database }}
@@ -126,7 +151,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${APP_ID}" ]; then
-            echo "app_id is required. Use the app id from the Minicloud console URL, for example app_52kqllu8k1nq4kg352kqllu8."
+            echo "app_id is required. Use the app id from the Selfrun console URL, for example app_52kqllu8k1nq4kg352kqllu8."
             exit 1
           fi
 
@@ -186,60 +211,79 @@ jobs:
               config["services"][name] = service.reject { |key, _| key == "name" }
             end
 
-            File.write("minicloud.yml", YAML.dump(config))
+            File.write("selfrun.yml", YAML.dump(config))
           '
 
-      - name: Deploy with Minicloud CLI
+      - name: Deploy with Selfrun CLI
         env:
-          MINICLOUD_TOKEN: ${{ secrets.minicloud_api_key }}
+          SELFRUN_API_KEY_SECRET: ${{ secrets.selfrun_api_key }}
+          MINICLOUD_API_KEY_SECRET: ${{ secrets.minicloud_api_key }}
           POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
-          MINICLOUD_ENVIRONMENT: ${{ inputs.minicloud_environment }}
-          MINICLOUD_APP_DOMAIN: ${{ inputs.minicloud_app_domain }}
-          SELF_HOSTED_API_URL: ${{ inputs.minicloud_api_url }}
+          SELFRUN_ENV_INPUT: ${{ inputs.selfrun_environment }}
+          MINICLOUD_ENV_INPUT: ${{ inputs.minicloud_environment }}
+          SELFRUN_APP_DOMAIN_INPUT: ${{ inputs.selfrun_app_domain }}
+          MINICLOUD_APP_DOMAIN_INPUT: ${{ inputs.minicloud_app_domain }}
+          SELFRUN_API_URL_INPUT: ${{ inputs.selfrun_api_url }}
+          MINICLOUD_API_URL_INPUT: ${{ inputs.minicloud_api_url }}
           APP_ID: ${{ inputs.app_id }}
           DATABASE: ${{ inputs.database }}
-          XDG_CONFIG_HOME: ${{ runner.temp }}/minicloud-config
+          XDG_CONFIG_HOME: ${{ runner.temp }}/selfrun-config
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${MINICLOUD_TOKEN}" ]; then
-            echo "minicloud_api_key is missing or unavailable in this repository."
+          TOKEN_VALUE="${SELFRUN_API_KEY_SECRET:-${MINICLOUD_API_KEY_SECRET}}"
+          if [ -z "${TOKEN_VALUE}" ]; then
+            echo "selfrun_api_key (or minicloud_api_key) is missing or unavailable in this repository."
             exit 1
           fi
-          echo "::add-mask::${MINICLOUD_TOKEN}"
+          echo "::add-mask::${TOKEN_VALUE}"
+          export SELFRUN_TOKEN="${TOKEN_VALUE}"
+          export MINICLOUD_TOKEN="${TOKEN_VALUE}"
 
           if [ -n "${POSTGRES_PASSWORD}" ]; then
             echo "::add-mask::${POSTGRES_PASSWORD}"
           fi
 
+          SELF_HOSTED_API_URL="${SELFRUN_API_URL_INPUT:-${MINICLOUD_API_URL_INPUT}}"
+          TARGET_APP_DOMAIN="${SELFRUN_APP_DOMAIN_INPUT:-${MINICLOUD_APP_DOMAIN_INPUT}}"
+          TARGET_ENVIRONMENT="${SELFRUN_ENV_INPUT:-${MINICLOUD_ENV_INPUT}}"
+
           if [[ -n "$SELF_HOSTED_API_URL" ]]; then
             if [[ ! "$SELF_HOSTED_API_URL" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]*(:[0-9]+)?/?$ ]]; then
-              echo "minicloud_api_url must be an HTTPS origin." >&2
+              echo "selfrun_api_url / minicloud_api_url must be an HTTPS origin." >&2
               exit 1
             fi
-            if [[ -z "$MINICLOUD_APP_DOMAIN" ]]; then
-              echo "minicloud_app_domain is required for a self-hosted instance." >&2
+            if [[ -z "$TARGET_APP_DOMAIN" ]]; then
+              echo "selfrun_app_domain / minicloud_app_domain is required for a self-hosted instance." >&2
               exit 1
             fi
+            export SELFRUN_API_URL="$SELF_HOSTED_API_URL"
             export MINICLOUD_API_URL="$SELF_HOSTED_API_URL"
-            MINICLOUD_ENVIRONMENT=self-hosted
+            TARGET_ENVIRONMENT=self-hosted
           else
-            case "${MINICLOUD_ENVIRONMENT}" in
+            case "${TARGET_ENVIRONMENT}" in
             prod)
+              export SELFRUN_API_URL="https://api.cloud.muni.dev"
               export MINICLOUD_API_URL="https://api.cloud.muni.dev"
               ;;
             staging)
+              export SELFRUN_API_URL="https://api.cloud-dev.muni.dev"
               export MINICLOUD_API_URL="https://api.cloud-dev.muni.dev"
               ;;
             *)
-              echo "minicloud_environment must be prod or staging."
+              echo "selfrun_environment / minicloud_environment must be prod or staging."
               exit 1
               ;;
             esac
           fi
 
-          args=(deploy --all --config minicloud.yml)
+          if [[ -n "$TARGET_APP_DOMAIN" ]]; then
+            export SELFRUN_APP_DOMAIN="$TARGET_APP_DOMAIN"
+            export MINICLOUD_APP_DOMAIN="$TARGET_APP_DOMAIN"
+          fi
+
+          args=(deploy --all --config selfrun.yml)
           if [ "${DATABASE}" = "postgres" ]; then
             if [ -z "${POSTGRES_PASSWORD}" ]; then
               echo "postgres_password is required when database is postgres."
@@ -249,14 +293,14 @@ jobs:
           fi
 
           {
-            echo "## Minicloud deployment"
+            echo "## Selfrun deployment"
             echo ""
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| App ID | \`${APP_ID}\` |"
-            echo "| Minicloud environment | \`${MINICLOUD_ENVIRONMENT}\` |"
+            echo "| Selfrun environment | \`${TARGET_ENVIRONMENT}\` |"
             echo "| Database | \`${DATABASE}\` |"
             echo "| Customer workflow execution | [${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-          minicloud "${args[@]}"
+          selfrun "${args[@]}"

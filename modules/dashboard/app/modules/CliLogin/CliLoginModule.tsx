@@ -69,7 +69,7 @@ function CliLoginContent({ sessionId }: { sessionId: string }) {
           <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
             {isApproved ? <CheckCircle2 className="h-5 w-5" /> : <Terminal className="h-5 w-5" />}
           </div>
-          <CardTitle>Minicloud CLI login</CardTitle>
+          <CardTitle>Selfrun CLI login</CardTitle>
           <CardDescription className="break-words">
             {isApproved ? "This CLI request has been authorized." : organization ? `Authorize CLI access for ${organization.name}.` : "Choose an organization before approving CLI access."}
           </CardDescription>
@@ -111,7 +111,7 @@ function CliLoginContent({ sessionId }: { sessionId: string }) {
           {profileError ? <p role="alert" className="text-sm text-destructive">{profileError}</p> : null}
           {!profile ? <p role="status">Loading organization memberships.</p> : eligibleOrganizations.length === 0 ? <p role="alert">You do not have permission to approve CLI access.</p> : null}
           {isApproved ? <p role="status" className="text-sm text-muted-foreground">You can return to your terminal.</p> : null}
-          {isExpired ? <p role="alert" className="text-sm text-destructive">This CLI login session expired. Run `minicloud login` again.</p> : null}
+          {isExpired ? <p role="alert" className="text-sm text-destructive">This CLI login session expired. Run `selfrun login` again.</p> : null}
           {!isApproved && !isExpired ? (
             <Button className="w-full" disabled={!canApprove} onClick={approve}>
               {isApproving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}

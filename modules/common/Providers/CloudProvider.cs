@@ -4,5 +4,11 @@ public enum CloudProvider
 {
     Hetzner,
     DigitalOcean,
-    Vultr
+    Vultr,
+    Aws,
+    Azure,
+    GoogleCloud,
+    Ovhcloud,
+    Linode,
+    Scaleway
 }

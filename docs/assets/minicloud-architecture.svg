@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="480" viewBox="0 0 1120 480" role="img" aria-labelledby="title description">
-  <title id="title">MiniCloud components and workflows</title>
+  <title id="title">Selfrun components and workflows</title>
   <desc id="description">Operators and agents use the dashboard or CLI to reach the self-hosted control plane. The worker provisions runtime servers and deploys application services. Service users connect through HTTPS.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -19,7 +19,7 @@
   <rect x="40" y="29" width="222" height="124" rx="11" class="card"/>
   <text x="60" y="65" class="heading">Operator or agent</text>
   <text x="60" y="99" class="label">Browser dashboard</text>
-  <text x="60" y="125" class="label">MiniCloud CLI</text>
+  <text x="60" y="125" class="label">Selfrun CLI</text>
 
   <rect x="315" y="29" width="765" height="172" rx="11" class="boundary"/>
   <text x="337" y="62" class="heading">Control plane VPS</text>

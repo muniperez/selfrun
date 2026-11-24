@@ -150,7 +150,7 @@ export function GitHubCallbackModule() {
   }, [status]);
   return <main className="mx-auto max-w-xl space-y-4 p-6">
     <h1>GitHub connection</h1>
-    <p role="status">{status === "authenticated" ? result : status === "initializing" ? "Checking your Minicloud session..." : "Sign in to Minicloud, then restart GitHub setup. No callback credentials have been saved in browser storage."}</p>
+    <p role="status">{status === "authenticated" ? result : status === "initializing" ? "Checking your Selfrun session..." : "Sign in to Selfrun, then restart GitHub setup. No callback credentials have been saved in browser storage."}</p>
     <Link to="/settings/github">Return to GitHub settings</Link>
   </main>;
 }

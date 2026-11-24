@@ -8,9 +8,16 @@ namespace Minicloud.Cli;
 
 public sealed class CliEnvironment
 {
-    public const string TokenEnvironmentVariable = "MINICLOUD_TOKEN";
-    public const string ApiUrlEnvironmentVariable = "MINICLOUD_API_URL";
-    public const string LocalOrganizationSlugEnvironmentVariable = "MINICLOUD_LOCAL_ORGANIZATION_SLUG";
+    public const string TokenEnvironmentVariable = "SELFRUN_TOKEN";
+    public const string LegacyTokenEnvironmentVariable = "MINICLOUD_TOKEN";
+    public const string ApiUrlEnvironmentVariable = "SELFRUN_API_URL";
+    public const string LegacyApiUrlEnvironmentVariable = "MINICLOUD_API_URL";
+    public const string LocalOrganizationSlugEnvironmentVariable = "SELFRUN_LOCAL_ORGANIZATION_SLUG";
+    public const string LegacyLocalOrganizationSlugEnvironmentVariable = "MINICLOUD_LOCAL_ORGANIZATION_SLUG";
+    public const string AppDomainEnvironmentVariable = "SELFRUN_APP_DOMAIN";
+    public const string LegacyAppDomainEnvironmentVariable = "MINICLOUD_APP_DOMAIN";
+    public const string TimingTraceOutputEnvironmentVariable = "SELFRUN_CLI_TIMING_TRACE_OUTPUT";
+    public const string LegacyTimingTraceOutputEnvironmentVariable = "MINICLOUD_CLI_TIMING_TRACE_OUTPUT";
 
     private CliEnvironment(string apiBaseUrl, string localOrganizationSlug, string configHome, string appDomain = "")
     {
@@ -50,31 +57,55 @@ public sealed class CliEnvironment
         if (active is not null) SelectInstance(active);
     }
 
-    public static CliEnvironment FromEnvironment()
+    public static string? GetEnvironmentVariable(string primaryName, string legacyName, Func<string, string?>? reader = null)
     {
-        var apiBaseUrl = Environment.GetEnvironmentVariable(ApiUrlEnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(apiBaseUrl))
+        reader ??= Environment.GetEnvironmentVariable;
+        var primary = reader(primaryName);
+        if (!string.IsNullOrWhiteSpace(primary))
         {
-            apiBaseUrl = "";
+            return primary;
         }
 
-        var localOrganizationSlug = Environment.GetEnvironmentVariable(LocalOrganizationSlugEnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(localOrganizationSlug))
+        var legacy = reader(legacyName);
+        return string.IsNullOrWhiteSpace(legacy) ? null : legacy;
+    }
+
+    public static string? GetTokenEnvironmentVariable(Func<string, string?>? reader = null) =>
+        GetEnvironmentVariable(TokenEnvironmentVariable, LegacyTokenEnvironmentVariable, reader);
+
+    public static string ResolveConfigDirectory(string xdgConfigHome)
+    {
+        var primary = Path.Combine(xdgConfigHome, "selfrun");
+        var legacy = Path.Combine(xdgConfigHome, "minicloud");
+        if (!Directory.Exists(primary) && Directory.Exists(legacy))
         {
-            localOrganizationSlug = "local";
+            return legacy;
         }
 
-        var configHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        return primary;
+    }
+
+    public static CliEnvironment FromEnvironment() =>
+        FromEnvironment(Environment.GetEnvironmentVariable,
+            () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config"));
+
+    internal static CliEnvironment FromEnvironment(Func<string, string?> reader, Func<string> defaultXdgConfigHome)
+    {
+        var apiBaseUrl = GetEnvironmentVariable(ApiUrlEnvironmentVariable, LegacyApiUrlEnvironmentVariable, reader) ?? "";
+
+        var localOrganizationSlug = GetEnvironmentVariable(
+            LocalOrganizationSlugEnvironmentVariable,
+            LegacyLocalOrganizationSlugEnvironmentVariable,
+            reader) ?? "local";
+
+        var configHome = reader("XDG_CONFIG_HOME");
         if (string.IsNullOrWhiteSpace(configHome))
         {
-            configHome = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".config");
+            configHome = defaultXdgConfigHome();
         }
 
-        var appDomain = Environment.GetEnvironmentVariable("MINICLOUD_APP_DOMAIN");
-        if (string.IsNullOrWhiteSpace(appDomain)) appDomain = "";
-        return new CliEnvironment(apiBaseUrl, localOrganizationSlug, Path.Combine(configHome, "minicloud"), appDomain)
+        var appDomain = GetEnvironmentVariable(AppDomainEnvironmentVariable, LegacyAppDomainEnvironmentVariable, reader) ?? "";
+        return new CliEnvironment(apiBaseUrl, localOrganizationSlug, ResolveConfigDirectory(configHome), appDomain)
         { HasApiOverride = !string.IsNullOrWhiteSpace(apiBaseUrl) };
     }
 

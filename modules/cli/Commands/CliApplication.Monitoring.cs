@@ -90,7 +90,7 @@ public sealed partial class CliApplication
         {
             throw new CliCommandException(
                 CliExitCodes.ValidationError,
-                $"'{value}' is not a deployment number. Use the number shown by Minicloud, for example 20261110.1.");
+                $"'{value}' is not a deployment number. Use the number shown by Selfrun, for example 20261110.1.");
         }
     }
 
@@ -133,7 +133,7 @@ public sealed partial class CliApplication
 
         throw new CliCommandException(
             CliExitCodes.ValidationError,
-            "Deployment numbers are scoped to an organization. Select one with --organization <id> or run the command next to an application's minicloud.yml.");
+            "Deployment numbers are scoped to an organization. Select one with --organization <id> or run the command next to an application's selfrun.yml (or minicloud.yml).");
     }
 
     private async Task<string> GetLatestDeploymentNumberAsync(OrganizationSummaryDto organization, CancellationToken cancellationToken)

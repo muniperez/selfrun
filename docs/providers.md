@@ -6,7 +6,7 @@ several accounts of one provider.
 
 CLI plan listing and app creation require an API key with `plans:read`.
 Existing keys do not gain new permissions automatically. Refresh an older CLI
-login with `minicloud login` or use a key with the required scope. Managing
+login with `selfrun login` (or legacy `minicloud login`) or use a key with the required scope. Managing
 provider credentials requires the separate `providers:write` operator scope.
 
 ## Configure an account
@@ -174,7 +174,14 @@ Do not clear deletion state or edit provider-account IDs directly in the databas
 Verify all live resource bindings before reopening admissions. Once account-aware
 allocations begin, old workers are not a safe rollback target.
 
-The [specification](specs/provider-accounts-and-plans.md) describes the contracts
-and acceptance matrix. Source/local tests and live provider qualification are
-separate checks; no live cloud acceptance is implied by installation or import
+The [provider accounts and plans specification](specs/provider-accounts-and-plans.md) describes
+account/plan contracts and acceptance criteria, and the [provider extension architecture specification](specs/provider-extension-architecture.md)
+defines the shared registry, capability, placement, credential, lifecycle, and qualification contracts
+used to add future providers behind qualification gates. Source/local tests and live provider
+qualification are separate checks; no live cloud acceptance is implied by installation or import
 command availability.
+
+For experimental provider adapters behind qualification gates (AWS, Microsoft Azure,
+Google Cloud, OVHcloud including bare-metal contracts, Akamai/Linode, and Scaleway),
+credential schemas, minimum IAM scopes, and live qualification checklists, see the
+[provider expansion adapter reference](provider-expansion.md).

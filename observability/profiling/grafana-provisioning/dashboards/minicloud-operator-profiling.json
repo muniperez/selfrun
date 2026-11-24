@@ -1,0 +1,164 @@
+{
+  "uid": "minicloud-operator-profiling",
+  "title": "Minicloud Operator Profiling",
+  "description": "Operator-only profiling metrics and bounded summaries across runtime-agent, API ingestion, and worker pipelines.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "editable": false,
+  "tags": ["minicloud", "operator", "profiling"],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU seconds per idle host-hour",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (exported_job, service_name) (rate(dotnet_process_cpu_time_seconds_total[5m])) * 3600",
+          "legendFormat": "{{service_name}} CPU s/host-hour"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Subprocesses per cycle",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation) (rate(minicloud_runtime_agent_child_launches_total[5m])) * 15",
+          "legendFormat": "{{operation}} / 15s cycle"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "DB commands per batch",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation) (rate(minicloud_db_commands_total[5m])) / clamp_min(sum(rate(minicloud_runtime_ingestion_calls_total[5m])), 1e-6)",
+          "legendFormat": "{{operation}} cmds/batch"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Allocated bytes per accepted MiB",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(dotnet_gc_heap_total_allocated_bytes[5m])) / clamp_min(sum(rate(minicloud_runtime_ingestion_bytes_total[5m])) / 1048576, 1e-6)",
+          "legendFormat": "Allocated B / accepted MiB"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Operation p95 latency",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(minicloud_runtime_agent_operation_duration_seconds_bucket[5m])))",
+          "legendFormat": "agent {{operation}} p95"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(minicloud_runtime_ingestion_duration_seconds_bucket[5m])))",
+          "legendFormat": "ingestion {{operation}} p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.95, sum by (le, service, operation) (rate(minicloud_worker_deployment_pipeline_duration_seconds_bucket[5m])))",
+          "legendFormat": "worker {{operation}} p95"
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "http {{http_route}} p95"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Exporter drops",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(minicloud_runtime_agent_exporter_drops_total[5m]))",
+          "legendFormat": "agent drops ({{reason}})"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_log_records_total[5m]) + rate(otelcol_exporter_send_failed_metric_points_total[5m]))",
+          "legendFormat": "collector drops ({{exporter}})"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Queue lag",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "minicloud-operator-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(minicloud_runtime_agent_exporter_queue_lag)",
+          "legendFormat": "agent exporter queue lag"
+        },
+        {
+          "refId": "B",
+          "expr": "max(dotnet_thread_pool_queue_length)",
+          "legendFormat": ".NET thread-pool queue length"
+        },
+        {
+          "refId": "C",
+          "expr": "max by (exporter) (otelcol_exporter_queue_size)",
+          "legendFormat": "collector queue ({{exporter}})"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "logs",
+      "title": "Bounded operator diagnostic summaries",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 8 },
+      "datasource": { "type": "loki", "uid": "minicloud-operator-loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=~\"minicloud-worker|minicloud-runtime-agent\"}"
+        }
+      ]
+    }
+  ]
+}

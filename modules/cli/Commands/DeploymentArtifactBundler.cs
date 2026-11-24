@@ -21,6 +21,7 @@ internal static class DeploymentArtifactBundler
     private static readonly HashSet<string> ExcludedSegments = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git",
+        ".selfrun",
         ".minicloud",
         "node_modules",
         ".next",
@@ -274,7 +275,8 @@ internal static class DeploymentArtifactBundler
         if (fileName.Equals(".env", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith(".env.", StringComparison.OrdinalIgnoreCase) ||
             ((fileName.StartsWith("credentials", StringComparison.OrdinalIgnoreCase) || fileName.StartsWith("secrets", StringComparison.OrdinalIgnoreCase)) && fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ||
-            fileName.Equals("minicloud.secrets.env", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals(LocalSecretsFile.FileName, StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals(LocalSecretsFile.LegacyFileName, StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals("id_rsa", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals("id_ed25519", StringComparison.OrdinalIgnoreCase) ||

@@ -9,30 +9,41 @@ neither installer uses repository-wide `latest`.
 For guided server setup from a **review candidate**, or to publish your own
 CLI with matching committed server source, see the [two seed paths](stateless-seed.md#guided-installation).
 Future versioned CLI archives built by the updated release workflow also carry
-matching TEST source. `minicloud help seed` reports whether a particular build
+matching TEST source. `selfrun help seed` (or `minicloud help seed`) reports whether a particular build
 contains it. Selecting `local` is explicit and does not verify or install a
 signed server release, even when the CLI archive itself is signed.
+
+> **Rename compatibility:** Selfrun was formerly named MiniCloud. The installer
+> scripts (`install.sh`, `install.ps1`) accept `SELFRUN_*` environment variables
+> with fallback to `MINICLOUD_*`, install both `selfrun` (symlink on Unix,
+> `selfrun.cmd` shim on Windows) and `minicloud`, and preserve the existing
+> `minicloud-<version>-<rid>.*` release archive names until Stage 3 of the
+> [rename migration](selfrun-rename-migration.md).
 
 ## Binary installation
 
 Select an actual newly published signed **CLI** tag:
 
 ```sh
-MINICLOUD_INSTALL_MODE=binary MINICLOUD_VERSION=v<exact-version> sh install.sh
+SELFRUN_INSTALL_MODE=binary SELFRUN_VERSION=v<exact-version> sh install.sh
 ```
 
 ```powershell
-$env:MINICLOUD_INSTALL_MODE = "binary"
-$env:MINICLOUD_VERSION = "v<exact-version>"
+$env:SELFRUN_INSTALL_MODE = "binary"
+$env:SELFRUN_VERSION = "v<exact-version>"
 .\install.ps1
 ```
+
+Legacy `MINICLOUD_INSTALL_MODE`, `MINICLOUD_VERSION`, `MINICLOUD_REPO`, and
+`MINICLOUD_INSTALL_DIR` variables remain supported with identical semantics;
+when both are set, `SELFRUN_*` takes precedence.
 
 Acquire/review these canonical installer scripts over HTTPS or from a reviewed
 source checkout before execution. Binary mode is the default, but an exact tag
 is mandatory: there is deliberately no fabricated current version, automatic
 downgrade, source fallback, SDK installation or server-channel selection.
 Unsigned historical tags/missing new assets fail without replacing an installed
-CLI. `MINICLOUD_REPO` is accepted only as `muniventures/minicloud`.
+CLI. `SELFRUN_REPO` / `MINICLOUD_REPO` is accepted only as `muniventures/minicloud`.
 
 Supported targets are `linux-x64`, `linux-arm64`, `osx-arm64`, `win-x64`.
 There is no Intel macOS target. Outputs are self-contained, **untrimmed**
@@ -65,14 +76,15 @@ Before extraction, the installer verifies:
    and per-file inventory; archive entries must be regular, listed, unique,
    path-safe and bounded. No link/traversal/type bypass is extracted.
 4. Embedded `cli-release.json`, native executable `--version` with exact source,
-   and `--help`, before replacing `minicloud`/`minicloud.exe`.
+   and `--help`, before replacing `minicloud`/`minicloud.exe` and updating the
+   `selfrun`/`selfrun.cmd` command alias.
 
 Replacement is atomic on the installation filesystem. Windows retains the
 previous executable as a uniquely named `.minicloud-previous-*.exe`;
 replacement failure (including a locked executable) leaves it working.
 Versioned notices live under `.minicloud/<tag>-<source>/`. Existing instance,
 authentication and application configuration are not touched.
-`MINICLOUD_INSTALL_DIR` retains its existing default: `/usr/local/bin` on Unix
+`SELFRUN_INSTALL_DIR` / `MINICLOUD_INSTALL_DIR` retains its existing default: `/usr/local/bin` on Unix
 (sudo when required) or `%LOCALAPPDATA%\Minicloud\bin` on Windows. The directory
 and ancestors must be trusted, not shared writable paths/reparse links.
 Unix users may select `$HOME/.local/bin` and add it to PATH; Windows preserves
@@ -84,8 +96,8 @@ Git and the .NET **10 SDK** remain supported; no binary verification failure
 silently builds source:
 
 ```sh
-MINICLOUD_INSTALL_MODE=source \
-MINICLOUD_VERSION=<full-lowercase-canonical-main-commit-sha> sh install.sh
+SELFRUN_INSTALL_MODE=source \
+SELFRUN_VERSION=<full-lowercase-canonical-main-commit-sha> sh install.sh
 ```
 
 Use the same environment variables with `install.ps1`. Exact CLI `v*` source
@@ -100,8 +112,9 @@ No SDK is installed for the user. This installer does not embed TEST server
 source; use the [Seed publish profile](stateless-seed.md#publish-from-a-clone)
 to build a CLI that does.
 
-The reusable source-built customer deployment workflow and its inputs/default
-source SHA are unchanged. Existing customer workflows need not switch channels.
+The reusable source-built customer deployment workflow preserves its legacy
+`minicloud_*` inputs/secrets and default source SHA while also accepting
+`selfrun_*` aliases. Existing customer workflows need not switch channels.
 The old source-only T20 milestone and historical publication claims remain
 historical facts; this new implementation deliberately supersedes its
 future-binary prohibition when merged.

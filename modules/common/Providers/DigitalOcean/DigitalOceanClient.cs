@@ -156,7 +156,11 @@ public sealed class DigitalOceanClient : IVpsProviderClient, IVpsProviderSshKeyC
                 // Assignment rejection cannot prove the preceding allocation was rejected.
                 throw new ProviderApiException(
                     $"DigitalOcean droplet {droplet.Id} was created, but project assignment failed. Reconcile the existing droplet before retrying.",
-                    provider: Provider, innerException: ex);
+                    provider: Provider,
+                    innerException: ex,
+                    category: Extensibility.ProviderErrorCategory.PartialAllocationAmbiguous,
+                    providerWireType: "digital-ocean",
+                    isAmbiguousOutcome: true);
             }
         }
 

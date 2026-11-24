@@ -20,8 +20,15 @@ acceptance are separate. Date: 2026-11-09.
 
 ## Brand
 
+Product name: **Selfrun** (`selfrun.dev`, formerly MiniCloud; see
+[Selfrun Rename Migration Guide](docs/selfrun-rename-migration.md)).
 Practical, restrained and operational. Preserve the dashboard shell and existing
 theme. Avoid decorative metrics, large promotional headers and new design systems.
+
+- **Logo mark**: Monochrome **Split S** geometric mark (`site/public/mark.svg`
+  for the marketing site; `modules/dashboard/public/favicon.svg` and
+  `modules/dashboard/app/core/layout/SelfrunMark.tsx` for the dashboard).
+  Palette: ink `#171717`, paper `#fafafa`; inline UI mark uses `currentColor`.
 
 ## Product goals
 
@@ -90,7 +97,7 @@ success state or imply that a credential check proves available provider quota.
 
 Use Plans, Provider accounts, Add plan, Edit, Duplicate plan and Save changes.
 Use Server type as the user-facing label for the provider SKU. Use Location for
-region codes. Keep provider accounts distinct from Minicloud API keys. Avoid
+region codes. Keep provider accounts distinct from Selfrun API keys. Avoid
 backend identifiers and secret-store implementation details in ordinary forms.
 
 ## Implementation constraints
@@ -123,31 +130,15 @@ automatically merged. Muse owns implementation after model prerequisites; Codex
 owns final validation. These artifacts specify design; they do not establish
 implementation or release completion.
 
-## Coding workspaces extension (Approved design)
+## Product boundary
 
-Issue [#138](https://github.com/muniventures/minicloud/issues/138) and its four
-attached drawings govern the workspace collection, stopped-create dialog,
-primary VM overview and expanded Git-save recovery. Keep `/workspaces` and
-`/workspaces/:workspaceId`, the existing shell, collection toolbar and centered
-dialogs. Image names, plans, rates and states in the drawings are illustrative.
-
-The collection separates the observed primary VM phase from ephemeral attention.
-Details put the primary VM before independently expandable ephemeral siblings;
-advanced operations stay scoped to the selected VM and generation. Named choices
-come from organization-scoped eligibility discovery and writes revalidate them.
-Viewing, refreshing, navigating and opening dialogs never start compute or
-authorize gateway sessions. Creation leaves compute stopped.
-
-Storage estimates remain visible while stopped. Compute reservation is an
-observation, not a conclusion inferred from a stop request. Git-save recovery and
-irreversible discard are separate actions with explicit generation-bound
-confirmation. Read-only roles retain navigation and status without write actions.
-Narrow layouts retain links, textual states, warnings and dialog actions.
-
-This dashboard redesign preserves the existing gateway launch contract. Optional
-T3 Connect account linking is separate work in
-[#146](https://github.com/muniventures/minicloud/issues/146), not a permission
-expansion of routine T3 or preview sessions.
+Cloud coding workspaces (`/workspaces`, ephemeral coding VMs, Git-save recovery,
+the workspace gateway, and T3 Connect) were extracted out of Minicloud into the
+independent workspace product (Municode; see
+[#256](https://github.com/muniventures/minicloud/issues/256)). Minicloud's
+dashboard design covers application hosting, managed databases, plans and
+provider accounts, deployments, and organization administration (including
+Minicloud's own GitHub App integration).
 
 ## Open questions
 

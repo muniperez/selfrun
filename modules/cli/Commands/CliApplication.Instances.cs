@@ -17,11 +17,11 @@ public sealed partial class CliApplication
             }
             return;
         }
-        _console.Write("Minicloud instance URL (e.g. cloud.example.com): ");
+        _console.Write("Selfrun instance URL (e.g. cloud.example.com): ");
         var url = _console.ReadLine();
         if (string.IsNullOrWhiteSpace(url))
             throw new CliCommandException(CliExitCodes.ValidationError,
-                "An instance URL is required. Run 'minicloud instance add <name> <url>' or set MINICLOUD_API_URL for CI.");
+                "An instance URL is required. Run 'selfrun instance add <name> <url>' or set SELFRUN_API_URL (or MINICLOUD_API_URL) for CI.");
         var normalized = InstanceStore.NormalizeUrl(url);
         await AddInstanceAsync(new Uri(normalized).Authority, normalized, ct);
     }
@@ -33,7 +33,7 @@ public sealed partial class CliApplication
         var normalized = InstanceStore.NormalizeUrl(url);
         var state = _environment.Instances.Load();
         if (state.Instances.Any(x => x.Name == name || x.Url == normalized))
-            throw new CliCommandException(CliExitCodes.ValidationError, "Instance name or URL already exists. Use 'minicloud instance use <name>'.");
+            throw new CliCommandException(CliExitCodes.ValidationError, "Instance name or URL already exists. Use 'selfrun instance use <name>'.");
         var info = await _apiClient.GetInstanceInfoAsync(InstanceStore.DeriveApiUrl(normalized), ct);
         var profile = new InstanceProfile(name, normalized, info.AppDomain);
         state.Instances.Add(profile);
@@ -55,12 +55,12 @@ public sealed partial class CliApplication
                 if (state.Instances.Count == 0) _console.WriteLine("No saved instances.");
                 foreach (var profile in state.Instances)
                     _console.WriteLine($"{(profile.Name == state.Active ? "*" : " ")} {profile.Name}  {profile.Url}");
-                if (_environment.HasApiOverride) _console.WriteLine($"MINICLOUD_API_URL override: {_environment.ApiBaseUrl}");
+                if (_environment.HasApiOverride) _console.WriteLine($"SELFRUN_API_URL override: {_environment.ApiBaseUrl}");
                 return CliExitCodes.Success;
             case "use" when args.Length == 2:
                 var saved = _environment.Instances.Load();
                 var selected = saved.Instances.SingleOrDefault(x => x.Name == args[1]);
-                if (selected is null) throw new CliCommandException(CliExitCodes.ValidationError, $"Unknown instance '{args[1]}'. Run 'minicloud instance list'.");
+                if (selected is null) throw new CliCommandException(CliExitCodes.ValidationError, $"Unknown instance '{args[1]}'. Run 'selfrun instance list'.");
                 var info = await _apiClient.GetInstanceInfoAsync(InstanceStore.DeriveApiUrl(selected.Url), ct);
                 var refreshed = selected with { AppDomain = info.AppDomain };
                 saved.Instances[saved.Instances.IndexOf(selected)] = refreshed;
@@ -68,7 +68,7 @@ public sealed partial class CliApplication
                 saved.Active = selected.Name;
                 _environment.Instances.Save(saved);
                 _console.WriteLine($"Active instance: {selected.Name} ({selected.Url})");
-                if (_environment.HasApiOverride) _console.WriteLine("Unset MINICLOUD_API_URL to use the saved active instance in subsequent commands.");
+                if (_environment.HasApiOverride) _console.WriteLine("Unset SELFRUN_API_URL / MINICLOUD_API_URL to use the saved active instance in subsequent commands.");
                 else _environment.SelectInstance(selected);
                 return CliExitCodes.Success;
             default:

@@ -1,6 +1,6 @@
-# Minicloud repository instructions
+# Selfrun repository instructions
 
-This repository contains the Minicloud product source and builds its public CLI releases.
+This repository contains the Selfrun (formerly MiniCloud) product source and builds its public CLI releases. See `docs/selfrun-rename-migration.md` for active rename stages and compatibility guarantees.
 Keep changes focused. Never push code unless explicitly asked.
 
 - Start with the README and the user documentation under `docs/`.

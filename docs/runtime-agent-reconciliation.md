@@ -277,3 +277,34 @@ for variant in baseline candidate; do
   done
 done
 ```
+
+## Cursor-write optimization, protocol fixture, and graceful EventPipe completion (#119, #122, #324)
+
+- **Cursor-write and collection refinements (#122):** `CursorStore` serializes
+  sorted canonical JSON in memory before creating a temporary file, compares
+  against the last persisted payload to skip byte-identical writes, cleans up
+  partial `.tmp` files on write failure while keeping `_dirty` set for retry,
+  tracks `WriteCount` / `SkippedWriteCount` / `BytesWritten`, and exposes
+  opt-in `PruneInactiveSources` for churn cleanup. `RuntimeCollector` hashes
+  cursor lines using stack/pooled buffers (`SHA256.TryHashData`) without heap
+  array allocations and skips parsing/hashing lines after the 500-record batch
+  cap is reached while still executing later source commands.
+- **Reproducible acceptance-protocol fixture (#119):** `tools/runtime-agent-benchmark`
+  adds the `protocol` workload (`off`, `on`, and `on-optimized` modes) covering
+  30 virtual minutes idle, duplicate replay, 500-record burst, route change,
+  failed/recovered HTTPS probe, 409 deployment gate with container rollover,
+  and restart with a pending acknowledgement, reporting synthetic collector
+  footprint separately from product work.
+- **Graceful EventPipe completion and aggregate-only inspection (#324):**
+  `Minicloud.RuntimeAgent` handles `SIGTERM`/`SIGINT` by completing the active
+  cycle so started `Activity` spans emit stop markers before exit.
+  `tools/runtime-agent-benchmark` supports `--start-file` / `--ready-file` / `--stop-file`
+  coordination, `EventPipeSessionCoordinator` (`CaptureWhileAliveAsync` and
+  `CaptureLaunchedProcessWhileAliveAsync`) stops and drains the EventPipe
+  session to its final NetTrace EOF marker (`EndObject` + `NullReference`)
+  while the target is still alive, and `RuntimeAgentAllocationReport`
+  (`--capture-benchmark` and `--verify-activity`) inspects `.nettrace` files
+  strictly under `.local/artifacts/` with aggregate-only JSON output certifying
+  clean stream completion, zero lost events, and matched Activity start/stop
+  closure.
+

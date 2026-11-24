@@ -1,4 +1,5 @@
 import { apiRequest, apiUrl, setCsrfToken } from "./apiClient";
+import type { PasskeyLoginOptionsJson, PasskeyRegistrationOptionsJson } from "./webauthn";
 
 export type AccountCapabilities = {
   password: boolean;
@@ -6,6 +7,8 @@ export type AccountCapabilities = {
   emailRecovery: boolean;
   /** Whether the operator offers "Keep me signed in". */
   keepSignedIn?: boolean;
+  /** Whether WebAuthn passkeys are enabled for dashboard sign-in and account settings. */
+  passkey?: boolean;
   bootstrapState: "required" | "ready" | "blocked";
 };
 
@@ -22,7 +25,7 @@ export type AccountSession = {
   keepSignedInPreference?: boolean;
 };
 
-export type FlowKind = "login" | "settings" | "recovery";
+export type FlowKind = "login" | "settings" | "recovery" | "reauthentication";
 export type FlowMessage = { id: number; text: string; type: string };
 export type FlowNode = {
   group: string;
@@ -33,11 +36,29 @@ export type FlowNode = {
   messages: FlowMessage[];
 };
 export type FlowProvider = { id: string; action: string; method: string };
+export type FlowPasskeyCredential = {
+  id: string;
+  displayName: string;
+  addedAt: string | null;
+  canRemove: boolean;
+};
+export type FlowPasskey = {
+  loginOptions?: PasskeyLoginOptionsJson | null;
+  registrationOptions?: PasskeyRegistrationOptionsJson | null;
+  credentials: FlowPasskeyCredential[];
+};
 export type BrowserFlow = {
   id: string;
   kind: FlowKind;
   expiresAt: string;
-  ui: { action: string; method: string; nodes: FlowNode[]; messages: FlowMessage[]; providers?: FlowProvider[] };
+  ui: {
+    action: string;
+    method: string;
+    nodes: FlowNode[];
+    messages: FlowMessage[];
+    providers?: FlowProvider[] | null;
+    passkey?: FlowPasskey | null;
+  };
 };
 export type ProviderContinuation = {
   result: "success" | "failed" | "forbidden" | "unavailable";
@@ -107,7 +128,7 @@ export function safeReturnPath(value: unknown): string {
 }
 
 function flowPath(kind: FlowKind) {
-  if (!["login", "settings", "recovery"].includes(kind)) throw new Error("Unsupported account flow.");
+  if (!["login", "settings", "recovery", "reauthentication"].includes(kind)) throw new Error("Unsupported account flow.");
   return `/api/account/flows/${kind}`;
 }
 
@@ -118,6 +139,34 @@ function flowId(id: string) {
     throw new Error("Invalid account form.");
   }
   return id;
+}
+
+function validatePasskey(passkey: FlowPasskey, kind: FlowKind) {
+  if (kind === "recovery" || typeof passkey !== "object" || passkey === null || !Array.isArray(passkey.credentials)) {
+    throw new Error("Invalid passkey flow options.");
+  }
+  for (const credential of passkey.credentials) {
+    if (!credential || typeof credential.id !== "string" || !credential.id ||
+        typeof credential.displayName !== "string" || typeof credential.canRemove !== "boolean" ||
+        (credential.addedAt !== null && typeof credential.addedAt !== "string")) {
+      throw new Error("Invalid passkey credential metadata.");
+    }
+  }
+  if (passkey.loginOptions != null) {
+    if (kind !== "login" && kind !== "reauthentication" || typeof passkey.loginOptions?.publicKey?.challenge !== "string" ||
+        !passkey.loginOptions.publicKey.challenge) {
+      throw new Error("Invalid passkey login options.");
+    }
+  }
+  if (passkey.registrationOptions != null) {
+    const pk = passkey.registrationOptions?.publicKey;
+    if (kind !== "settings" || typeof pk?.challenge !== "string" || !pk.challenge ||
+        typeof pk.rp?.name !== "string" || !pk.rp.name ||
+        typeof pk.user?.id !== "string" || !pk.user.id ||
+        !Array.isArray(pk.pubKeyCredParams) || pk.pubKeyCredParams.length === 0) {
+      throw new Error("Invalid passkey registration options.");
+    }
+  }
 }
 
 export function validateFlow(flow: BrowserFlow, kind: FlowKind) {
@@ -132,6 +181,9 @@ export function validateFlow(flow: BrowserFlow, kind: FlowKind) {
         providerAction.href !== apiUrl(`${flowPath(kind)}/oidc?flow=${flow.id}`)) {
       throw new Error("Invalid account provider destination.");
     }
+  }
+  if (flow.ui.passkey != null) {
+    validatePasskey(flow.ui.passkey, kind);
   }
   return flow;
 }
@@ -149,16 +201,19 @@ export function validateProviderUrl(value: unknown) {
 
 export const browserNavigation = { assign: (url: string) => window.location.assign(url) };
 
+function flowCsrfToken(flow: BrowserFlow): string {
+  return flow.ui.nodes.find(node => node.name === "csrf_token" && node.type === "hidden")?.value ?? "";
+}
+
 export async function startProviderRedirect(flow: BrowserFlow, provider: "google", returnTo: string, keepSignedIn?: boolean) {
   validateFlow(flow, flow.kind);
   if (!flow.ui.providers?.some(item => item.id === provider)) throw new Error("Invalid account provider destination.");
-  const csrf = flow.ui.nodes.find(node => node.name === "csrf_token" && node.type === "hidden")?.value;
   const result = await apiRequest<{ provider: string; redirectUrl: string }>(
     `${flowPath(flow.kind)}/oidc?flow=${flowId(flow.id)}&returnTo=${encodeURIComponent(safeReturnPath(returnTo))}` +
       keepSignedInQuery(flow.kind === "login" ? keepSignedIn : undefined), {
       method: "POST",
-      body: { csrf_token: csrf ?? "", provider },
-      browserFlow: flow.kind !== "settings",
+      body: { csrf_token: flowCsrfToken(flow), provider },
+      browserFlow: flow.kind === "login" || flow.kind === "recovery",
       notifyAuth: false
     });
   if (result.provider !== provider) throw new Error("Invalid account provider destination.");
@@ -204,7 +259,34 @@ export function submitAccountFlow(flow: BrowserFlow, fields: Record<string, stri
   return readEnvelope(apiRequest<FlowResponse>(`${flowPath(flow.kind)}?flow=${flowId(flow.id)}${query}`, {
     method: "POST",
     body: fields,
-    browserFlow: flow.kind !== "settings",
+    browserFlow: flow.kind === "login" || flow.kind === "recovery",
     notifyAuth: false
   }), flow.kind);
+}
+
+export function submitPasskeyLogin(flow: BrowserFlow, passkeyLoginJson: string, keepSignedIn?: boolean) {
+  if (flow.kind !== "login" && flow.kind !== "reauthentication") throw new Error("Invalid account form destination.");
+  return submitAccountFlow(flow, {
+    csrf_token: flowCsrfToken(flow),
+    method: "passkey",
+    passkey_login: passkeyLoginJson
+  }, keepSignedIn);
+}
+
+export function submitPasskeyRegistration(flow: BrowserFlow, passkeyRegisterJson: string) {
+  if (flow.kind !== "settings") throw new Error("Invalid account form destination.");
+  return submitAccountFlow(flow, {
+    csrf_token: flowCsrfToken(flow),
+    method: "passkey",
+    passkey_settings_register: passkeyRegisterJson
+  });
+}
+
+export function submitPasskeyRemoval(flow: BrowserFlow, credentialId: string) {
+  if (flow.kind !== "settings") throw new Error("Invalid account form destination.");
+  return submitAccountFlow(flow, {
+    csrf_token: flowCsrfToken(flow),
+    method: "passkey",
+    passkey_remove: credentialId
+  });
 }

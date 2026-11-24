@@ -1,17 +1,22 @@
 # GitHub Actions Workflow
 
-Use the reusable Minicloud workflow when you want GitHub Actions to deploy source artifacts through the Minicloud API.
+> **Rename note:** MiniCloud is transitioning to **Selfrun** (`selfrun.dev`). The
+> reusable workflow path `muniventures/minicloud/.github/workflows/customer-deploy.yml`
+> and all legacy `minicloud_*` inputs/secrets remain supported alongside the new
+> `selfrun_*` aliases. See [Selfrun Rename Migration Guide](selfrun-rename-migration.md).
+
+Use the reusable Selfrun workflow when you want GitHub Actions to deploy source artifacts through the Selfrun API.
 To create or check your own control-plane VPS from Actions, see
 [Seed a control plane](#seed-a-control-plane).
 
-For self-hosting, pass your HTTPS API origin as `minicloud_api_url`. When the
+For self-hosting, pass your HTTPS API origin as `selfrun_api_url` (or legacy `minicloud_api_url`). When the
 instance has no managed registry, use `buildMode: source` for source-backed
 services. Pin the reusable workflow to a reviewed commit and set
-`minicloud_version` to a full CLI source commit SHA for repeatable builds.
+`selfrun_version` (or legacy `minicloud_version`) to a full CLI source commit SHA for repeatable builds.
 
 ## Prerequisites
 
-Create a Minicloud API key in the console with these scopes:
+Create a Selfrun API key in the console with these scopes:
 
 - `deployments:create`
 - `deployments:read`
@@ -20,18 +25,18 @@ Add these secrets to your app repository. Repository or organization secrets wor
 
 | Secret | Required | Description |
 | --- | --- | --- |
-| `MINICLOUD_API_KEY` | Yes | Minicloud API key from the console. |
-| `MINICLOUD_POSTGRES_PASSWORD` | Only for `database: postgres` | Postgres password used by the deployment. |
+| `SELFRUN_API_KEY` (or legacy `MINICLOUD_API_KEY`) | Yes | Selfrun API key from the console. |
+| `SELFRUN_POSTGRES_PASSWORD` (or `MINICLOUD_POSTGRES_PASSWORD`) | Only for `database: postgres` | Postgres password used by the deployment. |
 
 Add this repository or organization variable:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `MINICLOUD_APP_ID` | Yes | App id from the Minicloud console URL, for example `app_52kqllu8k1nq4kg352kqllu8`. |
+| `SELFRUN_APP_ID` (or `MINICLOUD_APP_ID`) | Yes | App id from the Selfrun console URL, for example `app_52kqllu8k1nq4kg352kqllu8`. |
 
 ## Managed VPS Plans
 
-The workflow deploys to the app selected by `MINICLOUD_APP_ID`. The app's managed VPS plan is selected in the Minicloud control plane, not in the customer workflow.
+The workflow deploys to the app selected by `app_id`. The app's managed VPS plan is selected in the Selfrun control plane, not in the customer workflow.
 
 Current plan codes:
 
@@ -54,10 +59,10 @@ permissions:
 
 ## Backend App
 
-Create `.github/workflows/minicloud-deploy.yml`:
+Create `.github/workflows/selfrun-deploy.yml` (existing `.github/workflows/minicloud-deploy.yml` files continue to work unchanged):
 
 ```yaml
-name: Deploy With Minicloud
+name: Deploy With Selfrun
 
 on:
   push:
@@ -69,10 +74,10 @@ permissions:
   contents: read
 
 jobs:
-  minicloud:
+  selfrun:
     uses: muniventures/minicloud/.github/workflows/customer-deploy.yml@main
     with:
-      app_id: ${{ vars.MINICLOUD_APP_ID }}
+      app_id: ${{ vars.SELFRUN_APP_ID }}
       database: postgres
       services: |
         - name: backend
@@ -83,14 +88,14 @@ jobs:
           path: /
           healthPath: /health
     secrets:
-      minicloud_api_key: ${{ secrets.MINICLOUD_API_KEY }}
-      postgres_password: ${{ secrets.MINICLOUD_POSTGRES_PASSWORD }}
+      selfrun_api_key: ${{ secrets.SELFRUN_API_KEY }}
+      postgres_password: ${{ secrets.SELFRUN_POSTGRES_PASSWORD }}
 ```
 
 ## Frontend And Backend App
 
 ```yaml
-name: Deploy With Minicloud
+name: Deploy With Selfrun
 
 on:
   push:
@@ -102,10 +107,10 @@ permissions:
   contents: read
 
 jobs:
-  minicloud:
+  selfrun:
     uses: muniventures/minicloud/.github/workflows/customer-deploy.yml@main
     with:
-      app_id: ${{ vars.MINICLOUD_APP_ID }}
+      app_id: ${{ vars.SELFRUN_APP_ID }}
       database: postgres
       services: |
         - name: frontend
@@ -126,19 +131,23 @@ jobs:
           secretEnv:
             MAPBOX_ACCESS_TOKEN: MAPBOX_ACCESS_TOKEN
     secrets:
-      minicloud_api_key: ${{ secrets.MINICLOUD_API_KEY }}
-      postgres_password: ${{ secrets.MINICLOUD_POSTGRES_PASSWORD }}
+      selfrun_api_key: ${{ secrets.SELFRUN_API_KEY }}
+      postgres_password: ${{ secrets.SELFRUN_POSTGRES_PASSWORD }}
 ```
 
 ## Inputs
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `app_id` | Yes | | App id from the Minicloud console URL. Pass `${{ vars.MINICLOUD_APP_ID }}` from the caller workflow. |
+| `app_id` | Yes | | App id from the Selfrun console URL. Pass `${{ vars.SELFRUN_APP_ID }}` (or `${{ vars.MINICLOUD_APP_ID }}`) from the caller workflow. |
 | `database` | No | `sqlite` | `sqlite` or `postgres`. |
-| `minicloud_environment` | No | `prod` | `prod` or `staging`. `prod` uses the production Minicloud API. `staging` uses `https://api.cloud-dev.muni.dev`. |
-| `services` | Yes | | YAML service array. Uses the same service fields as `minicloud.yml`, with `name` added because a workflow input cannot receive the keyed `services` map directly. |
-| `minicloud_version` | No | `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` | Full lowercase CLI source commit SHA or exact CLI version tag (for example `v3.1.0`). Branches, `latest`, and `server-v*` tags are rejected. The workflow builds this source using Git and the .NET 10 SDK. |
+| `selfrun_environment` / `minicloud_environment` | No | `prod` | `prod` or `staging`. `selfrun_environment` takes precedence when set. `prod` uses the production API; `staging` uses `https://api.cloud-dev.muni.dev`. |
+| `services` | Yes | | YAML service array. Uses the same service fields as `selfrun.yml` / `minicloud.yml`, with `name` added because a workflow input cannot receive the keyed `services` map directly. |
+| `selfrun_version` / `minicloud_version` | No | `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` | Full lowercase CLI source commit SHA or exact CLI version tag (for example `v3.1.0`). `selfrun_version` takes precedence when set. Branches, `latest`, and `server-v*` tags are rejected. The workflow builds this source using Git and the .NET 10 SDK. |
+| `selfrun_api_url` / `minicloud_api_url` | No | | HTTPS API origin for a self-hosted instance. `selfrun_api_url` takes precedence when set. |
+| `selfrun_app_domain` / `minicloud_app_domain` | No | | Application domain (`APP_DOMAIN`) for a self-hosted instance. `selfrun_app_domain` takes precedence when set. |
+
+Legacy secret `minicloud_api_key` remains accepted when `selfrun_api_key` is omitted.
 
 This default selects the merged public authentication, SSH and numbered-deployment
 client for the [unpublished public candidate](public-candidate-handoff.md).
@@ -171,21 +180,21 @@ services: |
 | `path` | Yes | Public route path. Must start with `/`. |
 | `healthPath` | Yes | HTTP health check path. Must start with `/`. |
 | `env` | No | String key/value environment variables for the service. |
-| `secretEnv` | No | String key/value references to Minicloud app secrets. Values must be created through the CLI or portal before deployment. |
+| `secretEnv` | No | String key/value references to Selfrun app secrets. Values must be created through the CLI or portal before deployment. |
 
 ## Runtime Secrets
 
 Do not put `${{ secrets.MY_SECRET }}` inside the `services` input. GitHub does not expose the `secrets` context inside reusable workflow `with` inputs, and secret values could be copied into publish-job outputs.
 
-Runtime secret values are not passed through this GitHub workflow. Add them through the Minicloud CLI or the app portal before deploying:
+Runtime secret values are not passed through this GitHub workflow. Add them through the Selfrun CLI or the app portal before deploying:
 
 ```bash
-minicloud secrets set --app my-api MAPBOX_ACCESS_TOKEN
+selfrun secrets set --app my-api MAPBOX_ACCESS_TOKEN
 ```
 
 In the portal, open the app, go to **Secrets**, and create the app secret there.
 
-Use `secretEnv` only for non-sensitive references from container environment variable names to stored Minicloud secret names:
+Use `secretEnv` only for non-sensitive references from container environment variable names to stored Selfrun secret names:
 
 ```yaml
 services: |
@@ -200,19 +209,19 @@ services: |
       MAPBOX_ACCESS_TOKEN: MAPBOX_ACCESS_TOKEN
 ```
 
-The workflow sends `secretEnv` references to the Minicloud API. Minicloud resolves the values server-side from its OpenBao-backed secret store during deployment. Any service can reference an app secret by name. If a referenced secret does not exist, deployment validation fails.
+The workflow sends `secretEnv` references to the Selfrun API. Selfrun resolves the values server-side from its OpenBao-backed secret store during deployment. Any service can reference an app secret by name. If a referenced secret does not exist, deployment validation fails.
 
 ## What The Workflow Does
 
 The workflow runs one deploy job:
 
 - checks out the repository
-- clones and verifies the selected CLI source revision, then builds the CLI with the .NET 10 SDK in a separate runner-temporary directory
-- converts the `services` YAML input into a temporary `minicloud.yml`
-- runs `minicloud deploy --all --config minicloud.yml`
+- clones and verifies the selected CLI source revision, then builds the CLI with the .NET 10 SDK in a separate runner-temporary directory (providing both `selfrun` and `minicloud` commands)
+- converts the `services` YAML input into a temporary `selfrun.yml`
+- runs `selfrun deploy --all --config selfrun.yml`
 
-The CLI uploads zip source artifacts to the Minicloud API. The internal
-Minicloud deploy workflow downloads, verifies, builds, and publishes those
+The CLI uploads zip source artifacts to the Selfrun API. The internal
+Selfrun deploy workflow downloads, verifies, builds, and publishes those
 artifacts before running the same image-based runtime deploy.
 
 The deploy job summary includes:
@@ -220,7 +229,7 @@ The deploy job summary includes:
 - App ID
 - Customer workflow execution ID and link
 
-When a Minicloud API request fails, the CLI prints the Minicloud error message. Validation failures include field-level details where available.
+When a Selfrun API request fails, the CLI prints the API error message. Validation failures include field-level details where available.
 
 ## Postgres
 
@@ -228,17 +237,17 @@ When `database: postgres`, pass:
 
 ```yaml
 secrets:
-  postgres_password: ${{ secrets.MINICLOUD_POSTGRES_PASSWORD }}
+  postgres_password: ${{ secrets.SELFRUN_POSTGRES_PASSWORD }}
 ```
 
 For SQLite, omit `postgres_password`.
 
 ## Self-hosted domains
 
-Set `minicloud_api_url` to your HTTPS API origin and `minicloud_app_domain` to
-that installation's APP_DOMAIN. The latter sets `MINICLOUD_APP_DOMAIN` for
+Set `selfrun_api_url` (or `minicloud_api_url`) to your HTTPS API origin and `selfrun_app_domain` (or `minicloud_app_domain`) to
+that installation's APP_DOMAIN. The latter sets `SELFRUN_APP_DOMAIN` (and legacy `MINICLOUD_APP_DOMAIN`) for
 framework host validation. Both are required when selecting a self-hosted instance.
-Select a CLI source revision containing these options with `minicloud_version`.
+Select a CLI source revision containing these options with `selfrun_version` (or `minicloud_version`).
 
 ## Seed a control plane
 

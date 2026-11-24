@@ -263,6 +263,80 @@ public sealed class SshDeployStepTests : IClassFixture<WorkerSqliteTestHarness>
             ["__MINICLOUD_DEPLOY_FAILURE__=invalid code"]));
     }
 
+    [Theory]
+    [InlineData("restored", "Rollback restored the previous app services and their routing.")]
+    [InlineData("no_previous", "No previous running revision was available; the failed candidate was stopped.")]
+    [InlineData("failed", "Rollback did not complete. Inspect the target host and resolve the failure before redeploying.")]
+    [InlineData(null, "The runtime did not confirm rollback. Inspect the target host before redeploying.")]
+    public void BuildFailureMessage_HealthCheckFailedLeadsWithRollbackOutcomeAndFailedCheck(string? rollbackOutcome, string expectedLead)
+    {
+        var lines = new List<string>
+        {
+            "Waiting for health checks...",
+            "Health check failed for web at http://127.0.0.1:18080/health",
+            "curl: (22) The requested URL returned error: 503",
+            "===== Container status =====",
+            "ERROR: health_check_failed: Deployment aborted during phase verify_local_health.",
+            "__MINICLOUD_DEPLOY_FAILURE__=health_check_failed"
+        };
+        if (rollbackOutcome is not null)
+        {
+            lines.Add("__MINICLOUD_DEPLOY_ROLLBACK__=" + rollbackOutcome);
+        }
+        lines.AddRange(
+        [
+            "===== Caddy service status =====",
+            "● caddy.service - Caddy",
+            "     Loaded: loaded (/lib/systemd/system/caddy.service; enabled)",
+            "     Active: active (running) since Mon 2026-04-20 12:00:00 UTC"
+        ]);
+
+        var message = SshDeployStep.BuildFailureMessage(
+            new SshDeploymentResult(1, false, null, lines),
+            HealthCheckFinalizeStep.FailureCode);
+
+        Assert.StartsWith(expectedLead, message);
+        Assert.Contains("Health check failed for web at http://127.0.0.1:18080/health (curl: (22) The requested URL returned error: 503).", message);
+        Assert.DoesNotContain("remote-deploy.sh failed", message);
+        Assert.DoesNotContain("completion marker", message);
+        Assert.DoesNotContain("Last output:", message);
+        Assert.DoesNotContain("caddy.service", message);
+    }
+
+    [Fact]
+    public void BuildFailureMessage_HealthCheckFailedHandlesMultipleChecksAndFallbackWithoutProbeLine()
+    {
+        var multiple = SshDeployStep.ResolveHealthCheckFailureSummary(
+        [
+            "Health check failed for web at http://127.0.0.1:18080/health",
+            "curl: (7) Failed to connect to 127.0.0.1 port 18080",
+            "Health check failed for api at http://127.0.0.1:18081/ready",
+            "===== Container status ====="
+        ]);
+
+        Assert.Equal(
+            "Health check failed for web at http://127.0.0.1:18080/health (curl: (7) Failed to connect to 127.0.0.1 port 18080). Health check failed for api at http://127.0.0.1:18081/ready.",
+            multiple);
+
+        var fallback = SshDeployStep.ResolveHealthCheckFailureSummary(
+            ["ERROR: health_check_failed: Deployment aborted during phase verify_local_health."],
+            "ERROR: health_check_failed: Deployment aborted during phase verify_local_health.");
+
+        Assert.Equal("Local health check failed (Deployment aborted during phase verify_local_health).", fallback);
+    }
+
+    [Fact]
+    public void BuildFailureMessage_NonHealthFailurePreservesScriptExcerptFormat()
+    {
+        var message = SshDeployStep.BuildFailureMessage(
+            new SshDeploymentResult(1, false, null, ["Step 1/2 : FROM alpine", "ERROR: docker_build_failed: exit 1"]),
+            SshDeployStep.FailureCode);
+
+        Assert.StartsWith("remote-deploy.sh failed (exit 1, completion marker missing).", message);
+        Assert.Contains("Runtime error: ERROR: docker_build_failed: exit 1", message);
+        Assert.Contains("Last output:\nStep 1/2 : FROM alpine", message);
+    }
+
     [Fact]
     public void ResolveServiceHostsUsesExactServiceMappingForPrefixNames()
     {

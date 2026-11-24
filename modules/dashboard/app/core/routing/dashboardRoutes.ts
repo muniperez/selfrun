@@ -1,4 +1,4 @@
-import { AppWindow, Database, KeyRound, Rocket, Server, Settings, Users } from "lucide-react";
+import { AppWindow, Database, KeyRound, Rocket, Server, Users } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type DashboardRouteLayout = "guest" | "main" | "standalone";

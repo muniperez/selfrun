@@ -4,29 +4,38 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Extensibility;
 
 namespace Minicloud.Common.Services;
 
 public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore secrets,
-    ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock, IOptions<OpenBaoSecretStoreOptions> options)
+    ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock, IOptions<OpenBaoSecretStoreOptions> options,
+    IVpsProviderRegistry? registry = null)
 {
+    private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();
+    private readonly IVpsProviderRegistry _registry = registry ?? DefaultRegistry;
+
     public async Task<ProviderAccount> CreateAsync(CreateProviderRequest request, CancellationToken ct)
     {
         ValidateName(request.Name);
-        if (!TryParseType(request.ProviderType, out var type))
-            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean or Vultr.");
+        if (!_registry.TryParseBuiltIn(request.ProviderType, out var type))
+            throw new ProviderCatalogException("provider_type_unsupported", UnsupportedProviderMessage(_registry));
+        var descriptor = _registry.GetRequired(type).Descriptor;
         if (request.DefaultOsId is <= 0 || request.ProjectId is { Length: > 128 } || request.ProjectId?.Any(char.IsControl) == true)
             throw new ProviderCatalogException("provider_settings_invalid", "The provider account settings are invalid.");
         var now = clock.GetUtcNow();
         var account = new ProviderAccount
         {
             Id = ids.NewId("provider"), OrganizationId = request.OrganizationId, Name = request.Name.Trim(), ProviderType = type,
-            ProjectId = request.ProjectId, DefaultOsId = request.DefaultOsId ?? (type == CloudProvider.Vultr ? 2284 : null),
+            ProjectId = string.IsNullOrWhiteSpace(request.ProjectId) ? null : request.ProjectId.Trim(),
+            DefaultOsId = request.DefaultOsId ?? descriptor.Placement.DefaultOsId,
             CreatedAt = now, UpdatedAt = now
         };
-        var reference = await WriteCandidateAsync(account, request.Credential, ct);
-        await ProbeAsync(clients.CreateCandidate(account, request.Credential), ct);
-        await RejectKnownScopeAliasAsync(account, clients.CreateCandidate(account, request.Credential), ct);
+        var reference = await WriteCandidateAsync(account, descriptor, request.Credential, ct);
+        var candidate = clients.CreateCandidate(account, request.Credential);
+        await ProbeAsync(candidate, ct);
+        var candidateScope = await VerifyScopeIdentityAsync(account, candidate, descriptor, ct);
+        await RejectKnownScopeAliasAsync(account, candidate, candidateScope, ct);
         AssignCredential(account, reference);
         account.ValidationStatus = "valid"; account.LastValidatedAt = now;
         db.ProviderAccounts.Add(account);
@@ -47,7 +56,8 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     {
         if (request.Revision != account.Revision) throw ProviderCatalogService.Stale();
         if (account.ValidationStatus == "deleting") throw new ProviderCatalogException("provider_deleting", "Credential cleanup is pending.");
-        var reference = await WriteCandidateAsync(account, request.Credential, ct);
+        var descriptor = _registry.GetRequired(account.ProviderType).Descriptor;
+        var reference = await WriteCandidateAsync(account, descriptor, request.Credential, ct);
         var generation = account.CredentialGeneration;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await ProviderCatalogService.LockAccountAsync(db, account.OrganizationId, account.Id, ct);
@@ -55,8 +65,10 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         if (account.ValidationStatus == "deleting") throw new ProviderCatalogException("provider_deleting", "Credential cleanup is pending.");
         var candidate = clients.CreateCandidate(account, request.Credential);
         await ProbeAsync(candidate, ct);
-        await VerifyExistingScopeAsync(account, candidate, ct);
-        await RejectKnownScopeAliasAsync(account, candidate, ct);
+        var candidateScope = await VerifyScopeIdentityAsync(account, candidate, descriptor, ct);
+        var scopeIdentityMatched = await VerifyCurrentScopeMatchAsync(account, candidateScope, ct);
+        await VerifyExistingScopeAsync(account, candidate, ct, scopeIdentityMatched);
+        await RejectKnownScopeAliasAsync(account, candidate, candidateScope, ct);
         AssignCredential(account, reference);
         account.CredentialGeneration = generation;
         account.ValidationStatus = "valid"; account.LastValidatedAt = clock.GetUtcNow();
@@ -71,9 +83,11 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
             throw new ProviderCatalogException("provider_deleting", "Provider credential cleanup is pending. Retry deletion.");
         try
         {
+            var descriptor = _registry.GetRequired(account.ProviderType).Descriptor;
             var client = await clients.CreateAsync(account.OrganizationId, account.Id, ct);
             await ProbeAsync(client, ct);
-            await VerifyExistingScopeAsync(account, client, ct);
+            var scopeIdentity = await VerifyScopeIdentityAsync(account, client, descriptor, ct);
+            await VerifyExistingScopeAsync(account, client, ct, scopeIdentityVerified: scopeIdentity is not null);
             account.ValidationStatus = "valid";
         }
         catch (ProviderCatalogException ex) when (ex.Code == "provider_scope_unverified") { account.ValidationStatus = "scope_unverified"; }
@@ -117,10 +131,11 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         }
     }
 
-    private async Task<StoredSecretReference> WriteCandidateAsync(ProviderAccount account, string credential, CancellationToken ct)
+    private async Task<StoredSecretReference> WriteCandidateAsync(ProviderAccount account, ProviderDescriptor descriptor, string credential, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(credential) || credential.Length > 8192 || credential.Any(char.IsControl))
-            throw new ProviderCatalogException("provider_credential_invalid", "Enter a provider API credential without control characters.");
+        var validation = descriptor.Credentials.ValidateCredential(account, credential);
+        if (!validation.IsValid)
+            throw new ProviderCatalogException(validation.ErrorCode ?? "provider_credential_invalid", validation.ErrorMessage ?? "Enter a provider API credential without control characters.");
         var generation = Guid.NewGuid().ToString("N");
         var path = OpenBaoSecretStore.ProviderPathFor(options.Value.EnvironmentPrefix, account.OrganizationId, account.Id, generation);
         db.ProviderCredentialCleanups.Add(new ProviderCredentialCleanup
@@ -144,7 +159,71 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     private static Task ProbeAsync(IVpsProviderClient client, CancellationToken ct) =>
         client.FindServerAsync("minicloud-credential-check-" + Guid.NewGuid().ToString("N"), ct);
 
-    private async Task VerifyExistingScopeAsync(ProviderAccount account, IVpsProviderClient candidate, CancellationToken ct)
+    private static async Task<ProviderScopeIdentity?> VerifyScopeIdentityAsync(
+        ProviderAccount account,
+        IVpsProviderClient client,
+        ProviderDescriptor descriptor,
+        CancellationToken ct)
+    {
+        if (client is not IVpsProviderScopeClient scopeClient)
+        {
+            return null;
+        }
+
+        var identity = await scopeClient.VerifyScopeAsync(ct);
+        if (string.IsNullOrWhiteSpace(identity.ScopeId))
+        {
+            throw ScopeUnverified();
+        }
+
+        if (!string.IsNullOrWhiteSpace(account.ProjectId) &&
+            descriptor.Credentials.ScopeBoundary is ProviderScopeBoundaryKind.Project or ProviderScopeBoundaryKind.ServiceAndProject &&
+            !string.Equals(identity.ScopeId, account.ProjectId, StringComparison.Ordinal))
+        {
+            throw ScopeUnverified();
+        }
+
+        return identity;
+    }
+
+    private async Task<bool> VerifyCurrentScopeMatchAsync(
+        ProviderAccount account,
+        ProviderScopeIdentity? candidateScope,
+        CancellationToken ct)
+    {
+        if (candidateScope is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var currentClient = await clients.CreateAsync(account.OrganizationId, account.Id, ct);
+            if (currentClient is not IVpsProviderScopeClient currentScopeClient)
+            {
+                return false;
+            }
+
+            var currentScope = await currentScopeClient.VerifyScopeAsync(ct);
+            if (!currentScope.MatchesScope(candidateScope))
+            {
+                throw ScopeUnverified();
+            }
+
+            return true;
+        }
+        catch (ProviderCatalogException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or SecretStoreUnavailableException)
+        {
+            // Existing credential may already be revoked; fall back to registered resource verification.
+            return false;
+        }
+    }
+
+    private async Task VerifyExistingScopeAsync(ProviderAccount account, IVpsProviderClient candidate, CancellationToken ct, bool scopeIdentityVerified = false)
     {
         var servers = await db.ServerInstances.Include(x => x.App).ThenInclude(x => x.Organization)
             .Where(x => x.ProviderAccountId == account.Id).ToListAsync(ct);
@@ -167,14 +246,45 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         }
         if (await db.Deployments.AnyAsync(x => x.ProviderAccountId == account.Id && x.ProviderCreationAttempted
             && !db.ServerInstances.Any(s => s.ProviderAccountId == account.Id && s.AppId == x.AppId), ct)) throw ScopeUnverified();
-        if (servers.Count == 0 && volumes.Count == 0
+        if (!scopeIdentityVerified && servers.Count == 0 && volumes.Count == 0
             && (await db.Deployments.AnyAsync(x => x.ProviderAccountId == account.Id, ct)
                 || await db.ProviderPlans.AnyAsync(x => x.ProviderAccountId == account.Id && x.ProvisioningLockedAt != null, ct)))
             throw ScopeUnverified();
     }
 
-    private async Task RejectKnownScopeAliasAsync(ProviderAccount account, IVpsProviderClient candidate, CancellationToken ct)
+    private async Task RejectKnownScopeAliasAsync(ProviderAccount account, IVpsProviderClient candidate, ProviderScopeIdentity? candidateScope, CancellationToken ct)
     {
+        if (candidateScope is not null)
+        {
+            var otherAccounts = await db.ProviderAccounts.AsNoTracking()
+                .Where(x => x.Id != account.Id && x.ProviderType == account.ProviderType && x.ValidationStatus != "deleting")
+                .ToListAsync(ct);
+            foreach (var other in otherAccounts)
+            {
+                try
+                {
+                    var otherClient = await clients.CreateAsync(other.OrganizationId, other.Id, ct);
+                    if (otherClient is IVpsProviderScopeClient otherScopeClient)
+                    {
+                        var otherIdentity = await otherScopeClient.VerifyScopeAsync(ct);
+                        if (otherIdentity.MatchesScope(candidateScope))
+                        {
+                            throw new ProviderCatalogException("provider_scope_already_registered",
+                                "This cloud scope is already registered through another provider entry. Use that entry instead.");
+                        }
+                    }
+                }
+                catch (ProviderCatalogException ex) when (ex.Code == "provider_scope_already_registered")
+                {
+                    throw;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or SecretStoreUnavailableException or ProviderCatalogException)
+                {
+                    // Skip unreachable peer entries during alias detection; server-level check still runs below.
+                }
+            }
+        }
+
         var otherServers = await db.ServerInstances.Include(x => x.App).ThenInclude(x => x.Organization)
             .Where(x => x.ProviderAccountId != null && x.ProviderAccountId != account.Id && x.Provider == account.ProviderType.ToString()).ToListAsync(ct);
         foreach (var server in otherServers)
@@ -197,12 +307,20 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
             throw new ProviderCatalogException("provider_in_use", $"Provider has dependencies: {plans} plans, {servers} servers, {runtimes} runtimes, {volumes} retained volumes, {reservations} reservations. Disable it instead.");
     }
 
-    public static bool TryParseType(string value, out CloudProvider type)
+    public static bool TryParseType(string value, out CloudProvider type) =>
+        DefaultRegistry.TryParseBuiltIn(value, out type);
+
+    public static string WireType(CloudProvider type) =>
+        DefaultRegistry.GetWireType(type);
+
+    private static string UnsupportedProviderMessage(IVpsProviderRegistry registry)
     {
-        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, _ => (CloudProvider)(-1) };
-        return Enum.IsDefined(type);
+        var names = registry.GetSupported().Select(x => x.DisplayName).ToArray();
+        return names.Length > 0
+            ? $"Select a supported provider: {string.Join(", ", names)}."
+            : "This VPS provider type is not supported.";
     }
-    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
+
     private static string ServerName(string orgSlug, string appSlug) => ManagedServerName.ForApp(orgSlug, appSlug);
     private static ProviderCatalogException ScopeUnverified() => new("provider_scope_unverified", "Credentials could not be verified against all existing resources. Restore access to the original cloud scope before replacing credentials.");
     private static void ValidateName(string name)

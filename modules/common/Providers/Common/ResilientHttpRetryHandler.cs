@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.Logging;
+using Minicloud.Common.Providers.Extensibility;
 
 namespace Minicloud.Common.Providers.Common;
 
@@ -35,7 +36,9 @@ public class ResilientHttpRetryHandler : DelegatingHandler
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        if (request.Options.TryGetValue(Hetzner.HetznerClient.NoRetry, out var noRetry) && noRetry)
+        if ((request.Options.TryGetValue(ProviderHttpOptions.NoRetry, out var noRetry) && noRetry) ||
+            (request.Options.TryGetValue(ProviderHttpOptions.OperationSafety, out var safety) &&
+             safety == ProviderOperationSafety.NonIdempotentMutation))
         { return await base.SendAsync(request, cancellationToken); }
         var attempt = 0;
 

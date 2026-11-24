@@ -1,6 +1,6 @@
-# Minicloud API
+# Selfrun API
 
-Minicloud uses one unversioned first-party namespace: `/api`.
+Selfrun (formerly MiniCloud; see [Selfrun Rename Migration Guide](selfrun-rename-migration.md)) uses one unversioned first-party namespace: `/api`.
 The prelaunch application/environment cutover deliberately removes old product
 API routes and identity aliases. Clients and server must be updated together.
 
@@ -16,7 +16,9 @@ API routes and identity aliases. Clients and server must be updated together.
 - Other product resources use `/api`, including providers, plans, deployments,
   secrets, runtime ingestion, registry credentials and CLI authentication.
 
-Anonymous `GET /api/instance` returns `product`, `protocolVersion` and `appDomain`.
+Anonymous `GET /api/instance` returns `product`, `protocolVersion` and `appDomain`
+(during the rename transition, servers continue reporting `minicloud` while updated
+CLIs accept both `minicloud` and `selfrun`).
 Packaged servers additionally report `serverVersion`, `sourceRevision` and
 `cliCompatibility` from verified release metadata. Compatibility includes the
 protocol, optional half-open version interval and explicit source revisions;
@@ -63,7 +65,7 @@ membership response for both browser users and authorized machine credentials.
 
 | Route | Behavior |
 | --- | --- |
-| `GET /api/account/capabilities` | Password/optional-method availability, whether **Keep me signed in** is offered (`keepSignedIn`), and authoritative `required`, `ready` or `blocked` bootstrap state. |
+| `GET /api/account/capabilities` | Password, passkey (`passkey`), Google, and email-recovery availability, whether **Keep me signed in** is offered (`keepSignedIn`), and authoritative `required`, `ready` or `blocked` bootstrap state. |
 | `GET /api/account/session` | Browser user ID, absolute/idle expiry, `renewAfter`, `keepSignedIn` (this session) and `keepSignedInPreference` (sign-in default), and the session-bound CSRF token. Reading the session does not extend it. |
 | `POST /api/account/session/renew` | Explicit activity renewal. Inside the renewal window (`renewAfter`), extends the idle expiry (and the upstream Kratos session) up to the absolute expiry; earlier calls return the session unchanged. Never rotates the cookie or CSRF token and never restores a revoked session. The extension commits only if the session is still the one this cookie authenticated; see [session renewal](#session-renewal). `401` if it ended meanwhile, `503 auth_unavailable` on a Kratos outage, `409 session_conflict` if it kept changing concurrently (retry). |
 | `PUT /api/account/session/preference` | Body `{keepSignedIn}`. Stores the user's preference and applies it to the current session's limits and cookie persistence, under the same commit-time checks as renewal. `409 keep_signed_in_unavailable` when the operator disabled the option; `401` if the session ended meanwhile or the standard limits already end it. |
@@ -81,12 +83,13 @@ machine authentication: explicit bearer credentials take precedence, including
 invalid bearers. CLI approval still requires explicit human consent and
 organization API-key-write permission.
 
-For password changes, a successful settings submission rotates the current
-browser session and revokes older browser and Grafana sessions. If the password
-is rejected (`400 auth_password_rejected`), choose a different password and retry
-the form. For `410 auth_flow_expired`, start a new settings form. For
-`403 session_refresh_required`, log out, sign in again and start a new settings
-form; the API does not expose Kratos redirects or resume the previous submission.
+For password and passkey changes, a successful settings submission rotates the
+current browser session and revokes older browser and Grafana sessions. If the
+password is rejected (`400 auth_password_rejected`), choose a different password
+and retry the form. For `410 auth_flow_expired`, start a new settings form. For
+`403 session_refresh_required`, re-authenticate in place through a fresh `login`
+flow (or log out and sign in again) and start a new settings form; the API does
+not expose Kratos redirects or resume the previous submission.
 
 ### Session renewal
 
@@ -190,3 +193,42 @@ fields still fail validation; manually adding enable/callback overrides to
 Google login admits only identities already bound to a Minicloud user. An
 operator first links Google from account settings; public registration stays
 disabled. Keep the public API Host intact through the reverse proxy.
+
+### Passkey sign-in and settings
+
+Passkey support is gated by `Kratos:PasskeyEnabled` (default `false` in raw API
+options; default `true` in the packaged self-hosting Compose bundle via
+`MINICLOUD_PASSKEY_ENABLED`) and exposed via `GET /api/account/capabilities` as
+`passkey`.
+
+- **Discovery and sanitization.** When `Kratos:PasskeyEnabled` is `true`,
+  `login` and `settings` flows include a sanitized `ui.passkey` object rather
+  than forwarding raw Kratos `passkey` or `webauthn` nodes (upstream Kratos
+  `script` nodes are never forwarded):
+  - On `login`: `ui.passkey.loginOptions` contains validated WebAuthn
+    `PublicKeyCredentialRequestOptions` JSON derived from Kratos's
+    `passkey_challenge`.
+  - On `settings`: `ui.passkey.registrationOptions` contains validated WebAuthn
+    `PublicKeyCredentialCreationOptions` JSON derived from
+    `passkey_create_data`, and `ui.passkey.credentials` lists enrolled passkeys
+    (`id`, `displayName`, `addedAt`, `canRemove`).
+- **Submission.** The browser executes `navigator.credentials.get` or
+  `navigator.credentials.create` directly against the HTTPS dashboard origin and
+  submits the serialized JSON response via `POST /api/account/flows/{kind}` with
+  exact dashboard Origin, upstream flow CSRF token (`settings` also requires
+  `X-Minicloud-CSRF`), `method: "passkey"`, and exactly one of:
+  - `passkey_login` (`login` flow only) — verified against Kratos and admitted
+    only for an already-bound Minicloud user, respecting `keepSignedIn`.
+  - `passkey_settings_register` (`settings` flow only) — enrolls an additional
+    passkey and rotates the browser session on success.
+  - `passkey_remove` (`settings` flow only) — removes a specific credential ID
+    and rotates the browser session on success.
+  When passkeys are disabled, or when unexpected/mixed passkey fields are sent,
+  the API rejects the request with `400 auth_flow_invalid` without calling
+  Kratos.
+- **Re-authentication.** When Kratos enforces `privileged_session_max_age` on a
+  passkey settings change (`403 session_refresh_required`), the API preserves
+  the existing browser session and does not expose Kratos redirects. The
+  dashboard offers an explicit in-place re-authentication flow
+  (`GET /api/account/flows/login/browser`, which requests `refresh=true` with
+  the active session) supporting either passkey or password confirmation.

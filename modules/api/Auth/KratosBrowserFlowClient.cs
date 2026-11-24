@@ -103,7 +103,7 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         AddCookies(request, cookieJar);
         if (operation == "submit")
         {
-            request.Content = new StringContent(SerializeFields(fields), Encoding.UTF8, "application/json");
+            request.Content = new StringContent(SerializeFields(kind, fields), Encoding.UTF8, "application/json");
         }
         var changesPassword = kind == "settings" && operation == "submit" && fields is { } body &&
             body.TryGetProperty("method", out var method) && method.ValueEquals("password");
@@ -123,6 +123,20 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
             if (response.StatusCode == HttpStatusCode.Forbidden)
                 throw new AccountFlowException("csrf_invalid", 403, "The account form is invalid.");
             if ((int)response.StatusCode >= 500) throw new KratosUnavailableException();
+            if (kind == "recovery" && operation == "submit" && response.StatusCode == HttpStatusCode.UnprocessableEntity &&
+                await IsRecoverySettingsTransitionAsync(response, upstreamToken))
+            {
+                var recoveryCookies = ReadCookies(response);
+                if (!recoveryCookies.TryGetValue("ory_kratos_session", out var sessionCookie) || sessionCookie.Length == 0)
+                    throw new KratosUnavailableException();
+                foreach (var cookie in recoveryCookies)
+                {
+                    if (cookie.Value.Length == 0) cookieJar.Remove(cookie.Key);
+                    else cookieJar[cookie.Key] = cookie.Value;
+                }
+                var (identityId, sessionId) = await WhoamiAsync(baseUri, cookieJar, upstreamToken);
+                return new KratosFlowResult(null, identityId, sessionId, recoveryCookies);
+            }
             if (!response.IsSuccessStatusCode)
             {
                 // Browser redirects are never followed or exposed as upstream URLs.
@@ -158,7 +172,7 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
             var nodes = flow.Ui.Nodes
                 .Where(node => node is not null && node.Attributes is not null && Fields.Contains(node.Attributes.Name) &&
                     node.Attributes.Type is "hidden" or "text" or "email" or "password" or "submit" &&
-                    node.Group != "oidc")
+                    node.Group is not ("oidc" or "passkey" or "webauthn"))
                 .Select(node => new AccountFlowNode(
                     node.Group, node.Attributes.Type, node.Attributes.Name,
                     node.Attributes.Type == "password" || node.Attributes.Name is "password" or "code" ? null : node.Attributes.Value.ToString(),
@@ -173,9 +187,12 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
             var providers = offersGoogle
                 ? new[] { new AccountFlowProvider(GoogleProvider, $"/api/account/flows/{kind}/oidc?flow={flow.Id}", "POST") }
                 : null;
+            var passkey = _options.PasskeyEnabled && kind is ("login" or "settings")
+                ? ExtractPasskey(kind, flow.Ui.Nodes)
+                : null;
             return new KratosFlowResult(
                 new AccountBrowserFlow(flow.Id, kind, flow.ExpiresAt,
-                    new AccountFlowUi($"/api/account/flows/{kind}?flow={flow.Id}", "POST", nodes, SanitizeMessages(flow.Ui.Messages), providers)),
+                    new AccountFlowUi($"/api/account/flows/{kind}?flow={flow.Id}", "POST", nodes, SanitizeMessages(flow.Ui.Messages), providers, passkey)),
                 null, null, updatedCookies);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -381,15 +398,32 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         return uri;
     }
 
-    private string SerializeFields(JsonElement? fields)
+    private string SerializeFields(string kind, JsonElement? fields)
     {
         if (fields is not { ValueKind: JsonValueKind.Object } body) throw InvalidFlow();
         var values = new Dictionary<string, object>(StringComparer.Ordinal);
         var traits = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var field in body.EnumerateObject())
         {
-            if (!Fields.Contains(field.Name) || field.Value.ValueKind != JsonValueKind.String ||
+            if (field.Value.ValueKind != JsonValueKind.String ||
                 field.Value.GetString() is not { } value || value.Length > BodyLimit)
+                throw InvalidFlow();
+            if (field.Name is "passkey_login" or "passkey_settings_register" or "passkey_remove")
+            {
+                if (!_options.PasskeyEnabled ||
+                    field.Name == "passkey_login" && kind != "login" ||
+                    field.Name is ("passkey_settings_register" or "passkey_remove") && kind != "settings")
+                    throw InvalidFlow();
+                var normalized = field.Name switch
+                {
+                    "passkey_login" => NormalizePasskeyAssertion(value),
+                    "passkey_settings_register" => NormalizePasskeyRegistration(value),
+                    _ => NormalizePasskeyCredentialId(value)
+                };
+                if (!values.TryAdd(field.Name, normalized)) throw InvalidFlow();
+                continue;
+            }
+            if (!Fields.Contains(field.Name))
                 throw InvalidFlow();
             if (field.Name.StartsWith("traits.", StringComparison.Ordinal))
             {
@@ -407,7 +441,383 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         if (traits.Count > 0) values["traits"] = traits;
         if (!values.TryGetValue("csrf_token", out var csrf) || string.IsNullOrWhiteSpace(csrf.ToString()))
             throw new AccountFlowException("csrf_invalid", 403, "The account form is invalid.");
+        var hasPasskeyLogin = values.ContainsKey("passkey_login");
+        var hasPasskeyRegister = values.ContainsKey("passkey_settings_register");
+        var hasPasskeyRemove = values.ContainsKey("passkey_remove");
+        var hasAnyPasskeyField = hasPasskeyLogin || hasPasskeyRegister || hasPasskeyRemove;
+        var isPasskeyMethod = values.TryGetValue("method", out var methodObj) &&
+            string.Equals(methodObj as string, "passkey", StringComparison.Ordinal);
+        if (isPasskeyMethod)
+        {
+            if (!_options.PasskeyEnabled || kind is not ("login" or "settings") || traits.Count > 0)
+                throw InvalidFlow();
+            if (kind == "login" && (!hasPasskeyLogin || values.Count != 3))
+                throw InvalidFlow();
+            if (kind == "settings" && (hasPasskeyRegister == hasPasskeyRemove || values.Count != 3))
+                throw InvalidFlow();
+        }
+        else if (hasAnyPasskeyField)
+        {
+            throw InvalidFlow();
+        }
         return JsonSerializer.Serialize(values);
+    }
+
+    private static AccountFlowPasskey? ExtractPasskey(string kind, UpstreamNode[] nodes)
+    {
+        if (kind == "login")
+        {
+            var challenge = nodes.FirstOrDefault(node => node is { Group: "passkey", Attributes: { Name: "passkey_challenge", Type: "hidden" } } &&
+                node.Attributes.Value.ValueKind == JsonValueKind.String);
+            if (challenge?.Attributes.Value.GetString() is not { } raw)
+                return null;
+            var loginOptions = SanitizeLoginOptions(raw);
+            return loginOptions is null ? null : new AccountFlowPasskey(loginOptions, null, []);
+        }
+
+        if (kind == "settings")
+        {
+            JsonElement? registrationOptions = null;
+            var createNode = nodes.FirstOrDefault(node => node is { Group: "passkey", Attributes: { Name: "passkey_create_data", Type: "hidden" } } &&
+                node.Attributes.Value.ValueKind == JsonValueKind.String);
+            if (createNode?.Attributes.Value.GetString() is { } rawCreate)
+                registrationOptions = SanitizeRegistrationOptions(rawCreate);
+
+            var credentials = new List<AccountFlowPasskeyCredential>();
+            foreach (var node in nodes)
+            {
+                if (node is not { Group: "passkey", Attributes: { Name: "passkey_remove", Type: "submit" } } ||
+                    node.Attributes.Value.ValueKind != JsonValueKind.String)
+                    continue;
+                var id = node.Attributes.Value.GetString();
+                if (!IsPasskeyCredentialId(id))
+                    continue;
+                var (displayName, addedAt) = ReadCredentialMetadata(node.Meta?.Label?.Context);
+                credentials.Add(new AccountFlowPasskeyCredential(id!, displayName, addedAt, !node.Attributes.Disabled));
+            }
+            if (registrationOptions is null && credentials.Count == 0)
+                return null;
+            return new AccountFlowPasskey(null, registrationOptions, credentials);
+        }
+
+        return null;
+    }
+
+    private static (string DisplayName, DateTimeOffset? AddedAt) ReadCredentialMetadata(JsonElement? context)
+    {
+        var displayName = "Passkey";
+        DateTimeOffset? addedAt = null;
+        if (context is not { ValueKind: JsonValueKind.Object } obj)
+            return (displayName, addedAt);
+        if (obj.TryGetProperty("display_name", out var rawName) && rawName.ValueKind == JsonValueKind.String)
+        {
+            var cleaned = new string((rawName.GetString() ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+            if (cleaned.Length > 120) cleaned = cleaned[..120].Trim();
+            if (!string.IsNullOrEmpty(cleaned) && !string.Equals(cleaned, "unnamed", StringComparison.OrdinalIgnoreCase))
+                displayName = cleaned;
+        }
+        if (obj.TryGetProperty("added_at", out var rawAddedAt) && rawAddedAt.ValueKind == JsonValueKind.String &&
+            DateTimeOffset.TryParse(rawAddedAt.GetString(), out var parsedDate) && parsedDate.Year >= 2000)
+        {
+            addedAt = parsedDate;
+        }
+        else if (obj.TryGetProperty("added_at_unix", out var rawUnix) && rawUnix.ValueKind == JsonValueKind.Number &&
+            rawUnix.TryGetInt64(out var seconds) && seconds > 0)
+        {
+            try { addedAt = DateTimeOffset.FromUnixTimeSeconds(seconds); }
+            catch (ArgumentOutOfRangeException) { addedAt = null; }
+        }
+        return (displayName, addedAt);
+    }
+
+    private static JsonElement? SanitizeLoginOptions(string raw)
+    {
+        if (raw.Length is 0 or > BodyLimit) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 16 });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("publicKey", out var pk) || pk.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!TryGetBase64Url(pk, "challenge", 1024, out var challenge)) return null;
+            var publicKey = new Dictionary<string, object>(StringComparer.Ordinal) { ["challenge"] = challenge };
+            if (TryGetBoundedString(pk, "rpId", 253, out var rpId))
+                publicKey["rpId"] = rpId;
+            if (TryGetPositiveLong(pk, "timeout", out var timeout))
+                publicKey["timeout"] = timeout;
+            if (TryGetAllowedString(pk, "userVerification", ["required", "preferred", "discouraged"], out var uv))
+                publicKey["userVerification"] = uv;
+            if (pk.TryGetProperty("allowCredentials", out var allowElement))
+            {
+                if (!TrySanitizeDescriptorList(allowElement, out var allowList)) return null;
+                publicKey["allowCredentials"] = allowList;
+            }
+            return JsonSerializer.SerializeToElement(new Dictionary<string, object>(StringComparer.Ordinal) { ["publicKey"] = publicKey });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonElement? SanitizeRegistrationOptions(string raw)
+    {
+        if (raw.Length is 0 or > BodyLimit) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 16 });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("publicKey", out var pk) || pk.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!TryGetBase64Url(pk, "challenge", 1024, out var challenge)) return null;
+            if (!pk.TryGetProperty("rp", out var rpEl) || rpEl.ValueKind != JsonValueKind.Object ||
+                !TryGetBoundedString(rpEl, "name", 128, out var rpName))
+                return null;
+            var rp = new Dictionary<string, object>(StringComparer.Ordinal) { ["name"] = rpName };
+            if (TryGetBoundedString(rpEl, "id", 253, out var rpId))
+                rp["id"] = rpId;
+
+            if (!pk.TryGetProperty("user", out var userEl) || userEl.ValueKind != JsonValueKind.Object ||
+                !TryGetBase64Url(userEl, "id", 1024, out var userId) ||
+                !TryGetBoundedString(userEl, "name", 256, out var userName) ||
+                !TryGetBoundedString(userEl, "displayName", 256, out var userDisplayName))
+                return null;
+            var user = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["id"] = userId,
+                ["name"] = userName,
+                ["displayName"] = userDisplayName
+            };
+
+            if (!pk.TryGetProperty("pubKeyCredParams", out var paramsEl) || paramsEl.ValueKind != JsonValueKind.Array)
+                return null;
+            var credParams = new List<Dictionary<string, object>>();
+            foreach (var item in paramsEl.EnumerateArray())
+            {
+                if (credParams.Count >= 32 || item.ValueKind != JsonValueKind.Object ||
+                    !item.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String ||
+                    typeEl.GetString() != "public-key" ||
+                    !item.TryGetProperty("alg", out var algEl) || algEl.ValueKind != JsonValueKind.Number ||
+                    !algEl.TryGetInt32(out var alg))
+                    return null;
+                credParams.Add(new Dictionary<string, object>(StringComparer.Ordinal) { ["type"] = "public-key", ["alg"] = alg });
+            }
+            if (credParams.Count == 0) return null;
+
+            var publicKey = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["challenge"] = challenge,
+                ["rp"] = rp,
+                ["user"] = user,
+                ["pubKeyCredParams"] = credParams
+            };
+            if (TryGetPositiveLong(pk, "timeout", out var timeout))
+                publicKey["timeout"] = timeout;
+            if (TryGetAllowedString(pk, "attestation", ["none", "indirect", "direct", "enterprise"], out var attestation))
+                publicKey["attestation"] = attestation;
+            if (pk.TryGetProperty("authenticatorSelection", out var selEl) && selEl.ValueKind == JsonValueKind.Object)
+            {
+                var selection = new Dictionary<string, object>(StringComparer.Ordinal);
+                if (TryGetAllowedString(selEl, "authenticatorAttachment", ["platform", "cross-platform"], out var attachment))
+                    selection["authenticatorAttachment"] = attachment;
+                if (TryGetAllowedString(selEl, "residentKey", ["discouraged", "preferred", "required"], out var rk))
+                    selection["residentKey"] = rk;
+                if (selEl.TryGetProperty("requireResidentKey", out var rrk) && rrk.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    selection["requireResidentKey"] = rrk.GetBoolean();
+                if (TryGetAllowedString(selEl, "userVerification", ["required", "preferred", "discouraged"], out var uv))
+                    selection["userVerification"] = uv;
+                if (selection.Count > 0)
+                    publicKey["authenticatorSelection"] = selection;
+            }
+            if (pk.TryGetProperty("excludeCredentials", out var excludeElement))
+            {
+                if (!TrySanitizeDescriptorList(excludeElement, out var excludeList)) return null;
+                publicKey["excludeCredentials"] = excludeList;
+            }
+            return JsonSerializer.SerializeToElement(new Dictionary<string, object>(StringComparer.Ordinal) { ["publicKey"] = publicKey });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TrySanitizeDescriptorList(JsonElement element, out List<Dictionary<string, object>> result)
+    {
+        result = [];
+        if (element.ValueKind == JsonValueKind.Null) return true;
+        if (element.ValueKind != JsonValueKind.Array) return false;
+        foreach (var item in element.EnumerateArray())
+        {
+            if (result.Count >= 128 || item.ValueKind != JsonValueKind.Object ||
+                !item.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String ||
+                typeEl.GetString() != "public-key" ||
+                !TryGetBase64Url(item, "id", 1024, out var credId))
+                return false;
+            var descriptor = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["type"] = "public-key",
+                ["id"] = credId
+            };
+            if (item.TryGetProperty("transports", out var transportsEl) && transportsEl.ValueKind == JsonValueKind.Array)
+            {
+                var transports = new List<string>();
+                foreach (var t in transportsEl.EnumerateArray())
+                {
+                    if (transports.Count >= 8 || t.ValueKind != JsonValueKind.String) return false;
+                    var tv = t.GetString();
+                    if (tv is not ("usb" or "nfc" or "ble" or "hybrid" or "internal" or "smart-card")) continue;
+                    transports.Add(tv);
+                }
+                if (transports.Count > 0) descriptor["transports"] = transports;
+            }
+            result.Add(descriptor);
+        }
+        return true;
+    }
+
+    private static string NormalizePasskeyAssertion(string raw)
+    {
+        if (raw.Length is 0 or > BodyLimit) throw InvalidFlow();
+        try
+        {
+            using var doc = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 8 });
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryGetBase64Url(root, "id", 1024, out var id) ||
+                !TryGetBase64Url(root, "rawId", 1024, out var rawId) ||
+                !root.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String ||
+                typeEl.GetString() != "public-key" ||
+                !root.TryGetProperty("response", out var resp) || resp.ValueKind != JsonValueKind.Object ||
+                !TryGetBase64Url(resp, "authenticatorData", 16384, out var authenticatorData) ||
+                !TryGetBase64Url(resp, "clientDataJSON", 16384, out var clientDataJson) ||
+                !TryGetBase64Url(resp, "signature", 4096, out var signature))
+                throw InvalidFlow();
+            var responseObj = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["authenticatorData"] = authenticatorData,
+                ["clientDataJSON"] = clientDataJson,
+                ["signature"] = signature
+            };
+            if (resp.TryGetProperty("userHandle", out var userHandleEl))
+            {
+                if (userHandleEl.ValueKind == JsonValueKind.Null)
+                    responseObj["userHandle"] = null;
+                else if (userHandleEl.ValueKind == JsonValueKind.String && userHandleEl.GetString() is { } uh &&
+                    (uh.Length == 0 || IsBase64Url(uh, 1024)))
+                    responseObj["userHandle"] = uh;
+                else
+                    throw InvalidFlow();
+            }
+            return JsonSerializer.Serialize(new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["id"] = id,
+                ["rawId"] = rawId,
+                ["type"] = "public-key",
+                ["response"] = responseObj
+            });
+        }
+        catch (JsonException)
+        {
+            throw InvalidFlow();
+        }
+    }
+
+    private static string NormalizePasskeyRegistration(string raw)
+    {
+        if (raw.Length is 0 or > BodyLimit) throw InvalidFlow();
+        try
+        {
+            using var doc = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 8 });
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryGetBase64Url(root, "id", 1024, out var id) ||
+                !TryGetBase64Url(root, "rawId", 1024, out var rawId) ||
+                !root.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String ||
+                typeEl.GetString() != "public-key" ||
+                !root.TryGetProperty("response", out var resp) || resp.ValueKind != JsonValueKind.Object ||
+                !TryGetBase64Url(resp, "attestationObject", 32768, out var attestationObject) ||
+                !TryGetBase64Url(resp, "clientDataJSON", 16384, out var clientDataJson))
+                throw InvalidFlow();
+            var responseObj = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["attestationObject"] = attestationObject,
+                ["clientDataJSON"] = clientDataJson
+            };
+            if (resp.TryGetProperty("transports", out var transportsEl) && transportsEl.ValueKind == JsonValueKind.Array)
+            {
+                var transports = new List<string>();
+                foreach (var t in transportsEl.EnumerateArray())
+                {
+                    if (transports.Count >= 8 || t.ValueKind != JsonValueKind.String) throw InvalidFlow();
+                    var tv = t.GetString();
+                    if (tv is not ("usb" or "nfc" or "ble" or "hybrid" or "internal" or "smart-card")) continue;
+                    transports.Add(tv);
+                }
+                if (transports.Count > 0) responseObj["transports"] = transports;
+            }
+            var payload = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["id"] = id,
+                ["rawId"] = rawId,
+                ["type"] = "public-key",
+                ["response"] = responseObj
+            };
+            if (TryGetAllowedString(root, "authenticatorAttachment", ["platform", "cross-platform"], out var attachment))
+                payload["authenticatorAttachment"] = attachment;
+            return JsonSerializer.Serialize(payload);
+        }
+        catch (JsonException)
+        {
+            throw InvalidFlow();
+        }
+    }
+
+    private static string NormalizePasskeyCredentialId(string value) =>
+        IsPasskeyCredentialId(value) ? value : throw InvalidFlow();
+
+    private static bool IsPasskeyCredentialId(string? value) =>
+        !string.IsNullOrEmpty(value) && value.Length <= 512 && Regex.IsMatch(value, @"^[A-Za-z0-9_-]{1,512}$");
+
+    private static bool IsBase64Url(string? value, int maxLength) =>
+        !string.IsNullOrEmpty(value) && value.Length <= maxLength &&
+        value.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '=');
+
+    private static bool TryGetBase64Url(JsonElement obj, string name, int maxLength, out string value)
+    {
+        value = "";
+        if (!obj.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.String) return false;
+        var candidate = el.GetString();
+        if (!IsBase64Url(candidate, maxLength)) return false;
+        value = candidate!;
+        return true;
+    }
+
+    private static bool TryGetBoundedString(JsonElement obj, string name, int maxLength, out string value)
+    {
+        value = "";
+        if (!obj.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.String) return false;
+        var candidate = el.GetString();
+        if (string.IsNullOrWhiteSpace(candidate) || candidate.Length > maxLength || candidate.Any(char.IsControl)) return false;
+        value = candidate;
+        return true;
+    }
+
+    private static bool TryGetAllowedString(JsonElement obj, string name, string[] allowed, out string value)
+    {
+        value = "";
+        if (!obj.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.String) return false;
+        var candidate = el.GetString();
+        if (candidate is null || !allowed.Contains(candidate, StringComparer.Ordinal)) return false;
+        value = candidate;
+        return true;
+    }
+
+    private static bool TryGetPositiveLong(JsonElement obj, string name, out long value)
+    {
+        value = 0;
+        return obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number &&
+            el.TryGetInt64(out value) && value > 0;
     }
 
     private static void AddCookies(HttpRequestMessage request, IReadOnlyDictionary<string, string> cookies)
@@ -480,6 +890,39 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
         return null;
     }
 
+    /// <summary>
+    /// Recognizes Kratos v1.3.1's default JSON recovery-code completion (422 <c>browser_location_change_required</c>
+    /// targeting the configured dashboard settings route) without following or exposing the upstream redirect URL.
+    /// </summary>
+    private async Task<bool> IsRecoverySettingsTransitionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentType?.MediaType != "application/json")
+            return false;
+        var payload = await ReadJsonAsync(response, cancellationToken);
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object ||
+            !error.TryGetProperty("id", out var errorId) || errorId.ValueKind != JsonValueKind.String ||
+            !errorId.ValueEquals("browser_location_change_required"))
+            return false;
+        if (!payload.TryGetProperty("redirect_browser_to", out var target) || target.ValueKind != JsonValueKind.String)
+            throw new KratosUnavailableException();
+        ValidateRecoverySettingsRedirect(target.GetString());
+        return true;
+    }
+
+    private void ValidateRecoverySettingsRedirect(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > ProviderValueLimit ||
+            !Uri.TryCreate(_options.DashboardOrigin, UriKind.Absolute, out var dashboard) ||
+            dashboard.Scheme != Uri.UriSchemeHttps || dashboard.GetLeftPart(UriPartial.Authority) != _options.DashboardOrigin ||
+            !Uri.TryCreate(value, UriKind.Absolute, out var target) ||
+            target.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(target.UserInfo) ||
+            !string.IsNullOrEmpty(target.Fragment) ||
+            target.GetLeftPart(UriPartial.Authority) != _options.DashboardOrigin ||
+            !string.Equals(target.AbsolutePath, "/settings/account", StringComparison.Ordinal))
+            throw new KratosUnavailableException();
+    }
+
     private static AccountFlowMessage[] SanitizeMessages(UpstreamMessage[] messages) =>
         messages.Where(message => message is not null).Select(message => new AccountFlowMessage(message.Id,
             message.Type == "error" ? "Check your account details." : "Continue with the account form.",
@@ -493,10 +936,12 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
     {
         public UpstreamMessage[] Messages { get; init; } = Messages ?? [];
     }
-    private sealed record UpstreamNode(string Group, UpstreamAttributes Attributes, UpstreamMessage[] Messages)
+    private sealed record UpstreamNode(string Group, UpstreamAttributes Attributes, UpstreamMessage[] Messages, UpstreamMeta? Meta = null)
     {
         public UpstreamMessage[] Messages { get; init; } = Messages ?? [];
     }
-    private sealed record UpstreamAttributes(string Name, string Type, JsonElement Value, bool Required);
+    private sealed record UpstreamAttributes(string Name, string Type, JsonElement Value, bool Required, bool Disabled = false);
+    private sealed record UpstreamMeta(UpstreamLabel? Label);
+    private sealed record UpstreamLabel(int Id, string? Text, string? Type, JsonElement? Context);
     private sealed record UpstreamMessage(int Id, string Type);
 }

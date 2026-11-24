@@ -120,7 +120,7 @@ internal static class SeedOperatorKeys
         SeedGuard.Require(!protect || !Console.IsInputRedirected && !Console.IsOutputRedirected,
             "Passphrase-protected generation requires an interactive terminal for ssh-keygen's hidden prompts.");
         console.WriteLine(protect
-            ? "ssh-keygen will ask for the passphrase twice. Enter a nonempty passphrase; it is never handled or stored by Minicloud."
+            ? "ssh-keygen will ask for the passphrase twice. Enter a nonempty passphrase; it is never handled or stored by Selfrun."
             : "Generating an unencrypted operator key by explicit choice. Protect its private file.");
         var start = new ProcessStartInfo("ssh-keygen") { UseShellExecute = false };
         foreach (var arg in GenerationArguments(full, protect)) start.ArgumentList.Add(arg);

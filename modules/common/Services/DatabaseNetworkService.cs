@@ -7,18 +7,22 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Extensibility;
 
 namespace Minicloud.Common.Services;
 
-public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManagementService databases, ProviderCatalogService catalog, ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock)
+public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManagementService databases, ProviderCatalogService catalog, ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock, IVpsProviderRegistry? registry = null)
 {
+    private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();
+    private readonly IVpsProviderRegistry _registry = registry ?? DefaultRegistry;
+
     public async Task<ManagedDatabaseNetwork> CreateAsync(CreateDatabaseNetworkRequest request, ActorIdentity actor, CancellationToken ct)
     {
         await databases.RequireAsync(actor, request.OrganizationId, true, ct);
         if (!Regex.IsMatch(request.Name, "^[a-z][a-z0-9_-]{0,62}$")) { throw new ArgumentException("Use a lowercase network name with letters, digits, underscores or dashes."); }
         ValidateRanges(request.IpRange, request.SubnetRange);
         var plan = await catalog.ResolveAsync(request.OrganizationId, request.Plan, ct);
-        if (plan.ProviderAccount.ProviderType != CloudProvider.Hetzner) { throw new ArgumentException("Provider-native database networks currently require Hetzner."); }
+        if (!SupportsPrivateNetworks(plan.ProviderAccount.ProviderType)) { throw new ArgumentException("Provider-native database networks require a provider that supports private networks."); }
         if (await db.ManagedDatabaseNetworks.AnyAsync(x => x.OrganizationId == request.OrganizationId && x.Name == request.Name && x.Status != "deleted", ct))
         { throw new InvalidOperationException("Network name is already in use."); }
         var now = clock.GetUtcNow();
@@ -67,8 +71,9 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
     {
         var network = await db.ManagedDatabaseNetworks.SingleAsync(x => x.Id == id && x.OrganizationId == organizationId && x.Status == "ready", ct);
         var server = await db.ServerInstances.SingleAsync(x => x.Id == serverInstanceId && x.OrganizationId == organizationId, ct);
-        if (server.ProviderAccountId != network.ProviderAccountId || !string.Equals(server.Provider, "hetzner", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
-        { throw new InvalidOperationException("A provider-native network and its servers must belong to the same Hetzner project/account."); }
+        var account = await db.ProviderAccounts.AsNoTracking().SingleAsync(x => x.Id == network.ProviderAccountId && x.OrganizationId == network.OrganizationId, ct);
+        if (server.ProviderAccountId != network.ProviderAccountId || !string.Equals(server.Provider, account.ProviderType.ToString(), StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
+        { throw new InvalidOperationException("A provider-native network and its servers must belong to the same provider project/account."); }
         var provider = await ProviderAsync(network, ct);
         var remote = await provider.GetPrivateNetworkAsync(network.ProviderNetworkId!, ct) ?? throw new InvalidOperationException("Registered network disappeared.");
         ValidateRemote(network, remote);
@@ -88,6 +93,8 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
         if (network.Status == "deleted") { return true; }
         if (await db.ManagedDatabases.AnyAsync(x => x.NetworkId == id && x.Status != "deleted", ct))
         { throw new InvalidOperationException("Remove database access references before deleting this network."); }
+        var account = await db.ProviderAccounts.AsNoTracking().SingleAsync(x => x.Id == network.ProviderAccountId && x.OrganizationId == network.OrganizationId, ct);
+        var providerNameLower = account.ProviderType.ToString().ToLowerInvariant();
         var provider = await ProviderAsync(network, ct, allowDisabled: true);
         var remote = network.ProviderNetworkId is not null
             ? await provider.GetPrivateNetworkAsync(network.ProviderNetworkId, ct)
@@ -102,7 +109,7 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
             // An external or conflicting registration blocks the whole action.
             foreach (var serverId in remote.ServerIds)
             {
-                var registrations = await db.ServerInstances.AsNoTracking().Where(x => x.Provider.ToLower() == "hetzner" && x.ProviderServerId == serverId).ToListAsync(ct);
+                var registrations = await db.ServerInstances.AsNoTracking().Where(x => x.Provider.ToLower() == providerNameLower && x.ProviderServerId == serverId).ToListAsync(ct);
                 if (registrations.Count != 1 || registrations[0].OrganizationId != organizationId || registrations[0].ProviderAccountId != network.ProviderAccountId)
                 { throw new InvalidOperationException("Network has an unknown or conflicting server attachment; reconcile ownership before deletion."); }
             }
@@ -143,7 +150,7 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
     private async Task<IPrivateNetworkProvider> ProviderAsync(ManagedDatabaseNetwork network, CancellationToken ct, bool allowDisabled = false)
     {
         var account = await db.ProviderAccounts.AsNoTracking().SingleAsync(x => x.Id == network.ProviderAccountId && x.OrganizationId == network.OrganizationId, ct);
-        if (account.ProviderType != CloudProvider.Hetzner || !allowDisabled && !account.Enabled)
+        if (!SupportsPrivateNetworks(account.ProviderType) || !allowDisabled && !account.Enabled)
         { throw new InvalidOperationException("Network provider account is unsupported or disabled for new allocation/attachment."); }
         if (account.Revision != network.ProviderAccountRevision && network.ProviderNetworkId is null)
         { throw new InvalidOperationException("Unallocated network account changed; reconcile its original allocation intent before continuing."); }
@@ -167,6 +174,9 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
         }
         return provider;
     }
+
+    private bool SupportsPrivateNetworks(CloudProvider provider) =>
+        _registry.TryGet(provider, out var registration) && registration.Descriptor.Capabilities.SupportsPrivateNetworks;
 
     private static void ValidateRemote(ManagedDatabaseNetwork local, ProviderPrivateNetwork remote)
     {

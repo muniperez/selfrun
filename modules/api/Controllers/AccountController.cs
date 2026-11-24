@@ -41,7 +41,8 @@ public sealed class AccountController(
             Google: kratosOptions.Value.GoogleEnabled,
             EmailRecovery: kratosOptions.Value.EmailRecoveryEnabled,
             BootstrapState: state,
-            KeepSignedIn: sessions.Policy.KeepSignedInEnabled));
+            KeepSignedIn: sessions.Policy.KeepSignedInEnabled,
+            Passkey: kratosOptions.Value.PasskeyEnabled));
     }
 
     [Authorize]

@@ -11,7 +11,7 @@ public sealed partial class CliApplication
     {
         var action = args.FirstOrDefault();
         var name = args.ElementAtOrDefault(1);
-        var usage = $"Usage: minicloud environments list | create <name> --plan <plan> {SshOptionsUsage} | update <name> {SshOptionsUsage} | rename <name> <new-name> [--config path]";
+        var usage = $"Usage: selfrun environments list | create <name> --plan <plan> {SshOptionsUsage} | update <name> {SshOptionsUsage} | rename <name> <new-name> [--config path]";
         if (action is not ("list" or "create" or "update" or "rename") ||
             (action != "list" && (string.IsNullOrWhiteSpace(name) || name.StartsWith('-'))) ||
             (action == "create" && string.IsNullOrWhiteSpace(GetOption(args, "--plan"))) ||
@@ -43,7 +43,7 @@ public sealed partial class CliApplication
             if (current.ApplicationId != application.Id)
                 throw new CliCommandException(CliExitCodes.ValidationError, "The selected environment does not belong to this application.");
             var currentAccess = current.SshAccess
-                ?? throw new CliCommandException(CliExitCodes.ValidationError, "This Minicloud server does not report SSH access for environments. Upgrade the API before selecting SSH keys.");
+                ?? throw new CliCommandException(CliExitCodes.ValidationError, "This Selfrun server does not report SSH access for environments. Upgrade the API before selecting SSH keys.");
             if (currentAccess.SelectionLocked)
                 throw MapSshApiError(new ApiException(409, "ssh_selection_locked", string.Empty), sshAccess)!;
             var request = sshAccess! with { ExpectedRevision = currentAccess.Revision };

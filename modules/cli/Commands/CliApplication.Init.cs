@@ -10,7 +10,7 @@ public sealed partial class CliApplication
 {
     private async Task<int> RunInitAsync(string[] args, CancellationToken cancellationToken)
     {
-        _console.WriteLine("Minicloud init");
+        _console.WriteLine("Selfrun init");
         _console.WriteLine();
 
         var outputPath = GetOption(args, "--config") ?? SuggestedInitConfigPath();
@@ -39,7 +39,7 @@ public sealed partial class CliApplication
             {
                 if (HasSshAccessOptions(args))
                     throw new CliCommandException(CliExitCodes.ValidationError,
-                        $"'{outputPath}' already links an app; SSH options apply only when init creates a new app. Use 'minicloud environments update <name> {SshOptionsUsage}'.");
+                        $"'{outputPath}' already links an app; SSH options apply only when init creates a new app. Use 'selfrun environments update <name> {SshOptionsUsage}'.");
                 var existingConfig = existingResult.Config!;
                 try
                 {
@@ -60,7 +60,7 @@ public sealed partial class CliApplication
                         _console.WriteLine($"Using existing {outputPath}");
                         _console.WriteLine($"App: {app.Name} ({app.Slug}, {app.Id})");
                         _console.WriteLine($"Services: {string.Join(", ", existingConfig.Services.Keys)}");
-                        _console.WriteLine($"Next: minicloud deploy --config {outputPath}");
+                        _console.WriteLine($"Next: selfrun deploy --config {outputPath}");
                         return CliExitCodes.Success;
                     }
                 }
@@ -100,13 +100,13 @@ public sealed partial class CliApplication
         var updated = MinicloudConfigWriter.UpdateAppIdentity(File.ReadAllText(outputPath), app.Slug, app.Id);
         File.WriteAllText(outputPath, updated);
         _console.WriteLine($"Updated app identity in {outputPath}; existing service settings preserved.");
-        _console.WriteLine($"Next: minicloud deploy --config {outputPath}");
+        _console.WriteLine($"Next: selfrun deploy --config {outputPath}");
         return CliExitCodes.Success;
     }
 
     private async Task<int> RunAddServiceAsync(string[] args, CancellationToken cancellationToken)
     {
-        _console.WriteLine("Minicloud add-service");
+        _console.WriteLine("Selfrun add-service");
         _console.WriteLine();
 
         return await RunServiceConfigWizardAsync(
@@ -129,7 +129,7 @@ public sealed partial class CliApplication
         var requestedApp = GetOption(args, "--app") ?? FirstPositionalArg(args);
         var sshAccess = allowCreateApp ? ParseSshAccessOptions(args) : null;
         if (!allowCreateApp && HasSshAccessOptions(args))
-            throw new CliCommandException(CliExitCodes.ValidationError, $"SSH options apply only when 'minicloud init' creates a new app, or to 'minicloud environments create|update'.");
+            throw new CliCommandException(CliExitCodes.ValidationError, $"SSH options apply only when 'selfrun init' creates a new app, or to 'selfrun environments create|update'.");
 
         var me = await _apiClient.GetMeAsync(cancellationToken);
         var organization = me.Organizations.FirstOrDefault();
@@ -183,9 +183,9 @@ public sealed partial class CliApplication
         if (!advanced)
         {
             _console.WriteLine("Used Dockerfile ports where available and defaults for remaining service options.");
-            _console.WriteLine("Run 'minicloud init --advanced' to customize every option.");
+            _console.WriteLine("Run 'selfrun init --advanced' to customize every option.");
         }
-        _console.WriteLine($"Next: minicloud deploy --config {outputPath}");
+        _console.WriteLine($"Next: selfrun deploy --config {outputPath}");
         return CliExitCodes.Success;
     }
 
@@ -606,7 +606,7 @@ public sealed partial class CliApplication
 
         var sourcePath = service.SourcePath ?? ".";
         _console.WriteError($"Warning: {serviceName} does not have a Dockerfile at '{Path.Combine(sourcePath, "Dockerfile")}'.");
-        _console.WriteError("Minicloud needs a Dockerfile in the service folder before it can deploy this service.");
+        _console.WriteError("Selfrun needs a Dockerfile in the service folder before it can deploy this service.");
         _console.WriteError("Init will continue, but deploy will fail until the Dockerfile exists.");
     }
 
@@ -618,7 +618,7 @@ public sealed partial class CliApplication
         return !string.IsNullOrWhiteSpace(service.SourcePath) && File.Exists(EffectiveDockerfilePath(service));
     }
 
-    internal static string SuggestedInitConfigPath() => "minicloud.yml";
+    internal static string SuggestedInitConfigPath() => MinicloudConfigLoader.DefaultFileName;
 
     private (int Port, string Path, string HealthPath) DefaultServiceOptions(string serviceName) =>
         serviceName switch

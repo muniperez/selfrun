@@ -100,6 +100,12 @@ function formatProviderName(type: string, types: ProviderType[]) {
   if (type === "hetzner") return "Hetzner";
   if (type === "digital-ocean") return "DigitalOcean";
   if (type === "vultr") return "Vultr";
+  if (type === "aws") return "AWS";
+  if (type === "azure") return "Microsoft Azure";
+  if (type === "gcp") return "Google Cloud";
+  if (type === "ovhcloud") return "OVHcloud";
+  if (type === "linode") return "Akamai Connected Cloud (Linode)";
+  if (type === "scaleway") return "Scaleway";
   return type;
 }
 
@@ -107,6 +113,12 @@ function providerShortMark(type: string) {
   if (type === "hetzner") return { text: "H", className: "bg-destructive/15 text-destructive" };
   if (type === "digital-ocean") return { text: "DO", className: "bg-info-surface text-info" };
   if (type === "vultr") return { text: "V", className: "bg-secondary text-foreground" };
+  if (type === "aws") return { text: "AWS", className: "bg-warning/15 text-warning" };
+  if (type === "azure") return { text: "AZ", className: "bg-info-surface text-info" };
+  if (type === "gcp") return { text: "GCP", className: "bg-success/15 text-success" };
+  if (type === "ovhcloud") return { text: "OVH", className: "bg-secondary text-foreground" };
+  if (type === "linode") return { text: "LN", className: "bg-success/15 text-success" };
+  if (type === "scaleway") return { text: "SCW", className: "bg-secondary text-foreground" };
   return { text: type.slice(0, 1).toUpperCase() || "P", className: "bg-muted text-muted-foreground" };
 }
 
@@ -114,6 +126,12 @@ function regionExample(type: string) {
   if (type === "hetzner") return "nbg1";
   if (type === "digital-ocean") return "nyc3";
   if (type === "vultr") return "ewr";
+  if (type === "aws") return "us-east-1";
+  if (type === "azure") return "eastus";
+  if (type === "gcp") return "us-central1-a";
+  if (type === "ovhcloud") return "GRA11";
+  if (type === "linode") return "us-east";
+  if (type === "scaleway") return "fr-par-1";
   return "nbg1";
 }
 
@@ -121,6 +139,12 @@ function skuExample(type: string) {
   if (type === "hetzner") return "cx23";
   if (type === "digital-ocean") return "s-1vcpu-1gb";
   if (type === "vultr") return "vc2-1c-1gb";
+  if (type === "aws") return "t3.small";
+  if (type === "azure") return "Standard_B2s";
+  if (type === "gcp") return "e2-small";
+  if (type === "ovhcloud") return "d2-4";
+  if (type === "linode") return "g6-nanode-1";
+  if (type === "scaleway") return "DEV1-S";
   return "cx23";
 }
 
@@ -950,7 +974,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               }
             >
               {canManage
-                ? "Create a named plan for your provider accounts to reference in the CLI and minicloud.yml."
+                ? "Create a named plan for your provider accounts to reference in the CLI and selfrun.yml."
                 : "No deployment plans are configured yet. An organization owner or admin can connect a provider account and add plans."}
             </EmptyState>
           ) : null}
@@ -1529,7 +1553,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                 <DialogDescription>
                   {editor.kind === "edit-plan"
                     ? "Update the plan configuration."
-                    : "Reference the plan name in the CLI or minicloud.yml. Names are unique across this organization."}
+                    : "Reference the plan name in the CLI or selfrun.yml. Names are unique across this organization."}
                 </DialogDescription>
               </DialogHeader>
               {formError ? (
@@ -1598,7 +1622,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                 <DialogTitle>Delete plan?</DialogTitle>
                 <DialogDescription>
                   Delete plan <strong className="font-medium text-foreground">{editor.plan.name}</strong>?
-                  This removes the plan configuration from Minicloud and does not delete cloud
+                  This removes the plan configuration from Selfrun and does not delete cloud
                   servers, volumes, or running services. Referenced plans cannot be removed.
                 </DialogDescription>
               </DialogHeader>
@@ -1975,8 +1999,8 @@ function PlanDialogForm({
         />
         <p id="plan-name-help" className="text-xs text-muted-foreground">
           {mode === "edit"
-            ? "After renaming, update the name in minicloud.yml and CLI commands. Existing app bindings are preserved."
-            : "Unique across this organization. Used in the CLI and minicloud.yml."}
+            ? "After renaming, update the name in selfrun.yml and CLI commands. Existing app bindings are preserved."
+            : "Unique across this organization. Used in the CLI and selfrun.yml."}
         </p>
       </div>
 
@@ -2276,12 +2300,26 @@ function AccountDialogForm({
             />
           </div>
 
-          {type === "digital-ocean" ? (
+          {type === "digital-ocean" ||
+          type === "aws" ||
+          type === "azure" ||
+          type === "gcp" ||
+          type === "ovhcloud" ||
+          type === "scaleway" ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="provider-project">Project ID (optional)</Label>
+              <Label htmlFor="provider-project">
+                {type === "azure"
+                  ? "Subscription / resource group scope"
+                  : type === "aws"
+                    ? "AWS account ID (optional)"
+                    : type === "gcp" || type === "ovhcloud" || type === "scaleway"
+                      ? "Project ID"
+                      : "Project ID (optional)"}
+              </Label>
               <Input
                 id="provider-project"
                 disabled={busy}
+                required={providerOptions.find((item) => item.type === type)?.requiresProjectId}
                 value={projectId}
                 onChange={(event) => setProjectId(event.target.value)}
               />

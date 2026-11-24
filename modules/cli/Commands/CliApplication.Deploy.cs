@@ -28,13 +28,13 @@ public sealed partial class CliApplication
             var cancelNumber = cancelPositionals.Count == 1 && !cancelPositionals[0].StartsWith("-", StringComparison.Ordinal) ? cancelPositionals[0] : null;
             if (cancelNumber is null)
             {
-                _console.WriteError("Usage: minicloud deploy cancel <deployment-number> [--organization <id>]");
+                _console.WriteError("Usage: selfrun deploy cancel <deployment-number> [--organization <id>]");
                 return CliExitCodes.ValidationError;
             }
             ValidateDeploymentNumberArgument(cancelNumber);
             var cancelOrganization = await ResolveDeploymentOrganizationAsync(args, cancellationToken);
             await _apiClient.CancelDeploymentAsync(cancelOrganization.Id, cancelNumber, cancellationToken);
-            _console.WriteLine($"Cancellation requested for deployment {cancelNumber}. Use 'minicloud status {cancelNumber} --watch' to follow completion. Changes already applied are not restored.");
+            _console.WriteLine($"Cancellation requested for deployment {cancelNumber}. Use 'selfrun status {cancelNumber} --watch' to follow completion. Changes already applied are not restored.");
             return CliExitCodes.Success;
         }
         var branchDeploy = args.FirstOrDefault() == "branch";
@@ -104,7 +104,7 @@ public sealed partial class CliApplication
         }
         if (branchDeploy && requestedServiceNames.Count > 0)
         {
-            _console.WriteError("Usage error: minicloud deploy branch deploys all configured services and does not accept service names.");
+            _console.WriteError("Usage error: selfrun deploy branch deploys all configured services and does not accept service names.");
             return CliExitCodes.ValidationError;
         }
 
@@ -168,7 +168,7 @@ public sealed partial class CliApplication
             catch (ApiException ex) when (ex.StatusCode == 404 || ex.Code == ImagePublicationErrors.Unavailable)
             {
                 throw new CliCommandException(CliExitCodes.ValidationError,
-                    "local_build_unavailable: this API does not support or enable local image publication. Nothing has been uploaded. Retry with minicloud deploy --build-mode source, or set buildMode: source on each sourcePath service in minicloud.yml.");
+                    "local_build_unavailable: this API does not support or enable local image publication. Nothing has been uploaded. Retry with selfrun deploy --build-mode source, or set buildMode: source on each sourcePath service in selfrun.yml (or minicloud.yml).");
             }
             localBuilderName = await LocalImageBuilder.PreflightAsync(buildTarget.Platform, cancellationToken);
             config = config with { Services = config.Services.ToDictionary(x => x.Key, x => x.Value.BuildMode == ServiceBuildModes.Local && !string.IsNullOrWhiteSpace(x.Value.SourcePath) ? x.Value with { BuildPlatform = buildTarget.Platform } : x.Value) };
@@ -403,7 +403,7 @@ public sealed partial class CliApplication
     {
         if (args.FirstOrDefault() != "destroy")
         {
-            _console.WriteError("Usage: minicloud branch destroy [branch] [--config minicloud.yml]");
+            _console.WriteError("Usage: selfrun branch destroy [branch] [--config selfrun.yml]");
             return CliExitCodes.ValidationError;
         }
 
@@ -614,7 +614,7 @@ public sealed partial class CliApplication
         if (changed.Count == 0)
         {
             _console.WriteLine("No services have changed since the last deployment.");
-            _console.WriteLine("Use 'minicloud deploy all' to force deployment, or specify service name: minicloud deploy <service>.");
+            _console.WriteLine("Use 'selfrun deploy all' to force deployment, or specify service name: selfrun deploy <service>.");
             return [];
         }
 
@@ -678,8 +678,8 @@ public sealed partial class CliApplication
             {
                 continue;
             }
-            var localPath = string.IsNullOrWhiteSpace(service.SourcePath) ? null : Path.Combine(service.SourcePath, LocalSecretsFile.FileName);
-            var local = localPath is not null && File.Exists(localPath) ? LocalSecretsFile.Parse(localPath) : new Dictionary<string, string>();
+            var localPath = LocalSecretsFile.ResolvePath(service.SourcePath);
+            var local = localPath is not null ? LocalSecretsFile.Parse(localPath) : new Dictionary<string, string>();
             var remote = service.SecretEnv.Where(x => !local.ContainsKey(x.Value)).ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
             if (remote.Count > 0)
             {
@@ -697,9 +697,8 @@ public sealed partial class CliApplication
         var total = 0;
         foreach (var (_, service) in config.Services)
         {
-            if (string.IsNullOrWhiteSpace(service.SourcePath)) continue;
-            var path = Path.Combine(service.SourcePath, LocalSecretsFile.FileName);
-            if (!File.Exists(path)) continue;
+            var path = LocalSecretsFile.ResolvePath(service.SourcePath);
+            if (path is null) continue;
             total += LocalSecretsFile.Parse(path).Count;
         }
         return total;
@@ -709,13 +708,8 @@ public sealed partial class CliApplication
     {
         foreach (var (serviceName, service) in config.Services)
         {
-            if (string.IsNullOrWhiteSpace(service.SourcePath))
-            {
-                continue;
-            }
-
-            var secretsPath = Path.Combine(service.SourcePath, LocalSecretsFile.FileName);
-            if (!File.Exists(secretsPath))
+            var secretsPath = LocalSecretsFile.ResolvePath(service.SourcePath);
+            if (secretsPath is null)
             {
                 continue;
             }

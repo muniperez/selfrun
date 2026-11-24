@@ -32,6 +32,11 @@ public static class LogParsing
 
     public static IReadOnlyList<AgentLogRecord> ParseJournalLine(string source, string cursorPrefix, long sequence, string line, DateTimeOffset fallbackTimestamp)
     {
+        if (string.Equals(line.Trim(), "-- No entries --", StringComparison.Ordinal))
+        {
+            return Array.Empty<AgentLogRecord>();
+        }
+
         var observedAt = fallbackTimestamp;
         var content = line;
         var separator = line.IndexOf(' ');

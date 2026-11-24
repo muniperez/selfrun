@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -46,36 +47,65 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
                 records.Add(record);
             }
         }
+        void CollectDockerStream(string service, string cursorPrefix, string output, string streamPrefix, DateTimeOffset observedAt)
+        {
+            if (records.Count >= AgentRuntimeLimits.MaxBatchRecords || string.IsNullOrEmpty(output))
+            {
+                return;
+            }
+
+            foreach (var line in Lines(output))
+            {
+                if (records.Count >= AgentRuntimeLimits.MaxBatchRecords)
+                {
+                    break;
+                }
+
+                var separator = line.IndexOf(' ');
+                var tagged = separator > 0 ? line.Insert(separator + 1, streamPrefix) : line;
+                foreach (var record in LogParsing.ParseDockerLine(service, cursorPrefix, StableSequence(tagged), tagged, observedAt))
+                {
+                    Add(record);
+                }
+            }
+        }
+
         var now = DateTimeOffset.UtcNow;
         var containers = await InspectAsync(cancellationToken);
         foreach (var container in containers.RootElement.EnumerateArray())
         {
             var service = ServiceName(container);
             var logs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "docker", ["logs", "--timestamps", "--since", "20s", "--tail", "100", container.GetProperty("Id").GetString()!], cancellationToken);
+            if (records.Count >= AgentRuntimeLimits.MaxBatchRecords)
+            {
+                continue;
+            }
             if (logs.ExitCode != 0)
             {
                 Add(SelfLog("minicloud-agent", $"Log collection failed for {service}.", now));
                 continue;
             }
-            foreach (var (output, stream) in new[] { (logs.Stdout, "stdout"), (logs.Stderr, "stderr") })
-            {
-                foreach (var line in Lines(output))
-                {
-                    var separator = line.IndexOf(' ');
-                    var tagged = separator > 0 ? line.Insert(separator + 1, stream + " ") : line;
-                    foreach (var record in LogParsing.ParseDockerLine(service, $"service:{service}", StableSequence(tagged), tagged, now))
-                    {
-                        Add(record);
-                    }
-                }
-            }
+            var cursorPrefix = $"service:{service}";
+            CollectDockerStream(service, cursorPrefix, logs.Stdout, "stdout ", now);
+            CollectDockerStream(service, cursorPrefix, logs.Stderr, "stderr ", now);
         }
         var caddyLogs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "journalctl", ["-u", "caddy", "--since", "20 seconds ago", "--output", "short-iso", "--no-pager"], cancellationToken);
-        foreach (var line in Lines(caddyLogs.ExitCode == 0 ? caddyLogs.Stdout : caddyLogs.Stderr))
+        if (records.Count < AgentRuntimeLimits.MaxBatchRecords)
         {
-            foreach (var record in LogParsing.ParseJournalLine("caddy", "caddy", StableSequence(line), line, now))
+            foreach (var line in Lines(caddyLogs.ExitCode == 0 ? caddyLogs.Stdout : caddyLogs.Stderr))
             {
-                Add(record);
+                if (records.Count >= AgentRuntimeLimits.MaxBatchRecords)
+                {
+                    break;
+                }
+                if (IsJournalNoEntriesSentinel(line))
+                {
+                    continue;
+                }
+                foreach (var record in LogParsing.ParseJournalLine("caddy", "caddy", StableSequence(line), line, now))
+                {
+                    Add(record);
+                }
             }
         }
         var result = records.ToArray();
@@ -102,6 +132,8 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
     public void Dispose() => _containers?.Dispose();
 
     private static string ServiceName(JsonElement container) => container.GetProperty("Config").GetProperty("Labels").GetProperty("com.docker.compose.service").GetString()!;
+    private static bool IsJournalNoEntriesSentinel(string line) =>
+        string.Equals(line.Trim(), "-- No entries --", StringComparison.Ordinal);
     private static void RequireSuccess(ProcessResult result, string operation)
     {
         if (result.ExitCode != 0)
@@ -123,8 +155,29 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
     private static AgentLogRecord SelfLog(string source, string message, DateTimeOffset observedAt) => new(source, null, "stderr", observedAt, $"{source}:{StableSequence(message):000000000000}", RuntimeLogRedactor.Redact(message));
     private static long StableSequence(string value)
     {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        return Math.Abs(BitConverter.ToInt64(hash, 0) % 1_000_000_000_000);
+        var maxBytes = Encoding.UTF8.GetMaxByteCount(value.Length);
+        Span<byte> hash = stackalloc byte[32];
+        if (maxBytes <= 1024)
+        {
+            Span<byte> buffer = stackalloc byte[maxBytes];
+            var written = Encoding.UTF8.GetBytes(value, buffer);
+            SHA256.TryHashData(buffer[..written], hash, out _);
+        }
+        else
+        {
+            var rented = ArrayPool<byte>.Shared.Rent(maxBytes);
+            try
+            {
+                var written = Encoding.UTF8.GetBytes(value, rented);
+                SHA256.TryHashData(rented.AsSpan(0, written), hash, out _);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+
+        return Math.Abs(BitConverter.ToInt64(hash) % 1_000_000_000_000);
     }
 }
 

@@ -16,7 +16,9 @@ public sealed class DeploymentTimingSink : IDeploymentTimingSink
 
     public DeploymentTimingSink(string? filePath = null)
     {
-        _filePath = filePath ?? Environment.GetEnvironmentVariable("MINICLOUD_CLI_TIMING_TRACE_OUTPUT");
+        _filePath = filePath ?? CliEnvironment.GetEnvironmentVariable(
+            CliEnvironment.TimingTraceOutputEnvironmentVariable,
+            CliEnvironment.LegacyTimingTraceOutputEnvironmentVariable);
     }
 
     public void RecordTiming(string line)

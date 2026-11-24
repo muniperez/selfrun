@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 set -eu
 
-mode="${MINICLOUD_INSTALL_MODE:-binary}"
+mode="${SELFRUN_INSTALL_MODE:-${MINICLOUD_INSTALL_MODE:-binary}}"
 if [ "$mode" != binary ] && [ "$mode" != source ]; then
-  echo "MINICLOUD_INSTALL_MODE must be binary or source; there is no automatic fallback." >&2
+  echo "SELFRUN_INSTALL_MODE (or MINICLOUD_INSTALL_MODE) must be binary or source; there is no automatic fallback." >&2
   exit 1
 fi
 if [ "$mode" = binary ]; then
@@ -17,6 +17,15 @@ import urllib.request, urllib.parse
 def require(value, message):
     if not value:
         raise ValueError(message)
+
+def env_alias(primary, legacy, default=""):
+    value = os.environ.get(primary)
+    if value:
+        return value
+    value = os.environ.get(legacy)
+    if value:
+        return value
+    return default
 
 def unique(pairs):
     value = {}
@@ -75,25 +84,29 @@ if not notices.exists():
     os.chmod(staging, 0o755)
     os.rename(staging, notices)
 pending = target / (".minicloud-" + uuid.uuid4().hex + ".new")
+pending_alias = target / (".selfrun-" + uuid.uuid4().hex + ".new")
 try:
     with (source / "minicloud").open("rb") as old, pending.open("xb") as new:
         shutil.copyfileobj(old, new); new.flush(); os.fsync(new.fileno())
     os.chmod(pending, 0o755)
     os.replace(pending, target / "minicloud")
+    os.symlink("minicloud", pending_alias)
+    os.replace(pending_alias, target / "selfrun")
     descriptor = os.open(target, os.O_RDONLY)
     try: os.fsync(descriptor)
     finally: os.close(descriptor)
 finally:
     if pending.exists(): pending.unlink()
+    if pending_alias.is_symlink() or pending_alias.exists(): pending_alias.unlink()
 '''
 
 stage = None
 try:
     os.umask(0o077)
-    require(os.environ.get("MINICLOUD_REPO", "muniventures/minicloud") == "muniventures/minicloud", "Only the canonical repository is allowed.")
-    tag = os.environ.get("MINICLOUD_VERSION", "")
+    require(env_alias("SELFRUN_REPO", "MINICLOUD_REPO", "muniventures/minicloud") == "muniventures/minicloud", "Only the canonical repository is allowed.")
+    tag = env_alias("SELFRUN_VERSION", "MINICLOUD_VERSION", "")
     require(re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?", tag),
-            "Binary mode requires MINICLOUD_VERSION=<exact published CLI vX.Y.Z[-prerelease]>. No latest, SHA, server-v selection or unsigned historical fallback. For source use MINICLOUD_INSTALL_MODE=source.")
+            "Binary mode requires SELFRUN_VERSION (or MINICLOUD_VERSION)=<exact published CLI vX.Y.Z[-prerelease]>. No latest, SHA, server-v selection or unsigned historical fallback. For source use SELFRUN_INSTALL_MODE=source.")
     targets = {
         ("Linux", "x86_64"): ("linux-x64", "cosign-linux-amd64", "c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644"),
         ("Linux", "aarch64"): ("linux-arm64", "cosign-linux-arm64", "426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7"),
@@ -150,17 +163,19 @@ try:
     require(metadata == {k:v for k,v in provenance.items() if k != "artifacts"} | {"rid":rid}, "Embedded release metadata mismatch.")
     executable = output / "minicloud"; executable.chmod(0o700)
     version = subprocess.run([str(executable), "--version"], check=True, capture_output=True, text=True).stdout.splitlines()
-    require(f"minicloud version {tag[1:]}" in version and f"source {provenance['sourceRevision']}" in version, "CLI version/source smoke check failed.")
-    require("minicloud" in subprocess.run([str(executable), "--help"], check=True, capture_output=True, text=True).stdout.lower(), "CLI help smoke check failed.")
-    install = Path(os.environ.get("MINICLOUD_INSTALL_DIR", "/usr/local/bin")).absolute()
+    require((f"selfrun version {tag[1:]}" in version or f"minicloud version {tag[1:]}" in version)
+            and f"source {provenance['sourceRevision']}" in version, "CLI version/source smoke check failed.")
+    help_text = subprocess.run([str(executable), "--help"], check=True, capture_output=True, text=True).stdout.lower()
+    require("selfrun" in help_text or "minicloud" in help_text, "CLI help smoke check failed.")
+    install = Path(env_alias("SELFRUN_INSTALL_DIR", "MINICLOUD_INSTALL_DIR", "/usr/local/bin")).absolute()
     parent = install
     while not parent.exists(): parent = parent.parent
     command = [sys.executable, "-c", FINALIZE, str(output), str(install), tag, provenance["sourceRevision"]]
     if not os.access(parent, os.W_OK):
-        require(shutil.which("sudo"), "Install path not writable; set MINICLOUD_INSTALL_DIR.")
+        require(shutil.which("sudo"), "Install path not writable; set SELFRUN_INSTALL_DIR or MINICLOUD_INSTALL_DIR.")
         command.insert(0, "sudo")
     subprocess.run(command, check=True)
-    print(f"Installed {install / 'minicloud'} ({tag}, source {provenance['sourceRevision']}). Existing configuration/authentication unchanged.")
+    print(f"Installed {install / 'selfrun'} -> {install / 'minicloud'} ({tag}, source {provenance['sourceRevision']}). Existing configuration/authentication unchanged.")
 except Exception:
     print("Verified binary installation failed. No source/channel fallback. Existing executable is retained unless atomic replacement already completed; inspect exact version/prerequisites and retry.", file=sys.stderr)
     sys.exit(1)
@@ -169,23 +184,23 @@ finally:
 PY
 fi
 
-repo="${MINICLOUD_REPO:-muniventures/minicloud}"
-version="${MINICLOUD_VERSION:-7416e1408ecd9d11f58c638f0caf1c28e5fa6e3f}"
-install_dir="${MINICLOUD_INSTALL_DIR:-/usr/local/bin}"
+repo="${SELFRUN_REPO:-${MINICLOUD_REPO:-muniventures/minicloud}}"
+version="${SELFRUN_VERSION:-${MINICLOUD_VERSION:-7416e1408ecd9d11f58c638f0caf1c28e5fa6e3f}}"
+install_dir="${SELFRUN_INSTALL_DIR:-${MINICLOUD_INSTALL_DIR:-/usr/local/bin}}"
 
 if [ "$repo" != "muniventures/minicloud" ]; then
-  echo "MINICLOUD_REPO must be muniventures/minicloud." >&2
+  echo "SELFRUN_REPO (or MINICLOUD_REPO) must be muniventures/minicloud." >&2
   exit 1
 fi
 
 for command_name in git dotnet; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
-    echo "$command_name is required to build the Minicloud CLI from source." >&2
+    echo "$command_name is required to build the Selfrun CLI from source." >&2
     exit 1
   fi
 done
 if ! dotnet --list-sdks | awk '$1 ~ /^10\./ { found=1 } END { exit !found }'; then
-  echo ".NET 10 SDK is required to build the Minicloud CLI. Install the SDK; this installer will not install it for you." >&2
+  echo ".NET 10 SDK is required to build the Selfrun CLI. Install the SDK; this installer will not install it for you." >&2
   exit 1
 fi
 
@@ -196,7 +211,7 @@ elif printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+
   expected_sha=""
   cli_version="${version#v}"
 else
-  echo "MINICLOUD_VERSION must be a full lowercase commit SHA or an exact CLI tag such as v3.1.0; branches, latest, and server-v tags are not supported." >&2
+  echo "SELFRUN_VERSION (or MINICLOUD_VERSION) must be a full lowercase commit SHA or an exact CLI tag such as v3.1.0; branches, latest, and server-v tags are not supported." >&2
   exit 1
 fi
 
@@ -230,7 +245,7 @@ if [ -z "$expected_sha" ]; then
   fi
 fi
 
-echo "Building Minicloud CLI from muniventures/minicloud at $expected_sha"
+echo "Building Selfrun CLI (formerly MiniCloud CLI) from muniventures/minicloud at $expected_sha"
 git clone --filter=blob:none --no-tags --single-branch --branch main "$url" "$source_dir"
 case "$version" in
   v*)
@@ -274,14 +289,14 @@ if [ -x "$publish_dir/Minicloud.Cli" ]; then
 fi
 executable="$publish_dir/minicloud"
 if [ ! -x "$executable" ]; then
-  echo "Source build did not produce the minicloud executable for $rid." >&2
+  echo "Source build did not produce the CLI executable for $rid." >&2
   exit 1
 fi
 if ! "$executable" --version | grep -F "$cli_version" >/dev/null; then
   echo "Built CLI version verification failed; the existing installation was not changed." >&2
   exit 1
 fi
-if ! "$executable" --help | grep -qi minicloud; then
+if ! "$executable" --help | grep -Eqi '(selfrun|minicloud)'; then
   echo "Built CLI help verification failed; the existing installation was not changed." >&2
   exit 1
 fi
@@ -301,20 +316,24 @@ fi
 if [ "$writable" -eq 1 ]; then
   mkdir -p "$install_dir"
   pending="$install_dir/.minicloud-source-$$.new"
+  pending_alias="$install_dir/.selfrun-source-$$.new"
   (set -C; cat "$executable" > "$pending")
   chmod 755 "$pending"
   mv -f "$pending" "$install_dir/minicloud"
+  ln -s minicloud "$pending_alias"
+  mv -f "$pending_alias" "$install_dir/selfrun"
 elif command -v sudo >/dev/null 2>&1; then
   sudo mkdir -p "$install_dir"
   pending="$install_dir/.minicloud-source-$$.new"
-  sudo sh -c 'set -C; cat "$1" > "$2"; chmod 755 "$2"; mv -f "$2" "$3"' sh "$executable" "$pending" "$install_dir/minicloud"
+  pending_alias="$install_dir/.selfrun-source-$$.new"
+  sudo sh -c 'set -C; cat "$1" > "$2"; chmod 755 "$2"; mv -f "$2" "$3"; ln -s minicloud "$4"; mv -f "$4" "$5"' sh "$executable" "$pending" "$install_dir/minicloud" "$pending_alias" "$install_dir/selfrun"
 else
   echo "$install_dir is not writable and sudo is unavailable." >&2
-  echo "Set MINICLOUD_INSTALL_DIR to a writable directory." >&2
+  echo "Set SELFRUN_INSTALL_DIR (or MINICLOUD_INSTALL_DIR) to a writable directory." >&2
   exit 1
 fi
 
-echo "Installed minicloud to $install_dir/minicloud (source $resolved_sha)"
-if ! command -v minicloud >/dev/null 2>&1; then
-  echo "Add $install_dir to PATH to run minicloud from any shell."
+echo "Installed selfrun -> minicloud in $install_dir (source $resolved_sha)"
+if ! command -v selfrun >/dev/null 2>&1; then
+  echo "Add $install_dir to PATH to run selfrun (or minicloud) from any shell."
 fi

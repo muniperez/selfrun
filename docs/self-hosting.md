@@ -1,4 +1,9 @@
-# Self-hosting Minicloud
+# Self-hosting Selfrun
+
+> **Rename note:** MiniCloud is transitioning to **Selfrun** (`selfrun.dev`).
+> Server bundle paths, `MINICLOUD_SECRETS_DIR`, `/opt/minicloud`, and `server-v*`
+> package conventions are intentionally preserved during Stages 1–2; see
+> [Selfrun Rename Migration Guide](selfrun-rename-migration.md).
 
 The packaged self-hosting stack is under active development. T40's server
 release foundation is merged, but no server images or release bundle have been
@@ -130,6 +135,10 @@ references (`MINICLOUD_*_IMAGE`) come from the generated, digest-pinned
 | `MANAGE_DNS_RECORDS` | Optional. Defaults to `false`. |
 | `MINICLOUD_SOURCE_URL` | Optional. The public source link shown in the dashboard. |
 | `MINICLOUD_GOOGLE_OIDC_ENABLED` | Defaults to `false`; the installer derives it only from explicit `googleOidc.enabled`. Shared API/Kratos switch, not a qualification assertion. |
+| `MINICLOUD_EMAIL_RECOVERY_ENABLED` | Unset by default; set to `true` only when the verified installer selects `compose.email-recovery.yml` for an explicit first-install `emailRecovery.enabled` opt-in. Basic password installs need no SMTP configuration. |
+| `MINICLOUD_PASSKEY_ENABLED` | Defaults to `true`. Shared API/Kratos switch for WebAuthn passkey sign-in and account-settings management. |
+| `MINICLOUD_PASSKEY_RP_DISPLAY_NAME` | Optional WebAuthn relying-party display name shown by browsers during passkey prompts. Defaults to `Minicloud`. |
+| `MINICLOUD_PASSKEY_RP_ID` | Optional WebAuthn relying-party ID. Defaults to `CONSOLE_HOSTNAME`; when overridden, must equal `CONSOLE_HOSTNAME` or be a dot-separated parent domain suffix. |
 | `MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED` | Defaults to `true`. Offers the per-user **Keep me signed in** option; when `false`, existing remembered sessions follow the standard limits. |
 | `MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES`, `MINICLOUD_PORTAL_STANDARD_MAX_MINUTES` | Dashboard inactivity timeout and absolute lifetime for standard sessions. Default `120` (2 hours) and `720` (12 hours). |
 | `MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES`, `MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES` | Same limits for **Keep me signed in** sessions. Default `10080` (7 days) and `43200` (30 days). |
@@ -152,8 +161,11 @@ independent random values:
 - `secret-encryption-key`
 - `kratos.env`: credentials only. See `secrets.env.example`. The `DSN`
   password must match `kratos-db-password`, URL-encoded. Explicit Google opt-in
-  also imports the single fixed Google provider JSON here; never dump this file
-  or a rendered Compose environment into logs.
+  also imports the single fixed Google provider JSON here, and explicit
+  first-install email/code recovery opt-in imports `COURIER_SMTP_*` settings
+  from the protected `emailRecovery.smtpFile` input; basic password installs
+  require neither. Never dump this file or a rendered Compose environment into
+  logs.
 - `openbao-server.crt`, `openbao-server.key` and `openbao-ca.crt`: a private CA
   and a server certificate whose SAN includes `openbao`. The API and worker
   trust this CA only for OpenBao, and public HTTPS keeps the system trust store.
@@ -244,6 +256,57 @@ to the idle window at the next renewal but never extends a session's original
 absolute lifetime. Disabling `keepSignedInEnabled` makes existing remembered
 sessions follow the standard limits.
 
+### Dashboard passkeys (WebAuthn)
+
+The packaged stack enables WebAuthn passkeys alongside password sign-in so
+operators can enroll one or more passkeys from **Account settings** and sign in
+without typing their password. Password sign-in (and optional email recovery
+when enabled) remains intact as a fallback, and public registration stays
+disabled.
+
+- **HTTPS and origin requirements.** Browsers require a trusted HTTPS context
+  for WebAuthn. Compose passes `SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ORIGINS`
+  explicitly from `CONSOLE_URL` (the public HTTPS dashboard origin), overriding
+  Kratos's default of deriving the scheme from its private `http://kratos:4433/`
+  base URL. Passkeys will not work over plain HTTP or untrusted certificates.
+- **Relying-party ID (`rpId`) and display name.** By default, Compose and the
+  installer set `MINICLOUD_PASSKEY_RP_ID` to `CONSOLE_HOSTNAME` and
+  `MINICLOUD_PASSKEY_RP_DISPLAY_NAME` to `Minicloud`. Configure or disable
+  passkeys with the optional installer object (all fields optional):
+
+```json
+"passkeys": {
+  "enabled": true,
+  "rpDisplayName": "Minicloud",
+  "rpId": "console.example.com"
+}
+```
+
+  When overridden, `rpId` must equal `consoleHostname` or be a dot-separated
+  parent domain suffix (for example, `example.com` for `console.example.com`).
+  Bare top-level domains and unrelated hostnames are rejected.
+- **Effect of changing the dashboard hostname.** Browsers cryptographically bind
+  each passkey to the WebAuthn relying-party ID (`rpId`) active when it was
+  enrolled. Changing `consoleHostname` to a different domain—or changing
+  `rpId`—prevents existing passkeys from matching the new origin. Users must
+  sign in with their password (or configured recovery flow) on the new hostname
+  and enroll replacement passkeys. Setting `rpId` to a shared parent domain lets
+  existing passkeys continue working if the dashboard later moves to another
+  subdomain under that parent domain, at the trade-off of a broader relying-party
+  scope.
+- **Multiple credentials and re-authentication.** Operators can enroll multiple
+  passkeys (for example, a primary device and a backup authenticator) and remove
+  individual passkeys from **Account settings**; Kratos disables removal when no
+  other first-factor credential remains. Because adding or removing a passkey is
+  a privileged settings change (`privileged_session_max_age: 15m`), Kratos
+  returns `403 session_refresh_required` after the privilege window expires and
+  the dashboard prompts for in-place re-authentication (with a passkey or
+  password) before retrying.
+- **Kratos v1.3.1 notes.** Kratos v1.3.1 derives each passkey's display name
+  from authenticator AAGUID metadata (falling back to `Passkey`) and does not
+  accept custom user-entered passkey labels in its settings flow. Enabling
+  passkeys in configuration does not claim live hosted browser qualification.
+
 ### Optional packaged Google OIDC
 
 Password-only installation remains the default. Omitting `googleOidc`, or
@@ -315,6 +378,28 @@ Live Google sign-in/link/422 behavior, separate-origin HTTPS/CORS/CSRF, proxy
 Host handling, SMTP recovery and browser/Grafana recovery revocation remain
 deferred in [#44](https://github.com/muniventures/minicloud/issues/44).
 The prior disposable Kratos v1.3.1 checks are not a live Google qualification.
+
+### Optional packaged email/code recovery
+
+Basic password-only installation remains independent of SMTP: omitting
+`emailRecovery`, or setting `{"enabled":false}`, leaves `kratos.env` without
+`COURIER_*` keys, keeps `identity.schema.json`, omits
+`compose.email-recovery.yml` and keeps recovery disabled in both Kratos and the
+API.
+
+For an explicitly opted-in **new installation**, the verified installer accepts
+`emailRecovery` with a protected root-owned `0600`/`0400` JSON `smtpFile`
+outside installation, recovery and release-asset directories, imports
+`COURIER_SMTP_*` into `secrets/kratos.env`, selects the signed
+`compose.email-recovery.yml` overlay (which mounts
+`identity.recovery.schema.json`, enables Kratos code recovery with
+`--watch-courier`, and sets `Kratos__EmailRecoveryEnabled=true` on the API),
+and keeps Google OIDC independent. Redeeming a valid recovery code through the
+API verifies the upstream Kratos session and revokes prior browser/Kratos/Grafana
+sessions while preserving API keys and memberships. See
+[optional email/code account recovery](server-installer.md#optional-emailcode-account-recovery)
+for schema, TLS/capture-sink rules, preexisting-install preservation, and
+backup/restore boundaries.
 
 ### Optional operator diagnostics
 

@@ -43,7 +43,7 @@ internal sealed class LocalBuildDeploymentSession : IAsyncDisposable
     public void ThrowIfLost()
     {
         if (_heartbeatFailure is not null)
-        { throw new CliCommandException(CliExitCodes.DeploymentFailed, "local_build_status_lost: Minicloud could not retain this local build session. Run deploy again. " + (_heartbeatFailure is ApiException api ? api.Code + ": " : "") + _heartbeatFailure.Message); }
+        { throw new CliCommandException(CliExitCodes.DeploymentFailed, "local_build_status_lost: Selfrun could not retain this local build session. Run deploy again. " + (_heartbeatFailure is ApiException api ? api.Code + ": " : "") + _heartbeatFailure.Message); }
     }
 
     private async Task HeartbeatAsync()
