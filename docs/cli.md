@@ -567,6 +567,13 @@ deploys, or set `buildMode: source` under each `sourcePath` service in
 `minicloud.yml`. A default deploy fails with `local_build_unavailable` and this
 remedy before building or uploading anything; it does not silently change modes.
 
+Run deploy from the app's own repository or a directory that Git includes.
+An app under a Git-ignored parent (for example `.local/`), or an ignored
+Dockerfile, fails before upload and names the ignore rule to change. Move the
+app, initialize its own repository, or include its build context in Git's ignore
+rules before retrying. Normal ignored files such as `node_modules` remain
+excluded without warnings.
+
 CLI 2.0.0 shows image preparation in a colored panel with a ready/total service count,
 current activity, elapsed time, and a fixed-height recent-output box. Warnings are
 summarized; the complete sanitized log file path is printed after image preparation,

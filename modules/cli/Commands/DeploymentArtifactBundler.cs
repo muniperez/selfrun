@@ -170,7 +170,7 @@ internal static class DeploymentArtifactBundler
         if (ignoreFile is not null) { ValidateMetadata(sourceRoot, ignoreFile); }
         var matcher = new DockerIgnoreMatcher(ignoreFile is null ? [] : File.ReadAllLines(ignoreFile));
         return
-        SelectCandidateFiles(sourceRoot)
+        SelectCandidateFiles(sourceRoot, dockerfile)
             .Select(Path.GetFullPath)
             .Where(File.Exists)
             .Select(path => RejectSymlink(sourceRoot, path))
@@ -180,9 +180,9 @@ internal static class DeploymentArtifactBundler
             .ToArray();
     }
 
-    private static IReadOnlyList<string> SelectCandidateFiles(string sourceRoot)
+    private static IReadOnlyList<string> SelectCandidateFiles(string sourceRoot, string? dockerfile)
     {
-        var gitFiles = TryGitFiles(sourceRoot);
+        var gitFiles = TryGitFiles(sourceRoot, dockerfile);
         if (gitFiles is not null)
         {
             return gitFiles;
@@ -194,7 +194,7 @@ internal static class DeploymentArtifactBundler
             .ToArray();
     }
 
-    private static IReadOnlyList<string>? TryGitFiles(string sourceRoot)
+    private static IReadOnlyList<string>? TryGitFiles(string sourceRoot, string? dockerfile)
     {
         try
         {
@@ -216,15 +216,54 @@ internal static class DeploymentArtifactBundler
                 return null;
             }
 
+            RequireGitBuildContext(sourceRoot, dockerfile);
             return output
                 .Split('\0', StringSplitOptions.RemoveEmptyEntries)
                 .Select(path => Path.GetFullPath(Path.Combine(sourceRoot, path)))
                 .Where(File.Exists)
                 .ToArray();
         }
-        catch
+        catch (System.ComponentModel.Win32Exception)
         {
             return null;
+        }
+    }
+
+    private static void RequireGitBuildContext(string sourceRoot, string? dockerfile)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true
+        };
+        foreach (var argument in new[] { "-C", sourceRoot, "check-ignore", "--verbose", "-z", "--stdin" })
+        {
+            start.ArgumentList.Add(argument);
+        }
+        using var process = Process.Start(start)
+            ?? throw new CliCommandException(CliExitCodes.ValidationError, "Unable to check Git build-context exclusions.");
+        process.StandardInput.Write(sourceRoot + '\0');
+        if (dockerfile is not null && IsUnderDirectory(sourceRoot, dockerfile))
+        {
+            process.StandardInput.Write(dockerfile + '\0');
+        }
+        process.StandardInput.Close();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode == 1) { return; }
+        if (process.ExitCode != 0)
+        {
+            throw new CliCommandException(CliExitCodes.ValidationError, $"Unable to check Git build-context exclusions: {error.Trim()}");
+        }
+        var fields = output.Split('\0');
+        // Verbose Git output also includes negated rules, which include rather than exclude a path.
+        for (var index = 0; index + 3 < fields.Length; index += 4)
+        {
+            if (fields[index + 2].StartsWith('!')) { continue; }
+            throw new CliCommandException(CliExitCodes.ValidationError,
+                $"Build context '{fields[index + 3]}' is ignored by git ({fields[index]}:{fields[index + 1]}, pattern '{fields[index + 2]}'). Nothing has been uploaded. Move the app outside the ignored directory, run deploy from its own repository, or update the Git ignore rule to include the build context.");
         }
     }
 
