@@ -488,6 +488,20 @@ class ReleaseTests(unittest.TestCase):
         self.assertLess(workflow.index("Gate missing handoffs"), workflow.index("docker/login-action"))
         self.assertLess(workflow.index("--anonymous-pulls"), workflow.index("gh release create"))
 
+    def test_release_components_and_bundle_exclude_extracted_workspace_surfaces(self):
+        root = Path(__file__).resolve().parents[2]
+        bundle = root / "packaging/server/bundle"
+        self.assertEqual(("api", "dashboard", "worker"), release.COMPONENTS)
+        for forbidden in (
+            "compose.workspaces.yml",
+            "Caddyfile.workspaces",
+            "development-workspaces.example.json",
+            "development-workspaces.md",
+        ):
+            self.assertFalse((bundle / forbidden).exists(), f"Unexpected workspace bundle asset: {forbidden}")
+        self.assertNotIn("workspace-gateway", (bundle / "compose.yml").read_text())
+        self.assertNotIn("workspace", (bundle / "openbao-policy.hcl").read_text().lower())
+
 
 if __name__ == "__main__":
     unittest.main()
