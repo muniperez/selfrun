@@ -180,3 +180,8 @@ defines the shared registry, capability, placement, credential, lifecycle, and q
 used to add future providers behind qualification gates. Source/local tests and live provider
 qualification are separate checks; no live cloud acceptance is implied by installation or import
 command availability.
+
+For experimental provider adapters behind qualification gates (AWS, Microsoft Azure,
+Google Cloud, OVHcloud including bare-metal contracts, Akamai/Linode, and Scaleway),
+credential schemas, minimum IAM scopes, and live qualification checklists, see the
+[provider expansion adapter reference](provider-expansion.md).

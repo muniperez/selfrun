@@ -100,15 +100,17 @@ public sealed class ProviderExtensionRegistryTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddMinicloudProviders(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
-        services.AddVpsProvider(CreateSyntheticRegistration("ovh", "OVHcloud", ProviderQualificationState.DraftGated));
-        services.AddVpsProvider(CreateSyntheticRegistration("linode", "Linode", ProviderQualificationState.DraftGated));
+        services.AddVpsProvider(CreateSyntheticRegistration("custom-gated-a", "Custom Gated A", ProviderQualificationState.DraftGated));
+        services.AddVpsProvider(CreateSyntheticRegistration("custom-gated-b", "Custom Gated B", ProviderQualificationState.DraftGated));
 
         using var provider = services.BuildServiceProvider();
         var registry = provider.GetRequiredService<IVpsProviderRegistry>();
 
         Assert.Equal(["hetzner", "digital-ocean", "vultr"], registry.GetSupported().Select(x => x.WireType).ToArray());
-        Assert.Contains(registry.GetAll(), x => x.WireType == "ovh");
+        Assert.Contains(registry.GetAll(), x => x.WireType == "ovhcloud");
         Assert.Contains(registry.GetAll(), x => x.WireType == "linode");
+        Assert.Contains(registry.GetAll(), x => x.WireType == "custom-gated-a");
+        Assert.Contains(registry.GetAll(), x => x.WireType == "custom-gated-b");
         Assert.Throws<ProviderCatalogException>(() => registry.GetRequiredByWireType("unknown-provider"));
     }
 

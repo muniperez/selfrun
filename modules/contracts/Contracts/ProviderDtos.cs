@@ -26,7 +26,8 @@ public sealed record ProviderTypeResponse(
     string? DefaultImage,
     int? DefaultOsId = null,
     ProviderTypeCapabilitiesDto? Capabilities = null,
-    string QualificationState = "qualified");
+    string QualificationState = "qualified",
+    bool RequiresProjectId = false);
 public sealed record CreateProviderRequest(string OrganizationId, string Name, string ProviderType, string Credential,
     string? ProjectId = null, int? DefaultOsId = null);
 public sealed record UpdateProviderRequest(long Revision, string? Name = null, bool? Enabled = null);
