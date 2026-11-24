@@ -1,10 +1,10 @@
-# Customer durable storage (Hetzner)
+# Customer durable storage (Hetzner and Linode)
 
 ## Implementation plan
 
 1. Add named writable storage to service configuration and deployment contracts; validate names, sizes, mount paths, ownership, and collisions before admission.
 2. Persist desired mounts with deployments and retain app-owned provider volume identities independently of deployment/container lifetimes.
-3. Reconcile Hetzner volumes by stable app/name identity: create formatted ext4 disks, recover ambiguous creation, attach only to the app server, grow only, and wait for provider actions.
+3. Reconcile Hetzner and Linode volumes by stable app/name identity: create disks, recover ambiguous creation, attach only to the app server, grow only, and wait for provider readiness. Linode volumes are formatted as ext4 on first mount only while the provider-owned `mc-format-pending` tag proves the new disk is eligible; existing unformatted volumes are never formatted.
 4. Mount verified block devices before starting containers. Refuse missing disks, wrong mounts, unexpected filesystems and local-directory fallbacks. Preserve existing data and never format on the VPS.
 5. Cover config/checksums, scoped deployments, provider requests/recovery, migrations, and runtime data preservation with local tests.
 
@@ -32,13 +32,13 @@ A name identifies a volume within the app. Services may share a name with the sa
 
 The dashboard Storage tab lists registered and retained volumes and offers a configuration example. Expanded service details and `minicloud apps inspect <app>` show configured mounts. `GET /api/environments/{appId}/storage` returns the app-scoped stored volume inventory, not a live mount-health check.
 
-Only Hetzner is supported. Each app supports up to 16 named volumes and 10,000 GB total, with 10–10,000 GB per volume, subject to provider quota. Increase `sizeGb` to grow; shrinking is rejected. Growth changes the provider disk and extends ext4 on the VPS. A failed deployment or rollback does not undo growth.
+Hetzner and Linode are supported. Each app supports up to 16 named volumes and 10,000 GB total, with 10–10,000 GB per volume, subject to provider quota. Increase `sizeGb` to grow; shrinking is rejected. Growth changes the provider disk and extends ext4 on the VPS. Linode's blank new disks are formatted once during first mount only when their pending-initialization tag is present; no existing volume is automatically formatted. A failed deployment or rollback does not undo growth.
 
-Removing a mount stops mounting that volume for the updated service. Scoped deploys retain mounts on unselected services. Renaming creates a new empty volume; reuse the original name to reconnect retained data. Neither mount removal nor app deletion deletes provider volumes. Retained disks continue incurring provider charges and require explicit operator cleanup in Hetzner. Volume labels include app ID and name for identification. No automatic data migration, backup, restore, cross-region transfer, or forced detach is included. Server snapshots do not back up attached volumes; arrange application-consistent backups separately.
+Removing a mount stops mounting that volume for the updated service. Scoped deploys retain mounts on unselected services. Renaming creates a new empty volume; reuse the original name to reconnect retained data. Neither mount removal nor app deletion deletes provider volumes. Retained disks continue incurring provider charges and require explicit operator cleanup in the owning provider account. Hetzner labels identify the app and storage name. Linode uses a bounded label and a Minicloud ownership tag; its API-provided device path is validated before mount. No automatic data migration, backup, restore, cross-region transfer, or forced detach is included. Server snapshots do not back up attached volumes; arrange application-consistent backups separately.
 
-Upgrade API and worker together and apply the included database migration before using the updated CLI. This is source/local-test support until separately qualified with a disposable Hetzner VPS. No paid provider resources are created by the local tests.
+Upgrade API and worker together and apply the included database migration before using the updated CLI. This is source/local-test support until separately qualified with disposable Hetzner and Linode resources. No paid provider resources are created by the local tests.
 
-Provider behavior was checked against [Hetzner’s volume client](https://github.com/hetznercloud/hcloud-go/blob/main/hcloud/volume.go) and [volume documentation](https://docs.hetzner.com/cloud/volumes/overview/).
+Hetzner behavior was checked against [Hetzner’s volume client](https://github.com/hetznercloud/hcloud-go/blob/main/hcloud/volume.go) and [volume documentation](https://docs.hetzner.com/cloud/volumes/overview/). Linode API shapes were checked against Akamai's [volume API reference](https://techdocs.akamai.com/linode-api/reference/volumes) and [Block Storage guide](https://techdocs.akamai.com/cloud-computing/docs/manage-block-storage-volumes-with-the-api); live qualification remains separate.
 
 ## Local validation
 

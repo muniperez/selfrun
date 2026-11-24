@@ -44,7 +44,7 @@ Conclusion: adding a second API key alone is insufficient. Account identity must
 
 Include account CRUD, credential replacement, account validation, custom plan CRUD, portal management, name-based CLI/YAML selection, account-aware provisioning and lifecycle operations, and migration of existing installations.
 
-Keep the supported VPS types to Hetzner, DigitalOcean, and Vultr. The type selector is a server-owned allowlist, not a user-entered plugin or arbitrary API endpoint. Adapter capability metadata must continue to identify Hetzner-only durable storage; adding multiple accounts does not add volume support to other providers.
+The implemented VPS allowlist is Hetzner, DigitalOcean, Vultr, and Linode. The type selector is a server-owned allowlist, not a user-entered plugin or arbitrary API endpoint. Adapter capability metadata identifies Hetzner and Linode durable Block Storage support; other provider accounts do not imply volume support.
 
 Exclude automatic quota balancing, account pools, cross-account failover, cross-account migration, server resizing, provider billing, automatic price comparison, and new provider adapters. Cloudflare DNS configuration, control-plane hosting, and the deployment SSH private key remain separate installation concerns.
 

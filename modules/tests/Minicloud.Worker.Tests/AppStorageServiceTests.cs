@@ -140,6 +140,7 @@ public sealed class AppStorageServiceTests : IClassFixture<WorkerSqliteTestHarne
     {
         private static long _nextId = 10000;
         private readonly string _id = Interlocked.Increment(ref _nextId).ToString();
+        public CloudProvider Provider => CloudProvider.Hetzner;
         public ProviderStorageVolume? Volume;
         public int Creates, Attaches, Resizes;
         public bool FailCreate, CreateBeforeFailure, RejectCreate;
