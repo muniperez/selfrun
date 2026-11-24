@@ -41,6 +41,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
     private readonly ILogger<ResolveProvisionServerStep>? _logger;
     private readonly Func<string, int, CancellationToken, Task<bool>>? _sshProbe;
     private readonly IServerHostKeyProbe _hostKeyProbe;
+    private readonly SshDeploymentOptions _sshOptions;
 
     public ResolveProvisionServerStep(
         IServiceScopeFactory scopeFactory,
@@ -49,8 +50,9 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         TimeProvider timeProvider,
         ILogger<ResolveProvisionServerStep>? logger = null,
         Func<string, int, CancellationToken, Task<bool>>? sshProbe = null,
-        IServerHostKeyProbe? hostKeyProbe = null)
-        : this(scopeFactory, providerResolver, options.Value, timeProvider, logger, sshProbe, hostKeyProbe)
+        IServerHostKeyProbe? hostKeyProbe = null,
+        IOptions<SshDeploymentOptions>? sshOptions = null)
+        : this(scopeFactory, providerResolver, options.Value, timeProvider, logger, sshProbe, hostKeyProbe, sshOptions?.Value)
     {
     }
 
@@ -61,7 +63,8 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         TimeProvider timeProvider,
         ILogger<ResolveProvisionServerStep>? logger = null,
         Func<string, int, CancellationToken, Task<bool>>? sshProbe = null,
-        IServerHostKeyProbe? hostKeyProbe = null)
+        IServerHostKeyProbe? hostKeyProbe = null,
+        SshDeploymentOptions? sshOptions = null)
     {
         ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(providerResolver);
@@ -75,6 +78,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         _logger = logger;
         _sshProbe = sshProbe;
         _hostKeyProbe = hostKeyProbe ?? new SshNetServerHostKeyProbe();
+        _sshOptions = sshOptions ?? new SshDeploymentOptions();
     }
 
     public async Task ExecuteAsync(PipelineStepContext context, CancellationToken cancellationToken)
@@ -117,9 +121,19 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             if (existing.Id is not null && existing.HostKeyFingerprint is null && existing.HostKeyEnrollmentSecret is not null)
             {
                 // A prior deployment created this server but stopped before its host key was verified.
-                var deadline = DateTimeOffset.UtcNow + _options.SshReadyTimeout;
-                await WaitForSshAsync(status.Ipv4Address, deadline, cancellationToken);
-                await EnrollHostKeyAsync(context, existing.Id, status.Ipv4Address, deadline, cancellationToken);
+                if (SshHostPins.Read(_sshOptions.HostKeyPinsFile, status.Ipv4Address).Count > 0)
+                {
+                    await RecordEventAsync(context.DeploymentId, EventLevel.Warning,
+                        $"SSH host-key enrollment is pending for server {existing.Id} ({status.Ipv4Address}); " +
+                        "using operator host-pins recovery. The SSH client must enforce that pin on every connection; enrollment remains pending.",
+                        cancellationToken);
+                }
+                else
+                {
+                    var deadline = DateTimeOffset.UtcNow + _options.SshReadyTimeout;
+                    await WaitForSshAsync(status.Ipv4Address, deadline, cancellationToken);
+                    await EnrollHostKeyAsync(context, existing.Id, status.Ipv4Address, deadline, cancellationToken);
+                }
             }
 
             context.ServerInstanceId = await SaveServerInstanceAsync(context, mapping,

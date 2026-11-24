@@ -181,7 +181,14 @@ and retry; an interrupted enrollment resumes on the next deployment.
 
 `ssh/host-pins` is only for hosts that the worker did not enroll. These include
 manually added servers, servers created before this enrollment existed, and
-servers rediscovered by name after the worker lost its creation record. Each
+servers rediscovered by name after the worker lost its creation record. It
+also recovers a worker-created server whose first-boot enrollment never
+completed: verify the current provider address and Ed25519 key out of band,
+add its pin, then retry deployment. The resolve step skips the proof wait and
+records a warning mentioning `host-pins`; each SSH connection still enforces
+the operator pin. The fingerprint stays unset and the enrollment secret is
+retained, so removing the entry resumes proof-based enrollment on a later
+deployment. A mismatching entry never authorizes the presented key. Each
 line is `<host> SHA256:<fingerprint>`; verify the fingerprint out of band before
 adding it. SSH trust is bound to the selected server record, which must be
 active, hold that address, and not share it with another active record.

@@ -347,6 +347,116 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         Assert.Equal("provider_provision_failed", ex.FailureCode);
     }
 
+    [SshdFact]
+    public async Task PendingEnrollmentRecoversThroughVerifiedOperatorHostPin()
+    {
+        await using var sshd = await ServerHostKeyEnrollmentTests.LocalSshd.StartAsync();
+        await sshd.WriteAsync("banner", "");
+        await sshd.ListenAsync();
+        var (org, app) = await _harness.SeedOrgAndAppAsync("operator-pin-recovery");
+        const string serverId = "abcdef0123456789abcdef0123456789";
+        var secret = ServerHostKeyEnrollment.CreateSecret();
+        var encryption = new SecretEncryptionService(Options.Create(new SecretEncryptionOptions
+        {
+            EncryptionKey = "synthetic-worker-test-key"
+        }));
+        var protectedSecret = encryption.Encrypt(Convert.ToHexString(secret));
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.ServerInstances.Add(new ServerInstance
+            {
+                Id = serverId, OrganizationId = org.Id, AppId = app.Id, Provider = "hetzner",
+                ProviderServerId = "provider-pending", IpAddress = "192.0.2.97", Region = "synthetic",
+                Status = "provisioning", BootstrapStatus = "pending", HostKeyEnrollmentSecret = protectedSecret
+            });
+            foreach (var id in new[] { "pin-unproven", "pin-wrong", "pin-recovered", "pin-enrolled" })
+            {
+                db.Deployments.Add(new Deployment
+                {
+                    Id = id, OrganizationId = org.Id, AppId = app.Id, Status = DeploymentStatus.Provisioning
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        var provider = new MockVpsProviderClient(
+            createServer: _ => throw new InvalidOperationException("Recovery must never provision."),
+            getServerStatus: id => Task.FromResult(new ProviderServerStatus(id, "running", "127.0.0.1", IsRunning: true)));
+        // Neither the old stored IP nor an entry for a different host can bypass enrollment.
+        var file = await sshd.WriteAsync("host-pins", $"192.0.2.97 {sshd.Fingerprint}\n");
+        var sshOptions = new SshDeploymentOptions { Port = sshd.Port, HostKeyPinsFile = file };
+        var probe = new LocalHostKeyProbe(sshd.Port);
+        var step = new ResolveProvisionServerStep(_harness.CreateScopeFactory(), _ => provider,
+            new DeploymentPipelineOptions { SshReadyTimeout = TimeSpan.FromMilliseconds(300) },
+            TimeProvider.System, sshProbe: (_, _, _) => Task.FromResult(true), hostKeyProbe: probe, sshOptions: sshOptions);
+
+        var failure = await Assert.ThrowsAsync<PipelineStepException>(() =>
+            step.ExecuteAsync(Context("pin-unproven"), default));
+        Assert.Equal("ssh_host_key_unverified", failure.FailureCode);
+        Assert.True(probe.Calls > 0);
+        var calls = probe.Calls;
+
+        var wrongFingerprint = "SHA256:" + Convert.ToBase64String(
+            System.Security.Cryptography.SHA256.HashData(ServerHostKeyEnrollmentTests.Ed25519Blob())).TrimEnd('=');
+        await sshd.WriteAsync("host-pins", $"127.0.0.1 {wrongFingerprint}\n");
+        var wrongContext = Context("pin-wrong");
+        await step.ExecuteAsync(wrongContext, default);
+        Assert.Equal(calls, probe.Calls);
+        var client = new SshDeploymentClient(sshOptions, pinSource: new ServerHostKeyPinSource(_harness.CreateScopeFactory()));
+        var mismatch = await Assert.ThrowsAsync<SshHostKeyTrustException>(() => client.ExecuteCommandAsync(
+            new SshTarget(wrongContext.ServerInstanceId, wrongContext.ServerIp), Environment.UserName, sshd.ClientPrivateKey,
+            "true", (_, _) => Task.CompletedTask, default));
+        Assert.Equal("ssh_host_key_mismatch", mismatch.FailureCode);
+
+        await sshd.WriteAsync("host-pins", $"127.0.0.1 {sshd.Fingerprint}\n");
+        var recovered = Context("pin-recovered");
+        await step.ExecuteAsync(recovered, default);
+        Assert.Equal(calls, probe.Calls);
+        Assert.Equal(serverId, recovered.ServerInstanceId);
+        Assert.Equal("127.0.0.1", recovered.ServerIp);
+        Assert.Equal(0, await client.ExecuteCommandAsync(new SshTarget(serverId, recovered.ServerIp),
+            Environment.UserName, sshd.ClientPrivateKey, "true", (_, _) => Task.CompletedTask, default));
+        await using (var db = _harness.CreateDbContext())
+        {
+            var pending = await db.ServerInstances.SingleAsync(s => s.Id == serverId);
+            Assert.Null(pending.HostKeyFingerprint);
+            Assert.Null(pending.HostKeyVerifiedAt);
+            Assert.Equal(protectedSecret, pending.HostKeyEnrollmentSecret);
+            Assert.Equal("active", pending.Status);
+            Assert.Contains(await db.DeploymentEvents.Where(e => e.DeploymentId == "pin-recovered").ToListAsync(),
+                e => e.Level == EventLevel.Warning && e.Message.Contains("host-pins"));
+        }
+
+        await sshd.WriteAsync("host-pins", "");
+        var untrusted = await Assert.ThrowsAsync<SshHostKeyTrustException>(() => client.ExecuteCommandAsync(
+            new SshTarget(serverId, "127.0.0.1"), Environment.UserName, sshd.ClientPrivateKey,
+            "true", (_, _) => Task.CompletedTask, default));
+        Assert.Equal("ssh_host_key_untrusted", untrusted.FailureCode);
+        var publicKey = (await File.ReadAllTextAsync(sshd.HostPublicKeyPath)).Split(' ')[1];
+        await sshd.WriteAsync("banner", ServerHostKeyEnrollmentTests.Banner(serverId, secret, Convert.FromBase64String(publicKey)));
+        await step.ExecuteAsync(Context("pin-enrolled"), default);
+        Assert.True(probe.Calls > calls);
+        await using var verify = _harness.CreateDbContext();
+        var enrolled = await verify.ServerInstances.SingleAsync(s => s.Id == serverId);
+        Assert.Equal(sshd.Fingerprint, enrolled.HostKeyFingerprint);
+        Assert.Null(enrolled.HostKeyEnrollmentSecret);
+
+        PipelineStepContext Context(string deploymentId) => new()
+        {
+            DeploymentId = deploymentId, OrganizationId = org.Id, AppId = app.Id
+        };
+    }
+
+    private sealed class LocalHostKeyProbe(int port) : IServerHostKeyProbe
+    {
+        public int Calls { get; private set; }
+        public Task<SshHostKeyObservation?> ObserveAsync(string host, int ignoredPort, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            Assert.Equal("127.0.0.1", host);
+            Calls++;
+            return new SshNetServerHostKeyProbe().ObserveAsync(host, port, timeout, cancellationToken);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
