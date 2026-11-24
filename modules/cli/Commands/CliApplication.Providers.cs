@@ -45,14 +45,15 @@ public sealed partial class CliApplication
         var organizationId = GetOption(args, "--organization");
         var name = GetOption(args, "--name");
         var provider = GetOption(args, "--provider")?.ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr"))
-            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr.");
+        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr" or "azure"))
+            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr|azure.");
         if (args.Any(x => x.StartsWith("--token", StringComparison.Ordinal) || x.StartsWith("--credential", StringComparison.Ordinal) || x.StartsWith("--api-key", StringComparison.Ordinal)))
             throw new CliCommandException(CliExitCodes.ValidationError, "Cloud credentials must be supplied through provider environment variables, never command arguments.");
         var credential = provider switch
         {
             "hetzner" => FirstEnvironmentValue("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
             "vultr" => FirstEnvironmentValue("VULTR_API_KEY", "VULTR_KEY"),
+            "azure" => AzureCredentialFromEnvironment(),
             _ => FirstEnvironmentValue("DIGITALOCEAN_ACCESS_TOKEN", "DIGITALOCEAN_TOKEN")
         };
         if (credential is null)
@@ -60,6 +61,7 @@ public sealed partial class CliApplication
             {
                 "hetzner" => "Set HCLOUD_TOKEN or HETZNER_API_TOKEN before adding this account.",
                 "vultr" => "Set VULTR_API_KEY or VULTR_KEY before adding this account.",
+                "azure" => "Set AZURE_CLIENT_ID and AZURE_CLIENT_SECRET before adding this account.",
                 _ => "Set DIGITALOCEAN_ACCESS_TOKEN or DIGITALOCEAN_TOKEN before adding this account."
             });
         var osValue = GetOption(args, "--os-id");
@@ -72,8 +74,15 @@ public sealed partial class CliApplication
                 throw new CliCommandException(CliExitCodes.ValidationError, "--os-id requires a positive integer.");
             osId = parsed;
         }
+        var tenantId = provider == "azure" ? GetOption(args, "--tenant-id") : null;
+        var subscriptionId = provider == "azure" ? GetOption(args, "--subscription-id") : null;
+        var resourceGroup = provider == "azure" ? GetOption(args, "--resource-group") : null;
+        if (provider == "azure" && (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(subscriptionId) || string.IsNullOrWhiteSpace(resourceGroup)))
+            throw new CliCommandException(CliExitCodes.ValidationError,
+                "Azure accounts require --tenant-id, --subscription-id and --resource-group. Set AZURE_CLIENT_ID and AZURE_CLIENT_SECRET in the process environment.");
         var account = await _apiClient.CreateProviderAsync(new(organizationId, name, provider == "digitalocean" ? "digital-ocean" : provider,
-            credential, GetOption(args, "--project-id") ?? (provider is "digital-ocean" or "digitalocean" ? FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID") : null), osId), ct);
+            credential, GetOption(args, "--project-id") ?? (provider is "digital-ocean" or "digitalocean" ? FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID") : null), osId,
+            tenantId, subscriptionId, resourceGroup), ct);
         _console.WriteLine($"Provider added: {account.Name} ({account.Id}, {account.ProviderType}).");
         return CliExitCodes.Success;
     }
@@ -126,4 +135,13 @@ public sealed partial class CliApplication
         && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString());
 
     private static string? FirstEnvironmentValue(params string[] names) => names.Select(Environment.GetEnvironmentVariable).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+    private static string? AzureCredentialFromEnvironment()
+    {
+        var clientId = FirstEnvironmentValue("AZURE_CLIENT_ID");
+        var clientSecret = FirstEnvironmentValue("AZURE_CLIENT_SECRET");
+        return string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret)
+            ? null
+            : JsonSerializer.Serialize(new { clientId, clientSecret });
+    }
 }

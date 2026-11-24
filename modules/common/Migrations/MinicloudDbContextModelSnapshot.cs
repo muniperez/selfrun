@@ -2928,6 +2928,18 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("text")
                         .HasColumnName("project_id");
 
+                    b.Property<string>("TenantId")
+                        .HasColumnType("text")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("SubscriptionId")
+                        .HasColumnType("text")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<string>("ResourceGroupName")
+                        .HasColumnType("text")
+                        .HasColumnName("resource_group_name");
+
                     b.Property<string>("ProviderType")
                         .IsRequired()
                         .HasColumnType("text")

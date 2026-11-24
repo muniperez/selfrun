@@ -233,7 +233,8 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
     }
     public static string? DefaultImage(CloudProvider type) => type switch
     {
-        CloudProvider.Hetzner => "ubuntu-24.04", CloudProvider.DigitalOcean => "ubuntu-24-04-x64", _ => null
+        CloudProvider.Hetzner => "ubuntu-24.04", CloudProvider.DigitalOcean => "ubuntu-24-04-x64",
+        CloudProvider.Azure => "Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest", _ => null
     };
 
     private static void ValidatePlacement(string region, string sku, string platform, string? image, CloudProvider provider)
@@ -241,10 +242,20 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         if (provider == CloudProvider.Vultr && !string.IsNullOrWhiteSpace(image)
             && (!int.TryParse(image.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var osId) || osId <= 0))
             throw new ProviderCatalogException("plan_mapping_invalid", "Vultr plan OS overrides must be positive numeric OS IDs.");
+        if (provider == CloudProvider.Azure && platform != "linux/amd64")
+            throw new ProviderCatalogException("plan_mapping_invalid", "Azure arm64 plans are gated until native image and VM-size qualification is complete.");
+        if (provider == CloudProvider.Azure && !string.IsNullOrWhiteSpace(image) && !IsAzureMarketplaceImage(image))
+            throw new ProviderCatalogException("plan_mapping_invalid", "Azure images must use a marketplace URN in publisher:offer:sku:version form.");
         if (string.IsNullOrWhiteSpace(region) || region.Length > 128 || region.Any(char.IsControl)
             || string.IsNullOrWhiteSpace(sku) || sku.Length > 128 || sku.Any(char.IsControl)
             || image is { Length: > 128 } || image?.Any(char.IsControl) == true
             || platform is not ("linux/amd64" or "linux/arm64"))
             throw new ProviderCatalogException("plan_mapping_invalid", "Specify a region, provider SKU, supported image and linux/amd64 or linux/arm64 platform.");
+    }
+
+    private static bool IsAzureMarketplaceImage(string image)
+    {
+        var parts = image.Split(':');
+        return parts.Length == 4 && parts.All(part => !string.IsNullOrWhiteSpace(part) && !part.Any(char.IsControl));
     }
 }

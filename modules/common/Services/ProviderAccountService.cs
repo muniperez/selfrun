@@ -14,14 +14,23 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     {
         ValidateName(request.Name);
         if (!TryParseType(request.ProviderType, out var type))
-            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean or Vultr.");
+            throw new ProviderCatalogException("provider_type_unsupported", "Select Hetzner, DigitalOcean, Vultr or Azure.");
         if (request.DefaultOsId is <= 0 || request.ProjectId is { Length: > 128 } || request.ProjectId?.Any(char.IsControl) == true)
             throw new ProviderCatalogException("provider_settings_invalid", "The provider account settings are invalid.");
+        if (type == CloudProvider.Azure && (!Guid.TryParse(request.TenantId, out _) ||
+            !Guid.TryParse(request.SubscriptionId, out _) || !IsResourceGroupName(request.ResourceGroupName)
+            || request.ProjectId is not null || request.DefaultOsId is not null))
+            throw new ProviderCatalogException("provider_settings_invalid", "Azure requires a tenant ID, subscription ID, and valid existing resource-group name.");
+        if (type != CloudProvider.Azure && (request.TenantId is not null || request.SubscriptionId is not null || request.ResourceGroupName is not null))
+            throw new ProviderCatalogException("provider_settings_invalid", "Azure account scope fields are only valid for Azure accounts.");
         var now = clock.GetUtcNow();
         var account = new ProviderAccount
         {
             Id = ids.NewId("provider"), OrganizationId = request.OrganizationId, Name = request.Name.Trim(), ProviderType = type,
             ProjectId = request.ProjectId, DefaultOsId = request.DefaultOsId ?? (type == CloudProvider.Vultr ? 2284 : null),
+            TenantId = type == CloudProvider.Azure ? request.TenantId!.Trim() : null,
+            SubscriptionId = type == CloudProvider.Azure ? request.SubscriptionId!.Trim() : null,
+            ResourceGroupName = type == CloudProvider.Azure ? request.ResourceGroupName!.Trim() : null,
             CreatedAt = now, UpdatedAt = now
         };
         var reference = await WriteCandidateAsync(account, request.Credential, ct);
@@ -199,10 +208,10 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
 
     public static bool TryParseType(string value, out CloudProvider type)
     {
-        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, _ => (CloudProvider)(-1) };
+        type = value?.ToLowerInvariant() switch { "hetzner" => CloudProvider.Hetzner, "digital-ocean" or "digitalocean" => CloudProvider.DigitalOcean, "vultr" => CloudProvider.Vultr, "azure" => CloudProvider.Azure, _ => (CloudProvider)(-1) };
         return Enum.IsDefined(type);
     }
-    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
+    public static string WireType(CloudProvider type) => type switch { CloudProvider.Hetzner => "hetzner", CloudProvider.DigitalOcean => "digital-ocean", CloudProvider.Vultr => "vultr", CloudProvider.Azure => "azure", _ => throw new ArgumentOutOfRangeException(nameof(type)) };
     private static string ServerName(string orgSlug, string appSlug) => ManagedServerName.ForApp(orgSlug, appSlug);
     private static ProviderCatalogException ScopeUnverified() => new("provider_scope_unverified", "Credentials could not be verified against all existing resources. Restore access to the original cloud scope before replacing credentials.");
     private static void ValidateName(string name)
@@ -210,4 +219,8 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 128 || name.Any(char.IsControl))
             throw new ProviderCatalogException("provider_name_invalid", "Use a provider name of 1 to 128 characters without control characters.");
     }
+
+    private static bool IsResourceGroupName(string? name) =>
+        !string.IsNullOrWhiteSpace(name) && name.Length <= 90 && name == name.Trim() && name[^1] != '.'
+        && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '(' or ')' or '-' or '.');
 }

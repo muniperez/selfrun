@@ -100,6 +100,7 @@ function formatProviderName(type: string, types: ProviderType[]) {
   if (type === "hetzner") return "Hetzner";
   if (type === "digital-ocean") return "DigitalOcean";
   if (type === "vultr") return "Vultr";
+  if (type === "azure") return "Microsoft Azure";
   return type;
 }
 
@@ -107,6 +108,7 @@ function providerShortMark(type: string) {
   if (type === "hetzner") return { text: "H", className: "bg-destructive/15 text-destructive" };
   if (type === "digital-ocean") return { text: "DO", className: "bg-info-surface text-info" };
   if (type === "vultr") return { text: "V", className: "bg-secondary text-foreground" };
+  if (type === "azure") return { text: "AZ", className: "bg-info-surface text-info" };
   return { text: type.slice(0, 1).toUpperCase() || "P", className: "bg-muted text-muted-foreground" };
 }
 
@@ -114,6 +116,7 @@ function regionExample(type: string) {
   if (type === "hetzner") return "nbg1";
   if (type === "digital-ocean") return "nyc3";
   if (type === "vultr") return "ewr";
+  if (type === "azure") return "eastus";
   return "nbg1";
 }
 
@@ -121,6 +124,7 @@ function skuExample(type: string) {
   if (type === "hetzner") return "cx23";
   if (type === "digital-ocean") return "s-1vcpu-1gb";
   if (type === "vultr") return "vc2-1c-1gb";
+  if (type === "azure") return "Standard_B2s";
   return "cx23";
 }
 
@@ -392,6 +396,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
           { value: "hetzner", label: "Hetzner" },
           { value: "digital-ocean", label: "DigitalOcean" },
           { value: "vultr", label: "Vultr" },
+          { value: "azure", label: "Microsoft Azure" },
         ];
     return knownTypes;
   }, [types]);
@@ -454,6 +459,9 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
             statusLabel,
             validationLabel,
             account.projectId ?? "",
+            account.tenantId ?? "",
+            account.subscriptionId ?? "",
+            account.resourceGroupName ?? "",
           ]
             .join(" ")
             .toLowerCase();
@@ -704,6 +712,9 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
       credential: string;
       projectId?: string;
       defaultOsId?: number;
+      tenantId?: string;
+      subscriptionId?: string;
+      resourceGroupName?: string;
     },
   ) {
     if (!organizationId) return;
@@ -728,6 +739,9 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
           credential: input.credential,
           projectId: input.projectId,
           defaultOsId: input.defaultOsId,
+          tenantId: input.tenantId,
+          subscriptionId: input.subscriptionId,
+          resourceGroupName: input.resourceGroupName,
         });
         if (currentOrgRef.current !== reqOrg) return;
         await refresh();
@@ -1215,7 +1229,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               }
             >
               {canManage
-                ? "Connect a Hetzner, DigitalOcean, or Vultr account to create named deployment plans."
+                ? "Connect a supported cloud account to create named deployment plans."
                 : "No provider accounts are configured yet. An organization owner or admin can connect provider accounts."}
             </EmptyState>
           ) : null}
@@ -1282,6 +1296,11 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                               {account.projectId ? (
                                 <div className="text-xs font-normal text-muted-foreground">
                                   Project: {account.projectId}
+                                </div>
+                              ) : null}
+                              {account.providerType === "azure" ? (
+                                <div className="text-xs font-normal text-muted-foreground">
+                                  Tenant: {account.tenantId} · subscription: {account.subscriptionId} · resource group: {account.resourceGroupName}
                                 </div>
                               ) : null}
                             </div>
@@ -1473,7 +1492,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                 <p>
                   {accounts.length > 0
                     ? "All configured provider accounts are currently disabled. Connect a new provider account or enable an existing account to create a plan."
-                    : "No provider accounts are connected to this organization yet. Connect a Hetzner, DigitalOcean, or Vultr account first."}
+                    : "No provider accounts are connected to this organization yet. Connect a supported cloud account first."}
                 </p>
               </div>
               <DialogFooter className="gap-2 sm:justify-end">
@@ -1709,6 +1728,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               ) : null}
               <CredentialDialogForm
                 accountName={editor.account.name}
+                providerType={editor.account.providerType}
                 busy={dialogBusy}
                 onCancel={closeEditor}
                 onSave={(credential) =>
@@ -2114,7 +2134,7 @@ function PlanDialogForm({
                 onChange={(event) => setPlatform(event.target.value)}
               >
                 <option value="linux/amd64">linux/amd64</option>
-                <option value="linux/arm64">linux/arm64</option>
+                {selectedProviderType !== "azure" ? <option value="linux/arm64">linux/arm64</option> : null}
               </select>
             </div>
           </div>
@@ -2154,6 +2174,9 @@ function AccountDialogForm({
     credential: string;
     projectId?: string;
     defaultOsId?: number;
+    tenantId?: string;
+    subscriptionId?: string;
+    resourceGroupName?: string;
   }) => Promise<void>;
 }) {
   const providerOptions = types.length
@@ -2162,6 +2185,7 @@ function AccountDialogForm({
         { type: "hetzner", name: "Hetzner", supportsStorage: true, defaultImage: "ubuntu-24.04" },
         { type: "digital-ocean", name: "DigitalOcean", supportsStorage: false, defaultImage: "ubuntu-24-04-x64" },
         { type: "vultr", name: "Vultr", supportsStorage: false, defaultImage: null, defaultOsId: 2284 },
+        { type: "azure", name: "Microsoft Azure", supportsStorage: false, defaultImage: "Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest" },
       ];
 
   const [name, setName] = useState(account?.name ?? "");
@@ -2177,18 +2201,27 @@ function AccountDialogForm({
         "",
     ),
   );
+  const [tenantId, setTenantId] = useState(account?.tenantId ?? "");
+  const [subscriptionId, setSubscriptionId] = useState(account?.subscriptionId ?? "");
+  const [resourceGroupName, setResourceGroupName] = useState(account?.resourceGroupName ?? "");
+  const [clientId, setClientId] = useState("");
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (conflictError) return;
-    const submittedCredential = credential;
+    const submittedCredential = type === "azure"
+      ? JSON.stringify({ clientId, clientSecret: credential })
+      : credential;
     setCredential("");
     await onSave({
       name,
       providerType: type,
       credential: submittedCredential,
-      projectId: projectId || undefined,
-      defaultOsId: osId ? Number(osId) : undefined,
+      projectId: type === "digital-ocean" ? projectId || undefined : undefined,
+      defaultOsId: type === "vultr" && osId ? Number(osId) : undefined,
+      tenantId: type === "azure" ? tenantId || undefined : undefined,
+      subscriptionId: type === "azure" ? subscriptionId || undefined : undefined,
+      resourceGroupName: type === "azure" ? resourceGroupName || undefined : undefined,
     });
   }
 
@@ -2264,7 +2297,7 @@ function AccountDialogForm({
           </div>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="provider-credential">API token or key</Label>
+            <Label htmlFor="provider-credential">{type === "azure" ? "Service principal client secret" : "API token or key"}</Label>
             <Input
               id="provider-credential"
               type="password"
@@ -2275,6 +2308,27 @@ function AccountDialogForm({
               onChange={(event) => setCredential(event.target.value)}
             />
           </div>
+
+          {type === "azure" ? (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="provider-azure-client-id">Service principal client ID</Label>
+                <Input id="provider-azure-client-id" required disabled={busy} value={clientId} onChange={(event) => setClientId(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="provider-azure-tenant-id">Tenant ID</Label>
+                <Input id="provider-azure-tenant-id" required disabled={busy} value={tenantId} onChange={(event) => setTenantId(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="provider-azure-subscription-id">Subscription ID</Label>
+                <Input id="provider-azure-subscription-id" required disabled={busy} value={subscriptionId} onChange={(event) => setSubscriptionId(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="provider-azure-resource-group">Existing resource group</Label>
+                <Input id="provider-azure-resource-group" required disabled={busy} value={resourceGroupName} onChange={(event) => setResourceGroupName(event.target.value)} />
+              </div>
+            </>
+          ) : null}
 
           {type === "digital-ocean" ? (
             <div className="grid gap-1.5">
@@ -2318,33 +2372,42 @@ function AccountDialogForm({
 
 function CredentialDialogForm({
   accountName,
+  providerType,
   busy,
   onCancel,
   onSave,
 }: {
   accountName: string;
+  providerType: string;
   busy: boolean;
   onCancel: () => void;
   onSave: (credential: string) => Promise<void>;
 }) {
   const [credential, setCredential] = useState("");
+  const [clientId, setClientId] = useState("");
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const value = credential;
     setCredential("");
-    void onSave(value);
+    void onSave(providerType === "azure" ? JSON.stringify({ clientId, clientSecret: value }) : value);
   }
 
   return (
     <form className="grid gap-4" onSubmit={handleSubmit}>
       <p className="text-sm text-muted-foreground">
-        Replace the API token or key for <strong className="font-medium text-foreground">{accountName}</strong>.
-        Use credentials for the same cloud account and project. A different cloud account
+        Replace the credential for <strong className="font-medium text-foreground">{accountName}</strong>.
+        Use credentials for the same cloud scope. A different cloud account
         requires a new provider entry.
       </p>
       <div className="grid gap-1.5">
-        <Label htmlFor="replacement-credential">New API token or key</Label>
+        <Label htmlFor="replacement-credential">{providerType === "azure" ? "New service principal client secret" : "New API token or key"}</Label>
+        {providerType === "azure" ? (
+          <div className="grid gap-1.5">
+            <Label htmlFor="replacement-client-id">Service principal client ID</Label>
+            <Input id="replacement-client-id" required autoComplete="off" disabled={busy} value={clientId} onChange={(event) => setClientId(event.target.value)} />
+          </div>
+        ) : null}
         <Input
           id="replacement-credential"
           type="password"

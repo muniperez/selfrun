@@ -287,10 +287,24 @@ public sealed class ProviderCatalogApiTests : IAsyncLifetime
     {
         using var client = Client();
         var types = (await client.GetFromJsonAsync<ProviderTypeResponse[]>("/api/provider-types"))!;
-        Assert.Equal(new[] { "digital-ocean", "hetzner", "vultr" }, types.Select(x => x.Type).OrderBy(x => x).ToArray());
+        Assert.Equal(new[] { "azure", "digital-ocean", "hetzner", "vultr" }, types.Select(x => x.Type).OrderBy(x => x).ToArray());
         Assert.True(types.Single(x => x.Type == "hetzner").SupportsStorage);
         Assert.All(types.Where(x => x.Type != "hetzner"), type => Assert.False(type.SupportsStorage));
+        Assert.Equal("Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest", types.Single(x => x.Type == "azure").DefaultImage);
         await ErrorAsync(await client.PostAsJsonAsync("/api/providers", new CreateProviderRequest(OrganizationId, "Unsupported", "arbitrary-provider", "synthetic-token")), "provider_type_unsupported");
+        Assert.Empty(_factory.Secrets.Values);
+        Assert.Empty(_factory.Cloud.Requests);
+    }
+
+    [Fact]
+    public async Task AzureAccountRequiresExplicitTenantSubscriptionAndResourceGroupScope()
+    {
+        using var client = Client();
+
+        await ErrorAsync(await client.PostAsJsonAsync("/api/providers", new CreateProviderRequest(
+            OrganizationId, "Azure", "azure", """{"clientId":"synthetic-client","clientSecret":"synthetic-secret"}""")),
+            "provider_settings_invalid");
+
         Assert.Empty(_factory.Secrets.Values);
         Assert.Empty(_factory.Cloud.Requests);
     }

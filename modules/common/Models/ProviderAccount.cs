@@ -12,6 +12,9 @@ public sealed class ProviderAccount
     public bool Enabled { get; set; } = true;
     public string? ProjectId { get; set; }
     public int? DefaultOsId { get; set; }
+    public string? TenantId { get; set; }
+    public string? SubscriptionId { get; set; }
+    public string? ResourceGroupName { get; set; }
     public string CredentialStoreProvider { get; set; } = "openbao";
     public string CredentialPath { get; set; } = default!;
     public string? CredentialVersion { get; set; }
