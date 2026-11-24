@@ -52,7 +52,7 @@ Or via the central registry feature-gate list (`ProviderRegistryOptions`):
 
 - All provider credentials remain **write-only** and are persisted exclusively in OpenBao under per-organization, per-account, per-generation paths.
 - Structured multi-field credentials are stored as compact single-line JSON (no control characters) and validated via `ProviderDescriptor.Credentials.ValidateCredential` **before** secret storage or cloud HTTP dispatch.
-- The CLI (`minicloud providers add`) reads provider credentials strictly from operator environment variables and never accepts secret values as command-line arguments.
+- The CLI (`selfrun providers add`, with legacy `minicloud` command alias) reads provider credentials strictly from operator environment variables (`SELFRUN_*` preferred, legacy `MINICLOUD_*` aliases supported) and never accepts secret values as command-line arguments.
 
 ---
 
@@ -66,8 +66,8 @@ Or via the central registry feature-gate list (`ProviderRegistryOptions`):
   ```json
   {"accessKeyId":"AKIA...","secretAccessKey":"...","sessionToken":"...","region":"us-east-1","accountId":"123456789012"}
   ```
-- **CLI environment variables**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, `AWS_DEFAULT_REGION`/`AWS_REGION`, `AWS_ACCOUNT_ID`.
-- **Minimum IAM permissions**: Scoped to Minicloud-tagged resources (`minicloud-managed=true`) where possible: `ec2:DescribeRegions`, `ec2:DescribeInstanceTypes`, `ec2:DescribeImages`, `ec2:DescribeInstances`, `ec2:RunInstances`, `ec2:TerminateInstances`, `ec2:CreateTags`, `ec2:DescribeKeyPairs`, `ec2:ImportKeyPair`, `ec2:DeleteKeyPair`, `ec2:CreateVolume`, `ec2:DescribeVolumes`, `ec2:AttachVolume`, `ec2:DetachVolume`, `ec2:DeleteVolume`, `servicequotas:ListServiceQuotas` (optional for quota snapshots).
+- **CLI environment variables**: `SELFRUN_AWS_CREDENTIAL_JSON` (or legacy `MINICLOUD_AWS_CREDENTIAL_JSON`), or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` with optional `AWS_SESSION_TOKEN`, `AWS_DEFAULT_REGION`/`AWS_REGION`, `AWS_ACCOUNT_ID`.
+- **Minimum IAM permissions**: Scoped to Selfrun-managed tagged resources (`minicloud-managed=true`) where possible: `ec2:DescribeRegions`, `ec2:DescribeInstanceTypes`, `ec2:DescribeImages`, `ec2:DescribeInstances`, `ec2:RunInstances`, `ec2:TerminateInstances`, `ec2:CreateTags`, `ec2:DescribeKeyPairs`, `ec2:ImportKeyPair`, `ec2:DeleteKeyPair`, `ec2:CreateVolume`, `ec2:DescribeVolumes`, `ec2:AttachVolume`, `ec2:DetachVolume`, `ec2:DeleteVolume`, `servicequotas:ListServiceQuotas` (optional for quota snapshots).
 - **Regions, SKUs, Images & Architectures**: Standard EC2 regions (e.g., `us-east-1`, `eu-central-1`), x86_64 (`t3.small`, `m6i.large`) and ARM64 Graviton (`t4g.small`, `m7g.large`) SKUs, Ubuntu 24.04 LTS AMI IDs per region/architecture.
 - **Boundary & cost notes**: Cross-account responses are rejected when `accountId` is configured. Deleting an instance does not automatically release standalone Elastic IPs or detached EBS volumes unless explicitly cleaned up.
 
@@ -78,11 +78,11 @@ Or via the central registry feature-gate list (`ProviderRegistryOptions`):
 - **Scope (`ProjectId`)**: `<subscriptionId>/<resourceGroup>` (required).
 - **Credential format (OpenBao JSON)**:
   ```json
-  {"tenantId":"...","clientId":"...","clientSecret":"...","subscriptionId":"...","resourceGroup":"rg-minicloud"}
+  {"tenantId":"...","clientId":"...","clientSecret":"...","subscriptionId":"...","resourceGroup":"rg-selfrun"}
   ```
-  *(Or `{"subscriptionId":"...","resourceGroup":"rg-minicloud","accessToken":"..."}` for Managed Identity / federated token injection.)*
-- **CLI environment variables**: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, plus either (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) or `AZURE_ACCESS_TOKEN`.
-- **Minimum RBAC permissions**: Scoped to the dedicated resource group (`rg-minicloud`) rather than the entire subscription: `Microsoft.Compute/virtualMachines/*`, `Microsoft.Compute/disks/*`, `Microsoft.Compute/sshPublicKeys/*`, `Microsoft.Network/networkInterfaces/*`, `Microsoft.Network/publicIPAddresses/*`, `Microsoft.Network/virtualNetworks/subnets/join/action`, `Microsoft.Compute/locations/usages/read`, `Microsoft.Compute/skus/read`.
+  *(Or `{"subscriptionId":"...","resourceGroup":"rg-selfrun","accessToken":"..."}` for Managed Identity / federated token injection.)*
+- **CLI environment variables**: `SELFRUN_AZURE_CREDENTIAL_JSON` (or legacy `MINICLOUD_AZURE_CREDENTIAL_JSON`), or `AZURE_SUBSCRIPTION_ID` and `AZURE_RESOURCE_GROUP` plus either (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) or `AZURE_ACCESS_TOKEN`.
+- **Minimum RBAC permissions**: Scoped to the dedicated resource group (`rg-selfrun`) rather than the entire subscription: `Microsoft.Compute/virtualMachines/*`, `Microsoft.Compute/disks/*`, `Microsoft.Compute/sshPublicKeys/*`, `Microsoft.Network/networkInterfaces/*`, `Microsoft.Network/publicIPAddresses/*`, `Microsoft.Network/virtualNetworks/subnets/join/action`, `Microsoft.Compute/locations/usages/read`, `Microsoft.Compute/skus/read`.
 - **Partial-allocation cleanup**: Creating an Azure VM allocates a Public IP and NIC before the VM. If VM creation fails (for example, `QuotaExceeded`), the adapter performs best-effort cleanup of the newly created NIC and Public IP in reverse order to prevent orphaned billable network resources.
 - **Boundary & limitations**: Subscription and resource-group prefixes are verified on every discovered resource; cross-RG or cross-subscription responses are rejected.
 
@@ -92,7 +92,7 @@ Or via the central registry feature-gate list (`ProviderRegistryOptions`):
 - **Auth**: SDK-independent RS256 OAuth2 JWT bearer assertion signed directly from a Service Account JSON key (with token caching), or pre-minted Workload Identity Federation `accessToken`.
 - **Scope (`ProjectId`)**: GCP `project_id` (required).
 - **Credential format (OpenBao JSON)**: Standard Google Cloud Service Account JSON (`client_email`, `private_key`, `project_id`, `token_uri`) compacted to a single line, or `{"projectId":"...","accessToken":"..."}`.
-- **CLI environment variables**: `GCP_SERVICE_ACCOUNT_JSON` (or `GOOGLE_APPLICATION_CREDENTIALS_JSON`) or `GCP_ACCESS_TOKEN` with `GCP_PROJECT_ID`/`GOOGLE_CLOUD_PROJECT`.
+- **CLI environment variables**: `SELFRUN_GCP_CREDENTIAL_JSON` (or legacy `MINICLOUD_GCP_CREDENTIAL_JSON`), `GCP_SERVICE_ACCOUNT_JSON` (or `GOOGLE_APPLICATION_CREDENTIALS_JSON`), or `GCP_ACCESS_TOKEN` with `GCP_PROJECT_ID`/`GOOGLE_CLOUD_PROJECT`.
 - **Minimum IAM permissions**: Custom role scoped to the project with `compute.instances.get`, `compute.instances.list`, `compute.instances.create`, `compute.instances.delete`, `compute.instances.attachDisk`, `compute.instances.detachDisk`, `compute.instances.setMetadata`, `compute.disks.*`, `compute.zones.list`, `compute.machineTypes.list`, `compute.images.list`, `compute.zoneOperations.get`, `compute.projects.get`.
 - **Discovery & safety**: Uses paginated `aggregated/instances` queries across zones, fails safely on duplicate names across zones, rejects cross-project `selfLink` responses, requires an explicit zone operation payload on create/delete, and rejects cross-zone disk attachment.
 
@@ -107,16 +107,16 @@ Or via the central registry feature-gate list (`ProviderRegistryOptions`):
   ```json
   {"applicationKey":"...","applicationSecret":"...","consumerKey":"...","projectId":"...","endpoint":"ovh-eu"}
   ```
-- **CLI environment variables**: `OVH_APPLICATION_KEY`, `OVH_APPLICATION_SECRET`, `OVH_CONSUMER_KEY`, optional `OVH_PROJECT_ID`, `OVH_ENDPOINT` (`ovh-eu`, `ovh-ca`, `ovh-us`).
+- **CLI environment variables**: `SELFRUN_OVH_CREDENTIAL_JSON` (or legacy `MINICLOUD_OVH_CREDENTIAL_JSON`), or `OVH_APPLICATION_KEY`, `OVH_APPLICATION_SECRET`, `OVH_CONSUMER_KEY`, optional `OVH_PROJECT_ID`, `OVH_ENDPOINT` (`ovh-eu`, `ovh-ca`, `ovh-us`).
 - **Bare-metal commercial ordering gate**: `OvhcloudOptions.AllowBareMetalCommercialOrdering` defaults to **`false`**. Attempting to order or cancel a billable dedicated server contract throws a `ProviderApiException` unless an operator explicitly opts in. Read-only dedicated server inventory/offer listing and Public Cloud VM operations do not trigger commercial bare-metal orders.
-- **Cost & lifecycle caveats**: Dedicated bare-metal servers have monthly/commitment billing cycles and multi-minute OS reinstall times that differ significantly from hourly Public Cloud VMs; Minicloud exposes `ComputeFamily.BareMetal` in `ProviderDescriptor.Capabilities.ComputeFamilies` so callers treat bare-metal separately from VPS auto-provisioning.
+- **Cost & lifecycle caveats**: Dedicated bare-metal servers have monthly/commitment billing cycles and multi-minute OS reinstall times that differ significantly from hourly Public Cloud VMs; Selfrun exposes `ComputeFamily.BareMetal` in `ProviderDescriptor.Capabilities.ComputeFamilies` so callers treat bare-metal separately from VPS auto-provisioning.
 
 ### 2.5 Akamai Connected Cloud / Linode (`linode`, `#350`)
 
 - **Compute & storage**: Linode Instances v4 (`IVpsProviderClient`), account SSH keys (`IVpsProviderSshKeyClient`), Block Storage Volumes (`IStorageVolumeProvider`), scope verification (`IVpsProviderScopeClient`), and region/type/image/quota discovery (`IVpsProviderCatalogDiscoveryClient`).
 - **Auth**: Personal Access Token (`Authorization: Bearer <token>`).
 - **Credential format (OpenBao)**: Raw Linode Personal Access Token string (or JSON `{"token":"..."}`).
-- **CLI environment variables**: `LINODE_TOKEN` or `LINODE_API_TOKEN`.
+- **CLI environment variables**: `SELFRUN_LINODE_TOKEN` (or legacy `MINICLOUD_LINODE_TOKEN`), `LINODE_TOKEN`, or `LINODE_API_TOKEN`.
 - **Minimum token scopes**: `linodes:read_write`, `volumes:read_write`, `account:read_only` (SSH key management requires `account:read_write`).
 - **Provisioning details**: Uses `X-Filter` headers for exact label discovery, passes cloud-init via base64 `metadata.user_data`, and generates an ephemeral cryptographic `root_pass` (never logged or persisted, and redacted if echoed) to satisfy Linode's instance creation requirement while relying on SSH keys for access.
 
@@ -129,8 +129,8 @@ Or via the central registry feature-gate list (`ProviderRegistryOptions`):
   ```json
   {"secretKey":"...","projectId":"...","defaultZone":"fr-par-1"}
   ```
-- **CLI environment variables**: `SCW_SECRET_KEY`, `SCW_DEFAULT_PROJECT_ID` (or `SCW_PROJECT_ID`), optional `SCW_DEFAULT_ZONE`.
-- **Multi-step provisioning & partial-failure reconciliation**: Scaleway instance launch requires three steps (`POST /servers` -> `PATCH /servers/{id}/user_data/cloud-init` -> `POST /servers/{id}/action` with `poweron`). If cloud-init staging or `poweron` fails after server creation, the adapter throws a `ProviderApiException` containing the created `zone/serverId` so Minicloud's reservation/reconciliation loop can inspect or clean up the stopped instance instead of leaking it.
+- **CLI environment variables**: `SELFRUN_SCALEWAY_CREDENTIAL_JSON` (or legacy `MINICLOUD_SCALEWAY_CREDENTIAL_JSON`), `SCW_SECRET_KEY`, or `SCALEWAY_SECRET_KEY`, with `SCW_DEFAULT_PROJECT_ID` (or `SCW_PROJECT_ID`/`SCALEWAY_PROJECT_ID`), optional `SCW_DEFAULT_ZONE`.
+- **Multi-step provisioning & partial-failure reconciliation**: Scaleway instance launch requires three steps (`POST /servers` -> `PATCH /servers/{id}/user_data/cloud-init` -> `POST /servers/{id}/action` with `poweron`). If cloud-init staging or `poweron` fails after server creation, the adapter throws a `ProviderApiException` containing the created `zone/serverId` so Selfrun's reservation/reconciliation loop can inspect or clean up the stopped instance instead of leaking it.
 - **Architectures**: Supports both `x86_64` (`DEV1-S`, `PRO2-*`) and `arm64` (`COPARM1-*`, `PLAY2-*`) commercial types across zones (`fr-par-1`, `nl-ams-1`, `pl-waw-1`).
 
 ---

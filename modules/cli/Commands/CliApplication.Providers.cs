@@ -70,12 +70,12 @@ public sealed partial class CliApplication
                 "hetzner" => "Set HCLOUD_TOKEN or HETZNER_API_TOKEN before adding this account.",
                 "vultr" => "Set VULTR_API_KEY or VULTR_KEY before adding this account.",
                 "digital-ocean" => "Set DIGITALOCEAN_ACCESS_TOKEN or DIGITALOCEAN_TOKEN before adding this account.",
-                "aws" => "Set MINICLOUD_AWS_CREDENTIAL_JSON or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY before adding this account.",
-                "azure" => "Set MINICLOUD_AZURE_CREDENTIAL_JSON or AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_SUBSCRIPTION_ID, and AZURE_RESOURCE_GROUP before adding this account.",
-                "gcp" => "Set MINICLOUD_GCP_CREDENTIAL_JSON before adding this account.",
-                "ovhcloud" => "Set MINICLOUD_OVH_CREDENTIAL_JSON or OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET, and OVH_CONSUMER_KEY before adding this account.",
-                "linode" => "Set LINODE_TOKEN or LINODE_API_TOKEN before adding this account.",
-                "scaleway" => "Set SCW_SECRET_KEY or SCALEWAY_SECRET_KEY before adding this account.",
+                "aws" => "Set SELFRUN_AWS_CREDENTIAL_JSON (or legacy MINICLOUD_AWS_CREDENTIAL_JSON) or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY before adding this account.",
+                "azure" => "Set SELFRUN_AZURE_CREDENTIAL_JSON (or legacy MINICLOUD_AZURE_CREDENTIAL_JSON) or AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP with AZURE_ACCESS_TOKEN or AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET before adding this account.",
+                "gcp" => "Set SELFRUN_GCP_CREDENTIAL_JSON (or legacy MINICLOUD_GCP_CREDENTIAL_JSON), GCP_SERVICE_ACCOUNT_JSON, GOOGLE_APPLICATION_CREDENTIALS_JSON, or GCP_ACCESS_TOKEN before adding this account.",
+                "ovhcloud" => "Set SELFRUN_OVH_CREDENTIAL_JSON (or legacy MINICLOUD_OVH_CREDENTIAL_JSON) or OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET, and OVH_CONSUMER_KEY before adding this account.",
+                "linode" => "Set SELFRUN_LINODE_TOKEN (or legacy MINICLOUD_LINODE_TOKEN), LINODE_TOKEN, or LINODE_API_TOKEN before adding this account.",
+                "scaleway" => "Set SELFRUN_SCALEWAY_CREDENTIAL_JSON (or legacy MINICLOUD_SCALEWAY_CREDENTIAL_JSON), SCW_SECRET_KEY, or SCALEWAY_SECRET_KEY before adding this account.",
                 _ => "Set the provider credential environment variable before adding this account."
             });
         var osValue = GetOption(args, "--os-id");
@@ -100,7 +100,7 @@ public sealed partial class CliApplication
         "azure" => (FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"), FirstEnvironmentValue("AZURE_RESOURCE_GROUP")) is ({ } sub, { } rg) ? $"{sub}/{rg}" : FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"),
         "gcp" => FirstEnvironmentValue("GCP_PROJECT_ID", "GOOGLE_CLOUD_PROJECT"),
         "ovhcloud" => FirstEnvironmentValue("OVH_PROJECT_ID", "OS_TENANT_ID"),
-        "scaleway" => FirstEnvironmentValue("SCW_DEFAULT_PROJECT_ID", "SCALEWAY_PROJECT_ID"),
+        "scaleway" => FirstEnvironmentValue("SCW_DEFAULT_PROJECT_ID", "SCW_PROJECT_ID", "SCALEWAY_PROJECT_ID"),
         _ => null
     };
 
@@ -109,7 +109,7 @@ public sealed partial class CliApplication
         "hetzner" => FirstEnvironmentValue("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
         "vultr" => FirstEnvironmentValue("VULTR_API_KEY", "VULTR_KEY"),
         "digital-ocean" => FirstEnvironmentValue("DIGITALOCEAN_ACCESS_TOKEN", "DIGITALOCEAN_TOKEN"),
-        "aws" => FirstEnvironmentValue("MINICLOUD_AWS_CREDENTIAL_JSON")
+        "aws" => FirstEnvironmentValue("SELFRUN_AWS_CREDENTIAL_JSON", "MINICLOUD_AWS_CREDENTIAL_JSON")
             ?? ((FirstEnvironmentValue("AWS_ACCESS_KEY_ID"), FirstEnvironmentValue("AWS_SECRET_ACCESS_KEY")) is ({ } ak, { } sk)
                 ? JsonSerializer.Serialize(new
                 {
@@ -120,31 +120,47 @@ public sealed partial class CliApplication
                     region = FirstEnvironmentValue("AWS_REGION", "AWS_DEFAULT_REGION")
                 })
                 : null),
-        "azure" => FirstEnvironmentValue("MINICLOUD_AZURE_CREDENTIAL_JSON")
-            ?? ((FirstEnvironmentValue("AZURE_TENANT_ID"), FirstEnvironmentValue("AZURE_CLIENT_ID"), FirstEnvironmentValue("AZURE_CLIENT_SECRET"),
-                FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"), FirstEnvironmentValue("AZURE_RESOURCE_GROUP")) is ({ } tid, { } cid, { } csec, { } sub, { } rg)
+        "azure" => FirstEnvironmentValue("SELFRUN_AZURE_CREDENTIAL_JSON", "MINICLOUD_AZURE_CREDENTIAL_JSON")
+            ?? ((FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"), FirstEnvironmentValue("AZURE_RESOURCE_GROUP")) is ({ } sub, { } rg)
+                ? (FirstEnvironmentValue("AZURE_ACCESS_TOKEN") is { } token
+                    ? JsonSerializer.Serialize(new
+                    {
+                        subscriptionId = sub,
+                        resourceGroup = rg,
+                        accessToken = token
+                    })
+                    : (FirstEnvironmentValue("AZURE_TENANT_ID"), FirstEnvironmentValue("AZURE_CLIENT_ID"), FirstEnvironmentValue("AZURE_CLIENT_SECRET")) is ({ } tid, { } cid, { } csec)
+                        ? JsonSerializer.Serialize(new
+                        {
+                            tenantId = tid,
+                            clientId = cid,
+                            clientSecret = csec,
+                            subscriptionId = sub,
+                            resourceGroup = rg
+                        })
+                        : null)
+                : null),
+        "gcp" => FirstEnvironmentValue("SELFRUN_GCP_CREDENTIAL_JSON", "MINICLOUD_GCP_CREDENTIAL_JSON", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_APPLICATION_CREDENTIALS_JSON")
+            ?? (FirstEnvironmentValue("GCP_ACCESS_TOKEN") is { } gcpToken && (projectId ?? FirstEnvironmentValue("GCP_PROJECT_ID", "GOOGLE_CLOUD_PROJECT")) is { } gcpProject
                 ? JsonSerializer.Serialize(new
                 {
-                    tenantId = tid,
-                    clientId = cid,
-                    clientSecret = csec,
-                    subscriptionId = sub,
-                    resourceGroup = rg
+                    projectId = gcpProject,
+                    accessToken = gcpToken
                 })
                 : null),
-        "gcp" => FirstEnvironmentValue("MINICLOUD_GCP_CREDENTIAL_JSON"),
-        "ovhcloud" => FirstEnvironmentValue("MINICLOUD_OVH_CREDENTIAL_JSON")
+        "ovhcloud" => FirstEnvironmentValue("SELFRUN_OVH_CREDENTIAL_JSON", "MINICLOUD_OVH_CREDENTIAL_JSON")
             ?? ((FirstEnvironmentValue("OVH_APPLICATION_KEY"), FirstEnvironmentValue("OVH_APPLICATION_SECRET"), FirstEnvironmentValue("OVH_CONSUMER_KEY")) is ({ } ak, { } asec, { } ck)
                 ? JsonSerializer.Serialize(new
                 {
                     applicationKey = ak,
                     applicationSecret = asec,
                     consumerKey = ck,
-                    projectId = projectId ?? FirstEnvironmentValue("OVH_PROJECT_ID")
+                    projectId = projectId ?? FirstEnvironmentValue("OVH_PROJECT_ID"),
+                    endpoint = FirstEnvironmentValue("OVH_ENDPOINT")
                 })
                 : null),
-        "linode" => FirstEnvironmentValue("LINODE_TOKEN", "LINODE_API_TOKEN"),
-        "scaleway" => FirstEnvironmentValue("MINICLOUD_SCALEWAY_CREDENTIAL_JSON", "SCW_SECRET_KEY", "SCALEWAY_SECRET_KEY"),
+        "linode" => FirstEnvironmentValue("SELFRUN_LINODE_TOKEN", "MINICLOUD_LINODE_TOKEN", "LINODE_TOKEN", "LINODE_API_TOKEN"),
+        "scaleway" => FirstEnvironmentValue("SELFRUN_SCALEWAY_CREDENTIAL_JSON", "MINICLOUD_SCALEWAY_CREDENTIAL_JSON", "SCW_SECRET_KEY", "SCALEWAY_SECRET_KEY"),
         _ => null
     };
 
