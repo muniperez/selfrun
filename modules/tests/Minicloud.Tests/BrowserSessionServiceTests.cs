@@ -180,6 +180,145 @@ public sealed class BrowserSessionServiceTests
     }
 
     [Fact]
+    public async Task ReauthenticationReplacementRollsBackRetirementWhenTheInsertFails()
+    {
+        await using var model = await Race.StartAsync();
+        var expected = (await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!;
+        model.RejectInsert = true;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => model.Renewing.ReauthenticateAsync(
+            expected, "kratos_session_2", CancellationToken.None));
+
+        var stored = await model.StoredAsync();
+        Assert.Null(stored.RevokedAt);
+        Assert.Equal(expected.TokenHash, stored.TokenHash);
+        Assert.Equal(expected.IdleExpiresAt, stored.IdleExpiresAt);
+
+        model.RejectInsert = false;
+        var retry = await model.Renewing.ReauthenticateAsync(expected, "kratos_session_2", CancellationToken.None);
+        Assert.Equal(BrowserSessionWriteOutcome.Applied, retry.Outcome);
+        Assert.NotNull(retry.Created);
+        Assert.NotNull((await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!.RevokedAt);
+        Assert.Null((await model.Renewing.FindCommittedAsync(retry.Created.Session.Id, CancellationToken.None))!.RevokedAt);
+    }
+
+    [Fact]
+    public async Task ReauthenticationCannotReplaceAnAlreadyCommittedUpstreamBinding()
+    {
+        await using var model = await Race.StartAsync();
+        var expected = (await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!;
+        var existing = await model.Competitor().CreateAsync(
+            "usr_1", "identity_1", "kratos_session_2", remembered: true, CancellationToken.None);
+
+        var result = await model.Renewing.ReauthenticateAsync(expected, "kratos_session_2", CancellationToken.None);
+
+        Assert.Equal(BrowserSessionWriteOutcome.Superseded, result.Outcome);
+        Assert.Null(result.Created);
+        var original = (await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!;
+        var untouched = (await model.Renewing.FindCommittedAsync(existing.Session.Id, CancellationToken.None))!;
+        Assert.Null(original.RevokedAt);
+        Assert.Equal(expected.TokenHash, original.TokenHash);
+        Assert.Null(untouched.RevokedAt);
+        Assert.Equal(existing.Session.TokenHash, untouched.TokenHash);
+        Assert.True(untouched.Persistent);
+    }
+
+    [Theory]
+    [InlineData(false, "logout")]
+    [InlineData(true, "logout")]
+    [InlineData(false, "renewal")]
+    [InlineData(true, "renewal")]
+    [InlineData(false, "rotation")]
+    [InlineData(true, "rotation")]
+    [InlineData(false, "preference")]
+    [InlineData(true, "preference")]
+    public async Task ReauthenticationConditionalWritePreservesACommittedStateChange(bool replaceBinding, string change)
+    {
+        await using var model = await Race.StartAsync();
+        var expected = (await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!;
+        model.Clock.Advance(TimeSpan.FromMinutes(90));
+        BrowserSession? committed = null;
+        model.BeforeTransaction = async () =>
+        {
+            var writer = model.Competitor();
+            switch (change)
+            {
+                case "logout":
+                    await writer.RevokeAsync(model.Created.Cookie, CancellationToken.None);
+                    break;
+                case "renewal":
+                    Assert.Equal(BrowserSessionWriteOutcome.Applied,
+                        (await writer.RenewAsync(model.Id, model.Generation, null, CancellationToken.None)).Outcome);
+                    break;
+                case "rotation":
+                    await writer.CreateOrRotateAsync("usr_1", "identity_1", "kratos_session_1", CancellationToken.None);
+                    break;
+                case "preference":
+                    Assert.Equal(BrowserSessionWriteOutcome.Applied,
+                        (await writer.SetRememberedAsync(model.Id, model.Generation, true, CancellationToken.None)).Outcome);
+                    break;
+            }
+            committed = await model.StoredAsync();
+        };
+
+        var result = await model.Renewing.ReauthenticateAsync(
+            expected, replaceBinding ? "kratos_session_2" : "kratos_session_1", CancellationToken.None);
+
+        Assert.Equal(BrowserSessionWriteOutcome.Conflict, result.Outcome);
+        Assert.Null(result.Created);
+        var stored = await model.StoredAsync();
+        Assert.NotNull(committed);
+        Assert.Equal(committed.TokenHash, stored.TokenHash);
+        Assert.Equal(committed.CsrfTokenHash, stored.CsrfTokenHash);
+        Assert.Equal(committed.RevokedAt, stored.RevokedAt);
+        Assert.Equal(committed.Persistent, stored.Persistent);
+        Assert.Equal(committed.CreatedAt, stored.CreatedAt);
+        Assert.Equal(committed.RenewedAt, stored.RenewedAt);
+        Assert.Equal(committed.IdleExpiresAt, stored.IdleExpiresAt);
+        Assert.Equal(committed.ExpiresAt, stored.ExpiresAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReauthenticationDoesNotAdoptAnEarlierRenewalOfTheInitiatingState(bool replaceBinding)
+    {
+        await using var model = await Race.StartAsync();
+        var expected = (await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!;
+        model.Clock.Advance(TimeSpan.FromMinutes(90));
+        var renewed = await model.Competitor().RenewAsync(model.Id, model.Generation, null, CancellationToken.None);
+
+        var result = await model.Renewing.ReauthenticateAsync(
+            expected, replaceBinding ? "kratos_session_2" : "kratos_session_1", CancellationToken.None);
+
+        Assert.Equal(BrowserSessionWriteOutcome.Conflict, result.Outcome);
+        Assert.Null(result.Created);
+        var stored = await model.StoredAsync();
+        Assert.Null(stored.RevokedAt);
+        Assert.Equal(expected.TokenHash, stored.TokenHash);
+        Assert.Equal(renewed.Session!.IdleExpiresAt, stored.IdleExpiresAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReauthenticationEndsAnExpiredInitiatingStateWithoutIssuingAReplacement(bool replaceBinding)
+    {
+        await using var model = await Race.StartAsync();
+        var expected = (await model.Renewing.FindCommittedAsync(model.Id, CancellationToken.None))!;
+        model.Clock.Advance(TimeSpan.FromHours(2));
+
+        var result = await model.Renewing.ReauthenticateAsync(
+            expected, replaceBinding ? "kratos_session_2" : "kratos_session_1", CancellationToken.None);
+
+        Assert.Equal(BrowserSessionWriteOutcome.Expired, result.Outcome);
+        Assert.Null(result.Created);
+        var stored = await model.StoredAsync();
+        Assert.Equal(model.Clock.GetUtcNow(), stored.RevokedAt);
+        Assert.Equal(expected.TokenHash, stored.TokenHash);
+    }
+
+    [Fact]
     public async Task RenewalRacingLogoutCannotRestoreTheSession()
     {
         await using var race = await Race.StartAsync();
@@ -480,13 +619,16 @@ public sealed class BrowserSessionServiceTests
     {
         private readonly SqliteConnection _connection;
         private readonly BeforeSessionWrite _interceptor;
+        private readonly BeforeSessionTransaction _transactionInterceptor;
         private readonly IOptions<PortalSessionOptions> _policy = Options.Create(new PortalSessionOptions());
         private readonly List<MinicloudDbContext> _contexts = [];
 
-        private Race(SqliteConnection connection, BeforeSessionWrite interceptor, MinicloudDbContext renewingDb)
+        private Race(SqliteConnection connection, BeforeSessionWrite interceptor,
+            BeforeSessionTransaction transactionInterceptor, MinicloudDbContext renewingDb)
         {
             _connection = connection;
             _interceptor = interceptor;
+            _transactionInterceptor = transactionInterceptor;
             _contexts.Add(renewingDb);
             Renewing = new BrowserSessionService(renewingDb, new IdGenerator(), Clock, _policy);
         }
@@ -497,21 +639,43 @@ public sealed class BrowserSessionServiceTests
         public string Id => Created.Session.Id;
         public string Generation => Created.Session.TokenHash;
         public Func<Task>? BeforeWrite { set => _interceptor.Competing = value; }
+        public Func<Task>? BeforeTransaction { set => _transactionInterceptor.Competing = value; }
+        public bool RejectInsert { set => _interceptor.RejectInsert = value; }
 
         public static async Task<Race> StartAsync(bool remembered = false)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
             var interceptor = new BeforeSessionWrite();
+            var transactionInterceptor = new BeforeSessionTransaction();
             var renewingDb = new MinicloudDbContext(new DbContextOptionsBuilder<MinicloudDbContext>()
-                .UseSqlite(connection).AddInterceptors(interceptor).Options);
+                .UseSqlite(connection).AddInterceptors(interceptor, transactionInterceptor).Options);
             await renewingDb.Database.EnsureCreatedAsync();
             renewingDb.Users.Add(new User { Id = "usr_1", KratosIdentityId = "identity_1", Email = "user@example.test" });
             await renewingDb.SaveChangesAsync();
-            var race = new Race(connection, interceptor, renewingDb);
+            var race = new Race(connection, interceptor, transactionInterceptor, renewingDb);
             race.Created = await race.Competitor().CreateAsync(
                 "usr_1", "identity_1", "kratos_session_1", remembered, CancellationToken.None);
             return race;
+        }
+
+        private sealed class BeforeSessionTransaction : DbTransactionInterceptor
+        {
+            public Func<Task>? Competing { get; set; }
+
+            public override async ValueTask<InterceptionResult<DbTransaction>> TransactionStartingAsync(
+                DbConnection connection,
+                TransactionStartingEventData eventData,
+                InterceptionResult<DbTransaction> result,
+                CancellationToken cancellationToken = default)
+            {
+                if (Competing is { } competing)
+                {
+                    Competing = null;
+                    await competing();
+                }
+                return result;
+            }
         }
 
         /// <summary>A separate request, with its own change tracker.</summary>
@@ -539,6 +703,18 @@ public sealed class BrowserSessionServiceTests
     private sealed class BeforeSessionWrite : DbCommandInterceptor
     {
         public Func<Task>? Competing { get; set; }
+        public bool RejectInsert { get; set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (RejectInsert && command.CommandText.Contains("INSERT INTO \"browser_sessions\"", StringComparison.Ordinal))
+                throw new DbUpdateException("Synthetic session insert failure.");
+            return ValueTask.FromResult(result);
+        }
 
         public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
             DbCommand command,

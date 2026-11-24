@@ -166,7 +166,9 @@ public sealed class AccountFlowsController(
                 : null;
             if (reauthentication)
             {
-                if (current is null || current.UserId != principal!.UserId || current.RevokedAt is not null)
+                if (current is null || current.UserId != principal!.UserId || current.RevokedAt is not null ||
+                    sessions.IsExpired(current) ||
+                    sessions.GetCsrfToken(current, Request.Cookies[BrowserSessionCookie.Name] ?? "") is null)
                     return EndpointResults.Problem("unauthenticated", "A browser session is required.", 401);
                 if (operation != "start")
                 {
@@ -202,7 +204,7 @@ public sealed class AccountFlowsController(
                 return Results.Ok(new AccountFlowResponse(result.Flow, null));
             }
             var (session, problem) = await AdmitAsync(kind, principal, result.IdentityId, result.SessionId, result.Cookies,
-                keepSignedIn, cancellationToken);
+                keepSignedIn, cancellationToken, current);
             return problem ?? Results.Ok(new AccountFlowResponse(null, session));
         }
         catch (AccountFlowException exception)
@@ -217,18 +219,8 @@ public sealed class AccountFlowsController(
 
     private async Task<(AccountSessionResponse? Session, IResult? Problem)> AdmitAsync(string kind, ControlPlanePrincipal? principal,
         string identityId, string sessionId, IReadOnlyDictionary<string, string> cookies, bool? keepSignedIn,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Minicloud.Common.Models.BrowserSession? initiatingSession = null)
     {
-        if (kind == "reauthentication")
-        {
-            var current = principal?.BrowserSessionId is { } currentId
-                ? await sessions.FindCommittedAsync(currentId, cancellationToken)
-                : null;
-            if (current is null || current.UserId != principal?.UserId || current.RevokedAt is not null ||
-                sessions.IsExpired(current) ||
-                sessions.GetCsrfToken(current, Request.Cookies[BrowserSessionCookie.Name] ?? "") is null)
-                return (null, EndpointResults.Problem("unauthenticated", "A browser session is required.", 401));
-        }
         var user = await db.Users.SingleOrDefaultAsync(x => x.KratosIdentityId == identityId, cancellationToken);
         if (user is null || (kind is "settings" or "reauthentication" || kind == "login" && principal?.IsDashboardUser == true) &&
             user.Id != principal?.UserId)
@@ -244,25 +236,40 @@ public sealed class AccountFlowsController(
                 await db.SaveChangesAsync(cancellationToken);
             }
         }
-        else if (kind is "settings" or "reauthentication" && principal?.BrowserSessionId is { } currentSessionId)
+        else if (kind == "settings" && principal?.BrowserSessionId is { } currentSessionId)
         {
             remembered = (await sessions.FindByIdAsync(currentSessionId, cancellationToken))?.Persistent == true;
         }
-        if (kind is "settings" or "recovery")
+        CreatedBrowserSession created;
+        if (kind == "reauthentication")
         {
-            var previous = await db.BrowserSessions.AsNoTracking()
-                .Where(x => x.UserId == user.Id && x.RevokedAt == null)
-                .Select(x => x.KratosSessionId).Distinct().ToListAsync(cancellationToken);
-            await sessions.RevokeUserSessionsAsync(user.Id, cancellationToken);
-            await grafanaSessions.RevokeUserSessionsAsync(user.Id, cancellationToken);
-            foreach (var upstreamId in previous.Where(x => x != sessionId))
-                await kratosSessions.RevokeSessionAsync(upstreamId, cancellationToken);
+            if (initiatingSession is null)
+                return (null, EndpointResults.Problem("unauthenticated", "A browser session is required.", 401));
+            var rotation = await sessions.ReauthenticateAsync(initiatingSession, sessionId, cancellationToken);
+            if (rotation.Created is not { } replacement)
+                return rotation.Outcome == BrowserSessionWriteOutcome.Conflict
+                    ? (null, EndpointResults.Problem("session_conflict", "The browser session changed. Try again.", 409))
+                    : (null, EndpointResults.Problem("unauthenticated", "A browser session is required.", 401));
+            created = replacement;
         }
-        else if (Request.Cookies.TryGetValue("__Host-minicloud-session", out var oldCookie))
+        else
         {
-            await sessions.RevokeAsync(oldCookie, cancellationToken);
+            if (kind is "settings" or "recovery")
+            {
+                var previous = await db.BrowserSessions.AsNoTracking()
+                    .Where(x => x.UserId == user.Id && x.RevokedAt == null)
+                    .Select(x => x.KratosSessionId).Distinct().ToListAsync(cancellationToken);
+                await sessions.RevokeUserSessionsAsync(user.Id, cancellationToken);
+                await grafanaSessions.RevokeUserSessionsAsync(user.Id, cancellationToken);
+                foreach (var upstreamId in previous.Where(x => x != sessionId))
+                    await kratosSessions.RevokeSessionAsync(upstreamId, cancellationToken);
+            }
+            else if (Request.Cookies.TryGetValue("__Host-minicloud-session", out var oldCookie))
+            {
+                await sessions.RevokeAsync(oldCookie, cancellationToken);
+            }
+            created = await sessions.CreateOrRotateAsync(user.Id, identityId, sessionId, remembered, cancellationToken);
         }
-        var created = await sessions.CreateOrRotateAsync(user.Id, identityId, sessionId, remembered, cancellationToken);
         WriteCookies(cookies);
         var deadlines = sessions.GetDeadlines(created.Session);
         BrowserSessionCookie.Append(Response, created.Cookie, deadlines);

@@ -1447,11 +1447,16 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ReauthenticationChecksReturnedIdentityBeforeReplacingStateAndPreservesRememberMe(bool differentIdentity)
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public async Task ReauthenticationChecksReturnedIdentityBeforeReplacingStateAndPreservesRememberMe(
+        bool differentIdentity, bool changedUpstreamSession, bool remembered)
     {
-        using var login = Submit("login", LoginFields(), keepSignedIn: true);
+        using var login = Submit("login", LoginFields(), keepSignedIn: remembered);
         var loggedIn = await _client.SendAsync(login);
         var cookie = LocalCookie(loggedIn);
         var csrf = (await loggedIn.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.CsrfToken;
@@ -1467,7 +1472,9 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             await db.SaveChangesAsync();
             _factory.Upstream.Identity = "44444444-2222-4333-8444-555555555555";
         }
-        using var submit = Submit("reauthentication", LoginFields(), cookie + "; " + binding, keepSignedIn: false);
+        if (changedUpstreamSession)
+            _factory.Upstream.UpstreamSessionId = "55555555-2222-4333-8444-555555555555";
+        using var submit = Submit("reauthentication", LoginFields(), cookie + "; " + binding, keepSignedIn: !remembered);
         submit.Headers.Add("X-Minicloud-CSRF", csrf);
         var response = await _client.SendAsync(submit);
         Assert.Equal(differentIdentity ? HttpStatusCode.Forbidden : HttpStatusCode.OK, response.StatusCode);
@@ -1479,8 +1486,26 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         }
         else
         {
-            Assert.True((await response.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.KeepSignedIn);
-            Assert.NotEqual(cookie, LocalCookie(response));
+            var session = (await response.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!;
+            Assert.Equal(remembered, session.KeepSignedIn);
+            Assert.Equal(remembered, session.KeepSignedInPreference);
+            Assert.NotEqual(csrf, session.CsrfToken);
+            var replacementCookie = LocalCookie(response);
+            Assert.NotEqual(cookie, replacementCookie);
+            using var check = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+            check.Headers.Add("Cookie", replacementCookie);
+            var active = await _client.SendAsync(check);
+            Assert.Equal(HttpStatusCode.OK, active.StatusCode);
+            Assert.Equal(session.CsrfToken, (await active.Content.ReadFromJsonAsync<AccountSessionResponse>())!.CsrfToken);
+            await using var scope = _factory.Services.CreateAsyncScope();
+            var rows = await scope.ServiceProvider.GetRequiredService<MinicloudDbContext>()
+                .BrowserSessions.AsNoTracking().ToListAsync();
+            Assert.Equal(changedUpstreamSession ? 2 : 1, rows.Count);
+            var live = Assert.Single(rows, row => row.RevokedAt is null);
+            Assert.Equal(remembered, live.Persistent);
+            Assert.Equal(_factory.Upstream.UpstreamSessionId, live.KratosSessionId);
+            if (changedUpstreamSession)
+                Assert.NotNull(rows.Single(row => row.KratosSessionId == SessionId).RevokedAt);
         }
     }
 

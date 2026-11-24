@@ -9,6 +9,8 @@ namespace Minicloud.Common.Services;
 
 public sealed record CreatedBrowserSession(string Cookie, string CsrfToken, BrowserSession Session);
 
+public sealed record BrowserSessionRotation(BrowserSessionWriteOutcome Outcome, CreatedBrowserSession? Created);
+
 /// <summary>Effective deadlines of a session under the current operator policy.</summary>
 /// <param name="RenewAfter">Earliest time a renewal is accepted; null once the idle window can no longer grow.</param>
 public sealed record BrowserSessionDeadlines(
@@ -32,7 +34,9 @@ public enum BrowserSessionWriteOutcome
     /// <summary>The session was revoked, logged out or removed by someone else.</summary>
     Revoked,
     /// <summary>The session had passed a deadline; this call revoked it.</summary>
-    Expired
+    Expired,
+    /// <summary>The initiating state changed; the caller must start again from the committed session.</summary>
+    Conflict
 }
 
 /// <param name="Session">The committed state when the generation is still active; otherwise null.</param>
@@ -70,6 +74,15 @@ public sealed class BrowserSessionService(
             throw new InvalidOperationException("The identity is not bound to this Minicloud user.");
         }
 
+        var created = NewSession(userId, kratosIdentityId, kratosSessionId, remembered);
+        db.BrowserSessions.Add(created.Session);
+        await db.SaveChangesAsync(cancellationToken);
+        return created;
+    }
+
+    private CreatedBrowserSession NewSession(
+        string userId, string kratosIdentityId, string kratosSessionId, bool remembered)
+    {
         var now = timeProvider.GetUtcNow();
         var cookie = CreateSecret();
         var sessionId = ids.NewId("bsess");
@@ -84,8 +97,6 @@ public sealed class BrowserSessionService(
             CsrfTokenHash = HashSecret(csrfToken)
         };
         StartLifetime(session, remembered, now);
-        db.BrowserSessions.Add(session);
-        await db.SaveChangesAsync(cancellationToken);
         return new CreatedBrowserSession(cookie, csrfToken, session);
     }
 
@@ -365,6 +376,87 @@ public sealed class BrowserSessionService(
         RevokedAt = session.RevokedAt,
         User = session.User
     };
+
+    /// <summary>
+    /// Reauthenticates only the live state captured before identity confirmation. A competing write wins without
+    /// retrying against its newer state. Retiring the old binding and inserting a new one commit together.
+    /// </summary>
+    public async Task<BrowserSessionRotation> ReauthenticateAsync(
+        BrowserSession expected,
+        string kratosSessionId,
+        CancellationToken cancellationToken)
+    {
+        // Keep the original decision immutable even when this context also tracks the session.
+        expected = Copy(expected);
+        try
+        {
+            return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+            {
+                var current = await ReadCommittedAsync(expected.Id, cancellationToken);
+                if (Ended(current, expected.TokenHash) is { } ended)
+                    return new BrowserSessionRotation(ended.Outcome, null);
+
+                await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+                var now = timeProvider.GetUtcNow();
+                if (IsExpired(expected))
+                {
+                    if (await WhereUnchanged(expected).ExecuteUpdateAsync(
+                            update => update.SetProperty(x => x.RevokedAt, now), cancellationToken) != 1)
+                        return new BrowserSessionRotation(BrowserSessionWriteOutcome.Conflict, null);
+                    await transaction.CommitAsync(cancellationToken);
+                    return new BrowserSessionRotation(BrowserSessionWriteOutcome.Expired, null);
+                }
+
+                CreatedBrowserSession created;
+                if (expected.KratosSessionId == kratosSessionId)
+                {
+                    var next = Copy(expected);
+                    var cookie = CreateSecret();
+                    var csrfToken = CreateCsrfToken(cookie, next.Id);
+                    next.TokenHash = HashSecret(cookie);
+                    next.CsrfTokenHash = HashSecret(csrfToken);
+                    StartLifetime(next, expected.Persistent, now);
+                    if (await WhereUnchanged(expected).ExecuteUpdateAsync(update => update
+                            .SetProperty(x => x.TokenHash, next.TokenHash)
+                            .SetProperty(x => x.CsrfTokenHash, next.CsrfTokenHash)
+                            .SetProperty(x => x.Persistent, next.Persistent)
+                            .SetProperty(x => x.CreatedAt, next.CreatedAt)
+                            .SetProperty(x => x.LastSeenAt, next.LastSeenAt)
+                            .SetProperty(x => x.RenewedAt, next.RenewedAt)
+                            .SetProperty(x => x.ExpiresAt, next.ExpiresAt)
+                            .SetProperty(x => x.IdleExpiresAt, next.IdleExpiresAt), cancellationToken) != 1)
+                        return new BrowserSessionRotation(BrowserSessionWriteOutcome.Conflict, null);
+                    created = new CreatedBrowserSession(cookie, csrfToken, next);
+                }
+                else
+                {
+                    if (await db.BrowserSessions.AnyAsync(x => x.KratosSessionId == kratosSessionId, cancellationToken))
+                        return new BrowserSessionRotation(BrowserSessionWriteOutcome.Superseded, null);
+                    if (await WhereUnchanged(expected).ExecuteUpdateAsync(
+                            update => update.SetProperty(x => x.RevokedAt, now), cancellationToken) != 1)
+                        return new BrowserSessionRotation(BrowserSessionWriteOutcome.Conflict, null);
+                    created = NewSession(expected.UserId, expected.KratosIdentityId, kratosSessionId, expected.Persistent);
+                    db.BrowserSessions.Add(created.Session);
+                    try
+                    {
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    finally
+                    {
+                        // A rolled-back insert must not remain pending if the execution strategy retries.
+                        db.Entry(created.Session).State = EntityState.Detached;
+                    }
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                return new BrowserSessionRotation(BrowserSessionWriteOutcome.Applied, created);
+            });
+        }
+        finally
+        {
+            await ReloadTrackedAsync(expected.Id, cancellationToken);
+        }
+    }
 
     public async Task<CreatedBrowserSession> CreateOrRotateAsync(
         string userId,
