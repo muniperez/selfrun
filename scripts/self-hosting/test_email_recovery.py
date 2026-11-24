@@ -2,6 +2,8 @@ import hashlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import tarfile
 import unittest
 from unittest import mock
@@ -253,6 +255,149 @@ class EmailRecoveryTests(unittest.TestCase):
                         subject.readiness()
                 self.assertEqual(mock.call(subject.config["apiUrl"] + "/api/account/capabilities", no_store=True),
                                  read.call_args)
+
+    def _write_release(self, directory, *, tag, payload, images=None, dependencies=None):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        version = tag.removeprefix("server-v")
+        archive = directory / f"minicloud-server-{version}.tar.gz"
+        with tarfile.open(archive, "w:gz") as target:
+            for name, data in payload.items():
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                target.addfile(member, io.BytesIO(data))
+        os.chmod(archive, 0o600)
+        manifest = {
+            "releaseTag": tag, "serverVersion": version, "sourceRevision": "a" * 40,
+            "images": images or dict(self.manifest["images"]),
+            "dependencies": dependencies or dict(self.manifest["dependencies"]),
+            "configurationSchemaVersion": 1, "identitySchemaVersion": 1, "applicationMigration": "synthetic",
+            "bundle": {"name": archive.name, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()},
+            "files": {name: hashlib.sha256(data).hexdigest() for name, data in payload.items()},
+        }
+        path = directory / "server-manifest.json"
+        path.write_text(json.dumps(manifest))
+        os.chmod(path, 0o600)
+        return manifest
+
+    def test_docker_compose_renders_base_and_opted_in_email_recovery_contracts(self):
+        if shutil.which("docker") is None or subprocess.run(
+            ["docker", "compose", "version"], capture_output=True
+        ).returncode != 0:
+            self.skipTest("docker compose CLI unavailable")
+        payload = dict(self.payload)
+        payload["compose.yml"] = (fixtures.BUNDLE / "compose.yml").read_bytes()
+        payload["images.env"] = b""
+        images = {name: f"example.test/{name}@sha256:" + "a" * 64 for name in ("api", "dashboard", "worker")}
+        dependencies = {name: f"example.test/{name}@sha256:" + "b" * 64 for name in ("postgres", "openbao", "kratos", "caddy")}
+        self.manifest = self._write_release(self.assets, tag="server-v0.1.0", payload=payload,
+                                            images=images, dependencies=dependencies)
+
+        # 1. Basic password-only installation renders without recovery overlay, courier, or SMTP variables.
+        self.args.root = self.base / "password-only"
+        base_subject = self.subject()
+        base_subject.execute()
+        base_cmd, base_env = base_subject.compose_invocation("config", "--format", "json")
+        base_rendered = json.loads(subprocess.run(base_cmd, env=base_env, capture_output=True, text=True, check=True).stdout)
+        base_services = base_rendered["services"]
+        self.assertEqual(["serve", "--config", "/etc/config/kratos.yml"], base_services["kratos"]["command"])
+        for service in ("kratos", "kratos-migrate"):
+            schema_mounts = [v for v in base_services[service]["volumes"] if v["target"] == "/etc/config/identity.schema.json"]
+            self.assertEqual(1, len(schema_mounts))
+            self.assertTrue(schema_mounts[0]["source"].endswith("/bundle/identity.schema.json"))
+            env = base_services[service]["environment"]
+            for key in ("SELFSERVICE_FLOWS_RECOVERY_ENABLED", "SELFSERVICE_FLOWS_RECOVERY_USE",
+                        "SELFSERVICE_METHODS_CODE_ENABLED", "COURIER_DELIVERY_STRATEGY",
+                        "COURIER_SMTP_CONNECTION_URI", "COURIER_SMTP_FROM_ADDRESS", "COURIER_SMTP_FROM_NAME"):
+                self.assertNotIn(key, env)
+        self.assertNotIn("Kratos__EmailRecoveryEnabled", base_services["api"]["environment"])
+        self.assertEqual("false", base_services["api"]["environment"]["Kratos__GoogleEnabled"])
+
+        # 2. Opted-in installation merges compose.email-recovery.yml with exact Kratos v1.3.1 & API wiring.
+        self.args.root = self.base / "email-recovery"
+        _, values = self.enable()
+        rec_subject = self.subject()
+        rec_subject.execute()
+        rec_cmd, rec_env = rec_subject.compose_invocation("config", "--format", "json")
+        rec_rendered = json.loads(subprocess.run(rec_cmd, env=rec_env, capture_output=True, text=True, check=True).stdout)
+        rec_services = rec_rendered["services"]
+        self.assertEqual(set(base_services), set(rec_services))
+        self.assertEqual({name for name, svc in rec_services.items() if svc.get("ports")}, {"caddy"})
+        self.assertEqual(["serve", "--config", "/etc/config/kratos.yml", "--watch-courier"], rec_services["kratos"]["command"])
+        expected_kratos = {
+            "SELFSERVICE_FLOWS_RECOVERY_ENABLED": "true",
+            "SELFSERVICE_FLOWS_RECOVERY_USE": "code",
+            "SELFSERVICE_FLOWS_RECOVERY_UI_URL": "https://cloud.example.com/recovery",
+            "SELFSERVICE_METHODS_CODE_ENABLED": "true",
+            "SELFSERVICE_METHODS_CODE_PASSWORDLESS_ENABLED": "false",
+            "SELFSERVICE_METHODS_CODE_MFA_ENABLED": "false",
+            "COURIER_DELIVERY_STRATEGY": "smtp",
+            "COURIER_SMTP_CONNECTION_URI": values["connectionUri"],
+            "COURIER_SMTP_FROM_ADDRESS": values["fromAddress"],
+            "COURIER_SMTP_FROM_NAME": values["fromName"],
+            "SELFSERVICE_METHODS_OIDC_ENABLED": "false",
+        }
+        for service in ("kratos", "kratos-migrate"):
+            schema_mounts = [v for v in rec_services[service]["volumes"] if v["target"] == "/etc/config/identity.schema.json"]
+            self.assertEqual(1, len(schema_mounts))
+            self.assertTrue(schema_mounts[0]["source"].endswith("/bundle/identity.recovery.schema.json"))
+            env = rec_services[service]["environment"]
+            for key, expected in expected_kratos.items():
+                self.assertEqual(expected, env.get(key), f"{service} env {key}")
+        self.assertEqual("true", rec_services["api"]["environment"]["Kratos__EmailRecoveryEnabled"])
+        self.assertEqual("false", rec_services["api"]["environment"]["Kratos__GoogleEnabled"])
+        for service in ("api", "dashboard", "worker"):
+            self.assertFalse(any(key.startswith("COURIER_") for key in rec_services[service]["environment"]))
+
+    def test_preexisting_install_upgrade_preservation_and_release_support_boundaries(self):
+        legacy_payload = {k: v for k, v in self.payload.items() if k not in installer.EMAIL_RECOVERY_FILES}
+        previous_dir = self.base / "assets-v0.1.0"
+        target_dir = self.base / "assets-v0.2.0"
+        previous_manifest = self._write_release(previous_dir, tag="server-v0.1.0", payload=legacy_payload)
+        target_manifest = self._write_release(target_dir, tag="server-v0.2.0", payload=self.payload)
+
+        # Preexisting password-only install created on a pre-recovery release stays password-only on upgrade.
+        self.args.assets_dir = previous_dir
+        self.args.tag = "server-v0.1.0"
+        original_install = self.subject()
+        original_install.execute()
+        secret = original_install.root / "secrets/kratos.env"
+        original_secret = secret.read_bytes()
+        self.assertNotIn(b"COURIER_", original_secret)
+
+        self.args.assets_dir = target_dir
+        self.args.tag = "server-v0.2.0"
+        upgrader = self.subject()
+        upgrader.load_state(manifest=previous_manifest)
+        self.assertEqual(original_secret, secret.read_bytes())
+        command, env = upgrader.compose_invocation("up", "-d", "kratos", "api")
+        self.assertNotIn("MINICLOUD_EMAIL_RECOVERY_ENABLED", env)
+        self.assertNotIn("compose.email-recovery.yml", " ".join(command))
+
+        # Attempting to enable emailRecovery in-place on a preexisting password-only install fails closed.
+        self.enable()
+        with self.assertRaisesRegex(installer.InstallError, "original configuration"):
+            self.subject().load_state(manifest=previous_manifest)
+        self.assertEqual(original_secret, secret.read_bytes())
+
+        # An opted-in email-recovery install preserves its overlay against a recovery-capable target release,
+        # and refuses an upgrade target that lacks EMAIL_RECOVERY_FILES without mutating installed files.
+        self.args.root = self.base / "opted-in-install"
+        self.args.assets_dir = target_dir
+        self.args.tag = "server-v0.2.0"
+        opted_in = self.subject()
+        opted_in.execute()
+        opted_secret = (opted_in.root / "secrets/kratos.env").read_bytes()
+        opted_state = (opted_in.root / "installation.json").read_bytes()
+        self.assertIn(b"COURIER_SMTP_CONNECTION_URI=", opted_secret)
+
+        unsupported_target_dir = self.base / "assets-v0.3.0-no-recovery"
+        self._write_release(unsupported_target_dir, tag="server-v0.3.0", payload=legacy_payload)
+        self.args.assets_dir = unsupported_target_dir
+        self.args.tag = "server-v0.3.0"
+        with self.assertRaisesRegex(installer.InstallError, "does not support"):
+            self.subject()
+        self.assertEqual(opted_secret, (opted_in.root / "secrets/kratos.env").read_bytes())
+        self.assertEqual(opted_state, (opted_in.root / "installation.json").read_bytes())
 
 
 if __name__ == "__main__":
