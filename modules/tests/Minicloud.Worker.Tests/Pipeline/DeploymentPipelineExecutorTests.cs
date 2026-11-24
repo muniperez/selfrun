@@ -13,6 +13,7 @@ using Minicloud.Common.Providers.Dns;
 using Minicloud.Common.Providers.Models;
 using Minicloud.Worker.Ssh;
 using Minicloud.Worker.Storage;
+using Minicloud.Common.Services;
 
 namespace Minicloud.Worker.Tests.Pipeline;
 
@@ -129,7 +130,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
             await db.SaveChangesAsync();
         }
 
-        var tempDir = Directory.CreateTempSubdirectory("minicloud-connected-pipeline-");
+        var tempDir = CreateArtifactDirectory();
         try
         {
             var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "minicloud-deploy");
@@ -222,7 +223,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
             await db.SaveChangesAsync();
         }
 
-        var tempDir = Directory.CreateTempSubdirectory("minicloud-test-pipe-");
+        var tempDir = CreateArtifactDirectory();
         try
         {
             var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "minicloud-deploy");
@@ -371,7 +372,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 return Task.FromResult(0);
             });
 
-        var tempDir = Directory.CreateTempSubdirectory("minicloud-test-pipe-");
+        var tempDir = CreateArtifactDirectory();
         try
         {
             var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "minicloud-deploy");
@@ -504,7 +505,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
             throw new InvalidOperationException("dns failed");
         });
 
-        var tempDir = Directory.CreateTempSubdirectory("minicloud-test-pipe-");
+        var tempDir = CreateArtifactDirectory();
         try
         {
             var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "minicloud-deploy");
@@ -563,7 +564,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
         }
         var gateStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var ssh = new WaitingGateSshClient(gateStarted, code == "docker_build_failed");
-        var tempDir = Directory.CreateTempSubdirectory("minicloud-preparation-failure-");
+        var tempDir = CreateArtifactDirectory();
         try
         {
             var scripts = Directory.CreateDirectory(Path.Combine(tempDir.FullName, "scripts", "github-actions", "minicloud-deploy"));
@@ -602,6 +603,167 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
             }
         }
         finally { tempDir.Delete(true); }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FirstDeploymentWithManualDns_StopsBeforeRolloutAndReusesServerOnRetry(
+        bool retryHealthy)
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (org, app) = await _harness.SeedOrgAndAppAsync("first-dns-" + suffix);
+        var now = DateTimeOffset.UtcNow;
+        var hostname = $"web-{suffix}.apps.example.test";
+        Deployment NewDeployment(string attempt) => new()
+        {
+            Id = $"dep-{suffix}-{attempt}", OrganizationId = org.Id, AppId = app.Id,
+            Status = DeploymentStatus.Provisioning, OwnershipToken = $"owner-{suffix}-{attempt}",
+            Database = DatabaseMode.None, CreatedAt = now, UpdatedAt = now,
+            Services = [new DeploymentService
+            {
+                Id = $"svc-{suffix}-{attempt}", Name = "web", Image = "example/web:latest",
+                Public = true, Port = 8080, Path = "/", HealthPath = "/health"
+            }]
+        };
+        var first = NewDeployment("first");
+        await using (var db = _harness.CreateDbContext())
+        {
+            // The new server is registered before the first deployment's DNS handoff.
+            db.ServerInstances.Add(new ServerInstance
+            {
+                Id = "srv-" + suffix, OrganizationId = org.Id, AppId = app.Id,
+                Provider = "hetzner", ProviderServerId = "provider-" + suffix,
+                IpAddress = "192.0.2.88", Region = "nbg1", Status = "active", BootstrapStatus = "ready",
+                CreatedAt = now, UpdatedAt = now
+            });
+            db.Domains.Add(new Domain
+            {
+                Id = "dom-" + suffix, OrganizationId = org.Id, AppId = app.Id,
+                ServiceName = "web", Hostname = hostname, Kind = DomainBindingService.KindMinicloudSubdomain,
+                Status = DomainBindingService.StatusPendingApply, DnsStatus = DomainBindingService.DnsPending,
+                ApplyStatus = DomainBindingService.ApplyPending, SslStatus = DomainBindingService.SslPending,
+                PathPrefix = "/", CreatedAt = now, UpdatedAt = now
+            });
+            db.Deployments.Add(first);
+            await db.SaveChangesAsync();
+        }
+
+        var pending = true;
+        var remoteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remoteCanceled = false;
+        var rolloutReleased = false;
+        var rollbackAttempted = false;
+        var httpRequests = 0;
+        var ssh = new MockSshDeploymentClient(
+            execDeploy: async (_, ct) =>
+            {
+                remoteStarted.TrySetResult();
+                if (pending)
+                {
+                    try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+                    catch (OperationCanceledException) { remoteCanceled = true; throw; }
+                }
+                return new SshDeploymentResult(0, true, "sha123", ["__MINICLOUD_DEPLOY_COMPLETE__=sha123"]);
+            },
+            execCmd: (_, _, _, command) =>
+            {
+                if (command.Contains("rollout.ready", StringComparison.Ordinal)) { rolloutReleased = true; }
+                if (command.Contains("rollback", StringComparison.Ordinal)) { rollbackAttempted = true; }
+                return Task.FromResult(0);
+            });
+        var dns = new MockCloudflareDnsClient(async (host, ct) =>
+        {
+            Assert.Equal(hostname, host);
+            if (pending)
+            {
+                await remoteStarted.Task.WaitAsync(ct);
+                throw new TimeoutException("synthetic DNS not propagated");
+            }
+        });
+        var provider = new MockVpsProviderClient(ipv6Address: "2001:db8::88");
+        var artifactDir = CreateArtifactDirectory();
+        try
+        {
+            var scriptDir = Directory.CreateDirectory(Path.Combine(artifactDir.FullName, "scripts", "github-actions", "minicloud-deploy"));
+            await File.WriteAllTextAsync(Path.Combine(scriptDir.FullName, "remote-deploy.sh"), "#!/bin/bash\necho ok");
+            var scopeFactory = _harness.CreateScopeFactory();
+            var options = Options.Create(new DeploymentPipelineOptions
+            {
+                HealthCheckTimeout = TimeSpan.FromMilliseconds(50), HealthCheckInterval = TimeSpan.FromMilliseconds(5)
+            });
+            var sshOptions = Options.Create(new SshDeploymentOptions { PrivateKeyContent = "MOCK_KEY" });
+            var executor = new DeploymentPipelineExecutor(scopeFactory,
+                new ResolveProvisionServerStep(scopeFactory, _ => provider, options, TimeProvider.System),
+                new DnsSetupStep(scopeFactory, dns, options, TimeProvider.System,
+                    managedDomains: Options.Create(new ManagedDomainOptions { Suffix = "apps.example.test", ManageDnsRecords = false })),
+                new SshDeployStep(scopeFactory, new MockArtifactRetriever(), ssh, sshOptions, options,
+                    new TestHostEnvironment { ContentRootPath = artifactDir.FullName }, TimeProvider.System),
+                new HealthCheckFinalizeStep(scopeFactory, new HttpClient(new MockHttpMessageHandler(
+                    retryHealthy ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable, () => httpRequests++)), options, TimeProvider.System),
+                ssh, sshOptions, TimeProvider.System);
+
+            var failure = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(first, default).WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal("dns_pending", failure.FailureCode);
+            Assert.Contains($"A {hostname} -> 192.0.2.88", failure.Message);
+            Assert.Contains($"AAAA {hostname} -> 2001:db8::88", failure.Message);
+            Assert.True(remoteCanceled);
+            Assert.False(rolloutReleased);
+            Assert.False(rollbackAttempted);
+            Assert.Equal(0, httpRequests);
+            await using (var verify = _harness.CreateDbContext())
+            {
+                var failed = await verify.Deployments.FindAsync(first.Id);
+                Assert.Equal(DeploymentStatus.Failed, failed!.Status);
+                Assert.Equal("dns_pending", failed.FailureCode);
+                Assert.Equal(failure.Message, failed.FailureMessage);
+                Assert.Null(failed.OwnershipToken);
+                var domain = await verify.Domains.FindAsync("dom-" + suffix);
+                Assert.Equal(DomainBindingService.DnsPending, domain!.DnsStatus);
+            }
+
+            pending = false;
+            var retry = NewDeployment("retry");
+            await using (var db = _harness.CreateDbContext())
+            {
+                db.Deployments.Add(retry);
+                await db.SaveChangesAsync();
+            }
+            if (retryHealthy)
+            {
+                await executor.ExecuteAsync(retry, default);
+            }
+            else
+            {
+                var healthFailure = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(retry, default));
+                Assert.Equal("health_check_failed", healthFailure.FailureCode);
+            }
+            Assert.True(rolloutReleased);
+            Assert.Equal(!retryHealthy, rollbackAttempted);
+            Assert.True(httpRequests > 0);
+            Assert.Equal(0, provider.CreateCalls);
+            await using (var verify = _harness.CreateDbContext())
+            {
+                var finished = await verify.Deployments.FindAsync(retry.Id);
+                Assert.Equal(retryHealthy ? DeploymentStatus.Succeeded : DeploymentStatus.Failed, finished!.Status);
+                Assert.Equal(retryHealthy ? null : "health_check_failed", finished.FailureCode);
+                Assert.Equal(1, await verify.ServerInstances.CountAsync(server => server.AppId == app.Id));
+                var domain = await verify.Domains.FindAsync("dom-" + suffix);
+                Assert.Equal(DomainBindingService.DnsVerified, domain!.DnsStatus);
+                Assert.Equal("192.0.2.88", domain.TargetIp);
+            }
+        }
+        finally { artifactDir.Delete(true); }
+    }
+
+    private static DirectoryInfo CreateArtifactDirectory()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (!File.Exists(Path.Combine(root.FullName, "AGENTS.md")))
+        {
+            root = root.Parent ?? throw new InvalidOperationException("Repository root not found.");
+        }
+        return Directory.CreateDirectory(Path.Combine(root.FullName, ".local", "artifacts", "worker-pipeline-" + Guid.NewGuid().ToString("N")));
     }
 
     private sealed class FailingSecretResolver(Task gateStarted, string code) : Minicloud.Common.Services.IAppServiceSecretResolver
@@ -648,15 +810,19 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
         }
     }
 
-    private sealed class MockVpsProviderClient(string ipAddress = "192.0.2.88") : IVpsProviderClient
+    private sealed class MockVpsProviderClient(string ipAddress = "192.0.2.88", string? ipv6Address = null) : IVpsProviderClient
     {
+        public int CreateCalls { get; private set; }
         public CloudProvider Provider => CloudProvider.Hetzner;
         public Task<ProviderServerInfo?> FindServerAsync(string name, CancellationToken cancellationToken = default) =>
             Task.FromResult<ProviderServerInfo?>(null);
-        public Task<ProviderServerInfo> CreateServerAsync(CreateServerRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ProviderServerInfo("srv-1", request.Name, ipAddress, "running", null, request.Labels));
+        public Task<ProviderServerInfo> CreateServerAsync(CreateServerRequest request, CancellationToken cancellationToken = default)
+        {
+            CreateCalls++;
+            return Task.FromResult(new ProviderServerInfo("srv-1", request.Name, ipAddress, "running", ipv6Address, request.Labels));
+        }
         public Task<ProviderServerStatus> GetServerStatusAsync(string serverId, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ProviderServerStatus(serverId, "running", ipAddress, null, true));
+            Task.FromResult(new ProviderServerStatus(serverId, "running", ipAddress, ipv6Address, true));
         public Task DeleteServerAsync(string serverId, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
     }
@@ -704,10 +870,13 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
             Task.FromResult("/tmp/mock.zip");
     }
 
-    private sealed class MockHttpMessageHandler : HttpMessageHandler
+    private sealed class MockHttpMessageHandler(HttpStatusCode status = HttpStatusCode.OK, Action? onRequest = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("OK") });
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            onRequest?.Invoke();
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent("synthetic health response") });
+        }
     }
 
     private sealed class TestHostEnvironment : IHostEnvironment

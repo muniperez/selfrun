@@ -34,6 +34,8 @@ public sealed class PipelineStepContext
 
     public string ServerIp { get; set; } = string.Empty;
 
+    public string? ServerIpv6 { get; set; }
+
     public string SshUsername { get; set; } = "minicloud";
 
     public List<string> Hostnames { get; set; } = [];
