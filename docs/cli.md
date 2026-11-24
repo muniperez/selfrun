@@ -712,18 +712,23 @@ readiness timeout. CLI 2.0.1 requires the updated control API's
 `POST /api/deployments/validate-secrets` endpoint for remote secret checks.
 
 If an app revision fails its health check on the server, the deployment stays
-failed with `health_check_failed`. Minicloud stops the candidate and restores the
-previous running revision when available. The public URL never reaches a
-candidate before it passes its health check. While an existing app's services are
+failed with `health_check_failed`. The failure message leads with the rollback
+outcome and the failed local health check; full container and proxy diagnostics
+remain in `minicloud logs <deployment-number>`. Minicloud stops the candidate and
+restores the previous running revision when available. The public URL never reaches
+a candidate before it passes its health check. While an existing app's services are
 replaced, its hostnames return `503 Deployment in progress` with `Retry-After: 30`.
 The previous revision stops before the candidate starts, so one writable volume never
-has two writers. A healthy candidate then becomes public; a failed one is stopped
-and the previous revision and route return. Named volumes are reused, not
-reverted: writes made by the candidate before the failure remain. If there was no
-previous running revision, the failed candidate is stopped and no new route is
-activated. If recovery does not complete, check the deployment logs and resolve
-the reported problem on the target host before redeploying. A later deployment
-attempts recovery once before starting another rollout.
+has two writers. For a healthy candidate, that maintenance window ends as soon as
+container replacement and local health verification pass (typically seconds to tens
+of seconds). For a failing candidate, the window remains open across container
+replacement, up to the 60-second local health-check timeout (30 probes at 2-second
+intervals), and rollback recovery while the previous revision and route are restored.
+Named volumes are reused, not reverted: writes made by the candidate before the
+failure remain. If there was no previous running revision, the failed candidate is
+stopped and no new route is activated. If recovery does not complete, check the
+deployment logs and resolve the reported problem on the target host before
+redeploying. A later deployment attempts recovery once before starting another rollout.
 
 ## Local build visibility
 

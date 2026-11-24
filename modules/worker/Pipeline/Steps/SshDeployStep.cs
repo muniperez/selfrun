@@ -185,17 +185,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         if (result.ExitCode != 0 || !result.CompletionMarkerFound)
         {
             var failureCode = ResolveFailureCode(result.OutputLines);
-            var failureLine = result.OutputLines.LastOrDefault(line =>
-                line.StartsWith("ERROR: ", StringComparison.Ordinal));
-            var excerpt = result.OutputLines.Count > 0
-                ? string.Join("\n", result.OutputLines.TakeLast(5))
-                : "no remote output captured";
-            var failureSummary = string.IsNullOrWhiteSpace(failureLine)
-                ? string.Empty
-                : $" Runtime error: {failureLine}";
-            var rollbackSummary = ResolveRollbackSummary(result.OutputLines, failureCode);
-            throw new PipelineStepException(failureCode,
-                $"remote-deploy.sh failed (exit {result.ExitCode}, completion marker {(result.CompletionMarkerFound ? "found" : "missing")}).{failureSummary}{rollbackSummary} Last output:\n{excerpt}");
+            throw new PipelineStepException(failureCode, BuildFailureMessage(result, failureCode));
         }
 
         var observed = result.OutputLines.LastOrDefault(x => x.StartsWith("__MINICLOUD_BUILD_PLATFORM__=", StringComparison.Ordinal))?.Split('=', 2).Last();
@@ -252,6 +242,93 @@ public sealed partial class SshDeployStep : IPipelineStep
             char.IsAsciiLetterOrDigit(character) || character is '_' or '-')
             ? failureCode
             : FailureCode;
+    }
+
+    internal static string BuildFailureMessage(SshDeploymentResult result, string failureCode)
+    {
+        var failureLine = result.OutputLines.LastOrDefault(line =>
+            line.StartsWith("ERROR: ", StringComparison.Ordinal));
+        var rollbackSummary = ResolveRollbackSummary(result.OutputLines, failureCode);
+        if (failureCode == HealthCheckFinalizeStep.FailureCode)
+        {
+            var healthFailure = ResolveHealthCheckFailureSummary(result.OutputLines, failureLine);
+            return $"{rollbackSummary.TrimStart()} {healthFailure}";
+        }
+
+        var excerpt = result.OutputLines.Count > 0
+            ? string.Join("\n", result.OutputLines.TakeLast(5))
+            : "no remote output captured";
+        var failureSummary = string.IsNullOrWhiteSpace(failureLine)
+            ? string.Empty
+            : $" Runtime error: {failureLine}";
+        return $"remote-deploy.sh failed (exit {result.ExitCode}, completion marker {(result.CompletionMarkerFound ? "found" : "missing")}).{failureSummary}{rollbackSummary} Last output:\n{excerpt}";
+    }
+
+    internal static string ResolveHealthCheckFailureSummary(IReadOnlyList<string> outputLines, string? failureLine = null)
+    {
+        var failures = new List<string>();
+        for (var i = 0; i < outputLines.Count; i++)
+        {
+            var line = outputLines[i].Trim();
+            if (!line.StartsWith("Health check failed for ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var detail = i + 1 < outputLines.Count ? outputLines[i + 1].Trim() : string.Empty;
+            var hasDetail = !string.IsNullOrWhiteSpace(detail) &&
+                !detail.StartsWith("Health check failed for ", StringComparison.Ordinal) &&
+                !detail.StartsWith("===== ", StringComparison.Ordinal) &&
+                !detail.StartsWith("__MINICLOUD_", StringComparison.Ordinal) &&
+                !detail.StartsWith("ERROR: ", StringComparison.Ordinal) &&
+                !detail.StartsWith("TIMING ", StringComparison.Ordinal) &&
+                !detail.StartsWith("Remote deploy failed", StringComparison.Ordinal) &&
+                !detail.StartsWith("Rollback ", StringComparison.Ordinal) &&
+                !detail.StartsWith("WARNING: ", StringComparison.Ordinal);
+            if (hasDetail)
+            {
+                if (detail.Length > 200)
+                {
+                    detail = detail[..200].TrimEnd() + "...";
+                }
+                else
+                {
+                    detail = detail.TrimEnd('.');
+                }
+
+                failures.Add($"{line.TrimEnd('.')} ({detail}).");
+            }
+            else
+            {
+                failures.Add($"{line.TrimEnd('.')}.");
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            return string.Join(" ", failures);
+        }
+
+        if (!string.IsNullOrWhiteSpace(failureLine))
+        {
+            var detail = failureLine.Trim();
+            const string healthPrefix = "ERROR: health_check_failed: ";
+            if (detail.StartsWith(healthPrefix, StringComparison.Ordinal))
+            {
+                detail = detail[healthPrefix.Length..].Trim();
+            }
+            else if (detail.StartsWith("ERROR: ", StringComparison.Ordinal))
+            {
+                detail = detail["ERROR: ".Length..].Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(detail))
+            {
+                return $"Local health check failed ({detail.TrimEnd('.')}).";
+            }
+        }
+
+        return "Local health check failed.";
     }
 
     private static string ResolveRollbackSummary(IReadOnlyList<string> outputLines, string failureCode)
