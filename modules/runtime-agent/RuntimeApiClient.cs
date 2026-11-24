@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
@@ -11,7 +12,7 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
         {
             Content = JsonContent.Create(new RuntimeLogIngestRequest(records), options: JsonDefaults.Options)
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        PrepareRequest(request);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<RuntimeLogIngestResponse>(JsonDefaults.Options, cancellationToken)
@@ -24,7 +25,7 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
         {
             Content = JsonContent.Create(new RuntimeHeartbeatRequest(agentVersion, DateTimeOffset.UtcNow), options: JsonDefaults.Options)
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        PrepareRequest(request);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
@@ -35,7 +36,7 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
         {
             Content = JsonContent.Create(status, options: JsonDefaults.Options)
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        PrepareRequest(request);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
@@ -43,7 +44,7 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
     public async Task<RuntimeDesiredRoutingResponse> GetRoutingAsync(CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{config.ApiBaseUrl.TrimEnd('/')}/api/runtime/routing");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        PrepareRequest(request);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<RuntimeDesiredRoutingResponse>(JsonDefaults.Options, cancellationToken)
@@ -56,13 +57,29 @@ public sealed class RuntimeApiClient(HttpClient httpClient, AgentConfig config, 
         {
             Content = JsonContent.Create(results, options: JsonDefaults.Options)
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        PrepareRequest(request);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         var acknowledgement = await response.Content.ReadFromJsonAsync<RoutingAcknowledgement>(JsonDefaults.Options, cancellationToken);
         if (acknowledgement?.Accepted != results.Results.Count)
         {
             throw new InvalidOperationException("Runtime API did not accept all routing results; reconciliation will retry.");
+        }
+    }
+
+    private void PrepareRequest(HttpRequestMessage request)
+    {
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var current = Activity.Current;
+        if (current is not null)
+        {
+            DistributedContextPropagator.Current.Inject(current, request, static (carrier, key, value) =>
+            {
+                if (carrier is HttpRequestMessage message && !string.IsNullOrEmpty(value) && !message.Headers.Contains(key))
+                {
+                    message.Headers.TryAddWithoutValidation(key, value);
+                }
+            });
         }
     }
 

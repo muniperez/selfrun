@@ -40,8 +40,8 @@ repo:
   observability/loki/loki.yml         # reviewed Loki template
   observability/grafana/grafana.ini   # reviewed Grafana template
   observability/grafana/provisioning/ # tenant Grafana remains dynamically provisioned
-  observability/profiling/            # private collector, Prometheus, and Tempo templates
-  observability/profiling/grafana-provisioning/ # operator-only static datasources
+  observability/profiling/            # private collector, Prometheus, Tempo, and remote-agent example templates
+  observability/profiling/grafana-provisioning/ # operator-only static datasources and dashboard
   observability/README.md             # this file
 
 VPS (/var/lib/minicloud/observability, separate mounted volume):
@@ -241,6 +241,41 @@ docker volume rm minicloud-operator-prometheus-dev minicloud-operator-tempo-dev 
 Remove `compose.profiling.yml` from the Compose command and unset the worker's
 `OperatorProfiling__Enabled` setting before restarting it to resume normal
 non-exporting behavior.
+
+### Operator Grafana dashboard and remote runtime-agent profiling (#119)
+
+`observability/profiling/grafana-provisioning/dashboards/` provisions the
+read-only **Minicloud Operator Profiling** dashboard with panels for CPU
+seconds per idle host-hour, subprocesses per cycle, DB commands per batch,
+allocated bytes per accepted MiB, operation p95 latency, exporter drops, queue
+lag, and bounded operator diagnostic summaries.
+
+Runtime-agent profiling is opt-in and disabled by default (`profiling.enabled:
+false`). See `observability/profiling/runtime-agent.profiling.example.json` for
+the example local configuration and
+`observability/profiling/remote-agent-collector.example.yml` for a single-host
+loopback collector:
+
+- **Loopback-only remote capture contract:** `AgentProfilingConfig` rejects any
+  non-loopback `receiverUrl`, embedded URI credentials, or unbounded queue/timeout
+  values when enabled.
+- **Bounded structured summary & restricted reader:** When enabled, the agent
+  emits single-line allowlisted JSON summaries (`minicloud.runtime-agent.summary.v1`)
+  and optionally exports bounded OTLP/HTTP payloads over a dedicated non-blocking
+  queue (`DropWrite` when saturated). A failed or slow receiver increments
+  `minicloud.runtime.agent.exporter.drops` and never delays heartbeats, routing,
+  or application-log ingestion. The example local collector restricts its
+  `journald` reader to `minicloud-runtime-agent.service` and the summary schema,
+  and forwards only through an operator-managed authenticated SSH tunnel
+  (`127.0.0.1:14318`) so collector and tunnel overhead can be measured separately.
+- **Reproducible synthetic fixture:** `tools/runtime-agent-benchmark` includes a
+  `protocol` workload covering 30 virtual minutes idle, fixed-rate replay with
+  duplicates, a burst near the 500-record cap, a route change, a failed and
+  recovered HTTPS probe, a 409 deployment gate with container rollover, and an
+  agent restart with a pending acknowledgement across three modes (`off`, `on`,
+  `on-optimized`). Raw outputs and EventPipe `.nettrace` captures must remain
+  under the git-ignored `.local/artifacts/` directory and are inspected
+  aggregate-only via `tools/runtime-agent-allocation-report --verify-activity`.
 
 ## Disk-pressure recovery
 

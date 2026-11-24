@@ -1,0 +1,83 @@
+# Example opt-in local loopback collector for a single operator-controlled VPS (#119).
+# Bind ONLY to 127.0.0.1 and forward ONLY through an authenticated encrypted SSH tunnel
+# (for example: ssh -N -L 127.0.0.1:14318:127.0.0.1:4318 operator@profiling-host).
+# Never install fleet-wide or expose this receiver off loopback.
+extensions:
+  bearertokenauth/remote_agent:
+    token: ${env:MINICLOUD_REMOTE_AGENT_OTLP_TOKEN}
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+        auth:
+          authenticator: bearertokenauth/remote_agent
+  journald/runtime_agent:
+    units:
+      - minicloud-runtime-agent.service
+    operators:
+      - type: json_parser
+        parse_from: body
+        on_error: drop
+      - type: filter
+        expr: 'attributes.schema != "minicloud.runtime-agent.summary.v1"'
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 64
+    spike_limit_mib: 16
+  filter/runtime_agent_summary:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'instrumentation_scope.name != "Minicloud.RuntimeAgent" and attributes["schema"] != "minicloud.runtime-agent.summary.v1"'
+  transform/runtime_agent_summary:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - keep_keys(attributes, ["schema", "service", "Service", "Operation", "Outcome", "WindowDurationMs", "windowDurationMs", "Count", "TotalDurationMs", "Bytes", "inputBytes", "Failures", "TraceId", "traceId", "ChildLaunches", "childLaunches", "Records", "records", "CursorWrites", "cursorWrites", "CursorWritesSkipped", "cursorWritesSkipped", "AllocatedBytesDelta", "allocatedBytesDelta", "cpuSecondsDelta", "ExporterDrops", "exporterDrops", "QueueLag", "queueLag"])
+          - set(body, "")
+      - context: resource
+        statements:
+          - set(attributes["service.name"], "minicloud-runtime-agent")
+          - keep_keys(attributes, ["service.name"])
+  batch:
+    timeout: 2s
+    send_batch_size: 64
+    send_batch_max_size: 128
+
+exporters:
+  otlphttp/operator_tunnel:
+    endpoint: http://127.0.0.1:14318
+    headers:
+      Authorization: Bearer ${env:MINICLOUD_OPERATOR_OTLP_TOKEN}
+    compression: gzip
+    timeout: 5s
+    sending_queue:
+      enabled: true
+      queue_size: 64
+      num_consumers: 1
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 5s
+      max_elapsed_time: 30s
+
+service:
+  extensions: [bearertokenauth/remote_agent]
+  pipelines:
+    logs:
+      receivers: [otlp, journald/runtime_agent]
+      processors: [memory_limiter, filter/runtime_agent_summary, transform/runtime_agent_summary, batch]
+      exporters: [otlphttp/operator_tunnel]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/operator_tunnel]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/operator_tunnel]

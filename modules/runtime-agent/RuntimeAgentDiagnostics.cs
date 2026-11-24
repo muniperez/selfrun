@@ -15,6 +15,13 @@ public static class RuntimeAgentDiagnostics
     private static readonly Counter<long> ChildLaunches = Meter.CreateCounter<long>("minicloud.runtime.agent.child.launches");
     private static readonly Counter<long> Bytes = Meter.CreateCounter<long>("minicloud.runtime.agent.bytes", "By");
     private static readonly Counter<long> Records = Meter.CreateCounter<long>("minicloud.runtime.agent.records", "{record}");
+    private static readonly Counter<long> CursorWrites = Meter.CreateCounter<long>("minicloud.runtime.agent.cursor.writes", "{write}");
+    private static readonly Counter<long> ExporterDrops = Meter.CreateCounter<long>("minicloud.runtime.agent.exporter.drops", "{drop}");
+    private static int _exporterQueueLag;
+    private static readonly ObservableGauge<int> ExporterQueueLag = Meter.CreateObservableGauge(
+        "minicloud.runtime.agent.exporter.queue_lag",
+        () => Volatile.Read(ref _exporterQueueLag),
+        "{item}");
 
     internal static OperationMeasurement StartOperation(string operation) =>
         new(operation, Stopwatch.GetTimestamp(), ActivitySource.StartActivity(operation, ActivityKind.Internal));
@@ -52,6 +59,33 @@ public static class RuntimeAgentDiagnostics
             var tags = new TagList { { "operation", NormalizeOperation(operation) } };
             Records.Add(records, tags);
         }
+    }
+
+    internal static void RecordCursorWrite(string outcome)
+    {
+        if (CursorWrites.Enabled)
+        {
+            var boundedOutcome = outcome is "written" or "skipped" or "failure" ? outcome : "failure";
+            var tags = new TagList { { "outcome", boundedOutcome } };
+            CursorWrites.Add(1, tags);
+        }
+    }
+
+    internal static void RecordExporterDrop(string reason)
+    {
+        if (ExporterDrops.Enabled)
+        {
+            var boundedReason = reason is "queue_full" or "timeout" or "http_error" or "network_error" or "serialization_error"
+                ? reason
+                : "other";
+            var tags = new TagList { { "reason", boundedReason } };
+            ExporterDrops.Add(1, tags);
+        }
+    }
+
+    internal static void UpdateExporterQueueLag(int currentLag)
+    {
+        Volatile.Write(ref _exporterQueueLag, Math.Max(0, currentLag));
     }
 
     internal static async Task<ProcessResult> RunChildAsync(IProcessRunner runner, string fileName, IReadOnlyList<string> args, CancellationToken cancellationToken)
