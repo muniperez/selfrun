@@ -29,10 +29,15 @@ public sealed class TestHttpMessageHandler : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        var authHeader = request.Headers.Authorization?.ToString()
+            ?? (request.Headers.TryGetValues("Authorization", out var authValues)
+                ? string.Join(", ", authValues)
+                : null);
+
         var recorded = new RecordedRequest(
             request.Method,
             request.RequestUri?.ToString() ?? string.Empty,
-            request.Headers.Authorization?.ToString(),
+            authHeader,
             request.Content != null ? await request.Content.ReadAsStringAsync(cancellationToken) : null);
 
         _recordedRequests.Add(recorded);

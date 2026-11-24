@@ -44,23 +44,39 @@ public sealed partial class CliApplication
             throw new CliCommandException(CliExitCodes.ValidationError, "Usage: selfrun providers add --organization <id> --name <name> --provider <type> | import-legacy --manifest <path> | ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");
         var organizationId = GetOption(args, "--organization");
         var name = GetOption(args, "--name");
-        var provider = GetOption(args, "--provider")?.ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is not ("hetzner" or "digital-ocean" or "digitalocean" or "vultr"))
-            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr.");
+        var rawProvider = GetOption(args, "--provider")?.ToLowerInvariant();
+        var provider = rawProvider switch
+        {
+            "hetzner" => "hetzner",
+            "digital-ocean" or "digitalocean" => "digital-ocean",
+            "vultr" => "vultr",
+            "aws" or "ec2" => "aws",
+            "azure" or "microsoft-azure" => "azure",
+            "gcp" or "google-cloud" or "googlecloud" => "gcp",
+            "ovhcloud" or "ovh" or "ovh-cloud" => "ovhcloud",
+            "linode" or "akamai" or "akamai-linode" => "linode",
+            "scaleway" or "scw" => "scaleway",
+            _ => null
+        };
+        if (string.IsNullOrWhiteSpace(organizationId) || string.IsNullOrWhiteSpace(name) || provider is null)
+            throw new CliCommandException(CliExitCodes.ValidationError, "Specify --organization, --name and --provider hetzner|digital-ocean|vultr|aws|azure|gcp|ovhcloud|linode|scaleway.");
         if (args.Any(x => x.StartsWith("--token", StringComparison.Ordinal) || x.StartsWith("--credential", StringComparison.Ordinal) || x.StartsWith("--api-key", StringComparison.Ordinal)))
             throw new CliCommandException(CliExitCodes.ValidationError, "Cloud credentials must be supplied through provider environment variables, never command arguments.");
-        var credential = provider switch
-        {
-            "hetzner" => FirstEnvironmentValue("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
-            "vultr" => FirstEnvironmentValue("VULTR_API_KEY", "VULTR_KEY"),
-            _ => FirstEnvironmentValue("DIGITALOCEAN_ACCESS_TOKEN", "DIGITALOCEAN_TOKEN")
-        };
+        var projectId = GetOption(args, "--project-id") ?? ResolveDefaultProjectId(provider);
+        var credential = ResolveProviderCredential(provider, projectId);
         if (credential is null)
             throw new CliCommandException(CliExitCodes.ValidationError, provider switch
             {
                 "hetzner" => "Set HCLOUD_TOKEN or HETZNER_API_TOKEN before adding this account.",
                 "vultr" => "Set VULTR_API_KEY or VULTR_KEY before adding this account.",
-                _ => "Set DIGITALOCEAN_ACCESS_TOKEN or DIGITALOCEAN_TOKEN before adding this account."
+                "digital-ocean" => "Set DIGITALOCEAN_ACCESS_TOKEN or DIGITALOCEAN_TOKEN before adding this account.",
+                "aws" => "Set SELFRUN_AWS_CREDENTIAL_JSON (or legacy MINICLOUD_AWS_CREDENTIAL_JSON) or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY before adding this account.",
+                "azure" => "Set SELFRUN_AZURE_CREDENTIAL_JSON (or legacy MINICLOUD_AZURE_CREDENTIAL_JSON) or AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP with AZURE_ACCESS_TOKEN or AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET before adding this account.",
+                "gcp" => "Set SELFRUN_GCP_CREDENTIAL_JSON (or legacy MINICLOUD_GCP_CREDENTIAL_JSON), GCP_SERVICE_ACCOUNT_JSON, GOOGLE_APPLICATION_CREDENTIALS_JSON, or GCP_ACCESS_TOKEN before adding this account.",
+                "ovhcloud" => "Set SELFRUN_OVH_CREDENTIAL_JSON (or legacy MINICLOUD_OVH_CREDENTIAL_JSON) or OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET, and OVH_CONSUMER_KEY before adding this account.",
+                "linode" => "Set SELFRUN_LINODE_TOKEN (or legacy MINICLOUD_LINODE_TOKEN), LINODE_TOKEN, or LINODE_API_TOKEN before adding this account.",
+                "scaleway" => "Set SELFRUN_SCALEWAY_CREDENTIAL_JSON (or legacy MINICLOUD_SCALEWAY_CREDENTIAL_JSON), SCW_SECRET_KEY, or SCALEWAY_SECRET_KEY before adding this account.",
+                _ => "Set the provider credential environment variable before adding this account."
             });
         var osValue = GetOption(args, "--os-id");
         if (args.Any(x => x == "--os-id" || x.StartsWith("--os-id=", StringComparison.Ordinal)) && string.IsNullOrWhiteSpace(osValue))
@@ -72,11 +88,81 @@ public sealed partial class CliApplication
                 throw new CliCommandException(CliExitCodes.ValidationError, "--os-id requires a positive integer.");
             osId = parsed;
         }
-        var account = await _apiClient.CreateProviderAsync(new(organizationId, name, provider == "digitalocean" ? "digital-ocean" : provider,
-            credential, GetOption(args, "--project-id") ?? (provider is "digital-ocean" or "digitalocean" ? FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID") : null), osId), ct);
+        var account = await _apiClient.CreateProviderAsync(new(organizationId, name, provider, credential, projectId, osId), ct);
         _console.WriteLine($"Provider added: {account.Name} ({account.Id}, {account.ProviderType}).");
         return CliExitCodes.Success;
     }
+
+    private static string? ResolveDefaultProjectId(string provider) => provider switch
+    {
+        "digital-ocean" => FirstEnvironmentValue("DIGITALOCEAN_PROJECT_ID"),
+        "aws" => FirstEnvironmentValue("AWS_ACCOUNT_ID"),
+        "azure" => (FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"), FirstEnvironmentValue("AZURE_RESOURCE_GROUP")) is ({ } sub, { } rg) ? $"{sub}/{rg}" : FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"),
+        "gcp" => FirstEnvironmentValue("GCP_PROJECT_ID", "GOOGLE_CLOUD_PROJECT"),
+        "ovhcloud" => FirstEnvironmentValue("OVH_PROJECT_ID", "OS_TENANT_ID"),
+        "scaleway" => FirstEnvironmentValue("SCW_DEFAULT_PROJECT_ID", "SCW_PROJECT_ID", "SCALEWAY_PROJECT_ID"),
+        _ => null
+    };
+
+    private static string? ResolveProviderCredential(string provider, string? projectId) => provider switch
+    {
+        "hetzner" => FirstEnvironmentValue("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
+        "vultr" => FirstEnvironmentValue("VULTR_API_KEY", "VULTR_KEY"),
+        "digital-ocean" => FirstEnvironmentValue("DIGITALOCEAN_ACCESS_TOKEN", "DIGITALOCEAN_TOKEN"),
+        "aws" => FirstEnvironmentValue("SELFRUN_AWS_CREDENTIAL_JSON", "MINICLOUD_AWS_CREDENTIAL_JSON")
+            ?? ((FirstEnvironmentValue("AWS_ACCESS_KEY_ID"), FirstEnvironmentValue("AWS_SECRET_ACCESS_KEY")) is ({ } ak, { } sk)
+                ? JsonSerializer.Serialize(new
+                {
+                    accessKeyId = ak,
+                    secretAccessKey = sk,
+                    sessionToken = FirstEnvironmentValue("AWS_SESSION_TOKEN"),
+                    accountId = projectId ?? FirstEnvironmentValue("AWS_ACCOUNT_ID"),
+                    region = FirstEnvironmentValue("AWS_REGION", "AWS_DEFAULT_REGION")
+                })
+                : null),
+        "azure" => FirstEnvironmentValue("SELFRUN_AZURE_CREDENTIAL_JSON", "MINICLOUD_AZURE_CREDENTIAL_JSON")
+            ?? ((FirstEnvironmentValue("AZURE_SUBSCRIPTION_ID"), FirstEnvironmentValue("AZURE_RESOURCE_GROUP")) is ({ } sub, { } rg)
+                ? (FirstEnvironmentValue("AZURE_ACCESS_TOKEN") is { } token
+                    ? JsonSerializer.Serialize(new
+                    {
+                        subscriptionId = sub,
+                        resourceGroup = rg,
+                        accessToken = token
+                    })
+                    : (FirstEnvironmentValue("AZURE_TENANT_ID"), FirstEnvironmentValue("AZURE_CLIENT_ID"), FirstEnvironmentValue("AZURE_CLIENT_SECRET")) is ({ } tid, { } cid, { } csec)
+                        ? JsonSerializer.Serialize(new
+                        {
+                            tenantId = tid,
+                            clientId = cid,
+                            clientSecret = csec,
+                            subscriptionId = sub,
+                            resourceGroup = rg
+                        })
+                        : null)
+                : null),
+        "gcp" => FirstEnvironmentValue("SELFRUN_GCP_CREDENTIAL_JSON", "MINICLOUD_GCP_CREDENTIAL_JSON", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_APPLICATION_CREDENTIALS_JSON")
+            ?? (FirstEnvironmentValue("GCP_ACCESS_TOKEN") is { } gcpToken && (projectId ?? FirstEnvironmentValue("GCP_PROJECT_ID", "GOOGLE_CLOUD_PROJECT")) is { } gcpProject
+                ? JsonSerializer.Serialize(new
+                {
+                    projectId = gcpProject,
+                    accessToken = gcpToken
+                })
+                : null),
+        "ovhcloud" => FirstEnvironmentValue("SELFRUN_OVH_CREDENTIAL_JSON", "MINICLOUD_OVH_CREDENTIAL_JSON")
+            ?? ((FirstEnvironmentValue("OVH_APPLICATION_KEY"), FirstEnvironmentValue("OVH_APPLICATION_SECRET"), FirstEnvironmentValue("OVH_CONSUMER_KEY")) is ({ } ak, { } asec, { } ck)
+                ? JsonSerializer.Serialize(new
+                {
+                    applicationKey = ak,
+                    applicationSecret = asec,
+                    consumerKey = ck,
+                    projectId = projectId ?? FirstEnvironmentValue("OVH_PROJECT_ID"),
+                    endpoint = FirstEnvironmentValue("OVH_ENDPOINT")
+                })
+                : null),
+        "linode" => FirstEnvironmentValue("SELFRUN_LINODE_TOKEN", "MINICLOUD_LINODE_TOKEN", "LINODE_TOKEN", "LINODE_API_TOKEN"),
+        "scaleway" => FirstEnvironmentValue("SELFRUN_SCALEWAY_CREDENTIAL_JSON", "MINICLOUD_SCALEWAY_CREDENTIAL_JSON", "SCW_SECRET_KEY", "SCALEWAY_SECRET_KEY"),
+        _ => null
+    };
 
     private async Task<int> RunProviderSshKeysAsync(string[] args, CancellationToken ct)
     {

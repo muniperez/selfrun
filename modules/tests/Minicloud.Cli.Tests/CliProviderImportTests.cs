@@ -31,6 +31,48 @@ public sealed class CliProviderImportTests
     }
 
     [Fact]
+    public async Task Add_prefers_selfrun_credential_env_var_and_falls_back_to_minicloud_alias()
+    {
+        var prevSelfrun = Environment.GetEnvironmentVariable("SELFRUN_GCP_CREDENTIAL_JSON");
+        var prevLegacy = Environment.GetEnvironmentVariable("MINICLOUD_GCP_CREDENTIAL_JSON");
+        var prevSa = Environment.GetEnvironmentVariable("GCP_SERVICE_ACCOUNT_JSON");
+        var prevGac = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+        var prevToken = Environment.GetEnvironmentVariable("GCP_ACCESS_TOKEN");
+        var directory = Directory.CreateTempSubdirectory("provider-add-alias-");
+        try
+        {
+            Environment.SetEnvironmentVariable("GCP_SERVICE_ACCOUNT_JSON", null);
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON", null);
+            Environment.SetEnvironmentVariable("GCP_ACCESS_TOKEN", null);
+
+            const string selfrunJson = """{"projectId":"proj-1","accessToken":"synthetic-selfrun-gcp-token"}""";
+            const string legacyJson = """{"projectId":"proj-1","accessToken":"synthetic-legacy-gcp-token"}""";
+
+            Environment.SetEnvironmentVariable("SELFRUN_GCP_CREDENTIAL_JSON", selfrunJson);
+            Environment.SetEnvironmentVariable("MINICLOUD_GCP_CREDENTIAL_JSON", legacyJson);
+            var handler = new Handler(); var console = new Console();
+            var application = Application(directory.FullName, handler, console);
+            Assert.Equal(CliExitCodes.Success, await application.RunAsync(["providers", "add", "--organization", "org", "--name", "Gcp Primary", "--provider", "gcp", "--project-id", "proj-1"], default));
+            Assert.Equal(selfrunJson, handler.Body!.RootElement.GetProperty("credential").GetString());
+            Assert.DoesNotContain("synthetic-selfrun-gcp-token", string.Join('\n', console.Messages));
+
+            Environment.SetEnvironmentVariable("SELFRUN_GCP_CREDENTIAL_JSON", null);
+            Assert.Equal(CliExitCodes.Success, await application.RunAsync(["providers", "add", "--organization", "org", "--name", "Gcp Legacy", "--provider", "gcp", "--project-id", "proj-1"], default));
+            Assert.Equal(legacyJson, handler.Body!.RootElement.GetProperty("credential").GetString());
+            Assert.DoesNotContain("synthetic-legacy-gcp-token", string.Join('\n', console.Messages));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SELFRUN_GCP_CREDENTIAL_JSON", prevSelfrun);
+            Environment.SetEnvironmentVariable("MINICLOUD_GCP_CREDENTIAL_JSON", prevLegacy);
+            Environment.SetEnvironmentVariable("GCP_SERVICE_ACCOUNT_JSON", prevSa);
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON", prevGac);
+            Environment.SetEnvironmentVariable("GCP_ACCESS_TOKEN", prevToken);
+            directory.Delete(true);
+        }
+    }
+
+    [Fact]
     public async Task Import_requires_explicit_resource_arrays_and_sends_only_the_selected_account()
     {
         var directory = Directory.CreateTempSubdirectory("provider-import-");

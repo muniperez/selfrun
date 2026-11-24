@@ -101,8 +101,10 @@ public sealed class ProviderExtensionApiContractTests : IAsyncLifetime
     [InlineData("azure")]
     [InlineData("gcp")]
     [InlineData("ovh")]
+    [InlineData("ovhcloud")]
     [InlineData("linode")]
     [InlineData("scaleway")]
+    [InlineData("custom-cloud")]
     public async Task DraftGatedPlannedProvidersCannotBeCreatedWithoutQualification(string wireType)
     {
         using var client = Client();
@@ -148,19 +150,10 @@ public sealed class ProviderExtensionApiContractTests : IAsyncLifetime
                 services.AddSingleton<IKratosSessionValidator>(new FakeKratos());
                 services.AddHttpClient(ProviderAccountClientFactory.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => Cloud);
 
-                // Register synthetic DraftGated entries for planned providers to verify they stay hidden and rejected.
-                foreach (var (wire, display) in new[]
-                {
-                    ("aws", "AWS EC2"),
-                    ("azure", "Azure VMs"),
-                    ("gcp", "GCP Compute Engine"),
-                    ("ovh", "OVHcloud"),
-                    ("linode", "Linode"),
-                    ("scaleway", "Scaleway")
-                })
-                {
-                    services.AddVpsProvider(new DraftGatedRegistration(wire, display));
-                }
+                // Built-in expansion providers (aws, azure, gcp, ovhcloud/ovh, linode, scaleway) are already
+                // registered as Experimental and gated by default. Add a synthetic DraftGated custom provider
+                // to verify third-party gated registrations also remain hidden and rejected.
+                services.AddVpsProvider(new DraftGatedRegistration("custom-cloud", "Custom Cloud"));
             });
         }
     }

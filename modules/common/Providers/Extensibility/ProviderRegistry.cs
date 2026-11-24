@@ -1,8 +1,14 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Minicloud.Common.Models;
+using Minicloud.Common.Providers.Aws;
+using Minicloud.Common.Providers.Azure;
 using Minicloud.Common.Providers.DigitalOcean;
+using Minicloud.Common.Providers.GoogleCloud;
 using Minicloud.Common.Providers.Hetzner;
+using Minicloud.Common.Providers.Linode;
+using Minicloud.Common.Providers.Ovhcloud;
+using Minicloud.Common.Providers.Scaleway;
 using Minicloud.Common.Providers.Vultr;
 using Minicloud.Common.Services;
 
@@ -29,6 +35,7 @@ public interface IVpsProviderRegistration
 {
     ProviderDescriptor Descriptor { get; }
     IProviderErrorClassifier ErrorClassifier { get; }
+    bool IsEnabledByOptions => false;
     IVpsProviderClient CreateClient(ProviderClientCreationContext context);
 }
 
@@ -183,7 +190,8 @@ public sealed class VpsProviderRegistry : IVpsProviderRegistry
 
         if (descriptor.QualificationState is ProviderQualificationState.DraftGated or ProviderQualificationState.Experimental)
         {
-            return _enabledGated.Contains(descriptor.WireType)
+            return registration.IsEnabledByOptions
+                || _enabledGated.Contains(descriptor.WireType)
                 || descriptor.Aliases.Any(alias => _enabledGated.Contains(alias));
         }
 
@@ -194,13 +202,25 @@ public sealed class VpsProviderRegistry : IVpsProviderRegistry
         IOptions<HetznerOptions>? hetzner = null,
         IOptions<DigitalOceanOptions>? digitalOcean = null,
         IOptions<VultrOptions>? vultr = null,
-        IOptions<ProviderRegistryOptions>? options = null)
+        IOptions<ProviderRegistryOptions>? options = null,
+        IOptions<AwsOptions>? aws = null,
+        IOptions<AzureOptions>? azure = null,
+        IOptions<GoogleCloudOptions>? googleCloud = null,
+        IOptions<OvhcloudOptions>? ovhcloud = null,
+        IOptions<LinodeOptions>? linode = null,
+        IOptions<ScalewayOptions>? scaleway = null)
     {
         return new VpsProviderRegistry(
         [
             new HetznerProviderRegistration(hetzner ?? Options.Create(new HetznerOptions())),
             new DigitalOceanProviderRegistration(digitalOcean ?? Options.Create(new DigitalOceanOptions())),
-            new VultrProviderRegistration(vultr ?? Options.Create(new VultrOptions()))
+            new VultrProviderRegistration(vultr ?? Options.Create(new VultrOptions())),
+            new AwsProviderRegistration(aws ?? Options.Create(new AwsOptions())),
+            new AzureProviderRegistration(azure ?? Options.Create(new AzureOptions())),
+            new GoogleCloudProviderRegistration(googleCloud ?? Options.Create(new GoogleCloudOptions())),
+            new OvhcloudProviderRegistration(ovhcloud ?? Options.Create(new OvhcloudOptions())),
+            new LinodeProviderRegistration(linode ?? Options.Create(new LinodeOptions())),
+            new ScalewayProviderRegistration(scaleway ?? Options.Create(new ScalewayOptions()))
         ], options);
     }
 }
@@ -344,11 +364,300 @@ public static class BuiltInProviderDescriptors
             SupportsReadOnlyScopeIdentity: false),
         RetryPolicy: ProviderRetryPolicy.Default);
 
+    public static ProviderDescriptor Aws { get; } = new(
+        WireType: "aws",
+        Aliases: ["ec2", "amazon-web-services"],
+        DisplayName: "AWS",
+        BuiltInProvider: CloudProvider.Aws,
+        QualificationState: ProviderQualificationState.Experimental,
+        Capabilities: new ProviderCapabilities(
+            ComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedArchitectures: ["linux/amd64", "linux/arm64"],
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportsSshKeyInventory: true,
+            SupportsCloudInit: true,
+            SupportsDurableVolumes: true,
+            SupportsVolumeResize: false,
+            SupportsSnapshots: true,
+            SupportsPrivateNetworks: false,
+            SupportsPublicIpv4: true,
+            SupportsPublicIpv6: true,
+            SupportsLabelsOrTags: true,
+            SupportsExactLabelOwnershipVerification: true,
+            SupportsScopeIdentityDiscovery: true,
+            SupportsQuotaDiscovery: true,
+            SupportsCatalogDiscovery: true,
+            SupportsAsynchronousOperations: true,
+            SupportsIdempotencyTokens: true),
+        Placement: new ProviderPlacementContract(
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportedComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedBuildPlatforms: ["linux/amd64", "linux/arm64"],
+            ImageFormat: ProviderImageFormat.AmiOrAlias,
+            DefaultImage: "ami-ubuntu-24.04-lts",
+            DefaultOsId: null,
+            ImageRequired: false,
+            LocationExample: "us-east-1",
+            SkuExample: "t3.small"),
+        Credentials: new ProviderCredentialContract(
+            Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
+            ScopeBoundary: ProviderScopeBoundaryKind.AccountAndRole,
+            EnvironmentVariableNames: ["SELFRUN_AWS_CREDENTIAL_JSON", "MINICLOUD_AWS_CREDENTIAL_JSON", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+            NonSecretSettings:
+            [
+                new ProviderSettingField("projectId", "AWS Account ID", Required: false, ImmutableAfterReservation: true,
+                    Description: "Optional 12-digit AWS account ID scope boundary.")
+            ],
+            SupportsReadOnlyScopeIdentity: true,
+            CredentialFormatValidator: ExpansionProviderCredentialValidators.ValidateAws),
+        RetryPolicy: ProviderRetryPolicy.Default);
+
+    public static ProviderDescriptor Azure { get; } = new(
+        WireType: "azure",
+        Aliases: ["microsoft-azure"],
+        DisplayName: "Microsoft Azure",
+        BuiltInProvider: CloudProvider.Azure,
+        QualificationState: ProviderQualificationState.Experimental,
+        Capabilities: new ProviderCapabilities(
+            ComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedArchitectures: ["linux/amd64", "linux/arm64"],
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportsSshKeyInventory: true,
+            SupportsCloudInit: true,
+            SupportsDurableVolumes: true,
+            SupportsVolumeResize: false,
+            SupportsSnapshots: true,
+            SupportsPrivateNetworks: false,
+            SupportsPublicIpv4: true,
+            SupportsPublicIpv6: true,
+            SupportsLabelsOrTags: true,
+            SupportsExactLabelOwnershipVerification: true,
+            SupportsScopeIdentityDiscovery: true,
+            SupportsQuotaDiscovery: true,
+            SupportsCatalogDiscovery: true,
+            SupportsAsynchronousOperations: true,
+            SupportsIdempotencyTokens: false),
+        Placement: new ProviderPlacementContract(
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportedComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedBuildPlatforms: ["linux/amd64", "linux/arm64"],
+            ImageFormat: ProviderImageFormat.UrnOrResourceId,
+            DefaultImage: "Canonical:ubuntu-24_04-lts:server:latest",
+            DefaultOsId: null,
+            ImageRequired: false,
+            LocationExample: "eastus",
+            SkuExample: "Standard_B2s"),
+        Credentials: new ProviderCredentialContract(
+            Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
+            ScopeBoundary: ProviderScopeBoundaryKind.TenantAndSubscription,
+            EnvironmentVariableNames: ["SELFRUN_AZURE_CREDENTIAL_JSON", "MINICLOUD_AZURE_CREDENTIAL_JSON", "AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_ACCESS_TOKEN"],
+            NonSecretSettings:
+            [
+                new ProviderSettingField("projectId", "Subscription / Resource Group", Required: true, ImmutableAfterReservation: true,
+                    Description: "Azure subscriptionId/resourceGroup scope boundary.")
+            ],
+            SupportsReadOnlyScopeIdentity: true,
+            CredentialFormatValidator: ExpansionProviderCredentialValidators.ValidateAzure),
+        RetryPolicy: ProviderRetryPolicy.Default);
+
+    public static ProviderDescriptor GoogleCloud { get; } = new(
+        WireType: "gcp",
+        Aliases: ["google-cloud", "googlecloud"],
+        DisplayName: "Google Cloud",
+        BuiltInProvider: CloudProvider.GoogleCloud,
+        QualificationState: ProviderQualificationState.Experimental,
+        Capabilities: new ProviderCapabilities(
+            ComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedArchitectures: ["linux/amd64", "linux/arm64"],
+            LocationGranularity: ProviderLocationGranularity.Zone,
+            SupportsSshKeyInventory: false,
+            SupportsCloudInit: true,
+            SupportsDurableVolumes: true,
+            SupportsVolumeResize: false,
+            SupportsSnapshots: true,
+            SupportsPrivateNetworks: false,
+            SupportsPublicIpv4: true,
+            SupportsPublicIpv6: true,
+            SupportsLabelsOrTags: true,
+            SupportsExactLabelOwnershipVerification: true,
+            SupportsScopeIdentityDiscovery: true,
+            SupportsQuotaDiscovery: true,
+            SupportsCatalogDiscovery: true,
+            SupportsAsynchronousOperations: true,
+            SupportsIdempotencyTokens: true),
+        Placement: new ProviderPlacementContract(
+            LocationGranularity: ProviderLocationGranularity.Zone,
+            SupportedComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedBuildPlatforms: ["linux/amd64", "linux/arm64"],
+            ImageFormat: ProviderImageFormat.ImageFamilyOrSelfLink,
+            DefaultImage: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
+            DefaultOsId: null,
+            ImageRequired: false,
+            LocationExample: "us-central1-a",
+            SkuExample: "e2-small"),
+        Credentials: new ProviderCredentialContract(
+            Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
+            ScopeBoundary: ProviderScopeBoundaryKind.ServiceAndProject,
+            EnvironmentVariableNames: ["SELFRUN_GCP_CREDENTIAL_JSON", "MINICLOUD_GCP_CREDENTIAL_JSON", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_APPLICATION_CREDENTIALS_JSON", "GCP_ACCESS_TOKEN"],
+            NonSecretSettings:
+            [
+                new ProviderSettingField("projectId", "Project ID", Required: true, ImmutableAfterReservation: true,
+                    Description: "Google Cloud project ID scope boundary.")
+            ],
+            SupportsReadOnlyScopeIdentity: true,
+            CredentialFormatValidator: ExpansionProviderCredentialValidators.ValidateGoogleCloud),
+        RetryPolicy: ProviderRetryPolicy.Default);
+
+    public static ProviderDescriptor Ovhcloud { get; } = new(
+        WireType: "ovhcloud",
+        Aliases: ["ovh", "ovh-cloud"],
+        DisplayName: "OVHcloud",
+        BuiltInProvider: CloudProvider.Ovhcloud,
+        QualificationState: ProviderQualificationState.Experimental,
+        Capabilities: new ProviderCapabilities(
+            ComputeFamilies: ProviderComputeFamily.VirtualServer | ProviderComputeFamily.BareMetal,
+            SupportedArchitectures: ["linux/amd64", "linux/arm64"],
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportsSshKeyInventory: true,
+            SupportsCloudInit: true,
+            SupportsDurableVolumes: true,
+            SupportsVolumeResize: false,
+            SupportsSnapshots: true,
+            SupportsPrivateNetworks: false,
+            SupportsPublicIpv4: true,
+            SupportsPublicIpv6: true,
+            SupportsLabelsOrTags: true,
+            SupportsExactLabelOwnershipVerification: false,
+            SupportsScopeIdentityDiscovery: true,
+            SupportsQuotaDiscovery: true,
+            SupportsCatalogDiscovery: true,
+            SupportsAsynchronousOperations: true,
+            SupportsIdempotencyTokens: false),
+        Placement: new ProviderPlacementContract(
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportedComputeFamilies: ProviderComputeFamily.VirtualServer | ProviderComputeFamily.BareMetal,
+            SupportedBuildPlatforms: ["linux/amd64", "linux/arm64"],
+            ImageFormat: ProviderImageFormat.SlugOrId,
+            DefaultImage: "Ubuntu 24.04",
+            DefaultOsId: null,
+            ImageRequired: false,
+            LocationExample: "GRA11",
+            SkuExample: "d2-4"),
+        Credentials: new ProviderCredentialContract(
+            Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
+            ScopeBoundary: ProviderScopeBoundaryKind.ServiceAndProject,
+            EnvironmentVariableNames: ["SELFRUN_OVH_CREDENTIAL_JSON", "MINICLOUD_OVH_CREDENTIAL_JSON", "OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET", "OVH_CONSUMER_KEY", "OVH_PROJECT_ID"],
+            NonSecretSettings:
+            [
+                new ProviderSettingField("projectId", "Project ID", Required: true, ImmutableAfterReservation: true,
+                    Description: "OVHcloud Public Cloud project ID scope boundary.")
+            ],
+            SupportsReadOnlyScopeIdentity: true,
+            CredentialFormatValidator: ExpansionProviderCredentialValidators.ValidateOvhcloud),
+        RetryPolicy: ProviderRetryPolicy.Default);
+
+    public static ProviderDescriptor Linode { get; } = new(
+        WireType: "linode",
+        Aliases: ["akamai", "akamai-linode"],
+        DisplayName: "Akamai Connected Cloud (Linode)",
+        BuiltInProvider: CloudProvider.Linode,
+        QualificationState: ProviderQualificationState.Experimental,
+        Capabilities: new ProviderCapabilities(
+            ComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedArchitectures: ["linux/amd64"],
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportsSshKeyInventory: true,
+            SupportsCloudInit: true,
+            SupportsDurableVolumes: true,
+            SupportsVolumeResize: false,
+            SupportsSnapshots: false,
+            SupportsPrivateNetworks: false,
+            SupportsPublicIpv4: true,
+            SupportsPublicIpv6: true,
+            SupportsLabelsOrTags: true,
+            SupportsExactLabelOwnershipVerification: false,
+            SupportsScopeIdentityDiscovery: true,
+            SupportsQuotaDiscovery: false,
+            SupportsCatalogDiscovery: true,
+            SupportsAsynchronousOperations: true,
+            SupportsIdempotencyTokens: false),
+        Placement: new ProviderPlacementContract(
+            LocationGranularity: ProviderLocationGranularity.Region,
+            SupportedComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedBuildPlatforms: ["linux/amd64"],
+            ImageFormat: ProviderImageFormat.SlugOrId,
+            DefaultImage: "linode/ubuntu24.04",
+            DefaultOsId: null,
+            ImageRequired: false,
+            LocationExample: "us-east",
+            SkuExample: "g6-nanode-1"),
+        Credentials: new ProviderCredentialContract(
+            Format: ProviderCredentialFormat.ApiToken,
+            ScopeBoundary: ProviderScopeBoundaryKind.Account,
+            EnvironmentVariableNames: ["SELFRUN_LINODE_TOKEN", "MINICLOUD_LINODE_TOKEN", "LINODE_TOKEN", "LINODE_API_TOKEN"],
+            NonSecretSettings: [],
+            SupportsReadOnlyScopeIdentity: true),
+        RetryPolicy: ProviderRetryPolicy.Default);
+
+    public static ProviderDescriptor Scaleway { get; } = new(
+        WireType: "scaleway",
+        Aliases: ["scw"],
+        DisplayName: "Scaleway",
+        BuiltInProvider: CloudProvider.Scaleway,
+        QualificationState: ProviderQualificationState.Experimental,
+        Capabilities: new ProviderCapabilities(
+            ComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedArchitectures: ["linux/amd64", "linux/arm64"],
+            LocationGranularity: ProviderLocationGranularity.Zone,
+            SupportsSshKeyInventory: true,
+            SupportsCloudInit: true,
+            SupportsDurableVolumes: true,
+            SupportsVolumeResize: false,
+            SupportsSnapshots: true,
+            SupportsPrivateNetworks: false,
+            SupportsPublicIpv4: true,
+            SupportsPublicIpv6: true,
+            SupportsLabelsOrTags: true,
+            SupportsExactLabelOwnershipVerification: false,
+            SupportsScopeIdentityDiscovery: true,
+            SupportsQuotaDiscovery: true,
+            SupportsCatalogDiscovery: true,
+            SupportsAsynchronousOperations: true,
+            SupportsIdempotencyTokens: false),
+        Placement: new ProviderPlacementContract(
+            LocationGranularity: ProviderLocationGranularity.Zone,
+            SupportedComputeFamilies: ProviderComputeFamily.VirtualServer,
+            SupportedBuildPlatforms: ["linux/amd64", "linux/arm64"],
+            ImageFormat: ProviderImageFormat.SlugOrId,
+            DefaultImage: "ubuntu_noble",
+            DefaultOsId: null,
+            ImageRequired: false,
+            LocationExample: "fr-par-1",
+            SkuExample: "DEV1-S"),
+        Credentials: new ProviderCredentialContract(
+            Format: ProviderCredentialFormat.ApiToken,
+            ScopeBoundary: ProviderScopeBoundaryKind.Project,
+            EnvironmentVariableNames: ["SELFRUN_SCALEWAY_CREDENTIAL_JSON", "MINICLOUD_SCALEWAY_CREDENTIAL_JSON", "SCW_SECRET_KEY", "SCALEWAY_SECRET_KEY"],
+            NonSecretSettings:
+            [
+                new ProviderSettingField("projectId", "Project ID", Required: true, ImmutableAfterReservation: true,
+                    Description: "Scaleway project UUID scope boundary.")
+            ],
+            SupportsReadOnlyScopeIdentity: true,
+            CredentialFormatValidator: ExpansionProviderCredentialValidators.ValidateScaleway),
+        RetryPolicy: ProviderRetryPolicy.Default);
+
     public static ProviderDescriptor ForBuiltIn(CloudProvider provider) => provider switch
     {
         CloudProvider.Hetzner => Hetzner,
         CloudProvider.DigitalOcean => DigitalOcean,
         CloudProvider.Vultr => Vultr,
+        CloudProvider.Aws => Aws,
+        CloudProvider.Azure => Azure,
+        CloudProvider.GoogleCloud => GoogleCloud,
+        CloudProvider.Ovhcloud => Ovhcloud,
+        CloudProvider.Linode => Linode,
+        CloudProvider.Scaleway => Scaleway,
         _ => throw new ArgumentOutOfRangeException(nameof(provider))
     };
 }

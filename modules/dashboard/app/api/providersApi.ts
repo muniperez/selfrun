@@ -1,6 +1,35 @@
 import { apiRequest } from "./apiClient";
 
-export type ProviderType = { type: string; name: string; supportsStorage: boolean; defaultImage: string | null; defaultOsId?: number | null };
+export type ProviderTypeCapabilities = {
+  computeFamilies: string[];
+  supportedArchitectures: string[];
+  locationGranularity: string;
+  supportsSshKeyInventory: boolean;
+  supportsCloudInit: boolean;
+  supportsDurableVolumes: boolean;
+  supportsVolumeResize: boolean;
+  supportsSnapshots: boolean;
+  supportsPrivateNetworks: boolean;
+  supportsPublicIpv4: boolean;
+  supportsPublicIpv6: boolean;
+  supportsLabelsOrTags: boolean;
+  supportsScopeIdentityDiscovery: boolean;
+  supportsQuotaDiscovery: boolean;
+  supportsCatalogDiscovery: boolean;
+  supportsAsynchronousOperations: boolean;
+  supportsIdempotencyTokens: boolean;
+};
+
+export type ProviderType = {
+  type: string;
+  name: string;
+  supportsStorage: boolean;
+  defaultImage: string | null;
+  defaultOsId?: number | null;
+  capabilities?: ProviderTypeCapabilities | null;
+  qualificationState?: string;
+  requiresProjectId?: boolean;
+};
 export type ProviderAccount = {
   id: string; organizationId: string; name: string; providerType: string; enabled: boolean;
   projectId?: string | null; defaultOsId?: number | null; validationStatus: string;

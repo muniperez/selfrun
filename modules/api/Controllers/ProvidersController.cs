@@ -50,7 +50,9 @@ public sealed class ProvidersController(MinicloudDbContext db, ControlPlaneAutho
                 capabilities.SupportsCatalogDiscovery,
                 capabilities.SupportsAsynchronousOperations,
                 capabilities.SupportsIdempotencyTokens),
-            ProviderCapabilities.ToWireValue(descriptor.QualificationState));
+            ProviderCapabilities.ToWireValue(descriptor.QualificationState),
+            descriptor.Credentials.NonSecretSettings.Any(s =>
+                string.Equals(s.Key, "projectId", StringComparison.OrdinalIgnoreCase) && s.Required));
     }
 
     [HttpGet]

@@ -741,3 +741,59 @@ it("does not reopen an old organization's add-plan editor when account creation 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByText("old-org-account")).not.toBeInTheDocument();
 });
+
+it("renders experimental provider types with scope fields when advertised by the API", async () => {
+  vi.mocked(api.listProviderTypes).mockResolvedValue([
+    ...providerTypes,
+    {
+      type: "aws",
+      name: "AWS",
+      supportsStorage: true,
+      defaultImage: "ami-ubuntu-24.04-lts",
+      qualificationState: "experimental",
+      requiresProjectId: false,
+    },
+    {
+      type: "ovhcloud",
+      name: "OVHcloud",
+      supportsStorage: true,
+      defaultImage: "Ubuntu 24.04",
+      qualificationState: "experimental",
+      requiresProjectId: true,
+    },
+    {
+      type: "gcp",
+      name: "Google Cloud",
+      supportsStorage: true,
+      defaultImage: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
+      qualificationState: "experimental",
+      requiresProjectId: true,
+    },
+  ]);
+
+  mount("/plans/accounts");
+  await screen.findByRole("heading", { name: "Provider accounts" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+  const dialog = await screen.findByRole("dialog");
+
+  const providerSelect = within(dialog).getByLabelText("Provider");
+  expect(within(providerSelect).getByRole("option", { name: "AWS" })).toBeInTheDocument();
+  expect(within(providerSelect).getByRole("option", { name: "OVHcloud" })).toBeInTheDocument();
+  expect(within(providerSelect).getByRole("option", { name: "Google Cloud" })).toBeInTheDocument();
+
+  fireEvent.change(providerSelect, { target: { value: "ovhcloud" } });
+  const ovhProjectInput = within(dialog).getByLabelText("Project ID");
+  expect(ovhProjectInput).toBeInTheDocument();
+  expect(ovhProjectInput).toBeRequired();
+
+  fireEvent.change(providerSelect, { target: { value: "gcp" } });
+  const gcpProjectInput = within(dialog).getByLabelText("Project ID");
+  expect(gcpProjectInput).toBeInTheDocument();
+  expect(gcpProjectInput).toBeRequired();
+
+  fireEvent.change(providerSelect, { target: { value: "aws" } });
+  expect(within(dialog).queryByLabelText("Project ID")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("AWS account ID (optional)")).toBeInTheDocument();
+});
+

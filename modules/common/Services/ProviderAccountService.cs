@@ -27,7 +27,8 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
         var account = new ProviderAccount
         {
             Id = ids.NewId("provider"), OrganizationId = request.OrganizationId, Name = request.Name.Trim(), ProviderType = type,
-            ProjectId = request.ProjectId, DefaultOsId = request.DefaultOsId ?? descriptor.Placement.DefaultOsId,
+            ProjectId = string.IsNullOrWhiteSpace(request.ProjectId) ? null : request.ProjectId.Trim(),
+            DefaultOsId = request.DefaultOsId ?? descriptor.Placement.DefaultOsId,
             CreatedAt = now, UpdatedAt = now
         };
         var reference = await WriteCandidateAsync(account, descriptor, request.Credential, ct);
