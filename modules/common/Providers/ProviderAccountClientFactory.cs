@@ -5,6 +5,7 @@ using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Hetzner;
+using Minicloud.Common.Providers.Ovhcloud;
 using Minicloud.Common.Providers.Vultr;
 using Minicloud.Common.Services;
 
@@ -15,7 +16,7 @@ namespace Minicloud.Common.Providers;
 public class ProviderAccountClientFactory(
     MinicloudDbContext db, ISecretStore secrets, IHttpClientFactory http,
     IOptions<HetznerOptions> hetzner, IOptions<DigitalOceanOptions> digitalOcean,
-    IOptions<VultrOptions> vultr, ILoggerFactory logs)
+    IOptions<VultrOptions> vultr, ILoggerFactory logs, IOptions<OvhcloudOptions>? ovhcloud = null)
 {
     public const string HttpClientName = "provider-accounts";
 
@@ -46,7 +47,21 @@ public class ProviderAccountClientFactory(
                 { ApiToken = credential, BaseUrl = digitalOcean.Value.BaseUrl, ProjectId = account.ProjectId }, logs.CreateLogger<DigitalOceanClient>()),
             CloudProvider.Vultr => new VultrClient(client, new VultrOptions
                 { ApiKey = credential, BaseUrl = vultr.Value.BaseUrl, DefaultOsId = account.DefaultOsId }, logs.CreateLogger<VultrClient>()),
+            CloudProvider.Ovhcloud => new OvhcloudClient(client,
+                ovhcloud?.Value ?? new OvhcloudOptions(),
+                AddProjectToCredential(credential, account.ProjectId), logs.CreateLogger<OvhcloudClient>()),
             _ => throw new ProviderCatalogException("provider_type_unsupported", "This VPS provider type is not supported.")
         };
+    }
+
+    private static string AddProjectToCredential(string credential, string? projectId)
+    {
+        if (string.IsNullOrWhiteSpace(projectId)) return credential;
+        using var document = System.Text.Json.JsonDocument.Parse(credential);
+        var values = document.RootElement.EnumerateObject()
+            .Where(x => !string.Equals(x.Name, "projectId", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(x => x.Name, x => x.Value.Clone(), StringComparer.OrdinalIgnoreCase);
+        values["projectId"] = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(projectId)).RootElement.Clone();
+        return System.Text.Json.JsonSerializer.Serialize(values);
     }
 }

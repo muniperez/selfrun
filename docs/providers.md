@@ -1,7 +1,7 @@
 # Providers and plans
 
 Each organization owns its provider accounts and named plans. You can connect
-multiple Hetzner, DigitalOcean, and Vultr accounts at the same time, including
+multiple Hetzner, DigitalOcean, Vultr, and OVHcloud accounts at the same time, including
 several accounts of one provider.
 
 CLI plan listing and app creation require an API key with `plans:read`.
@@ -14,8 +14,32 @@ provider credentials requires the separate `providers:write` operator scope.
 Open **Plans** in the dashboard and select **Provider accounts** (or **Add plan**
 and **Connect account**). Add an account name, select a supported
 provider, and enter its API credential. DigitalOcean accounts can also specify a
-project; Vultr accounts can specify an OS ID. Credentials are write-only and
+project; Vultr accounts can specify an OS ID. OVHcloud accounts require a
+project or dedicated-service identifier. Credentials are write-only and
 stored in OpenBao. An organization Owner or Admin manages accounts and plans.
+
+### OVHcloud
+
+The CLI reads an OVHcloud credential JSON object from `OVHCLOUD_CREDENTIAL`
+(or `OVH_CLOUD_CREDENTIAL`) and the service/project identifier from
+`OVHCLOUD_PROJECT_ID`:
+
+```json
+{"projectId":"xxxxxxxxxxxxxxxx","bearerToken":"redacted"}
+```
+
+Application credentials may instead contain `applicationKey`,
+`applicationSecret`, and `consumerKey`. Public Cloud plans use the OVH flavor
+ID as SKU, the OVH region as location, and an image ID/name as image. Creates,
+discovery and deletion are scoped to the registered project and exact managed
+name; an uncertain create is reconciled before retrying.
+
+Bare metal is a separate capability, not a VM label. A `baremetal:` SKU is
+recognized as dedicated-server intent, but ordering is gated because OVHcloud
+orders have stock, price, installation, billing and cancellation constraints.
+Minicloud will not reinstall, adopt an unowned server, or terminate a
+dedicated service automatically. Dedicated inventory and status are
+read-only until an explicitly approved order/cancellation workflow is added.
 
 The connection check uses read-only provider requests. It does not allocate a
 server or guarantee available quota. Accounts with identical provider types

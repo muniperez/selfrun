@@ -100,6 +100,7 @@ function formatProviderName(type: string, types: ProviderType[]) {
   if (type === "hetzner") return "Hetzner";
   if (type === "digital-ocean") return "DigitalOcean";
   if (type === "vultr") return "Vultr";
+  if (type === "ovhcloud") return "OVHcloud";
   return type;
 }
 
@@ -107,6 +108,7 @@ function providerShortMark(type: string) {
   if (type === "hetzner") return { text: "H", className: "bg-destructive/15 text-destructive" };
   if (type === "digital-ocean") return { text: "DO", className: "bg-info-surface text-info" };
   if (type === "vultr") return { text: "V", className: "bg-secondary text-foreground" };
+  if (type === "ovhcloud") return { text: "OVH", className: "bg-warning/20 text-warning-foreground" };
   return { text: type.slice(0, 1).toUpperCase() || "P", className: "bg-muted text-muted-foreground" };
 }
 
@@ -114,6 +116,7 @@ function regionExample(type: string) {
   if (type === "hetzner") return "nbg1";
   if (type === "digital-ocean") return "nyc3";
   if (type === "vultr") return "ewr";
+  if (type === "ovhcloud") return "GRA";
   return "nbg1";
 }
 
@@ -121,6 +124,7 @@ function skuExample(type: string) {
   if (type === "hetzner") return "cx23";
   if (type === "digital-ocean") return "s-1vcpu-1gb";
   if (type === "vultr") return "vc2-1c-1gb";
+  if (type === "ovhcloud") return "b2-7";
   return "cx23";
 }
 
@@ -392,6 +396,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
           { value: "hetzner", label: "Hetzner" },
           { value: "digital-ocean", label: "DigitalOcean" },
           { value: "vultr", label: "Vultr" },
+          { value: "ovhcloud", label: "OVHcloud" },
         ];
     return knownTypes;
   }, [types]);
@@ -2162,6 +2167,7 @@ function AccountDialogForm({
         { type: "hetzner", name: "Hetzner", supportsStorage: true, defaultImage: "ubuntu-24.04" },
         { type: "digital-ocean", name: "DigitalOcean", supportsStorage: false, defaultImage: "ubuntu-24-04-x64" },
         { type: "vultr", name: "Vultr", supportsStorage: false, defaultImage: null, defaultOsId: 2284 },
+        { type: "ovhcloud", name: "OVHcloud", supportsStorage: false, defaultImage: "Ubuntu 24.04" },
       ];
 
   const [name, setName] = useState(account?.name ?? "");
@@ -2276,15 +2282,23 @@ function AccountDialogForm({
             />
           </div>
 
-          {type === "digital-ocean" ? (
+          {type === "digital-ocean" || type === "ovhcloud" ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="provider-project">Project ID (optional)</Label>
+              <Label htmlFor="provider-project">
+                {type === "ovhcloud" ? "Project or service ID" : "Project ID (optional)"}
+              </Label>
               <Input
                 id="provider-project"
                 disabled={busy}
                 value={projectId}
                 onChange={(event) => setProjectId(event.target.value)}
               />
+              {type === "ovhcloud" ? (
+                <p className="text-sm text-muted-foreground">
+                  The credential must be JSON with projectId and bearerToken, or
+                  applicationKey/applicationSecret/consumerKey.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
