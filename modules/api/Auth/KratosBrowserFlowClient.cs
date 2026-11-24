@@ -123,6 +123,20 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
             if (response.StatusCode == HttpStatusCode.Forbidden)
                 throw new AccountFlowException("csrf_invalid", 403, "The account form is invalid.");
             if ((int)response.StatusCode >= 500) throw new KratosUnavailableException();
+            if (kind == "recovery" && operation == "submit" && response.StatusCode == HttpStatusCode.UnprocessableEntity &&
+                await IsRecoverySettingsTransitionAsync(response, upstreamToken))
+            {
+                var recoveryCookies = ReadCookies(response);
+                if (!recoveryCookies.TryGetValue("ory_kratos_session", out var sessionCookie) || sessionCookie.Length == 0)
+                    throw new KratosUnavailableException();
+                foreach (var cookie in recoveryCookies)
+                {
+                    if (cookie.Value.Length == 0) cookieJar.Remove(cookie.Key);
+                    else cookieJar[cookie.Key] = cookie.Value;
+                }
+                var (identityId, sessionId) = await WhoamiAsync(baseUri, cookieJar, upstreamToken);
+                return new KratosFlowResult(null, identityId, sessionId, recoveryCookies);
+            }
             if (!response.IsSuccessStatusCode)
             {
                 // Browser redirects are never followed or exposed as upstream URLs.
@@ -478,6 +492,39 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
             // Unrecognized error bodies still use the sanitized status-based rejection below.
         }
         return null;
+    }
+
+    /// <summary>
+    /// Recognizes Kratos v1.3.1's default JSON recovery-code completion (422 <c>browser_location_change_required</c>
+    /// targeting the configured dashboard settings route) without following or exposing the upstream redirect URL.
+    /// </summary>
+    private async Task<bool> IsRecoverySettingsTransitionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentType?.MediaType != "application/json")
+            return false;
+        var payload = await ReadJsonAsync(response, cancellationToken);
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object ||
+            !error.TryGetProperty("id", out var errorId) || errorId.ValueKind != JsonValueKind.String ||
+            !errorId.ValueEquals("browser_location_change_required"))
+            return false;
+        if (!payload.TryGetProperty("redirect_browser_to", out var target) || target.ValueKind != JsonValueKind.String)
+            throw new KratosUnavailableException();
+        ValidateRecoverySettingsRedirect(target.GetString());
+        return true;
+    }
+
+    private void ValidateRecoverySettingsRedirect(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > ProviderValueLimit ||
+            !Uri.TryCreate(_options.DashboardOrigin, UriKind.Absolute, out var dashboard) ||
+            dashboard.Scheme != Uri.UriSchemeHttps || dashboard.GetLeftPart(UriPartial.Authority) != _options.DashboardOrigin ||
+            !Uri.TryCreate(value, UriKind.Absolute, out var target) ||
+            target.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(target.UserInfo) ||
+            !string.IsNullOrEmpty(target.Fragment) ||
+            target.GetLeftPart(UriPartial.Authority) != _options.DashboardOrigin ||
+            !string.Equals(target.AbsolutePath, "/settings/account", StringComparison.Ordinal))
+            throw new KratosUnavailableException();
     }
 
     private static AccountFlowMessage[] SanitizeMessages(UpstreamMessage[] messages) =>

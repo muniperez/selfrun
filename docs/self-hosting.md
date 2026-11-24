@@ -130,6 +130,7 @@ references (`MINICLOUD_*_IMAGE`) come from the generated, digest-pinned
 | `MANAGE_DNS_RECORDS` | Optional. Defaults to `false`. |
 | `MINICLOUD_SOURCE_URL` | Optional. The public source link shown in the dashboard. |
 | `MINICLOUD_GOOGLE_OIDC_ENABLED` | Defaults to `false`; the installer derives it only from explicit `googleOidc.enabled`. Shared API/Kratos switch, not a qualification assertion. |
+| `MINICLOUD_EMAIL_RECOVERY_ENABLED` | Unset by default; set to `true` only when the verified installer selects `compose.email-recovery.yml` for an explicit first-install `emailRecovery.enabled` opt-in. Basic password installs need no SMTP configuration. |
 | `MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED` | Defaults to `true`. Offers the per-user **Keep me signed in** option; when `false`, existing remembered sessions follow the standard limits. |
 | `MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES`, `MINICLOUD_PORTAL_STANDARD_MAX_MINUTES` | Dashboard inactivity timeout and absolute lifetime for standard sessions. Default `120` (2 hours) and `720` (12 hours). |
 | `MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES`, `MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES` | Same limits for **Keep me signed in** sessions. Default `10080` (7 days) and `43200` (30 days). |
@@ -152,8 +153,11 @@ independent random values:
 - `secret-encryption-key`
 - `kratos.env`: credentials only. See `secrets.env.example`. The `DSN`
   password must match `kratos-db-password`, URL-encoded. Explicit Google opt-in
-  also imports the single fixed Google provider JSON here; never dump this file
-  or a rendered Compose environment into logs.
+  also imports the single fixed Google provider JSON here, and explicit
+  first-install email/code recovery opt-in imports `COURIER_SMTP_*` settings
+  from the protected `emailRecovery.smtpFile` input; basic password installs
+  require neither. Never dump this file or a rendered Compose environment into
+  logs.
 - `openbao-server.crt`, `openbao-server.key` and `openbao-ca.crt`: a private CA
   and a server certificate whose SAN includes `openbao`. The API and worker
   trust this CA only for OpenBao, and public HTTPS keeps the system trust store.
@@ -315,6 +319,28 @@ Live Google sign-in/link/422 behavior, separate-origin HTTPS/CORS/CSRF, proxy
 Host handling, SMTP recovery and browser/Grafana recovery revocation remain
 deferred in [#44](https://github.com/muniventures/minicloud/issues/44).
 The prior disposable Kratos v1.3.1 checks are not a live Google qualification.
+
+### Optional packaged email/code recovery
+
+Basic password-only installation remains independent of SMTP: omitting
+`emailRecovery`, or setting `{"enabled":false}`, leaves `kratos.env` without
+`COURIER_*` keys, keeps `identity.schema.json`, omits
+`compose.email-recovery.yml` and keeps recovery disabled in both Kratos and the
+API.
+
+For an explicitly opted-in **new installation**, the verified installer accepts
+`emailRecovery` with a protected root-owned `0600`/`0400` JSON `smtpFile`
+outside installation, recovery and release-asset directories, imports
+`COURIER_SMTP_*` into `secrets/kratos.env`, selects the signed
+`compose.email-recovery.yml` overlay (which mounts
+`identity.recovery.schema.json`, enables Kratos code recovery with
+`--watch-courier`, and sets `Kratos__EmailRecoveryEnabled=true` on the API),
+and keeps Google OIDC independent. Redeeming a valid recovery code through the
+API verifies the upstream Kratos session and revokes prior browser/Kratos/Grafana
+sessions while preserving API keys and memberships. See
+[optional email/code account recovery](server-installer.md#optional-emailcode-account-recovery)
+for schema, TLS/capture-sink rules, preexisting-install preservation, and
+backup/restore boundaries.
 
 ### Optional operator diagnostics
 

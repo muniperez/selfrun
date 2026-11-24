@@ -125,26 +125,58 @@ describe("account browser forms", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("supports enabled recovery email and code steps without treating the email as a code", async () => {
+  it("supports enabled recovery email, resend, invalid code alert, and code redemption steps", async () => {
     const flow = browserFlow("recovery");
     flow.ui.nodes = [flow.ui.nodes[0],
       { group: "code", type: "email", name: "email", value: null, required: true, messages: [] },
       { group: "code", type: "submit", name: "method", value: "code", required: false, messages: [] }];
-    const codeFlow = { ...flow, ui: { ...flow.ui, nodes: [flow.ui.nodes[0],
-      { group: "code", type: "text", name: "code", value: null, required: true, messages: [] },
-      flow.ui.nodes[2]] } };
-    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ flow, session: null }))
+    const codeFlow = {
+      ...flow,
+      ui: {
+        ...flow.ui,
+        messages: [{ id: 1060003, text: "Continue with the account form.", type: "info" }],
+        nodes: [
+          flow.ui.nodes[0],
+          { group: "code", type: "text", name: "code", value: null, required: true, messages: [] },
+          { group: "code", type: "hidden", name: "method", value: "code", required: false, messages: [] },
+          flow.ui.nodes[2],
+          { group: "code", type: "submit", name: "email", value: "operator@example.test", required: false, messages: [] }
+        ]
+      }
+    };
+    const invalidCodeFlow = {
+      ...codeFlow,
+      ui: { ...codeFlow.ui, messages: [{ id: 4060006, text: "Check your account details.", type: "error" }] }
+    };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ flow, session: null }))
       .mockResolvedValueOnce(jsonResponse({ flow: codeFlow, session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: codeFlow, session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: invalidCodeFlow, session: null }))
       .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }));
     vi.stubGlobal("fetch", fetcher);
     const auth = mount("recovery", true);
     fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "operator@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue recovery" }));
     expect(await screen.findByLabelText("Recovery code")).toHaveValue("");
+    const resend = screen.getByRole("button", { name: "Resend code" });
+    expect(resend).toHaveAttribute("type", "button");
+    fireEvent.click(resend);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
+      csrf_token: "upstream-csrf", method: "code", email: "operator@example.test"
+    });
+    fireEvent.change(screen.getByLabelText("Recovery code"), { target: { value: "000000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue recovery" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check your account details");
+    expect(screen.getByLabelText("Recovery code")).toHaveValue("");
+    expect(auth.refreshSession).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Recovery code"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue recovery" }));
     await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
-    expect(JSON.parse(fetcher.mock.calls[2][1].body).code).toBe("123456");
+    expect(JSON.parse(fetcher.mock.calls[4][1].body)).toEqual({
+      csrf_token: "upstream-csrf", code: "123456", method: "code"
+    });
   });
 
   it("renders and submits both profile name parts from the real Kratos settings shape", async () => {

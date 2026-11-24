@@ -122,22 +122,13 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     }
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitFields(form: HTMLFormElement | null, fields: Record<string, string>) {
     if (!flow || busy || restartRequired) return;
     if (Date.parse(flow.expiresAt) <= Date.now()) {
       handleExpiredFlow();
       return;
     }
     const current = generation.current;
-    const form = event.currentTarget;
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    const data = new FormData(form);
-    const fields: Record<string, string> = {};
-    for (const [name, value] of data) {
-      if (typeof value === "string") fields[name] = value;
-    }
-    if (submitter instanceof HTMLButtonElement && submitter.name) fields[submitter.name] = submitter.value;
     setBusy(true);
     setError(null);
     let refreshing = false;
@@ -148,7 +139,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     try {
       const result = await submitAccountFlow(flow, fields, keepSignedInChoice);
       if (current !== generation.current) return;
-      form.reset();
+      form?.reset();
       setFlow(result.flow);
       if (result.session) {
         if (keepSignedInChoice !== undefined) rememberKeepSignedInHint(keepSignedInChoice);
@@ -157,7 +148,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
       }
     } catch (submitError) {
       if (current !== generation.current) return;
-      form.reset();
+      form?.reset();
       if (expiredLoginFlow(kind, submitError)) {
         refreshExpiredLogin();
       } else if (submitError instanceof ApiError &&
@@ -185,6 +176,31 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     }
   }
 
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const data = new FormData(form);
+    const fields: Record<string, string> = {};
+    for (const [name, value] of data) {
+      if (typeof value === "string") fields[name] = value;
+    }
+    if (submitter instanceof HTMLButtonElement && submitter.name) fields[submitter.name] = submitter.value;
+    await submitFields(form, fields);
+  }
+
+  async function resendRecoveryCode(email: string) {
+    if (!email) return;
+    const fields: Record<string, string> = {};
+    for (const node of nodes) {
+      if (node.type === "hidden" && node.value !== null) fields[node.name] = node.value;
+    }
+    fields.method = fields.method || "code";
+    fields.email = email;
+    await submitFields(formRef.current, fields);
+  }
+
+  const formRef = useRef<HTMLFormElement | null>(null);
   const nodes = flow?.ui.nodes.filter(supportedNode) ?? [];
   const google = capabilities?.google === true && kind !== "recovery" &&
     flow?.ui.providers?.some(provider => provider.id === "google") === true;
@@ -211,20 +227,36 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
         {notice ? <p role="alert" className="text-sm text-destructive">{notice}</p> : null}
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         {flow && !complete ? (
-          <form key={flow.id} className="space-y-4" onSubmit={submit}>
-            {flow.ui.messages.length > 0 ? <p role="status">Review your account details to continue.</p> : null}
+          <form ref={formRef} key={flow.id} className="space-y-4" onSubmit={submit}>
+            {flow.ui.messages.length > 0 ? (
+              flow.ui.messages.some(message => message.type === "error") ? (
+                <p role="alert" className="text-sm text-destructive">Check your account details and try again.</p>
+              ) : (
+                <p role="status">Review your account details to continue.</p>
+              )
+            ) : null}
             {nodes.map((node, index) => {
               const id = `account-${index}`;
               const key = `${node.group}:${node.name}:${node.type}`;
               if (node.type === "hidden") return <input key={key} type="hidden" name={node.name} value={node.value ?? ""} />;
-              if (node.type === "submit") return (
-                <Fragment key={key}>
-                  {index === firstSubmit ? keepSignedInControl : null}
-                  <Button type="submit" name={node.name} value={node.value ?? ""} disabled={busy || restartRequired}>
-                    {kind === "login" ? "Sign in" : kind === "settings" ? node.value === "profile" ? "Save profile" : "Save password" : "Continue recovery"}
-                  </Button>
-                </Fragment>
-              );
+              if (node.type === "submit") {
+                const isResend = kind === "recovery" && node.name === "email";
+                return (
+                  <Fragment key={key}>
+                    {index === firstSubmit ? keepSignedInControl : null}
+                    {isResend ? (
+                      <Button type="button" variant="outline" disabled={busy || restartRequired}
+                        onClick={() => { void resendRecoveryCode(node.value ?? ""); }}>
+                        Resend code
+                      </Button>
+                    ) : (
+                      <Button type="submit" name={node.name} value={node.value ?? ""} disabled={busy || restartRequired}>
+                        {kind === "login" ? "Sign in" : kind === "settings" ? node.value === "profile" ? "Save profile" : "Save password" : "Continue recovery"}
+                      </Button>
+                    )}
+                  </Fragment>
+                );
+              }
               return (
                 <div key={key} className="space-y-2">
                   <Label htmlFor={id}>{fieldLabel(node.name)}</Label>

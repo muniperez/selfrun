@@ -315,6 +315,249 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DisabledRecoveryRejectsAllRecoveryRoutesWithoutCallingKratos()
+    {
+        var start = await _client.GetAsync("/api/account/flows/recovery/browser");
+        Assert.Equal(HttpStatusCode.BadRequest, start.StatusCode);
+        var read = await _client.GetAsync($"/api/account/flows/recovery?id={FlowId}");
+        Assert.Equal(HttpStatusCode.BadRequest, read.StatusCode);
+        using var submit = Submit("recovery", new { csrf_token = "flow-csrf", email = "operator@example.test", method = "code" });
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(submit)).StatusCode);
+        Assert.Empty(_factory.Upstream.Requests);
+    }
+
+    [Fact]
+    public async Task RecoveryCodeFlowHandlesKratos422SettingsTransitionRevokesPriorSessionsAndPreservesKeysAndMemberships()
+    {
+        const string firstUpstreamSession = "33333333-1111-4333-8444-555555555551";
+        const string secondUpstreamSession = "33333333-2222-4333-8444-555555555552";
+        const string recoveredUpstreamSession = "33333333-9999-4333-8444-555555555559";
+
+        _factory.Upstream.UpstreamSessionId = firstUpstreamSession;
+        var (firstBrowserCookie, _) = await Login();
+        _factory.Upstream.UpstreamSessionId = secondUpstreamSession;
+        var (secondBrowserCookie, _) = await Login();
+
+        var apiKeyToken = new ApiKeyTokenService().Generate();
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            db.GrafanaProxySessions.Add(new GrafanaProxySession
+            {
+                Id = "grafana-prior", OrganizationId = "org-1", AppId = "app-1",
+                MinicloudUserId = "user-1", SessionHash = "grafana-prior-hash"
+            });
+            db.GrafanaLaunchCodes.Add(new GrafanaLaunchCode
+            {
+                Id = "launch-prior", OrganizationId = "org-1", AppId = "app-1",
+                MinicloudUserId = "user-1", CodeHash = "launch-prior-hash", Destination = "/"
+            });
+            db.ApiKeys.Add(new ApiKey
+            {
+                Id = "machine-key-1", OrganizationId = "org-1", Name = "CI machine key",
+                KeyPrefix = apiKeyToken.Prefix, KeyHash = new ApiKeyTokenService().Hash(apiKeyToken.Token),
+                ScopesJson = "[\"read\"]"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.EmailRecoveryEnabled = true;
+        _factory.Upstream.UpstreamSessionId = recoveredUpstreamSession;
+        _factory.Upstream.RecoverySubmit = body =>
+        {
+            if (body.Contains("\"email\"", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        id = FlowId, type = "browser", state = "sent_email",
+                        expires_at = DateTimeOffset.UtcNow.AddMinutes(10),
+                        ui = new
+                        {
+                            action = $"http://kratos:4433/self-service/recovery?flow={FlowId}", method = "POST",
+                            nodes = new object[]
+                            {
+                                new { group = "default", attributes = new { name = "csrf_token", type = "hidden", value = "sent-csrf", required = true } },
+                                new { group = "code", attributes = new { name = "code", type = "text", value = "", required = true } },
+                                new { group = "code", attributes = new { name = "method", type = "hidden", value = "code", required = false } },
+                                new { group = "code", attributes = new { name = "method", type = "submit", value = "code", required = false } },
+                                new { group = "code", attributes = new { name = "email", type = "submit", value = "operator@example.test", required = false } }
+                            },
+                            messages = new[] { new { id = 1060003, type = "info", text = "An email containing a recovery code has been sent." } }
+                        }
+                    })
+                };
+            }
+            if (body.Contains("\"code\":\"000000\"", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        id = FlowId, type = "browser", state = "sent_email",
+                        expires_at = DateTimeOffset.UtcNow.AddMinutes(10),
+                        ui = new
+                        {
+                            action = $"http://kratos:4433/self-service/recovery?flow={FlowId}", method = "POST",
+                            nodes = new object[]
+                            {
+                                new { group = "default", attributes = new { name = "csrf_token", type = "hidden", value = "sent-csrf", required = true } },
+                                new { group = "code", attributes = new { name = "code", type = "text", value = "", required = true } },
+                                new { group = "code", attributes = new { name = "method", type = "submit", value = "code", required = false } }
+                            },
+                            messages = new[] { new { id = 4060006, type = "error", text = "The recovery code is invalid or has already been used." } }
+                        }
+                    })
+                };
+            }
+            var transition = new HttpResponseMessage(HttpStatusCode.UnprocessableEntity)
+            {
+                Content = JsonContent.Create(new
+                {
+                    error = new { id = "browser_location_change_required", code = 422, status = "Unprocessable Entity" },
+                    redirect_browser_to = $"{Dashboard}/settings/account?flow=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+                })
+            };
+            transition.Headers.Add("Set-Cookie", "ory_kratos_session=recovered-ory-session; Path=/; HttpOnly");
+            return transition;
+        };
+
+        // Step 1: start flow and submit email -> sent_email flow (no session issued yet).
+        var start = await _client.GetAsync("/api/account/flows/recovery/browser");
+        Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        using var sendEmail = Submit("recovery", new { csrf_token = "flow-csrf", email = "operator@example.test", method = "code" });
+        var sentResponse = await _client.SendAsync(sendEmail);
+        Assert.Equal(HttpStatusCode.OK, sentResponse.StatusCode);
+        var sentBody = (await sentResponse.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.Null(sentBody.Session);
+        Assert.Contains(sentBody.Flow!.Ui.Nodes, n => n.Name == "code" && n.Type == "text");
+        Assert.Contains(sentBody.Flow.Ui.Nodes, n => n.Name == "email" && n.Type == "submit" && n.Value == "operator@example.test");
+
+        // Step 2: invalid/reused code returns sanitized error flow and never issues a session or revokes existing ones.
+        using var wrongCode = Submit("recovery", new { csrf_token = "sent-csrf", code = "000000", method = "code" });
+        var wrongResponse = await _client.SendAsync(wrongCode);
+        Assert.Equal(HttpStatusCode.OK, wrongResponse.StatusCode);
+        var wrongBody = (await wrongResponse.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.Null(wrongBody.Session);
+        Assert.Contains(wrongBody.Flow!.Ui.Messages, m => m.Id == 4060006 && m.Type == "error");
+        Assert.False(wrongResponse.Headers.TryGetValues("Set-Cookie", out var wrongCookies) &&
+            wrongCookies.Any(c => c.StartsWith("__Host-minicloud-session=")));
+
+        // Step 3: valid code triggers Kratos v1.3.1 422 browser_location_change_required -> API verifies /sessions/whoami and admits.
+        _factory.Kratos.Writes.Clear();
+        using var redeem = Submit("recovery", new { csrf_token = "sent-csrf", code = "123456", method = "code" });
+        var recoveredResponse = await _client.SendAsync(redeem);
+        Assert.Equal(HttpStatusCode.OK, recoveredResponse.StatusCode);
+        var recoveredJson = await recoveredResponse.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("redirect_browser_to", recoveredJson);
+        Assert.DoesNotContain("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", recoveredJson);
+        var recoveredBody = JsonSerializer.Deserialize<AccountFlowResponse>(recoveredJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Null(recoveredBody.Flow);
+        Assert.NotNull(recoveredBody.Session);
+        var recoveredCookie = LocalCookie(recoveredResponse);
+        Assert.NotEqual(firstBrowserCookie, recoveredCookie);
+        Assert.NotEqual(secondBrowserCookie, recoveredCookie);
+        Assert.Contains("ory_kratos_session=recovered-ory-session", _factory.Upstream.Requests.Last().Cookie);
+
+        // Prior browser sessions, upstream Kratos sessions, and Grafana sessions are all revoked.
+        foreach (var staleCookie in new[] { firstBrowserCookie, secondBrowserCookie })
+        {
+            using var check = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+            check.Headers.Add("Cookie", staleCookie);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(check)).StatusCode);
+        }
+        Assert.Equal(2, _factory.Kratos.Writes.Count(w => w == "revoke"));
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            Assert.All(await db.GrafanaProxySessions.AsNoTracking().ToListAsync(), s => Assert.NotNull(s.RevokedAt));
+            Assert.All(await db.GrafanaLaunchCodes.AsNoTracking().ToListAsync(), c => Assert.NotNull(c.ConsumedAt));
+        }
+
+        // Step 4: recovered session enters settings and rotates password.
+        using var settingsStart = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/settings/browser");
+        settingsStart.Headers.Add("Cookie", recoveredCookie + "; ory_kratos_session=recovered-ory-session");
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(settingsStart)).StatusCode);
+        using var changePassword = Submit("settings", PasswordChangeFields(), recoveredCookie);
+        changePassword.Headers.Add("X-Minicloud-CSRF", recoveredBody.Session!.CsrfToken);
+        var passwordResponse = await _client.SendAsync(changePassword);
+        Assert.Equal(HttpStatusCode.OK, passwordResponse.StatusCode);
+
+        // Step 5: machine API key and organization membership remain unchanged and usable.
+        using var machineMe = new HttpRequestMessage(HttpMethod.Get, "/api/me");
+        machineMe.Headers.Add("Authorization", "Bearer " + apiKeyToken.Token);
+        var machineResponse = await _client.SendAsync(machineMe);
+        Assert.Equal(HttpStatusCode.OK, machineResponse.StatusCode);
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var key = await db.ApiKeys.AsNoTracking().SingleAsync(k => k.Id == "machine-key-1");
+            Assert.Null(key.RevokedAt);
+            var member = await db.OrganizationMembers.AsNoTracking().SingleAsync(m => m.Id == "member-1");
+            Assert.Equal("user-1", member.UserId);
+            Assert.Equal("org-1", member.OrganizationId);
+            Assert.Equal(OrganizationRole.Owner, member.Role);
+        }
+    }
+
+    [Theory]
+    [InlineData("https://evil.example/settings/account?flow=1", true, HttpStatusCode.ServiceUnavailable)]
+    [InlineData("http://dashboard.example.test/settings/account?flow=1", true, HttpStatusCode.ServiceUnavailable)]
+    [InlineData("https://dashboard.example.test/other?flow=1", true, HttpStatusCode.ServiceUnavailable)]
+    [InlineData("https://user@dashboard.example.test/settings/account?flow=1", true, HttpStatusCode.ServiceUnavailable)]
+    [InlineData("https://dashboard.example.test/settings/account?flow=1#frag", true, HttpStatusCode.ServiceUnavailable)]
+    [InlineData("https://dashboard.example.test/settings/account?flow=1", false, HttpStatusCode.ServiceUnavailable)]
+    public async Task Recovery422WithUntrustedRedirectOrMissingSessionCookieFailsClosed(
+        string redirectTo, bool includeSessionCookie, HttpStatusCode expected)
+    {
+        var (existingCookie, _) = await Login();
+        _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.EmailRecoveryEnabled = true;
+        _factory.Upstream.RecoverySubmit = _ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.UnprocessableEntity)
+            {
+                Content = JsonContent.Create(new
+                {
+                    error = new { id = "browser_location_change_required", code = 422 },
+                    redirect_browser_to = redirectTo
+                })
+            };
+            if (includeSessionCookie)
+                response.Headers.Add("Set-Cookie", "ory_kratos_session=recovered-ory-session; Path=/; HttpOnly");
+            return response;
+        };
+
+        using var redeem = Submit("recovery", new { csrf_token = "flow-csrf", code = "123456", method = "code" });
+        var result = await _client.SendAsync(redeem);
+        Assert.Equal(expected, result.StatusCode);
+        Assert.DoesNotContain(redirectTo, await result.Content.ReadAsStringAsync());
+        Assert.False(result.Headers.TryGetValues("Set-Cookie", out var cookies) &&
+            cookies.Any(c => c.StartsWith("__Host-minicloud-session=")));
+
+        using var existingCheck = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+        existingCheck.Headers.Add("Cookie", existingCookie);
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(existingCheck)).StatusCode);
+    }
+
+    [Fact]
+    public async Task RecoveryForUnboundIdentityFailsClosedWithoutRevokingAdmittedUserSessions()
+    {
+        var (existingCookie, _) = await Login();
+        _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.EmailRecoveryEnabled = true;
+        _factory.Upstream.Identity = "99999999-9999-4999-8999-999999999999";
+        using var redeem = Submit("recovery", new { csrf_token = "flow-csrf", code = "123456", method = "code" });
+        var result = await _client.SendAsync(redeem);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        Assert.False(result.Headers.TryGetValues("Set-Cookie", out var cookies) &&
+            cookies.Any(c => c.StartsWith("__Host-minicloud-session=")));
+
+        using var existingCheck = new HttpRequestMessage(HttpMethod.Get, "/api/account/session");
+        existingCheck.Headers.Add("Cookie", existingCookie);
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(existingCheck)).StatusCode);
+    }
+
+    [Fact]
     public async Task ExplicitInvalidBearerCannotFallBackToTheBrowserCookieForSettings()
     {
         var (cookie, _) = await Login();
@@ -1035,9 +1278,11 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             Uri.EscapeDataString(Callback) + "&response_type=code&scope=openid%20email&state=synthetic-state";
         public List<(Uri Uri, string Cookie, string Origin, string Body, string Accept)> Requests { get; } = [];
         public string Identity { get; set; } = IdentityId;
+        public string UpstreamSessionId { get; set; } = SessionId;
         public int Status { get; set; } = 200;
         public TimeSpan SettingsPasswordDelay { get; set; }
         public (int Status, string Body)? SettingsPasswordError { get; set; }
+        public Func<string, HttpResponseMessage>? RecoverySubmit { get; set; }
         public bool Google { get; set; }
         public string ProviderRedirect { get; set; } = GoogleUrl;
         public int ProviderStatus { get; set; } = 422;
@@ -1047,6 +1292,9 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             Requests.Add((request.RequestUri!, request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single() : "",
                 request.Headers.TryGetValues("Origin", out var origin) ? origin.Single() : "", body, request.Headers.Accept.ToString()));
+            if (request.RequestUri!.AbsolutePath == "/self-service/recovery" && request.Method == HttpMethod.Post &&
+                RecoverySubmit is { } recoverySubmit)
+                return recoverySubmit(body);
             if (request.RequestUri!.AbsolutePath == "/self-service/settings" && request.Method == HttpMethod.Post &&
                 body.Contains("\"method\":\"password\"", StringComparison.Ordinal))
             {
@@ -1079,7 +1327,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
                 { Content = new StringContent("private upstream diagnostic") };
             if (request.RequestUri!.AbsolutePath == "/sessions/whoami")
                 return new HttpResponseMessage(HttpStatusCode.OK)
-                { Content = JsonContent.Create(new { id = SessionId, active = true, identity = new { id = Identity } }) };
+                { Content = JsonContent.Create(new { id = UpstreamSessionId, active = true, identity = new { id = Identity } }) };
             if (request.RequestUri.AbsolutePath == "/self-service/methods/oidc/callback/google")
             {
                 var callback = new HttpResponseMessage((HttpStatusCode)CallbackStatus)
