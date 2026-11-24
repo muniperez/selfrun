@@ -1,8 +1,9 @@
 # Providers and plans
 
 Each organization owns its provider accounts and named plans. You can connect
-multiple Hetzner, DigitalOcean, and Vultr accounts at the same time, including
-several accounts of one provider.
+multiple Hetzner, DigitalOcean, Vultr, and AWS accounts. AWS support is
+experimental and has not passed live provider qualification; do not treat it as
+production-qualified.
 
 CLI plan listing and app creation require an API key with `plans:read`.
 Existing keys do not gain new permissions automatically. Refresh an older CLI
@@ -20,6 +21,88 @@ stored in OpenBao. An organization Owner or Admin manages accounts and plans.
 The connection check uses read-only provider requests. It does not allocate a
 server or guarantee available quota. Accounts with identical provider types
 remain independent entries with separate credentials and plans.
+
+### AWS (experimental; live qualification pending)
+
+An AWS provider account is pinned to one AWS account, region, subnet, and
+security group. Create a public subnet in the selected region and a security
+group in that subnet's VPC before connecting AWS. The subnet must assign public
+IPv4 addresses and have a route to an internet gateway. Configure inbound SSH
+from the worker's egress addresses and the application ports you intend to
+serve; permit the outbound traffic needed for bootstrap packages and image
+registries. MiniCloud does not create or modify VPCs, subnets, routes, security
+groups, Elastic IPs, IAM roles, or instance profiles.
+
+Use temporary AWS credentials where practical. The dashboard accepts an access
+key ID, secret access key, and optional session token; the CLI reads
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optional `AWS_SESSION_TOKEN`.
+These values are stored together as a write-only OpenBao secret. The CLI
+requires the non-secret `--region`, `--subnet-id`, and `--security-group-id`
+arguments. Credential checks call STS `GetCallerIdentity` and read-only EC2
+describes; they do not launch instances or create volumes. MiniCloud records the
+12-digit AWS account ID and rejects credential rotation to a different account.
+The selected subnet and security group are checked for existence, region, and
+VPC consistency.
+
+With the AWS credentials already present in the CLI process environment, add
+the account without putting any key material in command arguments:
+
+```sh
+minicloud providers add --organization org_example --name "AWS production" --provider aws \
+  --region us-east-1 --subnet-id subnet-0123456789abcdef0 \
+  --security-group-id sg-0123456789abcdef0
+```
+
+The adapter needs these API actions:
+
+| Purpose | AWS actions |
+| --- | --- |
+| Identity and read-only validation/discovery | `sts:GetCallerIdentity` (AWS requires no grant for this call), `ec2:DescribeInstances`, `ec2:DescribeImages`, `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVolumes`, `ec2:DescribeVolumesModifications` |
+| Instance lifecycle | `ec2:RunInstances`, `ec2:TerminateInstances` |
+| Retained durable storage | `ec2:CreateVolume`, `ec2:AttachVolume`, `ec2:ModifyVolume` |
+| Resource identity tags | `ec2:CreateTags` |
+
+Constrain write access to the configured region, subnet, security group, AMI,
+instance types, and MiniCloud resource tags with IAM conditions/resource ARNs
+where each action supports them. EC2 `Describe*` actions generally require
+`Resource: "*"`. Review the current [EC2 service authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html)
+before applying a policy. The adapter does not request `iam:PassRole` and does
+not attach an instance profile. AWS quotas and instance availability vary by
+account and region; read-only validation cannot guarantee quota or capacity.
+
+Create an AWS plan with the account's exact region, an EC2 instance type such as
+`t3.micro`, and a regional AMI ID such as `ami-0123456789abcdef0`. AWS plans
+require an explicit AMI ID and `linux/amd64` or `linux/arm64`; the adapter checks
+that the AMI exists, is available, and matches the selected architecture before
+launch. Use a Linux AMI with cloud-init and the packages/network access required
+by MiniCloud bootstrap. AMI catalogs and automatic price comparisons are not
+provided.
+
+The adapter launches one instance into the configured subnet, requests a public
+IPv4 address, applies MiniCloud identity tags, and uses an EC2 client token for
+idempotent retries. Discovery and destructive operations require the expected
+MiniCloud identity tags in the pinned AWS account and region. Durable storage uses encrypted
+gp3 EBS volumes in the subnet's Availability Zone; volumes can attach only to
+instances in that same zone. Instance termination does not delete retained EBS
+volumes. There is no MiniCloud EBS delete workflow, so retained volumes continue
+to incur AWS charges and keep the provider account in use.
+
+AWS provider SSH-key inventory/registration, cross-region plans, public IP
+reservation, instance resizing, snapshots, and automatic cleanup of retained
+volumes are not implemented. Selected AWS plans should use the existing
+MiniCloud bootstrap SSH key rather than provider-managed key-pair selection.
+AWS instances, public IPv4 addresses, EBS volumes, and data transfer can incur
+charges. Review [EC2 pricing](https://aws.amazon.com/ec2/pricing/on-demand/),
+[EBS pricing](https://aws.amazon.com/ebs/pricing/), and
+[VPC public IPv4 pricing](https://aws.amazon.com/vpc/pricing/) for the target
+region before allocation.
+
+This adapter has synthetic local lifecycle/failure coverage only. No live AWS
+account, credentials, or billable resources were used. Live qualification still
+needs separately authorized disposable-account runs for native amd64 and arm64
+where offered, bootstrap readiness, deployment reuse/redeploy, quota and
+partial-failure reconciliation, retained-volume reattachment/resize, and
+deletion targeting. Until those checks pass, AWS support remains experimental.
 
 Add a plan in **Plans** and select an enabled provider account. Configure the
 provider's exact location (region code) and server type (SKU), and under

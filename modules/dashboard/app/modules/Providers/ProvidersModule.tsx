@@ -100,6 +100,7 @@ function formatProviderName(type: string, types: ProviderType[]) {
   if (type === "hetzner") return "Hetzner";
   if (type === "digital-ocean") return "DigitalOcean";
   if (type === "vultr") return "Vultr";
+  if (type === "aws") return "Amazon Web Services";
   return type;
 }
 
@@ -107,6 +108,7 @@ function providerShortMark(type: string) {
   if (type === "hetzner") return { text: "H", className: "bg-destructive/15 text-destructive" };
   if (type === "digital-ocean") return { text: "DO", className: "bg-info-surface text-info" };
   if (type === "vultr") return { text: "V", className: "bg-secondary text-foreground" };
+  if (type === "aws") return { text: "AWS", className: "bg-warning-surface text-warning" };
   return { text: type.slice(0, 1).toUpperCase() || "P", className: "bg-muted text-muted-foreground" };
 }
 
@@ -114,6 +116,7 @@ function regionExample(type: string) {
   if (type === "hetzner") return "nbg1";
   if (type === "digital-ocean") return "nyc3";
   if (type === "vultr") return "ewr";
+  if (type === "aws") return "us-east-1";
   return "nbg1";
 }
 
@@ -704,6 +707,9 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
       credential: string;
       projectId?: string;
       defaultOsId?: number;
+      awsRegion?: string;
+      awsSubnetId?: string;
+      awsSecurityGroupId?: string;
     },
   ) {
     if (!organizationId) return;
@@ -728,6 +734,9 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
           credential: input.credential,
           projectId: input.projectId,
           defaultOsId: input.defaultOsId,
+          awsRegion: input.awsRegion,
+          awsSubnetId: input.awsSubnetId,
+          awsSecurityGroupId: input.awsSecurityGroupId,
         });
         if (currentOrgRef.current !== reqOrg) return;
         await refresh();
@@ -1215,7 +1224,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               }
             >
               {canManage
-                ? "Connect a Hetzner, DigitalOcean, or Vultr account to create named deployment plans."
+                ? "Connect a Hetzner, DigitalOcean, Vultr, or AWS account to create named deployment plans."
                 : "No provider accounts are configured yet. An organization owner or admin can connect provider accounts."}
             </EmptyState>
           ) : null}
@@ -1282,6 +1291,11 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                               {account.projectId ? (
                                 <div className="text-xs font-normal text-muted-foreground">
                                   Project: {account.projectId}
+                                </div>
+                              ) : null}
+                              {account.awsRegion ? (
+                                <div className="text-xs font-normal text-muted-foreground">
+                                  Region: {account.awsRegion} · Subnet: {account.awsSubnetId}
                                 </div>
                               ) : null}
                             </div>
@@ -1709,6 +1723,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               ) : null}
               <CredentialDialogForm
                 accountName={editor.account.name}
+                providerType={editor.account.providerType}
                 busy={dialogBusy}
                 onCancel={closeEditor}
                 onSave={(credential) =>
@@ -1856,6 +1871,8 @@ function PlanDialogForm({
     selectedAccount?.providerType ?? currentPlan?.providerType ?? types[0]?.type ?? "hetzner";
 
   const [region, setRegion] = useState(() => {
+    const selected = accounts.find((item) => item.id === initialAccountId);
+    if (selected?.awsRegion) return selected.awsRegion;
     if (
       mode === "duplicate" &&
       currentPlan &&
@@ -1898,7 +1915,7 @@ function PlanDialogForm({
     }
     return currentPlan?.buildPlatform ?? "linux/amd64";
   });
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(selectedProviderType === "aws");
 
   const locked = mode === "edit" && Boolean(currentPlan?.provisioningLocked);
 
@@ -1906,10 +1923,11 @@ function PlanDialogForm({
     setAccountId(nextId);
     const nextAcc = accounts.find((item) => item.id === nextId);
     const nextType = nextAcc?.providerType ?? "hetzner";
-    setRegion("");
+    setRegion(nextAcc?.awsRegion ?? "");
     setSku("");
     setImage(defaultImageForType(nextType, types));
     setPlatform("linux/amd64");
+    if (nextType === "aws") setAdvancedOpen(true);
   }
 
   async function handleReload() {
@@ -2044,7 +2062,7 @@ function PlanDialogForm({
             id="plan-region"
             aria-describedby={locked ? "plan-locked-explanation" : "plan-region-help"}
             required
-            disabled={locked || busy}
+            disabled={locked || busy || selectedProviderType === "aws"}
             placeholder={regionExample(selectedProviderType)}
             value={region}
             onChange={(event) => setRegion(event.target.value)}
@@ -2096,12 +2114,19 @@ function PlanDialogForm({
               <Input
                 id="plan-image"
                 aria-describedby={locked ? "plan-locked-explanation" : undefined}
+                required={selectedProviderType === "aws"}
                 disabled={locked || busy}
                 type={selectedProviderType === "vultr" ? "number" : "text"}
                 min={selectedProviderType === "vultr" ? 1 : undefined}
+                placeholder={selectedProviderType === "aws" ? "ami-0123456789abcdef0" : undefined}
                 value={image}
                 onChange={(event) => setImage(event.target.value)}
               />
+              {selectedProviderType === "aws" ? (
+                <p className="text-xs text-muted-foreground">
+                  Use an AMI in the account&apos;s configured region that matches the selected Linux platform.
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="plan-platform">Linux platform</Label>
@@ -2154,6 +2179,9 @@ function AccountDialogForm({
     credential: string;
     projectId?: string;
     defaultOsId?: number;
+    awsRegion?: string;
+    awsSubnetId?: string;
+    awsSecurityGroupId?: string;
   }) => Promise<void>;
 }) {
   const providerOptions = types.length
@@ -2162,6 +2190,7 @@ function AccountDialogForm({
         { type: "hetzner", name: "Hetzner", supportsStorage: true, defaultImage: "ubuntu-24.04" },
         { type: "digital-ocean", name: "DigitalOcean", supportsStorage: false, defaultImage: "ubuntu-24-04-x64" },
         { type: "vultr", name: "Vultr", supportsStorage: false, defaultImage: null, defaultOsId: 2284 },
+        { type: "aws", name: "Amazon Web Services", supportsStorage: true, defaultImage: null },
       ];
 
   const [name, setName] = useState(account?.name ?? "");
@@ -2177,11 +2206,24 @@ function AccountDialogForm({
         "",
     ),
   );
+  const [awsRegion, setAwsRegion] = useState("us-east-1");
+  const [awsSubnetId, setAwsSubnetId] = useState("");
+  const [awsSecurityGroupId, setAwsSecurityGroupId] = useState("");
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
+  const [awsSessionToken, setAwsSessionToken] = useState("");
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (conflictError) return;
-    const submittedCredential = credential;
+    const submittedCredential =
+      type === "aws"
+        ? JSON.stringify({
+            accessKeyId: awsAccessKeyId,
+            secretAccessKey: awsSecretAccessKey,
+            ...(awsSessionToken ? { sessionToken: awsSessionToken } : {}),
+          })
+        : credential;
     setCredential("");
     await onSave({
       name,
@@ -2189,6 +2231,9 @@ function AccountDialogForm({
       credential: submittedCredential,
       projectId: projectId || undefined,
       defaultOsId: osId ? Number(osId) : undefined,
+      awsRegion: type === "aws" ? awsRegion : undefined,
+      awsSubnetId: type === "aws" ? awsSubnetId : undefined,
+      awsSecurityGroupId: type === "aws" ? awsSecurityGroupId : undefined,
     });
   }
 
@@ -2263,18 +2308,56 @@ function AccountDialogForm({
             </select>
           </div>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="provider-credential">API token or key</Label>
-            <Input
-              id="provider-credential"
-              type="password"
-              autoComplete="new-password"
-              required
-              disabled={busy}
-              value={credential}
-              onChange={(event) => setCredential(event.target.value)}
-            />
-          </div>
+          {type !== "aws" ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="provider-credential">API token or key</Label>
+              <Input
+                id="provider-credential"
+                type="password"
+                autoComplete="new-password"
+                required
+                disabled={busy}
+                value={credential}
+                onChange={(event) => setCredential(event.target.value)}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="aws-access-key">AWS access key ID</Label>
+                <Input id="aws-access-key" autoComplete="off" required disabled={busy}
+                  value={awsAccessKeyId} onChange={(event) => setAwsAccessKeyId(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="aws-secret-key">AWS secret access key</Label>
+                <Input id="aws-secret-key" type="password" autoComplete="new-password" required disabled={busy}
+                  value={awsSecretAccessKey} onChange={(event) => setAwsSecretAccessKey(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="aws-session-token">AWS session token (optional)</Label>
+                <Input id="aws-session-token" type="password" autoComplete="new-password" disabled={busy}
+                  value={awsSessionToken} onChange={(event) => setAwsSessionToken(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="aws-region">AWS region</Label>
+                <Input id="aws-region" required placeholder="us-east-1" disabled={busy}
+                  value={awsRegion} onChange={(event) => setAwsRegion(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="aws-subnet">Public subnet ID</Label>
+                <Input id="aws-subnet" required placeholder="subnet-0123456789abcdef0" disabled={busy}
+                  value={awsSubnetId} onChange={(event) => setAwsSubnetId(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="aws-security-group">Security group ID</Label>
+                <Input id="aws-security-group" required placeholder="sg-0123456789abcdef0" disabled={busy}
+                  value={awsSecurityGroupId} onChange={(event) => setAwsSecurityGroupId(event.target.value)} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This account is pinned to one region, subnet and security group. The secret key and optional session token are write-only.
+              </p>
+            </>
+          )}
 
           {type === "digital-ocean" ? (
             <div className="grid gap-1.5">
@@ -2318,20 +2401,32 @@ function AccountDialogForm({
 
 function CredentialDialogForm({
   accountName,
+  providerType,
   busy,
   onCancel,
   onSave,
 }: {
   accountName: string;
+  providerType: string;
   busy: boolean;
   onCancel: () => void;
   onSave: (credential: string) => Promise<void>;
 }) {
   const [credential, setCredential] = useState("");
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
+  const [awsSessionToken, setAwsSessionToken] = useState("");
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const value = credential;
+    const value =
+      providerType === "aws"
+        ? JSON.stringify({
+            accessKeyId: awsAccessKeyId,
+            secretAccessKey: awsSecretAccessKey,
+            ...(awsSessionToken ? { sessionToken: awsSessionToken } : {}),
+          })
+        : credential;
     setCredential("");
     void onSave(value);
   }
@@ -2339,22 +2434,42 @@ function CredentialDialogForm({
   return (
     <form className="grid gap-4" onSubmit={handleSubmit}>
       <p className="text-sm text-muted-foreground">
-        Replace the API token or key for <strong className="font-medium text-foreground">{accountName}</strong>.
+        Replace the {providerType === "aws" ? "AWS credentials" : "API token or key"} for <strong className="font-medium text-foreground">{accountName}</strong>.
         Use credentials for the same cloud account and project. A different cloud account
         requires a new provider entry.
       </p>
-      <div className="grid gap-1.5">
-        <Label htmlFor="replacement-credential">New API token or key</Label>
-        <Input
-          id="replacement-credential"
-          type="password"
-          autoComplete="new-password"
-          required
-          disabled={busy}
-          value={credential}
-          onChange={(event) => setCredential(event.target.value)}
-        />
-      </div>
+      {providerType === "aws" ? (
+        <>
+          <div className="grid gap-1.5">
+            <Label htmlFor="replacement-aws-access-key">New AWS access key ID</Label>
+            <Input id="replacement-aws-access-key" autoComplete="off" required disabled={busy}
+              value={awsAccessKeyId} onChange={(event) => setAwsAccessKeyId(event.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="replacement-aws-secret-key">New AWS secret access key</Label>
+            <Input id="replacement-aws-secret-key" type="password" autoComplete="new-password" required disabled={busy}
+              value={awsSecretAccessKey} onChange={(event) => setAwsSecretAccessKey(event.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="replacement-aws-session-token">New AWS session token (optional)</Label>
+            <Input id="replacement-aws-session-token" type="password" autoComplete="new-password" disabled={busy}
+              value={awsSessionToken} onChange={(event) => setAwsSessionToken(event.target.value)} />
+          </div>
+        </>
+      ) : (
+        <div className="grid gap-1.5">
+          <Label htmlFor="replacement-credential">New API token or key</Label>
+          <Input
+            id="replacement-credential"
+            type="password"
+            autoComplete="new-password"
+            required
+            disabled={busy}
+            value={credential}
+            onChange={(event) => setCredential(event.target.value)}
+          />
+        </div>
+      )}
       <DialogFooter className="gap-2 sm:justify-end">
         <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>
           Cancel

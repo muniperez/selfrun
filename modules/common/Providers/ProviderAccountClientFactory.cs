@@ -6,6 +6,7 @@ using Minicloud.Common.Models;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Providers.Vultr;
+using Minicloud.Common.Providers.Aws;
 using Minicloud.Common.Services;
 
 namespace Minicloud.Common.Providers;
@@ -46,6 +47,8 @@ public class ProviderAccountClientFactory(
                 { ApiToken = credential, BaseUrl = digitalOcean.Value.BaseUrl, ProjectId = account.ProjectId }, logs.CreateLogger<DigitalOceanClient>()),
             CloudProvider.Vultr => new VultrClient(client, new VultrOptions
                 { ApiKey = credential, BaseUrl = vultr.Value.BaseUrl, DefaultOsId = account.DefaultOsId }, logs.CreateLogger<VultrClient>()),
+            CloudProvider.Aws => new AwsVpsProviderClient(AwsCredentialBundle.Parse(credential),
+                new AwsProviderSettings(account.AwsRegion ?? "", account.AwsSubnetId ?? "", account.AwsSecurityGroupId ?? "")),
             _ => throw new ProviderCatalogException("provider_type_unsupported", "This VPS provider type is not supported.")
         };
     }

@@ -207,7 +207,8 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                         ["env"] = "production",
                     },
                     [$"minicloud-customer-{orgSlug}", $"minicloud-app-{appSlug}", "minicloud-env-production"],
-                    Image: context.ProviderImage),
+                    Image: context.ProviderImage,
+                    BuildPlatform: mapping.BuildPlatform),
                         cancellationToken);
                 }
                 catch (ProviderApiException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or
@@ -376,7 +377,8 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         }
         context.ProviderAccountId = deployment.ProviderAccountId;
         context.ProviderImage = deployment.ProviderImage;
-        return (app.Organization.Slug, app.Slug, new PlanMapping(provider, deployment.ProviderRegion, deployment.ProviderSku));
+        return (app.Organization.Slug, app.Slug, new PlanMapping(provider, deployment.ProviderRegion,
+            deployment.ProviderSku, deployment.ProviderBuildPlatform ?? "linux/amd64"));
     }
 
     private async Task<IVpsProviderClient> ResolveClientAsync(PipelineStepContext context, CloudProvider provider, CancellationToken ct)

@@ -20,7 +20,7 @@ public class ProviderPlanOptions
     public string DigitalOceanLargeSku { get; set; } = "s-1vcpu-2gb";
 }
 
-public sealed record ProviderPlanMapping(CloudProvider Provider, string Region, string Sku)
+public sealed record ProviderPlanMapping(CloudProvider Provider, string Region, string Sku, string BuildPlatform = "linux/amd64")
 {
     public static ProviderPlanMapping FromAppPlan(AppPlan plan, ProviderPlanOptions options) => plan switch
     {

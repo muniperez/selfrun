@@ -60,6 +60,12 @@ const providerTypes: api.ProviderType[] = [
     defaultImage: null,
     defaultOsId: 2284,
   },
+  {
+    type: "aws",
+    name: "Amazon Web Services",
+    supportsStorage: true,
+    defaultImage: null,
+  },
 ];
 
 const accountHetznerPrimary: api.ProviderAccount = {
@@ -310,6 +316,7 @@ it("UX06: guides connecting an account when no enabled accounts exist and resume
   fireEvent.change(within(dialog).getByLabelText("Account name"), {
     target: { value: "Hetzner primary" },
   });
+
   fireEvent.change(within(dialog).getByLabelText("API token or key"), {
     target: { value: "secret-token-123" },
   });
@@ -333,6 +340,66 @@ it("UX06: guides connecting an account when no enabled accounts exist and resume
     }),
   ).toBeInTheDocument();
   expect(screen.getByLabelText("Provider account")).toHaveValue("account-h1");
+});
+
+it("sends AWS account settings separately and stores only the credential bundle as a secret", async () => {
+  vi.mocked(api.createProvider).mockResolvedValue({
+    id: "account-aws",
+    organizationId: "org-1",
+    name: "AWS development",
+    providerType: "aws",
+    enabled: true,
+    awsRegion: "us-east-1",
+    awsSubnetId: "subnet-0123456789abcdef0",
+    awsSecurityGroupId: "sg-0123456789abcdef0",
+    validationStatus: "valid",
+    revision: 1,
+    planCount: 0,
+  });
+
+  mount("/plans/accounts");
+  await screen.findByRole("heading", { name: "Provider accounts" });
+  fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Account name"), {
+    target: { value: "AWS development" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Provider"), {
+    target: { value: "aws" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("AWS access key ID"), {
+    target: { value: "synthetic-access-key" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("AWS secret access key"), {
+    target: { value: "synthetic-secret-key" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("AWS region"), {
+    target: { value: "us-east-1" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Public subnet ID"), {
+    target: { value: "subnet-0123456789abcdef0" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Security group ID"), {
+    target: { value: "sg-0123456789abcdef0" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add account" }));
+
+  await waitFor(() =>
+    expect(api.createProvider).toHaveBeenCalledWith({
+      organizationId: "org-1",
+      name: "AWS development",
+      providerType: "aws",
+      credential: JSON.stringify({
+        accessKeyId: "synthetic-access-key",
+        secretAccessKey: "synthetic-secret-key",
+      }),
+      projectId: undefined,
+      defaultOsId: undefined,
+      awsRegion: "us-east-1",
+      awsSubnetId: "subnet-0123456789abcdef0",
+      awsSecurityGroupId: "sg-0123456789abcdef0",
+    }),
+  );
 });
 
 it("UX06: warns when a newly added plan is hidden by active filters and offers Clear filters", async () => {

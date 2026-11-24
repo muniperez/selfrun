@@ -26,11 +26,12 @@ public sealed class AppStorageService(MinicloudDbContext db, IStorageVolumeProvi
         {
             if (!allowAllocation) { throw new InvalidOperationException("The provider account is disabled for new storage allocation."); }
             stored = new AppStorageVolume { Id = identity, AppId = appId, OrganizationId = organizationId, ProviderAccountId = providerAccountId,
-                Name = name, Region = region, SizeGb = mount.SizeGb, Uid = mount.Uid, Gid = mount.Gid };
+                Provider = provider.Provider.ToString(), Name = name, Region = region, SizeGb = mount.SizeGb, Uid = mount.Uid, Gid = mount.Gid };
             db.AppStorageVolumes.Add(stored);
             await db.SaveChangesAsync(ct);
         }
-        if (stored.ProviderAccountId != providerAccountId || stored.OrganizationId != organizationId)
+        if (stored.ProviderAccountId != providerAccountId || stored.OrganizationId != organizationId ||
+            !string.Equals(stored.Provider, provider.Provider.ToString(), StringComparison.OrdinalIgnoreCase))
         { throw new InvalidOperationException("Storage belongs to a different organization or provider account; automatic migration is not supported."); }
         if (stored.Region != region) { throw new InvalidOperationException("Storage is in a different region; automatic migration is not supported."); }
         if (stored.Uid != mount.Uid || stored.Gid != mount.Gid) { throw new InvalidOperationException("Existing storage ownership cannot change automatically."); }
@@ -38,7 +39,7 @@ public sealed class AppStorageService(MinicloudDbContext db, IStorageVolumeProvi
         if (volume is null)
         {
             if (stored.ProviderVolumeId is not null || stored.CreationAttempted)
-            { throw new InvalidOperationException("Expected storage volume is missing or creation is unresolved; refusing to replace it with an empty disk. Inspect the Hetzner volume before retrying."); }
+            { throw new InvalidOperationException("Expected storage volume is missing or creation is unresolved; refusing to replace it with an empty disk. Inspect the registered provider volume before retrying."); }
             if (!allowAllocation) { throw new InvalidOperationException("The provider account is disabled for new storage allocation."); }
             stored.CreationAttempted = true;
             await db.SaveChangesAsync(ct);

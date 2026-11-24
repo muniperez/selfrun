@@ -199,10 +199,11 @@ Operators can add an account using an existing environment token, then import ex
 
 ```sh
 minicloud providers add --organization org_example --name "Hetzner primary" --provider hetzner
+minicloud providers add --organization org_example --name "AWS production" --provider aws --region us-east-1 --subnet-id subnet-0123456789abcdef0 --security-group-id sg-0123456789abcdef0
 minicloud providers import-legacy --manifest legacy-bindings.json
 ```
 
-Use an organization API key with `providers:write` for these operator commands; ordinary login/deployment keys do not grant credential management. `providers add` reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`, or `VULTR_API_KEY`/`VULTR_KEY` according to the selected type. Credentials are sent directly to the authenticated API for storage in OpenBao. Do not pass them as command arguments or put them in the import manifest. DigitalOcean supports `--project-id` (or `DIGITALOCEAN_PROJECT_ID`); Vultr supports `--os-id`.
+Use an organization API key with `providers:write` for these operator commands; ordinary login/deployment keys do not grant credential management. `providers add` reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`, `VULTR_API_KEY`/`VULTR_KEY`, or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (with optional `AWS_SESSION_TOKEN`) according to the selected type. AWS additionally requires `--region`, `--subnet-id`, and `--security-group-id`; its account is pinned to one region and public subnet. Credentials are sent directly to the authenticated API for storage in OpenBao. Do not pass them as command arguments or put them in the import manifest. DigitalOcean supports `--project-id` (or `DIGITALOCEAN_PROJECT_ID`); Vultr supports `--os-id`. AWS support is experimental and has not passed live provider qualification.
 
 The import manifest is non-secret JSON. Both resource lists must be supplied explicitly, including empty arrays:
 

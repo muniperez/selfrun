@@ -2,12 +2,13 @@ namespace Minicloud.Common.Contracts;
 
 public sealed record ProviderTypeResponse(string Type, string Name, bool SupportsStorage, string? DefaultImage, int? DefaultOsId = null);
 public sealed record CreateProviderRequest(string OrganizationId, string Name, string ProviderType, string Credential,
-    string? ProjectId = null, int? DefaultOsId = null);
+    string? ProjectId = null, int? DefaultOsId = null, string? AwsRegion = null, string? AwsSubnetId = null,
+    string? AwsSecurityGroupId = null);
 public sealed record UpdateProviderRequest(long Revision, string? Name = null, bool? Enabled = null);
 public sealed record ReplaceProviderCredentialRequest(string Credential, long Revision);
 public sealed record ProviderAccountResponse(string Id, string OrganizationId, string Name, string ProviderType,
     bool Enabled, string? ProjectId, int? DefaultOsId, string ValidationStatus, DateTimeOffset? LastValidatedAt,
-    long Revision, int PlanCount);
+    long Revision, int PlanCount, string? AwsRegion = null, string? AwsSubnetId = null, string? AwsSecurityGroupId = null);
 public sealed record CreateProviderPlanRequest(string OrganizationId, string ProviderAccountId, string Region, string Sku,
     string? Name = null, string? Image = null, string BuildPlatform = "linux/amd64", bool Enabled = true);
 public sealed record UpdateProviderPlanRequest(long Revision, string? Name = null, string? Region = null, string? Sku = null,

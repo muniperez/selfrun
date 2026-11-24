@@ -41,6 +41,7 @@ public static class ProviderServiceCollectionExtensions
             .AddHttpMessageHandler<ResilientHttpRetryHandler>();
         services.AddKeyedScoped<IVpsProviderClient, VultrClient>(CloudProvider.Vultr);
 
+
         services.AddHttpClient<ICustomDomainDnsResolver, CustomDomainDnsResolver>(http => http.Timeout = TimeSpan.FromSeconds(10));
         services.AddScoped<Minicloud.Common.Services.CustomDomainVerificationService>();
         services.AddScoped<Minicloud.Common.Services.CustomDomainRegistrationService>();
@@ -55,6 +56,7 @@ public static class ProviderServiceCollectionExtensions
             CloudProvider.Hetzner => sp.GetRequiredService<HetznerClient>(),
             CloudProvider.DigitalOcean => sp.GetRequiredService<DigitalOceanClient>(),
             CloudProvider.Vultr => sp.GetRequiredService<VultrClient>(),
+            CloudProvider.Aws => throw new NotSupportedException("AWS resources require an organization provider account."),
             _ => throw new NotSupportedException($"VPS provider {provider} is not supported.")
         });
 

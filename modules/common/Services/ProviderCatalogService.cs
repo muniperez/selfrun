@@ -5,6 +5,7 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Aws;
 
 namespace Minicloud.Common.Services;
 
@@ -133,7 +134,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         var name = request.Name is null ? Guid.NewGuid().ToString() : request.Name.Trim();
         var key = NormalizeName(name);
         await CheckNameAsync(request.OrganizationId, key, null, ct);
-        ValidatePlacement(request.Region, request.Sku, request.BuildPlatform, request.Image, account.ProviderType);
+        ValidatePlacement(request.Region, request.Sku, request.BuildPlatform, request.Image, account);
         var now = clock.GetUtcNow();
         var plan = new ProviderPlan
         {
@@ -154,7 +155,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         var sku = request.Sku?.Trim() ?? plan.Sku;
         var image = request.Image?.Trim() ?? plan.Image;
         var platform = request.BuildPlatform ?? plan.BuildPlatform;
-        ValidatePlacement(region, sku, platform, image, plan.ProviderAccount.ProviderType);
+        ValidatePlacement(region, sku, platform, image, plan.ProviderAccount);
         if (plan.ProvisioningLockedAt is not null && (region != plan.Region || sku != plan.Sku || image != plan.Image || platform != plan.BuildPlatform))
             throw new ProviderCatalogException("plan_mapping_locked", "This plan has been reserved for provisioning. Duplicate it to change its mapping.");
         if (request.Name is not null)
@@ -236,11 +237,14 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         CloudProvider.Hetzner => "ubuntu-24.04", CloudProvider.DigitalOcean => "ubuntu-24-04-x64", _ => null
     };
 
-    private static void ValidatePlacement(string region, string sku, string platform, string? image, CloudProvider provider)
+    private static void ValidatePlacement(string region, string sku, string platform, string? image, ProviderAccount account)
     {
-        if (provider == CloudProvider.Vultr && !string.IsNullOrWhiteSpace(image)
+        if (account.ProviderType == CloudProvider.Vultr && !string.IsNullOrWhiteSpace(image)
             && (!int.TryParse(image.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var osId) || osId <= 0))
             throw new ProviderCatalogException("plan_mapping_invalid", "Vultr plan OS overrides must be positive numeric OS IDs.");
+        if (account.ProviderType == CloudProvider.Aws
+            && (region != account.AwsRegion || !AwsVpsProviderClient.IsAmiId(image ?? "")))
+            throw new ProviderCatalogException("plan_mapping_invalid", "AWS plans must use the provider account's configured region and a valid regional AMI ID.");
         if (string.IsNullOrWhiteSpace(region) || region.Length > 128 || region.Any(char.IsControl)
             || string.IsNullOrWhiteSpace(sku) || sku.Length > 128 || sku.Any(char.IsControl)
             || image is { Length: > 128 } || image?.Any(char.IsControl) == true
