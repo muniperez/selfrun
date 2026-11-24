@@ -43,7 +43,7 @@ public sealed class AppStorageService(MinicloudDbContext db, IStorageVolumeProvi
             stored.CreationAttempted = true;
             await db.SaveChangesAsync(ct);
             try { volume = await provider.CreateVolumeAsync(identity, mount.SizeGb, region, labels, ct); }
-            catch (ProviderApiException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.UnprocessableEntity or HttpStatusCode.TooManyRequests)
+            catch (ProviderApiException ex) when (Minicloud.Common.Providers.Extensibility.DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(ex))
             {
                 // Explicit rejection did not allocate a disk. Ambiguous transport/5xx outcomes stay unresolved.
                 stored.CreationAttempted = false;

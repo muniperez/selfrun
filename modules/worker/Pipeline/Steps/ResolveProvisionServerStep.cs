@@ -8,6 +8,7 @@ using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Worker.Pipeline;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Extensibility;
 using Minicloud.Common.Providers.Models;
 using Minicloud.Common.Services;
 using Minicloud.Common.Providers.Common;
@@ -155,13 +156,9 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             var found = await client.FindServerAsync(serverName, cancellationToken);
             if (found is not null)
             {
-                if (!string.Equals(found.Name, serverName, StringComparison.Ordinal) ||
-                    (mapping.Provider == CloudProvider.Hetzner &&
-                     (found.Labels is null ||
-                      !found.Labels.TryGetValue("managed-by", out var manager) || manager != "minicloud" ||
-                      !found.Labels.TryGetValue("customer", out var customer) || customer != orgSlug ||
-                      !found.Labels.TryGetValue("app", out var appLabel) || appLabel != appSlug ||
-                      !found.Labels.TryGetValue("env", out var environment) || environment != "production")))
+                var descriptor = BuiltInProviderDescriptors.ForBuiltIn(mapping.Provider);
+                var ownership = new ProviderOwnershipEvidence(orgSlug, appSlug, "production", context.OrganizationId, context.ProviderAccountId, context.AppId);
+                if (!ProviderOwnershipVerifier.VerifyDiscoveredServer(descriptor, found, serverName, ownership))
                 {
                     throw new PipelineStepException(FailureCode, "Discovered server identity does not match this app; refusing deployment.");
                 }
@@ -224,10 +221,9 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                     Image: context.ProviderImage),
                         cancellationToken);
                 }
-                catch (ProviderApiException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or
-                    HttpStatusCode.Forbidden or HttpStatusCode.UnprocessableEntity or HttpStatusCode.TooManyRequests)
+                catch (ProviderApiException ex) when (DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(ex))
                 {
-                    // A definite rejection did not allocate a server. Transport/5xx outcomes remain unresolved.
+                    // A definite rejection did not allocate a server. Transport/5xx and partial-allocation outcomes remain unresolved.
                     await ClearRejectedCreationAsync(context);
                     throw;
                 }

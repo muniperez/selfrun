@@ -133,8 +133,8 @@ public sealed class ProviderSshKeyService(
                 external = await TryReconcileAsync(sshClient, deployment.SshFingerprint, ct);
                 if (external is null)
                 {
-                    var definiteRejection = ex is ProviderApiException { StatusCode: HttpStatusCode.BadRequest or
-                        HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.UnprocessableEntity or HttpStatusCode.TooManyRequests };
+                    var definiteRejection = ex is ProviderApiException apiEx &&
+                        Minicloud.Common.Providers.Extensibility.DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(apiEx);
                     var error = definiteRejection
                         ? new ProviderSshKeyException("ssh_registration_failed", "The provider rejected SSH key registration.")
                         : new ProviderSshKeyException("ssh_registration_unknown", "SSH key registration outcome is unknown; reconcile provider inventory before retrying.");
