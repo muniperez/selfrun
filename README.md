@@ -1,17 +1,17 @@
-# MiniCloud
+# Selfrun
 
-MiniCloud is a self-hosted platform for **application hosting and deployment**. Give your coding agent a CLI to provision infrastructure, deploy an app, and inspect the running services on your own servers.
+Selfrun (formerly MiniCloud — see the [rename migration guide](docs/selfrun-rename-migration.md)) is a self-hosted platform for **application hosting and deployment**. Give your coding agent a CLI to provision infrastructure, deploy an app, and inspect the running services on your own servers.
 
-![MiniCloud console showing an application environment, its runtime status, and global navigation](docs/assets/screenshots/console.png)
+![Selfrun console showing an application environment, its runtime status, and global navigation](docs/assets/screenshots/console.png)
 
-## How MiniCloud works
+## How Selfrun works
 
-1. **Run your own instance.** Your MiniCloud dashboard and API run on a dedicated VPS. You and your agents connect the CLI to that instance to manage projects.
-2. **Bring your VPS provider.** Connect a Hetzner, DigitalOcean, or Vultr account. Choose a region and server size, save them as a named plan, and MiniCloud provisions machines in that account. Your provider bills you directly.
+1. **Run your own instance.** Your Selfrun dashboard and API run on a dedicated VPS. You and your agents connect the CLI to that instance to manage projects.
+2. **Bring your VPS provider.** Connect a Hetzner, DigitalOcean, or Vultr account. Choose a region and server size, save them as a named plan, and Selfrun provisions machines in that account. Your provider bills you directly.
 3. **Use your own domains.** For example, host the dashboard at `cloud.example.com`, the API at `api.cloud.example.com`, and give public services addresses under `apps.example.com`. You can also attach a custom domain to an individual service.
-![MiniCloud connects the browser and CLI to a self-hosted control plane, which deploys application services](docs/assets/minicloud-architecture.svg)
+![Selfrun connects the browser and CLI to a self-hosted control plane, which deploys application services](docs/assets/selfrun-architecture.svg)
 
-[Self-host MiniCloud](#self-host-minicloud) · [Deploy your first app](#deploy-your-first-app)
+[Self-host Selfrun](#self-host-selfrun) · [Deploy your first app](#deploy-your-first-app) · [Rename migration guide](docs/selfrun-rename-migration.md)
 
 ### Open-source components
 
@@ -30,7 +30,7 @@ The control plane also uses [Ory Kratos](https://github.com/ory/kratos) for iden
 
 > “Deploy this change to the environment I selected and test the sign-in flow. If it fails, check the logs, fix the problem, and redeploy. Give me the working URL and tell me what you verified.”
 
-With the project configured, your agent can run `minicloud deploy --environment <name>`. The CLI deploys changed services, waits for the result, and prints public service URLs on success. The agent can exercise a URL with your project’s tests or its browser tools. It can look up a failed build by deployment number, or read runtime logs for a particular service when a running app behaves unexpectedly. You choose the target and what counts as a successful result. [Worked CLI example](docs/agent-workflows.md)
+With the project configured, your agent can run `selfrun deploy --environment <name>` (or the legacy `minicloud` alias). The CLI deploys changed services, waits for the result, and prints public service URLs on success. The agent can exercise a URL with your project’s tests or its browser tools. It can look up a failed build by deployment number, or read runtime logs for a particular service when a running app behaves unexpectedly. You choose the target and what counts as a successful result. [Worked CLI example](docs/agent-workflows.md)
 
 ## Application hosting
 
@@ -63,9 +63,9 @@ With the project configured, your agent can run `minicloud deploy --environment 
 
 ## Get started
 
-### Self-host MiniCloud
+### Self-host Selfrun
 
-Run **`minicloud seed`** to set up a dedicated Ubuntu VPS. Use a [CLI test build for your computer](docs/stateless-seed.md#download-a-candidate) or [publish the CLI from a clean clone](docs/stateless-seed.md#publish-from-a-clone), including from your own local commit. The candidate runs without Python, Git, or .NET installed on your workstation. These are **test installations**: no compatible signed server release or production migration path is available yet. Do not treat a historical CLI release as this candidate.
+Run **`selfrun seed`** (or `minicloud seed`) to set up a dedicated Ubuntu VPS. Use a [CLI test build for your computer](docs/stateless-seed.md#download-a-candidate) or [publish the CLI from a clean clone](docs/stateless-seed.md#publish-from-a-clone), including from your own local commit. The candidate runs without Python, Git, or .NET installed on your workstation. These are **test installations**: no compatible signed server release or production migration path is available yet. Do not treat a historical CLI release as this candidate.
 
 Have OpenSSH, a funded provider account, and DNS access. In the wizard, choose **`local`** to explicitly trust the executable's matching source for a test install. Review the provider quote before creating anything. The wizard creates a local SSH identity, verifies the VPS automatically, and guides you through installation, DNS, and `/setup`. Rerun the same command after a pause or interruption. [Guided setup and resume](docs/stateless-seed.md#guided-installation) · [Browser setup](docs/operator-setup.md)
 
@@ -75,19 +75,19 @@ Use the matching CLI you downloaded or built for your test instance. For an exis
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh |
-  MINICLOUD_INSTALL_MODE=source sh
+  SELFRUN_INSTALL_MODE=source sh
 ```
 
-In your app’s repository, replace the hostname below with your dashboard host. Sign in through the browser, then use `init` to select or create the app and write its `minicloud.yml`.
+In your app’s repository, replace the hostname below with your dashboard host. Sign in through the browser, then use `init` to select or create the app and write its `selfrun.yml` (existing `minicloud.yml` files continue to work automatically).
 
 ```sh
-minicloud instance add personal cloud.example.com
-minicloud login
-minicloud init
-minicloud deploy
+selfrun instance add personal cloud.example.com
+selfrun login
+selfrun init
+selfrun deploy
 ```
 
-The default local build uses Docker with Buildx and requires managed image publication. Seed installs do not enable it by default: use `minicloud deploy --build-mode source` to build on the server, or save `buildMode: source` on each source service in `minicloud.yml`. This mode also works without local Docker. If the app has multiple environments, add `--environment <name>`. Open the service URL printed by the CLI to try the deployment. [App configuration](docs/cli.md#create-a-deployment-config) · [Build and deploy options](docs/cli.md#deploy)
+The default local build uses Docker with Buildx and requires managed image publication. Seed installs do not enable it by default: use `selfrun deploy --build-mode source` to build on the server, or save `buildMode: source` on each source service in `selfrun.yml`. This mode also works without local Docker. If the app has multiple environments, add `--environment <name>`. Open the service URL printed by the CLI to try the deployment. [App configuration](docs/cli.md#create-a-deployment-config) · [Build and deploy options](docs/cli.md#deploy)
 
 ## Develop from source
 
@@ -103,4 +103,4 @@ dotnet run --project modules/cli -- --help
 
 Some integration tests require Docker. Start local PostgreSQL and OpenBao with `docker compose -f compose.dev.yml up -d postgres openbao openbao-init`. This Compose file is for development only.
 
-[Licensing](docs/licensing.md) · [Report a vulnerability](SECURITY.md)
+[Licensing](docs/licensing.md) · [Rename migration guide](docs/selfrun-rename-migration.md) · [Report a vulnerability](SECURITY.md)

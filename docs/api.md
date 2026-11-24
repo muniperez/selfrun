@@ -1,6 +1,6 @@
-# Minicloud API
+# Selfrun API
 
-Minicloud uses one unversioned first-party namespace: `/api`.
+Selfrun (formerly MiniCloud; see [Selfrun Rename Migration Guide](selfrun-rename-migration.md)) uses one unversioned first-party namespace: `/api`.
 The prelaunch application/environment cutover deliberately removes old product
 API routes and identity aliases. Clients and server must be updated together.
 
@@ -16,7 +16,9 @@ API routes and identity aliases. Clients and server must be updated together.
 - Other product resources use `/api`, including providers, plans, deployments,
   secrets, runtime ingestion, registry credentials and CLI authentication.
 
-Anonymous `GET /api/instance` returns `product`, `protocolVersion` and `appDomain`.
+Anonymous `GET /api/instance` returns `product`, `protocolVersion` and `appDomain`
+(during the rename transition, servers continue reporting `minicloud` while updated
+CLIs accept both `minicloud` and `selfrun`).
 Packaged servers additionally report `serverVersion`, `sourceRevision` and
 `cliCompatibility` from verified release metadata. Compatibility includes the
 protocol, optional half-open version interval and explicit source revisions;

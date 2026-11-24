@@ -121,8 +121,9 @@ def main():
 
     if expected_version not in run(executable, "--version"):
         raise AssertionError(f"--version did not report {expected_version}")
-    if "minicloud" not in run(executable, "--help").lower():
-        raise AssertionError("--help did not identify Minicloud")
+    help_output = run(executable, "--help").lower()
+    if "selfrun" not in help_output and "minicloud" not in help_output:
+        raise AssertionError("--help did not identify Selfrun or Minicloud")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -130,26 +131,42 @@ def main():
     try:
         artifacts_dir = Path(__file__).resolve().parents[1] / ".local" / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="minicloud-cli-smoke-", dir=artifacts_dir) as config_home:
+        with tempfile.TemporaryDirectory(prefix="selfrun-cli-smoke-", dir=artifacts_dir) as config_home:
             environment = os.environ.copy()
-            environment["MINICLOUD_API_URL"] = f"http://127.0.0.1:{server.server_port}"
-            environment.pop("MINICLOUD_APP_DOMAIN", None)
-            environment["MINICLOUD_TOKEN"] = TOKEN
+            for var in (
+                "SELFRUN_API_URL", "SELFRUN_APP_DOMAIN", "SELFRUN_TOKEN",
+                "MINICLOUD_API_URL", "MINICLOUD_APP_DOMAIN", "MINICLOUD_TOKEN",
+            ):
+                environment.pop(var, None)
+            environment["SELFRUN_API_URL"] = f"http://127.0.0.1:{server.server_port}"
+            environment["SELFRUN_TOKEN"] = TOKEN
             environment["XDG_CONFIG_HOME"] = config_home
             output = run(executable, "apps", "list", env=environment)
+
+            legacy_environment = os.environ.copy()
+            for var in (
+                "SELFRUN_API_URL", "SELFRUN_APP_DOMAIN", "SELFRUN_TOKEN",
+                "MINICLOUD_API_URL", "MINICLOUD_APP_DOMAIN", "MINICLOUD_TOKEN",
+            ):
+                legacy_environment.pop(var, None)
+            legacy_environment["MINICLOUD_API_URL"] = f"http://127.0.0.1:{server.server_port}"
+            legacy_environment["MINICLOUD_TOKEN"] = TOKEN
+            legacy_environment["XDG_CONFIG_HOME"] = config_home
+            legacy_output = run(executable, "apps", "list", env=legacy_environment)
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
 
-    if "release-smoke\trelease-smoke-app\t1 environments" not in output:
-        raise AssertionError(f"apps list did not render the mocked app: {output}")
-    expected_requests = [
+    for label, text in (("SELFRUN_*", output), ("MINICLOUD_*", legacy_output)):
+        if "release-smoke\trelease-smoke-app\t1 environments" not in text:
+            raise AssertionError(f"apps list ({label}) did not render the mocked app: {text}")
+    expected_single = [
         ("/api/instance", "", None),
         ("/api/me", "", f"Bearer {TOKEN}"),
         ("/api/apps", "organizationId=release-smoke-org", f"Bearer {TOKEN}"),
     ]
-    if Handler.requests != expected_requests:
+    if Handler.requests != expected_single * 2:
         raise AssertionError(f"unexpected API requests: {Handler.requests}")
 
     print(f"source smoke passed for {executable.name} {expected_version}")

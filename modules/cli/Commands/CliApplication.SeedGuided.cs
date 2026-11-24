@@ -16,7 +16,7 @@ public sealed partial class CliApplication
         try
         {
             SeedGuard.Require(!_console.IsInputRedirected,
-                "Guided seed requires a terminal. For automation, see minicloud help seed.");
+                "Guided seed requires a terminal. For automation, see selfrun help seed.");
             var home = Path.GetFullPath(stateDirectory ?? Path.Combine(_environment.ConfigHome, "seed-guided"));
             SeedFiles.Directory(home);
             _console.WriteLine("Protected seed state: " + home + ". Preserve it and the original SSH key to resume.");
@@ -267,8 +267,8 @@ public sealed partial class CliApplication
             if (setup || observed.Observation.Browser == "ready")
             {
                 _console.WriteLine("After creating your operator account, sign in at https://" + configForRun.Domain + "/, or connect this CLI (use its path if not on PATH):");
-                _console.WriteLine($"  minicloud instance add my-cloud https://{configForRun.Domain}");
-                _console.WriteLine("  minicloud login");
+                _console.WriteLine($"  selfrun instance add my-cloud https://{configForRun.Domain}");
+                _console.WriteLine("  selfrun login");
             }
             else _console.WriteLine("Browser setup state is not verified. Check the original host and rerun seed; never reinitialize it.");
             return SeedPortable.ExitCode(observed);

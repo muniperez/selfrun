@@ -69,9 +69,9 @@ describe("Create app SSH access", () => {
     fireEvent.change(screen.getByLabelText("Plan"), { target: { value: planName } });
   }
 
-  it("defaults to Minicloud access only and shows the destination account", async () => {
+  it("defaults to Selfrun access only and shows the destination account", async () => {
     await renderWithPlan();
-    expect(screen.getByRole("radio", { name: "Minicloud access only" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Selfrun access only" })).toBeChecked();
     expect(screen.getByText("Hetzner main · hetzner")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     await waitFor(() => expect(createApplication).toHaveBeenCalled());

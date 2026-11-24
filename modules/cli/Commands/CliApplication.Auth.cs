@@ -13,14 +13,14 @@ public sealed partial class CliApplication
     {
         if (args.Length == 0 || args[0] != "set")
         {
-            _console.WriteError("Usage: minicloud token set <token>");
+            _console.WriteError("Usage: selfrun token set <token>");
             return CliExitCodes.ValidationError;
         }
 
         var token = args.ElementAtOrDefault(1);
         if (string.IsNullOrWhiteSpace(token))
         {
-            _console.WriteError("Usage: minicloud token set <token>");
+            _console.WriteError("Usage: selfrun token set <token>");
             return CliExitCodes.ValidationError;
         }
 
@@ -51,11 +51,11 @@ public sealed partial class CliApplication
         var session = await _apiClient.CreateCliLoginSessionAsync(cancellationToken);
         if (!noBrowser && TryOpenBrowser(session.LoginUrl))
         {
-            _console.WriteLine("Opening browser for Minicloud login...");
+            _console.WriteLine("Opening browser for Selfrun login...");
         }
         else
         {
-            _console.WriteLine("Open this URL to finish Minicloud login:");
+            _console.WriteLine("Open this URL to finish Selfrun login:");
             _console.WriteLine(session.LoginUrl);
         }
 

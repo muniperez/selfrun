@@ -15,7 +15,7 @@ public sealed class TokenStore
 
     public string? GetToken()
     {
-        var environmentToken = Environment.GetEnvironmentVariable(CliEnvironment.TokenEnvironmentVariable);
+        var environmentToken = CliEnvironment.GetTokenEnvironmentVariable();
         if (!string.IsNullOrWhiteSpace(environmentToken))
         {
             return environmentToken.Trim();

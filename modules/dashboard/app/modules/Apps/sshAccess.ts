@@ -47,7 +47,7 @@ export type SshRequestResult = { request: SshAccessRequest; error?: undefined } 
 
 export function buildSshAccessRequest(draft: SshAccessDraft, accountId: string | null): SshRequestResult {
   if (draft.mode === "none") return { request: { mode: "none" } };
-  if (!accountId) return { error: "The selected plan has no provider account for SSH keys. Choose Minicloud access only." };
+  if (!accountId) return { error: "The selected plan has no provider account for SSH keys. Choose Selfrun access only." };
   if (draft.mode === "existing") {
     if (!draft.keyId || draft.keyAccountId !== accountId) return { error: "Select an SSH key from the destination provider account." };
     return { request: { mode: "existing", keyId: draft.keyId } };
@@ -79,11 +79,11 @@ export function sshErrorMessage(error: unknown, fallback = "Operation failed.") 
       case "ssh_key_not_found":
         return "The selected SSH key was not found in the destination provider account. Refresh the key list and choose another key.";
       case "ssh_inventory_unavailable":
-        return "The provider SSH key inventory is temporarily unavailable. Retry later, or choose Minicloud access only or a new public key.";
+        return "The provider SSH key inventory is temporarily unavailable. Retry later, or choose Selfrun access only or a new public key.";
       case "ssh_registration_failed":
         return "The provider rejected the SSH key registration. Check the public key or choose another key, then retry.";
       case "ssh_selection_account_mismatch":
-        return "The new plan uses a different provider account. Save SSH access for that account (or Minicloud access only) before changing the plan.";
+        return "The new plan uses a different provider account. Save SSH access for that account (or Selfrun access only) before changing the plan.";
     }
     if (error.status === 403) {
       return `Permission denied: ${error.message} Selecting an existing key requires provider read access; adding a new key requires an owner or admin (providers:write).`;
@@ -96,7 +96,7 @@ export function sshModeLabel(mode: string | null | undefined) {
   switch (mode) {
     case "existing": return "Existing provider key";
     case "new": return "New public key";
-    case "none": return "Minicloud access only";
+    case "none": return "Selfrun access only";
     default: return mode ?? "Unknown";
   }
 }

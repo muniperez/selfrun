@@ -39,7 +39,7 @@ describe("SidebarNavigation", () => {
       </AuthContext.Provider>,
     );
 
-    expect(screen.getByRole("button", { name: /Minicloud.*MuniVentures/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Selfrun.*MuniVentures/i })).toBeInTheDocument();
     expect(screen.getByText("Platform")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("aria-current", "page");
     fireEvent.pointerDown(screen.getByRole("button", { name: /example developer.*muni@example.test/i }), {

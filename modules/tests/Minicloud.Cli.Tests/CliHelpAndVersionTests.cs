@@ -32,7 +32,7 @@ public sealed class CliHelpAndVersionTests
 
         Assert.Equal(CliExitCodes.Success, exitCode);
         var lines = console.Output.Trim().Split('\n', StringSplitOptions.TrimEntries);
-        Assert.Equal($"minicloud version {CliApplication.GetVersion()}", lines[0]);
+        Assert.Equal($"selfrun version {CliApplication.GetVersion()}", lines[0]);
         Assert.InRange(lines.Length, 1, 2);
         if (lines.Length == 2)
         {
@@ -51,7 +51,7 @@ public sealed class CliHelpAndVersionTests
         var exitCode = await app.RunAsync([arg], CancellationToken.None);
 
         Assert.Equal(CliExitCodes.Success, exitCode);
-        Assert.Contains($"Minicloud CLI version {CliApplication.GetVersion()}", console.Output);
+        Assert.Contains($"Selfrun CLI version {CliApplication.GetVersion()}", console.Output);
         Assert.Contains("Usage:", console.Output);
         Assert.Contains("deploy", console.Output);
         Assert.Contains("status", console.Output);
@@ -68,7 +68,7 @@ public sealed class CliHelpAndVersionTests
         var exitCode = await app.RunAsync([], CancellationToken.None);
 
         Assert.Equal(CliExitCodes.Success, exitCode);
-        Assert.Contains($"Minicloud CLI version {CliApplication.GetVersion()}", console.Output);
+        Assert.Contains($"Selfrun CLI version {CliApplication.GetVersion()}", console.Output);
         Assert.Contains("Usage:", console.Output);
     }
 
@@ -83,10 +83,10 @@ public sealed class CliHelpAndVersionTests
         var exitCode = await app.RunAsync(args, CancellationToken.None);
 
         Assert.Equal(CliExitCodes.Success, exitCode);
-        Assert.Contains("Deploy services to Minicloud", console.Output);
-        Assert.Contains("minicloud deploy [service ...]", console.Output);
-        Assert.Contains("minicloud deploy all", console.Output);
-        Assert.Contains("minicloud deploy branch", console.Output);
+        Assert.Contains("Deploy services to Selfrun", console.Output);
+        Assert.Contains("selfrun deploy [service ...]", console.Output);
+        Assert.Contains("selfrun deploy all", console.Output);
+        Assert.Contains("selfrun deploy branch", console.Output);
         Assert.Contains("--no-publish", console.Output);
     }
 

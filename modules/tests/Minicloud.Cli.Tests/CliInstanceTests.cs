@@ -42,7 +42,7 @@ public sealed class CliInstanceTests : IDisposable
         var (app, console, env, handler) = Create();
         console.Input.Enqueue("cloud.example.com");
         Assert.Equal(0, await app.RunAsync(["login", "--token", "first-token"], default));
-        Assert.Contains("Minicloud instance URL", console.Output);
+        Assert.Contains("Selfrun instance URL", console.Output);
         Assert.Equal("https://api.cloud.example.com/api/instance", handler.Requests[0].Url);
         Assert.Null(handler.Requests[0].Token);
         Assert.Equal("first-token", handler.Requests[1].Token);

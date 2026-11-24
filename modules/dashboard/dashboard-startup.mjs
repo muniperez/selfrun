@@ -7,12 +7,21 @@ function isLocalHostname(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+function readEnv(primary, legacy) {
+  const primaryValue = process.env[primary];
+  if (primaryValue !== undefined && primaryValue !== "") {
+    return primaryValue;
+  }
+
+  return process.env[legacy];
+}
+
 function validateOrigin(value) {
   let url;
   try {
     url = new URL(value);
   } catch {
-    throw new Error("MINICLOUD_API_URL must be an absolute origin.");
+    throw new Error("SELFRUN_API_URL (or legacy MINICLOUD_API_URL) must be an absolute origin.");
   }
 
   if (
@@ -23,7 +32,7 @@ function validateOrigin(value) {
     url.hash ||
     !(url.protocol === "https:" || (url.protocol === "http:" && isLocalHostname(url.hostname)))
   ) {
-    throw new Error("MINICLOUD_API_URL must be an HTTPS origin (HTTP is allowed only for localhost).");
+    throw new Error("SELFRUN_API_URL (or legacy MINICLOUD_API_URL) must be an HTTPS origin (HTTP is allowed only for localhost).");
   }
 
   return url.origin;
@@ -41,12 +50,12 @@ function validateAppDomain(value) {
         !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
     )
   ) {
-    throw new Error("MINICLOUD_APP_DOMAIN must be a hostname without a scheme, port, or path.");
+    throw new Error("SELFRUN_APP_DOMAIN (or legacy MINICLOUD_APP_DOMAIN) must be a hostname without a scheme, port, or path.");
   }
 
   const parsed = new URL(`https://${value}`);
   if (parsed.hostname !== value) {
-    throw new Error("MINICLOUD_APP_DOMAIN must be a valid hostname.");
+    throw new Error("SELFRUN_APP_DOMAIN (or legacy MINICLOUD_APP_DOMAIN) must be a valid hostname.");
   }
 
   return value;
@@ -57,7 +66,7 @@ function validateSourceUrl(value) {
   try {
     url = new URL(value);
   } catch {
-    throw new Error("MINICLOUD_SOURCE_URL must be an absolute URL.");
+    throw new Error("SELFRUN_SOURCE_URL (or legacy MINICLOUD_SOURCE_URL) must be an absolute URL.");
   }
 
   if (
@@ -67,16 +76,16 @@ function validateSourceUrl(value) {
     url.hash ||
     !(url.protocol === "https:" || (url.protocol === "http:" && isLocalHostname(url.hostname)))
   ) {
-    throw new Error("MINICLOUD_SOURCE_URL must be a public HTTPS URL (HTTP is allowed only for localhost).");
+    throw new Error("SELFRUN_SOURCE_URL (or legacy MINICLOUD_SOURCE_URL) must be a public HTTPS URL (HTTP is allowed only for localhost).");
   }
 
   return url.href;
 }
 
 function createConfig() {
-  const apiBaseUrl = validateOrigin(process.env.MINICLOUD_API_URL ?? "");
-  const appDomain = validateAppDomain(process.env.MINICLOUD_APP_DOMAIN ?? "");
-  const sourceUrl = validateSourceUrl(process.env.MINICLOUD_SOURCE_URL ?? defaultSourceUrl);
+  const apiBaseUrl = validateOrigin(readEnv("SELFRUN_API_URL", "MINICLOUD_API_URL") ?? "");
+  const appDomain = validateAppDomain(readEnv("SELFRUN_APP_DOMAIN", "MINICLOUD_APP_DOMAIN") ?? "");
+  const sourceUrl = validateSourceUrl(readEnv("SELFRUN_SOURCE_URL", "MINICLOUD_SOURCE_URL") ?? defaultSourceUrl);
   return {
     apiBaseUrl,
     appDomain,
@@ -90,7 +99,7 @@ function createConfig() {
 
 function startNginx() {
   const config = createConfig();
-  const root = process.env.MINICLOUD_DASHBOARD_HTML_ROOT || "/usr/share/nginx/html";
+  const root = readEnv("SELFRUN_DASHBOARD_HTML_ROOT", "MINICLOUD_DASHBOARD_HTML_ROOT") || "/usr/share/nginx/html";
   const output = `${root}/runtime-config.json`;
   const temporary = `${output}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(config)}\n`, { mode: 0o644 });

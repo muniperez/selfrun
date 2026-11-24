@@ -41,7 +41,7 @@ public sealed partial class CliApplication
         if (args.FirstOrDefault() == "ssh-keys")
             return await RunProviderSshKeysAsync(args, ct);
         if (args.FirstOrDefault() != "add")
-            throw new CliCommandException(CliExitCodes.ValidationError, "Usage: minicloud providers add --organization <id> --name <name> --provider <type> | import-legacy --manifest <path> | ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");
+            throw new CliCommandException(CliExitCodes.ValidationError, "Usage: selfrun providers add --organization <id> --name <name> --provider <type> | import-legacy --manifest <path> | ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");
         var organizationId = GetOption(args, "--organization");
         var name = GetOption(args, "--name");
         var provider = GetOption(args, "--provider")?.ToLowerInvariant();
@@ -80,7 +80,7 @@ public sealed partial class CliApplication
 
     private async Task<int> RunProviderSshKeysAsync(string[] args, CancellationToken ct)
     {
-        const string usage = "Usage: minicloud providers ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]";
+        const string usage = "Usage: selfrun providers ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]";
         var accountId = args.ElementAtOrDefault(1) is { } positional && !positional.StartsWith('-') ? positional : null;
         var planName = GetOption(args, "--plan");
         if ((accountId is null) == (planName is null) || (planName is not null && string.IsNullOrWhiteSpace(planName)))
@@ -98,7 +98,7 @@ public sealed partial class CliApplication
         if (planName is not null)
         {
             var plan = (await _apiClient.GetPlansAsync(organizationId, ct)).SingleOrDefault(x => string.Equals(x.Name, planName, StringComparison.Ordinal))
-                ?? throw new CliCommandException(CliExitCodes.ValidationError, $"Plan '{planName}' was not found. Run 'minicloud plans list' to see current names.");
+                ?? throw new CliCommandException(CliExitCodes.ValidationError, $"Plan '{planName}' was not found. Run 'selfrun plans list' to see current names.");
             accountId = plan.ProviderAccountId;
             _console.WriteLine($"Provider account: {plan.ProviderName} ({accountId})");
         }

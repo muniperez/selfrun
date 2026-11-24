@@ -482,7 +482,7 @@ print(base64.b64encode(p.read_bytes()).decode())
         SeedGuard.Require(response.StatusCode == HttpStatusCode.OK, "Exact-origin trusted HTTPS discovery failed.");
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var value = json.RootElement;
-        SeedGuard.Require(value.GetProperty("product").GetString() == "minicloud" && value.GetProperty("protocolVersion").GetInt32() == 1
+        SeedGuard.Require(value.GetProperty("product").GetString() is "minicloud" or "selfrun" && value.GetProperty("protocolVersion").GetInt32() == 1
             && value.GetProperty("serverVersion").GetString() == s.ServerVersion[8..]
             && value.GetProperty("sourceRevision").GetString() == state.Plan.ReleaseSource
             && value.GetProperty("appDomain").GetString() == s.AppDomain, "HTTPS instance product/release/origin contract mismatch.");

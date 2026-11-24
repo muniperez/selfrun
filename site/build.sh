@@ -9,6 +9,7 @@ mkdir "$output"
 install -m 644 "$root/site/public/"{index.html,downloads.html,styles.css,mark.svg} "$output/"
 mkdir "$output/media"
 assets=(
+    selfrun-architecture.svg
     minicloud-architecture.svg
     projects/openbao.svg
     projects/opentelemetry.svg

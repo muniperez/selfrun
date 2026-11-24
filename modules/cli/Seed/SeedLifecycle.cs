@@ -133,7 +133,7 @@ internal sealed class SeedLifecycle(ISeedProvider provider, ISeedHost host, Acti
         {
             state.Phase = "complete"; save(state);
             write("Seed infrastructure and browser setup complete; independent recovery acknowledged. Login/provider registration/app deployment are separate actions.");
-            write($"Optional, default NO import: minicloud seed register-provider {state.Id} --register-provider --organization <workspace-id> --provider-name <name>. This requires ordinary login/permissions and separate approval of billable app-provisioning authority.");
+            write($"Optional, default NO import: selfrun seed register-provider {state.Id} --register-provider --organization <workspace-id> --provider-name <name>. This requires ordinary login/permissions and separate approval of billable app-provisioning authority.");
         }
     }
 

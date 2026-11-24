@@ -39,7 +39,7 @@ export function AppShell() {
                 <SidebarNavigation onNavigate={() => setOpen(false)} />
               </SheetContent>
             </Sheet>
-            <span>Minicloud</span>
+            <span>Selfrun</span>
           </header>
           <main className="mx-auto min-w-0 max-w-7xl p-4 md:p-6">
             <Outlet />

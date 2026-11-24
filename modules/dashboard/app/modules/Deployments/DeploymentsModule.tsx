@@ -197,7 +197,7 @@ export function DeploymentsModule() {
             deployments.length ? "No matching deployments" : "No deployments"
           }
         >
-          Deploy published image refs with the Minicloud API or CLI.
+          Deploy published image refs with the Selfrun API or CLI.
         </EmptyState>
       ) : null}
       {filteredDeployments.length > 0 ? (

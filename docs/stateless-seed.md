@@ -8,7 +8,7 @@ artifacts, or substitute an unqualified release just to make seed proceed.
 
 ## Guided installation
 
-Choose a CLI build and run `minicloud seed`. No JSON, Python, or helper
+Choose a CLI build and run `selfrun seed` (legacy alias `minicloud seed`). No JSON, Python, or helper
 script is needed on the workstation. Use a terminal with OpenSSH client tools
 installed; the wizard handles keys and host verification for new installations.
 Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
@@ -19,10 +19,11 @@ See [provider permissions and host requirements](seed.md#before-starting).
 The [CLI download page](https://muniventures.github.io/minicloud/downloads.html) has direct
 downloads for Windows x64, Apple silicon macOS, and glibc Linux on x64 or ARM64.
 Choose the build for the computer where you will run the CLI. Extract the
-archive and put `minicloud` (Windows: `minicloud.exe`) on your PATH.
+archive and put `minicloud` (Windows: `minicloud.exe`; installers also add the
+`selfrun` command alias) on your PATH.
 
 ```sh
-minicloud seed
+selfrun seed
 ```
 
 These are unsigned test builds. Each archive includes a `SOURCE.txt` file

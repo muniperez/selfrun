@@ -19,8 +19,8 @@ public sealed class CliSshAccessTests
     [InlineData(new[] { "--ssh-key", "key_1", "--ssh-public-key-file", "id.pub" }, "either")]
     [InlineData(new[] { "--ssh-key", "key_1", "--ssh-key-name", "laptop" }, "requires --ssh-public-key-file")]
     [InlineData(new[] { "--ssh-key-name", "laptop" }, "requires --ssh-public-key-file")]
-    [InlineData(new[] { "--ssh-key" }, "requires a Minicloud SSH key ID")]
-    [InlineData(new[] { "--ssh-key", "--plan" }, "requires a Minicloud SSH key ID")]
+    [InlineData(new[] { "--ssh-key" }, "requires a Selfrun SSH key ID")]
+    [InlineData(new[] { "--ssh-key", "--plan" }, "requires a Selfrun SSH key ID")]
     [InlineData(new[] { "--ssh-key=a", "--ssh-key=b" }, "only once")]
     public void Ssh_options_enforce_mutual_exclusion_and_name_pairing(string[] args, string message)
     {

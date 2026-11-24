@@ -79,6 +79,35 @@ describe("dashboard container startup", () => {
     expect(snapshot(second)).toEqual(snapshot(image));
   });
 
+  it("prefers SELFRUN_* configuration over legacy MINICLOUD_* aliases", () => {
+    const target = path.join(workspace, "selfrun-primary");
+    cpSync(image, target, { recursive: true });
+
+    const result = spawnSync(process.execPath, [startupScript], {
+      encoding: "utf8",
+      env: {
+        PATH: `${stubPath}:${process.env.PATH}`,
+        SELFRUN_DASHBOARD_HTML_ROOT: target,
+        MINICLOUD_DASHBOARD_HTML_ROOT: path.join(workspace, "unused"),
+        SELFRUN_API_URL: "https://api.selfrun.example",
+        MINICLOUD_API_URL: "https://api.legacy.example",
+        SELFRUN_APP_DOMAIN: "apps.selfrun.example",
+        MINICLOUD_APP_DOMAIN: "apps.legacy.example",
+        SELFRUN_SOURCE_URL: "https://selfrun.dev/source",
+        MINICLOUD_SOURCE_URL: "https://legacy.example/source"
+      }
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const config = parseRuntimeConfig(JSON.parse(readFileSync(path.join(target, "runtime-config.json"), "utf8")));
+    expect(config).toEqual({
+      apiBaseUrl: "https://api.selfrun.example",
+      appDomain: "apps.selfrun.example",
+      sourceUrl: "https://selfrun.dev/source",
+      auth: { origin: "https://api.selfrun.example", capabilitiesUrl: "https://api.selfrun.example/api/account/capabilities" }
+    });
+  });
+
   it.each([
     [{ MINICLOUD_APP_DOMAIN: "apps.example" }],
     [{ MINICLOUD_API_URL: "http://api.example", MINICLOUD_APP_DOMAIN: "apps.example" }],

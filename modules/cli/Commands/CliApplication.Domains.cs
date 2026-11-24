@@ -10,7 +10,7 @@ public sealed partial class CliApplication
     {
         if (args.Length == 0)
         {
-            _console.WriteError("Usage: minicloud domains <list|add-subdomain|disable|delete>");
+            _console.WriteError("Usage: selfrun domains <list|add-subdomain|disable|delete>");
             return CliExitCodes.ValidationError;
         }
 
@@ -48,7 +48,7 @@ public sealed partial class CliApplication
         var service = GetOption(args, "--service");
         if (string.IsNullOrWhiteSpace(service))
         {
-            _console.WriteError("Usage: minicloud domains add-subdomain --app <app> --service <service> [--label <label>]");
+            _console.WriteError("Usage: selfrun domains add-subdomain --app <app> --service <service> [--label <label>]");
             return CliExitCodes.ValidationError;
         }
 

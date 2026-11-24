@@ -36,14 +36,14 @@ public sealed class MinicloudApiClient
             using var response = await _httpClient.GetAsync(apiUrl + "/api/instance", ct);
             if (!response.IsSuccessStatusCode) throw new HttpRequestException($"Instance discovery returned HTTP {(int)response.StatusCode}.");
             var info = await response.Content.ReadFromJsonAsync<InstanceInfoResponse>(JsonOptions, ct);
-            if (info is null || info.Product != "minicloud" || info.ProtocolVersion != 1 ||
+            if (info is null || info.Product is not ("minicloud" or "selfrun") || info.ProtocolVersion != 1 ||
                 string.IsNullOrWhiteSpace(info.AppDomain) || Uri.CheckHostName(info.AppDomain) != UriHostNameType.Dns)
-                throw new JsonException("Invalid Minicloud instance response.");
+                throw new JsonException("Invalid Selfrun instance response.");
             return info;
         }
         catch (JsonException)
         {
-            throw new Commands.CliCommandException(CliExitCodes.ValidationError, $"{apiUrl} did not return valid Minicloud instance information.");
+            throw new Commands.CliCommandException(CliExitCodes.ValidationError, $"{apiUrl} did not return valid Selfrun instance information.");
         }
     }
 
@@ -169,7 +169,7 @@ public sealed class MinicloudApiClient
         var token = _tokenStore.GetToken();
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new ApiException((int)HttpStatusCode.Unauthorized, "missing_token", "Set MINICLOUD_TOKEN or run 'minicloud token set <token>'.");
+            throw new ApiException((int)HttpStatusCode.Unauthorized, "missing_token", "Set SELFRUN_TOKEN (or MINICLOUD_TOKEN) or run 'selfrun token set <token>'.");
         }
 
         await using var stream = File.OpenRead(filePath);
@@ -295,7 +295,7 @@ public sealed class MinicloudApiClient
         var token = tokenOverride ?? _tokenStore.GetToken();
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new ApiException((int)HttpStatusCode.Unauthorized, "missing_token", "Set MINICLOUD_TOKEN or run 'minicloud token set <token>'.");
+            throw new ApiException((int)HttpStatusCode.Unauthorized, "missing_token", "Set SELFRUN_TOKEN (or MINICLOUD_TOKEN) or run 'selfrun token set <token>'.");
         }
 
         using var request = new HttpRequestMessage(method, _environment.ApiBaseUrl + pathAndQuery);
@@ -323,7 +323,7 @@ public sealed class MinicloudApiClient
         var token = _tokenStore.GetToken();
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new ApiException((int)HttpStatusCode.Unauthorized, "missing_token", "Set MINICLOUD_TOKEN or run 'minicloud token set <token>'.");
+            throw new ApiException((int)HttpStatusCode.Unauthorized, "missing_token", "Set SELFRUN_TOKEN (or MINICLOUD_TOKEN) or run 'selfrun token set <token>'.");
         }
 
         using var request = new HttpRequestMessage(method, _environment.ApiBaseUrl + pathAndQuery);

@@ -11,7 +11,7 @@ public sealed partial class CliApplication
     {
         if (args.Length == 0)
         {
-            _console.WriteError("Usage: minicloud secrets <list|set|remove>");
+            _console.WriteError("Usage: selfrun secrets <list|set|remove>");
             return CliExitCodes.ValidationError;
         }
 
@@ -52,7 +52,7 @@ public sealed partial class CliApplication
         var value = GetOption(args, "--value");
         if (string.IsNullOrWhiteSpace(name))
         {
-            _console.WriteError("Usage: minicloud secrets set [--app <app>] <NAME> [--value value]");
+            _console.WriteError("Usage: selfrun secrets set [--app <app>] <NAME> [--value value]");
             return CliExitCodes.ValidationError;
         }
 
@@ -73,7 +73,7 @@ public sealed partial class CliApplication
         var name = FirstPositional(args);
         if (string.IsNullOrWhiteSpace(name))
         {
-            _console.WriteError("Usage: minicloud secrets remove [--app <app>] <NAME>");
+            _console.WriteError("Usage: selfrun secrets remove [--app <app>] <NAME>");
             return CliExitCodes.ValidationError;
         }
 

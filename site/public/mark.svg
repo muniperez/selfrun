@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Selfrun">
   <rect width="32" height="32" fill="#171717"/>
-  <path d="M8 23V9l8 7 8-7v14" fill="none" stroke="#fafafa" stroke-width="2.5"/>
+  <path d="M8 7h16v4H12v2.5h5L13.5 17H8V7z" fill="#fafafa"/>
+  <path d="M24 25H8v-4h12v-2.5h-5L18.5 15H24v10z" fill="#fafafa"/>
 </svg>

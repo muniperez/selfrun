@@ -57,7 +57,7 @@ public sealed partial class CliApplication
         if (string.IsNullOrWhiteSpace(value) || (value.StartsWith("--", StringComparison.Ordinal) && !args.Contains(option + "=" + value)))
             throw new CliCommandException(CliExitCodes.ValidationError, option switch
             {
-                SshKeyOption => $"{SshKeyOption} requires a Minicloud SSH key ID from the provider account's key inventory.",
+                SshKeyOption => $"{SshKeyOption} requires a Selfrun SSH key ID from the provider account's key inventory.",
                 SshPublicKeyFileOption => $"{SshPublicKeyFileOption} requires the path to an OpenSSH public key file (for example ~/.ssh/id_ed25519.pub).",
                 _ => $"{SshKeyNameOption} requires a name."
             });
@@ -95,7 +95,7 @@ public sealed partial class CliApplication
             content.Contains("-----BEGIN", StringComparison.Ordinal) ||
             content.Contains("PuTTY-User-Key-File", StringComparison.OrdinalIgnoreCase))
             throw new CliCommandException(CliExitCodes.ValidationError,
-                $"'{source}' looks like a private key. Minicloud never accepts private keys; supply the matching .pub public key file instead.");
+                $"'{source}' looks like a private key. Selfrun never accepts private keys; supply the matching .pub public key file instead.");
 
         var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
             .Select(line => line.Trim())
@@ -188,7 +188,7 @@ public sealed partial class CliApplication
     {
         if (request.Mode == "none")
         {
-            _console.WriteLine("SSH access: Minicloud only (no personal key).");
+            _console.WriteLine("SSH access: Selfrun only (no personal key).");
             return;
         }
 
@@ -196,7 +196,7 @@ public sealed partial class CliApplication
             ? $"existing key {saved?.Name ?? request.KeyId}"
             : $"new key '{request.Name}' ({SshPublicKeyFingerprint(request.PublicKey!)})";
         _console.WriteLine($"SSH access: {label}{(saved?.Fingerprint is { } fingerprint && request.Mode == "existing" ? $" ({fingerprint})" : string.Empty)}.");
-        _console.WriteLine("The key is installed when Minicloud first provisions this environment's VPS; new keys are registered with the provider account at that time, not now.");
+        _console.WriteLine("The key is installed when Selfrun first provisions this environment's VPS; new keys are registered with the provider account at that time, not now.");
         _console.WriteLine("The selection becomes immutable once server allocation starts and never changes keys on a running VPS.");
     }
 
@@ -205,7 +205,7 @@ public sealed partial class CliApplication
         if (access is null)
             return;
         var key = access.Mode == "none"
-            ? "Minicloud only"
+            ? "Selfrun only"
             : $"{access.Mode} key {access.Name ?? access.KeyId ?? "-"}{(access.Fingerprint is null ? string.Empty : $" {access.KeyType} {access.Fingerprint}")}";
         _console.WriteLine($"SSH access: {key}  state={access.RegistrationState}  revision={access.Revision}{(access.SelectionLocked ? "  locked" : string.Empty)}");
         if (connection is not null)
@@ -229,7 +229,7 @@ public sealed partial class CliApplication
         "ssh_key_invalid" => new(CliExitCodes.ValidationError,
             $"SSH key rejected: {ex.Message} Supply one Ed25519 or RSA (at least 3072-bit) OpenSSH public key."),
         "ssh_key_not_found" => new(CliExitCodes.ValidationError,
-            $"SSH key not found: {ex.Message} Use a key ID from 'minicloud providers ssh-keys --plan <plan>' for the environment plan's provider account."),
+            $"SSH key not found: {ex.Message} Use a key ID from 'selfrun providers ssh-keys --plan <plan>' for the environment plan's provider account."),
         "ssh_selection_locked" => new(CliExitCodes.ValidationError,
             "SSH access can no longer be changed: server allocation has started or a VPS exists. The selection is immutable after allocation and does not change keys on a running VPS."),
         "ssh_selection_revision_conflict" => new(CliExitCodes.ValidationError,

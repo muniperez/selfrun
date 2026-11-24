@@ -6,7 +6,25 @@ namespace Minicloud.Cli.Commands;
 
 internal static class LocalSecretsFile
 {
-    public const string FileName = "minicloud.secrets.env";
+    public const string FileName = "selfrun.secrets.env";
+    public const string LegacyFileName = "minicloud.secrets.env";
+
+    public static string? ResolvePath(string? sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return null;
+        }
+
+        var primary = Path.Combine(sourcePath, FileName);
+        if (File.Exists(primary))
+        {
+            return primary;
+        }
+
+        var legacy = Path.Combine(sourcePath, LegacyFileName);
+        return File.Exists(legacy) ? legacy : null;
+    }
 
     public static IReadOnlyDictionary<string, string> Parse(string path)
     {

@@ -191,7 +191,7 @@ export function ManageServiceDomainsDialog({ organizationId, appId, serviceName,
         <DialogHeader>
           <DialogTitle>Manage Domains: {serviceName}</DialogTitle>
           <DialogDescription>
-            Connect your own domain or add Minicloud subdomains.
+            Connect your own domain or add Selfrun subdomains.
           </DialogDescription>
         </DialogHeader>
         <CollectionToolbar label="domains" {...collection.toolbar} onRefresh={() => refreshDomains().catch(error => setError(String(error)))} />

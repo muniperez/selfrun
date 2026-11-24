@@ -45,28 +45,49 @@ function Install-MinicloudPayload([string]$Payload, [string]$Destination, [strin
       throw "Staged executable digest changed."
     }
     $VersionOutput = & $Candidate --version
-    if ($LASTEXITCODE -ne 0 -or !($VersionOutput -contains "minicloud version $($Version.TrimStart('v'))")) { throw "Candidate version check failed." }
+    $CleanVersion = $Version.TrimStart('v')
+    if ($LASTEXITCODE -ne 0 -or !($VersionOutput -contains "selfrun version $CleanVersion" -or $VersionOutput -contains "minicloud version $CleanVersion")) { throw "Candidate version check failed." }
     $HelpOutput = & $Candidate --help | Out-String
-    if ($LASTEXITCODE -ne 0 -or $HelpOutput -notmatch "minicloud") { throw "Candidate help check failed." }
+    if ($LASTEXITCODE -ne 0 -or $HelpOutput -notmatch "(?i)(selfrun|minicloud)") { throw "Candidate help check failed." }
     if (Test-Path -LiteralPath $Exe) {
       [IO.File]::Replace($Candidate, $Exe, (Join-Path $Destination (".minicloud-previous-" + [Guid]::NewGuid().ToString("N") + ".exe")))
     } else { [IO.File]::Move($Candidate, $Exe) }
   } finally { if (Test-Path -LiteralPath $Candidate) { Remove-Item -LiteralPath $Candidate -Force } }
+  $Alias = Join-Path $Destination "selfrun.cmd"
+  if ((Test-Path -LiteralPath $Alias) -and ((Get-Item -LiteralPath $Alias -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Existing selfrun alias is a reparse point."
+  }
+  $AliasCandidate = Join-Path $Destination (".selfrun-" + [Guid]::NewGuid().ToString("N") + ".cmd")
+  try {
+    [IO.File]::WriteAllText($AliasCandidate, "@echo off`r`n`"%~dp0minicloud.exe`" %*`r`n", [Text.Encoding]::ASCII)
+    if (Test-Path -LiteralPath $Alias) {
+      [IO.File]::Replace($AliasCandidate, $Alias, (Join-Path $Destination (".selfrun-previous-" + [Guid]::NewGuid().ToString("N") + ".cmd")))
+    } else { [IO.File]::Move($AliasCandidate, $Alias) }
+  } finally { if (Test-Path -LiteralPath $AliasCandidate) { Remove-Item -LiteralPath $AliasCandidate -Force } }
   $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if (($UserPath -split ";") -notcontains $Destination) {
     [Environment]::SetEnvironmentVariable("Path", "$UserPath;$Destination", "User")
     $env:Path = "$env:Path;$Destination"
   }
-  Write-Host "Installed $Exe (source $Source). Existing instance/configuration preserved."
+  Write-Host "Installed $Exe and $Alias (source $Source). Existing instance/configuration preserved."
 }
 
-$Mode = if ($env:MINICLOUD_INSTALL_MODE) { $env:MINICLOUD_INSTALL_MODE } else { "binary" }
-if ($Mode -notin @("binary", "source")) { throw "MINICLOUD_INSTALL_MODE must be binary or source; no automatic fallback." }
+function Get-EnvAlias([string]$Primary, [string]$Legacy, [string]$DefaultValue = "") {
+  $Value = [Environment]::GetEnvironmentVariable($Primary)
+  if ($Value) { return $Value }
+  $Value = [Environment]::GetEnvironmentVariable($Legacy)
+  if ($Value) { return $Value }
+  return $DefaultValue
+}
+
+$Mode = Get-EnvAlias "SELFRUN_INSTALL_MODE" "MINICLOUD_INSTALL_MODE" "binary"
+if ($Mode -notin @("binary", "source")) { throw "SELFRUN_INSTALL_MODE (or MINICLOUD_INSTALL_MODE) must be binary or source; no automatic fallback." }
 if ($Mode -eq "binary") {
-  if ($env:MINICLOUD_REPO -and $env:MINICLOUD_REPO -cne "muniventures/minicloud") { throw "Only muniventures/minicloud is allowed." }
-  $Tag = $env:MINICLOUD_VERSION
+  $RepoCheck = Get-EnvAlias "SELFRUN_REPO" "MINICLOUD_REPO" "muniventures/minicloud"
+  if ($RepoCheck -cne "muniventures/minicloud") { throw "Only muniventures/minicloud is allowed." }
+  $Tag = Get-EnvAlias "SELFRUN_VERSION" "MINICLOUD_VERSION"
   if ($Tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
-    throw "Binary mode requires MINICLOUD_VERSION=<exact published CLI vX.Y.Z[-prerelease]>; no latest, SHA, server-v or unsigned fallback. Use MINICLOUD_INSTALL_MODE=source for canonical source."
+    throw "Binary mode requires SELFRUN_VERSION (or MINICLOUD_VERSION)=<exact published CLI vX.Y.Z[-prerelease]>; no latest, SHA, server-v or unsigned fallback. Use SELFRUN_INSTALL_MODE=source for canonical source."
   }
   if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne "X64" -or [Environment]::OSVersion.Platform -ne "Win32NT") { throw "Supported target: Windows x64." }
   $Stage = Join-Path $HOME (".minicloud-install-" + [Guid]::NewGuid().ToString("N"))
@@ -173,28 +194,29 @@ if ($Mode -eq "binary") {
     $Metadata = Get-Content -LiteralPath (Join-Path $Payload "cli-release.json") -Raw | ConvertFrom-Json
     if ($Metadata.schemaVersion -ne 1 -or $Metadata.tag -cne $Tag -or $Metadata.rid -cne "win-x64" -or $Metadata.sourceRevision -cne $Provenance.sourceRevision -or $Metadata.workflow -cne $Provenance.workflow) { throw "Embedded release metadata mismatch." }
     $VersionOutput = & (Join-Path $Payload "minicloud.exe") --version
-    if ($LASTEXITCODE -ne 0 -or $VersionOutput -cnotcontains "minicloud version $($Tag.Substring(1))" -or $VersionOutput -cnotcontains "source $($Provenance.sourceRevision)") { throw "CLI version/source check failed." }
-    $Destination = if ($env:MINICLOUD_INSTALL_DIR) { $env:MINICLOUD_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Minicloud\bin" }
+    $TagSemver = $Tag.Substring(1)
+    if ($LASTEXITCODE -ne 0 -or !($VersionOutput -ccontains "selfrun version $TagSemver" -or $VersionOutput -ccontains "minicloud version $TagSemver") -or $VersionOutput -cnotcontains "source $($Provenance.sourceRevision)") { throw "CLI version/source check failed." }
+    $Destination = Get-EnvAlias "SELFRUN_INSTALL_DIR" "MINICLOUD_INSTALL_DIR" (Join-Path $env:LOCALAPPDATA "Minicloud\bin")
     Install-MinicloudPayload $Payload $Destination $Tag $Provenance.sourceRevision
   } finally { $Http.Dispose(); $Handler.Dispose(); Remove-Item -LiteralPath $Stage -Recurse -Force -ErrorAction SilentlyContinue }
   exit
 }
 
-$Repo = if ($env:MINICLOUD_REPO) { $env:MINICLOUD_REPO } else { "muniventures/minicloud" }
-$Version = if ($env:MINICLOUD_VERSION) { $env:MINICLOUD_VERSION } else { "7416e1408ecd9d11f58c638f0caf1c28e5fa6e3f" }
-$InstallDir = if ($env:MINICLOUD_INSTALL_DIR) { $env:MINICLOUD_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Minicloud\bin" }
+$Repo = Get-EnvAlias "SELFRUN_REPO" "MINICLOUD_REPO" "muniventures/minicloud"
+$Version = Get-EnvAlias "SELFRUN_VERSION" "MINICLOUD_VERSION" "7416e1408ecd9d11f58c638f0caf1c28e5fa6e3f"
+$InstallDir = Get-EnvAlias "SELFRUN_INSTALL_DIR" "MINICLOUD_INSTALL_DIR" (Join-Path $env:LOCALAPPDATA "Minicloud\bin")
 
 if ($Repo -ne "muniventures/minicloud") {
-  throw "MINICLOUD_REPO must be muniventures/minicloud."
+  throw "SELFRUN_REPO (or MINICLOUD_REPO) must be muniventures/minicloud."
 }
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
-  throw "Git is required to build the Minicloud CLI from source."
+  throw "Git is required to build the Selfrun CLI from source."
 }
 if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) {
-  throw "The .NET 10 SDK is required to build the Minicloud CLI from source."
+  throw "The .NET 10 SDK is required to build the Selfrun CLI from source."
 }
 if (!((& dotnet --list-sdks) -match '^10\.')) {
-  throw ".NET 10 SDK is required to build the Minicloud CLI. Install the SDK; this installer will not install it for you."
+  throw ".NET 10 SDK is required to build the Selfrun CLI. Install the SDK; this installer will not install it for you."
 }
 
 $ExpectedSha = ""
@@ -204,7 +226,7 @@ if ($Version -cmatch '^[0-9a-f]{40}$') {
 } elseif ($Version -cmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
   $CliVersion = $Version.Substring(1)
 } else {
-  throw "MINICLOUD_VERSION must be a full lowercase commit SHA or an exact CLI tag such as v3.1.0; branches, latest, and server-v tags are not supported."
+  throw "SELFRUN_VERSION (or MINICLOUD_VERSION) must be a full lowercase commit SHA or an exact CLI tag such as v3.1.0; branches, latest, and server-v tags are not supported."
 }
 
 $Rid = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
@@ -230,7 +252,7 @@ try {
     $ExpectedSha = ($RemoteTag -split '\s+')[0]
   }
 
-  Write-Host "Building Minicloud CLI from muniventures/minicloud at $ExpectedSha"
+  Write-Host "Building Selfrun CLI (formerly MiniCloud CLI) from muniventures/minicloud at $ExpectedSha"
   & git clone --filter=blob:none --no-tags --single-branch --branch main $Url $SourceDir
   if ($TagRef) {
     & git -C $SourceDir fetch --no-tags origin "${TagRef}:${TagRef}"
@@ -266,7 +288,7 @@ try {
       "-p:SourceRevisionId=$ResolvedSha" `
       "-p:InformationalVersion=$CliVersion+sha.$ResolvedSha"
     if ($LASTEXITCODE -ne 0) {
-      throw "Minicloud CLI source build failed; the existing installation was not changed."
+      throw "Selfrun CLI source build failed; the existing installation was not changed."
     }
   } finally {
     Pop-Location
@@ -275,7 +297,7 @@ try {
   $AppHost = Join-Path $PublishDir "Minicloud.Cli.exe"
   $Exe = Join-Path $PublishDir "minicloud.exe"
   if (!(Test-Path $AppHost)) {
-    throw "Source build did not produce the Minicloud CLI Windows executable for $Rid."
+    throw "Source build did not produce the Selfrun CLI Windows executable for $Rid."
   }
   Move-Item -Path $AppHost -Destination $Exe -Force
   $VersionOutput = & $Exe --version
@@ -283,7 +305,7 @@ try {
     throw "Built CLI version verification failed; the existing installation was not changed."
   }
   $HelpOutput = & $Exe --help | Out-String
-  if ($LASTEXITCODE -ne 0 -or $HelpOutput -notmatch "minicloud") {
+  if ($LASTEXITCODE -ne 0 -or $HelpOutput -notmatch "(?i)(selfrun|minicloud)") {
     throw "Built CLI help verification failed; the existing installation was not changed."
   }
 
@@ -295,10 +317,10 @@ try {
     $NewPath = if ($UserPath) { "$UserPath;$InstallDir" } else { $InstallDir }
     [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
     $env:Path = "$env:Path;$InstallDir"
-    Write-Host "Added $InstallDir to user PATH. Open a new terminal if minicloud is not found."
+    Write-Host "Added $InstallDir to user PATH. Open a new terminal if selfrun is not found."
   }
 
-  Write-Host "Installed minicloud to $(Join-Path $InstallDir 'minicloud.exe') (source $ResolvedSha)"
+  Write-Host "Installed selfrun.cmd -> minicloud.exe in $InstallDir (source $ResolvedSha)"
 } finally {
   Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }
