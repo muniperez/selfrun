@@ -1139,10 +1139,364 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    [Fact]
+    public async Task PasskeyDisabledByDefault_OmitsPasskeyUiAndRejectsSubmissionsAndRename()
+    {
+        var capabilities = await _client.GetFromJsonAsync<AccountCapabilitiesResponse>("/api/account/capabilities");
+        Assert.NotNull(capabilities);
+        Assert.False(capabilities.Passkey);
+
+        _factory.Upstream.Passkey = true;
+        _factory.Upstream.PasskeyCredentials.Add(("01020304", "unnamed", DateTimeOffset.UtcNow, true));
+
+        var loginFlow = await _client.GetFromJsonAsync<AccountFlowResponse>("/api/account/flows/login/browser?returnTo=%2Fapps");
+        Assert.NotNull(loginFlow?.Flow);
+        Assert.Null(loginFlow.Flow.Ui.Passkey);
+
+        var (cookie, csrf) = await Login();
+        using var settingsGet = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/settings/browser?returnTo=%2Fsettings%2Faccount");
+        settingsGet.Headers.Add("Cookie", cookie);
+        var settingsResponse = await _client.SendAsync(settingsGet);
+        var settingsFlow = await settingsResponse.Content.ReadFromJsonAsync<AccountFlowResponse>();
+        Assert.NotNull(settingsFlow?.Flow);
+        Assert.Null(settingsFlow.Flow.Ui.Passkey);
+
+        var before = _factory.Upstream.Requests.Count;
+        using var loginSubmit = Submit("login", new { csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = PasskeyAssertionJson("AQIDBA") });
+        var loginReject = await _client.SendAsync(loginSubmit);
+        Assert.Equal(HttpStatusCode.BadRequest, loginReject.StatusCode);
+
+        using var registerSubmit = Submit("settings", new { csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_settings_register = PasskeyAttestationJson("AQIDBA"), passkey_display_name = "Laptop" }, cookie);
+        registerSubmit.Headers.Add("X-Minicloud-CSRF", csrf);
+        var registerReject = await _client.SendAsync(registerSubmit);
+        Assert.Equal(HttpStatusCode.BadRequest, registerReject.StatusCode);
+
+        using var renameRequest = RenamePasskeyRequest("01020304", "Renamed", cookie, csrf);
+        var renameReject = await _client.SendAsync(renameRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, renameReject.StatusCode);
+
+        // Fail closed before contacting Kratos when passkeys are disabled.
+        Assert.Equal(before, _factory.Upstream.Requests.Count);
+    }
+
+    [Fact]
+    public async Task PasskeyEnrollmentNamingMultiplePasskeysRenameAndRemoval_EnforcesPrivilegedSessionAndCleansLabels()
+    {
+        EnablePasskey();
+        var capabilities = await _client.GetFromJsonAsync<AccountCapabilitiesResponse>("/api/account/capabilities");
+        Assert.NotNull(capabilities);
+        Assert.True(capabilities.Passkey);
+
+        var (cookie, csrf) = await Login();
+        using var initialSettingsReq = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/settings/browser?returnTo=%2Fsettings%2Faccount");
+        initialSettingsReq.Headers.Add("Cookie", cookie);
+        var initialSettings = await (await _client.SendAsync(initialSettingsReq)).Content.ReadFromJsonAsync<AccountFlowResponse>();
+        Assert.NotNull(initialSettings?.Flow?.Ui.Passkey?.RegistrationOptions);
+        Assert.Empty(initialSettings.Flow.Ui.Passkey.Credentials ?? []);
+        Assert.DoesNotContain(initialSettings.Flow.Ui.Nodes, node => node.Type == "script" || node.Group == "passkey");
+
+        // Enroll first named passkey (rawId AQIDBA -> hex 01020304).
+        using var enrollFirst = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_settings_register = PasskeyAttestationJson("AQIDBA"),
+            passkey_display_name = "  MacBook Touch ID  "
+        }, cookie);
+        enrollFirst.Headers.Add("X-Minicloud-CSRF", csrf);
+        var firstResp = await _client.SendAsync(enrollFirst);
+        Assert.Equal(HttpStatusCode.OK, firstResp.StatusCode);
+        var firstBody = (await firstResp.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.NotNull(firstBody.Session);
+        (cookie, csrf) = (LocalCookie(firstResp), firstBody.Session.CsrfToken);
+
+        // Verify passkey_display_name was stripped before forwarding to Kratos.
+        var registerUpstream = _factory.Upstream.Requests.Last(r => r.Uri.AbsolutePath == "/self-service/settings");
+        Assert.Contains("\"passkey_settings_register\"", registerUpstream.Body);
+        Assert.DoesNotContain("passkey_display_name", registerUpstream.Body);
+        Assert.DoesNotContain("MacBook Touch ID", registerUpstream.Body);
+
+        // Enroll second backup passkey (rawId CgsMDQ -> hex 0a0b0c0d).
+        using var enrollSecond = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_settings_register = PasskeyAttestationJson("CgsMDQ"),
+            passkey_display_name = "YubiKey Backup"
+        }, cookie);
+        enrollSecond.Headers.Add("X-Minicloud-CSRF", csrf);
+        var secondResp = await _client.SendAsync(enrollSecond);
+        Assert.Equal(HttpStatusCode.OK, secondResp.StatusCode);
+        var secondBody = (await secondResp.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        (cookie, csrf) = (LocalCookie(secondResp), secondBody.Session!.CsrfToken);
+
+        // Both passkeys appear in settings flow with their custom labels overlaid.
+        using var listedReq = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/settings/browser?returnTo=%2Fsettings%2Faccount");
+        listedReq.Headers.Add("Cookie", cookie);
+        var listed = await (await _client.SendAsync(listedReq)).Content.ReadFromJsonAsync<AccountFlowResponse>();
+        Assert.NotNull(listed?.Flow?.Ui.Passkey?.Credentials);
+        Assert.Equal(2, listed.Flow.Ui.Passkey.Credentials.Count);
+        Assert.Equal("MacBook Touch ID", listed.Flow.Ui.Passkey.Credentials[0].DisplayName);
+        Assert.Equal("YubiKey Backup", listed.Flow.Ui.Passkey.Credentials[1].DisplayName);
+
+        // Stale session cannot rename a passkey -> 403 session_refresh_required.
+        _factory.Kratos.AuthenticatedAt = DateTimeOffset.UtcNow.AddMinutes(-20);
+        using var staleRename = RenamePasskeyRequest("01020304", "Work MacBook", cookie, csrf);
+        var staleRenameResp = await _client.SendAsync(staleRename);
+        Assert.Equal(HttpStatusCode.Forbidden, staleRenameResp.StatusCode);
+        Assert.Contains("session_refresh_required", await staleRenameResp.Content.ReadAsStringAsync());
+
+        // Stale session removal is also blocked by Kratos -> 403 session_refresh_required without deleting label.
+        _factory.Upstream.SettingsPasskeyError = (403, """{"error":{"id":"session_refresh_required","code":403}}""");
+        using var staleRemove = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_remove = "0a0b0c0d"
+        }, cookie);
+        staleRemove.Headers.Add("X-Minicloud-CSRF", csrf);
+        var staleRemoveResp = await _client.SendAsync(staleRemove);
+        Assert.Equal(HttpStatusCode.Forbidden, staleRemoveResp.StatusCode);
+        Assert.Contains("session_refresh_required", await staleRemoveResp.Content.ReadAsStringAsync());
+        _factory.Upstream.SettingsPasskeyError = null;
+
+        // Re-authenticate -> fresh AuthenticatedAt enables rename and removal.
+        _factory.Kratos.AuthenticatedAt = DateTimeOffset.UtcNow;
+        using var freshRename = RenamePasskeyRequest("01020304", "Work MacBook", cookie, csrf);
+        var freshRenameResp = await _client.SendAsync(freshRename);
+        Assert.Equal(HttpStatusCode.OK, freshRenameResp.StatusCode);
+        var renamed = (await freshRenameResp.Content.ReadFromJsonAsync<AccountPasskeyRenameResponse>())!;
+        Assert.Equal("01020304", renamed.Id);
+        Assert.Equal("Work MacBook", renamed.DisplayName);
+
+        // Remove second passkey -> succeeds, rotates session, removes DB label.
+        using var removeSecond = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_remove = "0a0b0c0d"
+        }, cookie);
+        removeSecond.Headers.Add("X-Minicloud-CSRF", csrf);
+        var removeResp = await _client.SendAsync(removeSecond);
+        Assert.Equal(HttpStatusCode.OK, removeResp.StatusCode);
+        var removeBody = (await removeResp.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        (cookie, csrf) = (LocalCookie(removeResp), removeBody.Session!.CsrfToken);
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var remaining = await db.UserPasskeys.AsNoTracking().OrderBy(x => x.CredentialId).ToListAsync();
+            var single = Assert.Single(remaining);
+            Assert.Equal("01020304", single.CredentialId);
+            Assert.Equal("Work MacBook", single.DisplayName);
+        }
+
+        // Upstream refusal to remove last sign-in method returns sanitized 400 auth_passkey_remove_rejected.
+        _factory.Upstream.SettingsPasskeyError = (400, JsonSerializer.Serialize(new
+        {
+            id = FlowId,
+            type = "browser",
+            expires_at = DateTimeOffset.UtcNow.AddMinutes(10),
+            ui = new
+            {
+                action = $"http://kratos:4433/self-service/settings?flow={FlowId}",
+                method = "POST",
+                nodes = Array.Empty<object>(),
+                messages = new[] { new { id = 400001, type = "error", text = "private kratos diagnostic" } }
+            }
+        }));
+        using var removeLast = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_remove = "01020304"
+        }, cookie);
+        removeLast.Headers.Add("X-Minicloud-CSRF", csrf);
+        var removeLastResp = await _client.SendAsync(removeLast);
+        Assert.Equal(HttpStatusCode.BadRequest, removeLastResp.StatusCode);
+        var removeLastBody = await removeLastResp.Content.ReadAsStringAsync();
+        Assert.Contains("auth_passkey_remove_rejected", removeLastBody);
+        Assert.DoesNotContain("private kratos diagnostic", removeLastBody);
+    }
+
+    [Fact]
+    public async Task PasskeyPasswordlessLogin_CreatesSessionPreservesKeepSignedInAndFallsBackToPassword()
+    {
+        EnablePasskey();
+        var loginFlow = await _client.GetFromJsonAsync<AccountFlowResponse>("/api/account/flows/login/browser?returnTo=%2Fapps");
+        Assert.NotNull(loginFlow?.Flow?.Ui.Passkey?.ChallengeOptions);
+        Assert.Contains("\"challenge\"", loginFlow.Flow.Ui.Passkey.ChallengeOptions);
+
+        // Passwordless passkey sign-in with Keep me signed in creates a remembered session for the same account.
+        using var passkeyLogin = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_login = PasskeyAssertionJson("AQIDBA")
+        }, keepSignedIn: true);
+        var response = await _client.SendAsync(passkeyLogin);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = (await response.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.NotNull(body.Session);
+        Assert.True(body.Session.KeepSignedIn);
+        Assert.True(body.Session.KeepSignedInPreference);
+        var cookie = LocalCookie(response);
+
+        // Existing access controls remain intact on the passkey-authenticated session.
+        using var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/me");
+        meRequest.Headers.Add("Cookie", cookie);
+        var meResponse = await _client.SendAsync(meRequest);
+        Assert.Equal(HttpStatusCode.OK, meResponse.StatusCode);
+
+        // Unbound Kratos identity fails closed with 403 forbidden.
+        _factory.Upstream.Identity = "99999999-9999-4999-8999-999999999999";
+        using var unboundLogin = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_login = PasskeyAssertionJson("AQIDBA")
+        });
+        var unboundResp = await _client.SendAsync(unboundLogin);
+        Assert.Equal(HttpStatusCode.Forbidden, unboundResp.StatusCode);
+        _factory.Upstream.Identity = IdentityId;
+
+        // Removed or invalid passkey rejected by Kratos returns sanitized 400 auth_passkey_rejected.
+        _factory.Upstream.LoginPasskeyError = (400, """{"id":"11111111-2222-4333-8444-555555555555","type":"browser","ui":{"messages":[{"id":400001,"type":"error","text":"private credential missing"}]}}""");
+        using var removedLogin = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_login = PasskeyAssertionJson("CgsMDQ")
+        });
+        var removedResp = await _client.SendAsync(removedLogin);
+        Assert.Equal(HttpStatusCode.BadRequest, removedResp.StatusCode);
+        var removedText = await removedResp.Content.ReadAsStringAsync();
+        Assert.Contains("auth_passkey_rejected", removedText);
+        Assert.DoesNotContain("private credential missing", removedText);
+        _factory.Upstream.LoginPasskeyError = null;
+
+        // Password sign-in remains usable as fallback immediately afterward.
+        var (fallbackCookie, _) = await Login();
+        Assert.StartsWith("__Host-minicloud-session=", fallbackCookie);
+    }
+
+    [Fact]
+    public async Task InlineReauthentication_PreservesRememberedSessionPreference()
+    {
+        EnablePasskey();
+        using var rememberedLogin = Submit("login", LoginFields(), keepSignedIn: true);
+        var initialResp = await _client.SendAsync(rememberedLogin);
+        Assert.Equal(HttpStatusCode.OK, initialResp.StatusCode);
+        var initialBody = (await initialResp.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.True(initialBody.Session!.KeepSignedIn);
+        var cookie = LocalCookie(initialResp);
+
+        // Re-authenticate inline (same user, no keepSignedIn query param) using passkey.
+        using var reauthReq = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_login = PasskeyAssertionJson("AQIDBA")
+        }, cookie);
+        var reauthResp = await _client.SendAsync(reauthReq);
+        Assert.Equal(HttpStatusCode.OK, reauthResp.StatusCode);
+        var reauthBody = (await reauthResp.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.True(reauthBody.Session!.KeepSignedIn);
+    }
+
+    [Fact]
+    public async Task PasskeyValidation_RejectsCrossFlowFieldsMalformedPayloadsAndUnknownRename()
+    {
+        EnablePasskey();
+        var (cookie, csrf) = await Login();
+        var before = _factory.Upstream.Requests.Count;
+
+        // passkey_login rejected on settings; passkey_settings_register rejected on login.
+        using var loginOnSettings = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_login = PasskeyAssertionJson("AQIDBA")
+        }, cookie);
+        loginOnSettings.Headers.Add("X-Minicloud-CSRF", csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(loginOnSettings)).StatusCode);
+
+        using var registerOnLogin = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_settings_register = PasskeyAttestationJson("AQIDBA")
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(registerOnLogin)).StatusCode);
+
+        // Non-hex passkey_remove, control-char display name, and malformed WebAuthn payload rejected locally.
+        using var badRemove = Submit("settings", new { csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_remove = "not-hex!" }, cookie);
+        badRemove.Headers.Add("X-Minicloud-CSRF", csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(badRemove)).StatusCode);
+
+        using var badName = Submit("settings", new
+        {
+            csrf_token = "synthetic-flow-csrf",
+            method = "passkey",
+            passkey_settings_register = PasskeyAttestationJson("AQIDBA"),
+            passkey_display_name = "Bad\nName"
+        }, cookie);
+        badName.Headers.Add("X-Minicloud-CSRF", csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(badName)).StatusCode);
+
+        using var badAssertion = Submit("login", new { csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = """{"type":"public-key"}""" });
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(badAssertion)).StatusCode);
+        Assert.Equal(before, _factory.Upstream.Requests.Count);
+
+        // Unknown credential rename returns 404 not_found rather than inserting arbitrary rows.
+        using var unknownRename = RenamePasskeyRequest("deadbeef", "Ghost Key", cookie, csrf);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.SendAsync(unknownRename)).StatusCode);
+    }
+
     private void EnableGoogle()
     {
         _factory.Upstream.Google = true;
         _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.GoogleEnabled = true;
+    }
+
+    private void EnablePasskey()
+    {
+        _factory.Upstream.Passkey = true;
+        _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.PasskeyEnabled = true;
+    }
+
+    private static string PasskeyAttestationJson(string rawIdBase64Url) => JsonSerializer.Serialize(new
+    {
+        id = rawIdBase64Url,
+        rawId = rawIdBase64Url,
+        type = "public-key",
+        response = new { attestationObject = "o2NmbXRkbm9uZQ", clientDataJSON = "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0" }
+    });
+
+    private static string PasskeyAssertionJson(string rawIdBase64Url) => JsonSerializer.Serialize(new
+    {
+        id = rawIdBase64Url,
+        rawId = rawIdBase64Url,
+        type = "public-key",
+        response = new
+        {
+            authenticatorData = "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ",
+            clientDataJSON = "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0",
+            signature = "MEUCIQ synthetic-sig",
+            userHandle = "dXNlci0x"
+        }
+    });
+
+    private static HttpRequestMessage RenamePasskeyRequest(string credentialId, string displayName, string cookie, string csrf)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Put, $"/api/account/passkeys/{credentialId}")
+        {
+            Content = JsonContent.Create(new AccountPasskeyRenameRequest(displayName))
+        };
+        request.Headers.Add("Origin", Dashboard);
+        request.Headers.Add("Cookie", cookie);
+        request.Headers.Add("X-Minicloud-CSRF", csrf);
+        return request;
     }
 
     private static string StateHash(string state) => Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(
@@ -1235,6 +1589,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     private sealed class SessionValidator : IKratosSessionValidator
     {
         public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddDays(1);
+        public DateTimeOffset? AuthenticatedAt { get; set; } = DateTimeOffset.UtcNow;
         public bool Unavailable { get; set; }
         public bool Active { get; set; } = true;
         public int Extensions { get; private set; }
@@ -1246,7 +1601,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         public bool LoseExtendResponse { get; set; }
         public Task<bool> IsSessionActiveAsync(string sessionId, string identityId, CancellationToken cancellationToken) => Task.FromResult(Active);
         public Task<KratosSessionState?> GetActiveSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken) =>
-            Unavailable ? throw new KratosUnavailableException() : Task.FromResult(Active ? new KratosSessionState(ExpiresAt) : null);
+            Unavailable ? throw new KratosUnavailableException() : Task.FromResult(Active ? new KratosSessionState(ExpiresAt, AuthenticatedAt) : null);
         public async Task<KratosSessionState?> ExtendSessionAsync(string sessionId, string identityId, CancellationToken cancellationToken)
         {
             if (DuringExtend is { } during)
@@ -1282,8 +1637,12 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         public int Status { get; set; } = 200;
         public TimeSpan SettingsPasswordDelay { get; set; }
         public (int Status, string Body)? SettingsPasswordError { get; set; }
+        public (int Status, string Body)? SettingsPasskeyError { get; set; }
+        public (int Status, string Body)? LoginPasskeyError { get; set; }
         public Func<string, HttpResponseMessage>? RecoverySubmit { get; set; }
         public bool Google { get; set; }
+        public bool Passkey { get; set; }
+        public List<(string Id, string DisplayName, DateTimeOffset AddedAt, bool CanRemove)> PasskeyCredentials { get; } = [];
         public string ProviderRedirect { get; set; } = GoogleUrl;
         public int ProviderStatus { get; set; } = 422;
         public int CallbackStatus { get; set; } = 200;
@@ -1295,6 +1654,52 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             if (request.RequestUri!.AbsolutePath == "/self-service/recovery" && request.Method == HttpMethod.Post &&
                 RecoverySubmit is { } recoverySubmit)
                 return recoverySubmit(body);
+            if (request.RequestUri!.AbsolutePath == "/self-service/login" && request.Method == HttpMethod.Post &&
+                body.Contains("\"method\":\"passkey\"", StringComparison.Ordinal) &&
+                LoginPasskeyError is { } loginPasskeyError)
+            {
+                return new HttpResponseMessage((HttpStatusCode)loginPasskeyError.Status)
+                {
+                    Content = new StringContent(loginPasskeyError.Body, Encoding.UTF8, "application/json")
+                };
+            }
+            if (request.RequestUri!.AbsolutePath == "/self-service/settings" && request.Method == HttpMethod.Post &&
+                body.Contains("\"method\":\"passkey\"", StringComparison.Ordinal))
+            {
+                if (SettingsPasskeyError is { } passkeyError)
+                {
+                    var rejected = new HttpResponseMessage((HttpStatusCode)passkeyError.Status)
+                    {
+                        Content = new StringContent(passkeyError.Body, Encoding.UTF8, "application/json")
+                    };
+                    if (passkeyError.Status == 403)
+                        rejected.Headers.Add("Set-Cookie", "ory_kratos_continuity=synthetic-continuity; Path=/; HttpOnly");
+                    return rejected;
+                }
+
+                using var payload = JsonDocument.Parse(body);
+                if (payload.RootElement.TryGetProperty("passkey_settings_register", out var registerProp) &&
+                    registerProp.GetString() is { } registerJson)
+                {
+                    using var attestation = JsonDocument.Parse(registerJson);
+                    var rawId = attestation.RootElement.GetProperty("rawId").GetString()!;
+                    var hexId = Convert.ToHexString(Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlDecode(rawId)).ToLowerInvariant();
+                    if (PasskeyCredentials.All(x => x.Id != hexId))
+                        PasskeyCredentials.Add((hexId, "unnamed", DateTimeOffset.UtcNow, true));
+                }
+                else if (payload.RootElement.TryGetProperty("passkey_remove", out var removeProp) &&
+                         removeProp.GetString() is { } removeId)
+                {
+                    PasskeyCredentials.RemoveAll(x => string.Equals(x.Id, removeId, StringComparison.OrdinalIgnoreCase));
+                }
+
+                var accepted = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { id = FlowId, type = "browser", state = "success", identity = new { id = Identity } })
+                };
+                accepted.Headers.Add("Set-Cookie", "ory_kratos_session=updated-ory-session; Path=/; HttpOnly");
+                return accepted;
+            }
             if (request.RequestUri!.AbsolutePath == "/self-service/settings" && request.Method == HttpMethod.Post &&
                 body.Contains("\"method\":\"password\"", StringComparison.Ordinal))
             {
@@ -1369,6 +1774,63 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
                 return response;
             }
             var kind = request.RequestUri.AbsolutePath.Split('/')[2];
+            var nodes = new List<object>
+            {
+                new { group = "default", attributes = new { name = "csrf_token", type = "hidden", value = "synthetic-csrf", required = true } },
+                new { group = "default", attributes = new { name = "evil", type = "script", value = "private upstream diagnostic", required = false } }
+            };
+            if (kind == "settings")
+            {
+                // Profile nodes captured from Kratos v1.3.1 with the packaged identity schema.
+                nodes.Add(new { group = "profile", attributes = new { name = "traits.email", type = "email", value = "operator@example.test", required = true } });
+                nodes.Add(new { group = "profile", attributes = new { name = "traits.name.first", type = "text", value = "Synthetic", required = false } });
+                nodes.Add(new { group = "profile", attributes = new { name = "traits.name.last", type = "text", value = "Operator", required = false } });
+                nodes.Add(new { group = "profile", attributes = new { name = "method", type = "submit", value = "profile", required = false } });
+            }
+            if (Google)
+            {
+                nodes.Add(new { group = "oidc", attributes = new { name = kind == "settings" ? "link" : "provider", type = "submit", value = "google", required = false } });
+            }
+            if (Passkey)
+            {
+                if (kind == "login")
+                {
+                    var challengeOptions = JsonSerializer.Serialize(new
+                    {
+                        publicKey = new
+                        {
+                            challenge = "c3ludGhldGljLWNoYWxsZW5nZQ",
+                            rpId = "dashboard.example.test",
+                            allowCredentials = Array.Empty<object>(),
+                            userVerification = "preferred"
+                        }
+                    });
+                    nodes.Add(new { group = "passkey", attributes = new { name = "passkey_challenge", type = "hidden", value = challengeOptions, required = false } });
+                }
+                else if (kind == "settings")
+                {
+                    var createOptions = JsonSerializer.Serialize(new
+                    {
+                        publicKey = new
+                        {
+                            challenge = "c3ludGhldGljLXJlZ2lzdGVy",
+                            rp = new { id = "dashboard.example.test", name = "Minicloud" },
+                            user = new { id = "dXNlci0x", name = "operator@example.test", displayName = "operator@example.test" },
+                            pubKeyCredParams = new[] { new { type = "public-key", alg = -7 } }
+                        }
+                    });
+                    nodes.Add(new { group = "passkey", attributes = new { name = "passkey_create_data", type = "hidden", value = createOptions, required = false } });
+                    foreach (var credential in PasskeyCredentials)
+                    {
+                        nodes.Add(new
+                        {
+                            group = "passkey",
+                            attributes = new { name = "passkey_remove", type = "submit", value = credential.Id, disabled = !credential.CanRemove },
+                            meta = new { label = new { context = new { display_name = credential.DisplayName, added_at = credential.AddedAt.ToString("O") } } }
+                        });
+                    }
+                }
+            }
             var flowResponse = new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(new
@@ -1377,21 +1839,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
                     ui = new
                     {
                         action = $"http://kratos:4433/self-service/{kind}?flow={FlowId}", method = "POST",
-                        nodes = new[]
-                        {
-                            new { group = "default", attributes = new { name = "csrf_token", type = "hidden", value = "synthetic-csrf", required = true } },
-                            new { group = "default", attributes = new { name = "evil", type = "script", value = "private upstream diagnostic", required = false } }
-                        }.Concat(kind == "settings"
-                            ? [
-                                // Profile nodes captured from Kratos v1.3.1 with the packaged identity schema.
-                                new { group = "profile", attributes = new { name = "traits.email", type = "email", value = "operator@example.test", required = true } },
-                                new { group = "profile", attributes = new { name = "traits.name.first", type = "text", value = "Synthetic", required = false } },
-                                new { group = "profile", attributes = new { name = "traits.name.last", type = "text", value = "Operator", required = false } },
-                                new { group = "profile", attributes = new { name = "method", type = "submit", value = "profile", required = false } }
-                            ]
-                            : []).Concat(Google
-                            ? [new { group = "oidc", attributes = new { name = kind == "settings" ? "link" : "provider", type = "submit", value = "google", required = false } }]
-                            : []),
+                        nodes,
                         messages = new[] { new { id = 1, type = "error", text = "private upstream diagnostic" } }
                     }
                 }), Encoding.UTF8, "application/json")

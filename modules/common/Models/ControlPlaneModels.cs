@@ -37,6 +37,17 @@ public sealed class BrowserSession
     public DateTimeOffset? RevokedAt { get; set; }
 }
 
+public sealed class UserPasskey
+{
+    public string UserId { get; set; } = default!;
+    public User User { get; set; } = default!;
+    /// <summary>Lowercase hexadecimal WebAuthn credential ID matching Kratos passkey_remove values.</summary>
+    public string CredentialId { get; set; } = default!;
+    public string DisplayName { get; set; } = default!;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
 public sealed class BootstrapRecord
 {
     [Key]

@@ -6,6 +6,8 @@ export type AccountCapabilities = {
   emailRecovery: boolean;
   /** Whether the operator offers "Keep me signed in". */
   keepSignedIn?: boolean;
+  /** Whether passkey enrollment and passwordless sign-in are enabled. */
+  passkey?: boolean;
   bootstrapState: "required" | "ready" | "blocked";
 };
 
@@ -33,11 +35,33 @@ export type FlowNode = {
   messages: FlowMessage[];
 };
 export type FlowProvider = { id: string; action: string; method: string };
+export type PasskeyCredential = {
+  id: string;
+  displayName: string;
+  addedAt: string | null;
+  canRemove: boolean;
+};
+export type FlowPasskey = {
+  challengeOptions?: string;
+  registrationOptions?: string;
+  credentials?: PasskeyCredential[];
+};
+export type PasskeyRenameResponse = {
+  id: string;
+  displayName: string;
+};
 export type BrowserFlow = {
   id: string;
   kind: FlowKind;
   expiresAt: string;
-  ui: { action: string; method: string; nodes: FlowNode[]; messages: FlowMessage[]; providers?: FlowProvider[] };
+  ui: {
+    action: string;
+    method: string;
+    nodes: FlowNode[];
+    messages: FlowMessage[];
+    providers?: FlowProvider[];
+    passkey?: FlowPasskey;
+  };
 };
 export type ProviderContinuation = {
   result: "success" | "failed" | "forbidden" | "unavailable";
@@ -112,12 +136,20 @@ function flowPath(kind: FlowKind) {
 }
 
 const flowIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const passkeyCredentialIdPattern = /^(?:[0-9a-f]{2}){1,256}$/i;
 
 function flowId(id: string) {
   if (!flowIdPattern.test(id)) {
     throw new Error("Invalid account form.");
   }
   return id;
+}
+
+function validatePasskeyCredentialId(id: string) {
+  if (typeof id !== "string" || !passkeyCredentialIdPattern.test(id)) {
+    throw new Error("Invalid passkey identifier.");
+  }
+  return id.toLowerCase();
 }
 
 export function validateFlow(flow: BrowserFlow, kind: FlowKind) {
@@ -131,6 +163,20 @@ export function validateFlow(flow: BrowserFlow, kind: FlowKind) {
     if (kind === "recovery" || provider.id !== "google" || provider.method.toUpperCase() !== "POST" ||
         providerAction.href !== apiUrl(`${flowPath(kind)}/oidc?flow=${flow.id}`)) {
       throw new Error("Invalid account provider destination.");
+    }
+  }
+  if (flow.ui.passkey) {
+    if (kind === "recovery") {
+      throw new Error("Invalid account passkey configuration.");
+    }
+    if (kind === "login" && (flow.ui.passkey.registrationOptions != null || flow.ui.passkey.credentials != null)) {
+      throw new Error("Invalid account passkey configuration.");
+    }
+    if (kind === "settings" && flow.ui.passkey.challengeOptions != null) {
+      throw new Error("Invalid account passkey configuration.");
+    }
+    for (const credential of flow.ui.passkey.credentials ?? []) {
+      validatePasskeyCredentialId(credential.id);
     }
   }
   return flow;
@@ -207,4 +253,13 @@ export function submitAccountFlow(flow: BrowserFlow, fields: Record<string, stri
     browserFlow: flow.kind !== "settings",
     notifyAuth: false
   }), flow.kind);
+}
+
+export async function renamePasskey(credentialId: string, displayName: string) {
+  const normalized = validatePasskeyCredentialId(credentialId);
+  return apiRequest<PasskeyRenameResponse>(`/api/account/passkeys/${normalized}`, {
+    method: "PUT",
+    body: { displayName },
+    notifyAuth: false
+  });
 }

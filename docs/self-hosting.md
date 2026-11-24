@@ -130,6 +130,10 @@ references (`MINICLOUD_*_IMAGE`) come from the generated, digest-pinned
 | `MANAGE_DNS_RECORDS` | Optional. Defaults to `false`. |
 | `MINICLOUD_SOURCE_URL` | Optional. The public source link shown in the dashboard. |
 | `MINICLOUD_GOOGLE_OIDC_ENABLED` | Defaults to `false`; the installer derives it only from explicit `googleOidc.enabled`. Shared API/Kratos switch, not a qualification assertion. |
+| `MINICLOUD_PASSKEY_ENABLED` | Defaults to `true` in `compose.yml`. Shared API/Kratos switch for dashboard passkey enrollment and passwordless sign-in. |
+| `MINICLOUD_PASSKEY_RP_DISPLAY_NAME` | Optional. WebAuthn relying-party display name shown by authenticators; defaults to `Minicloud`. |
+| `MINICLOUD_PASSKEY_RP_ID` | Optional. WebAuthn relying-party ID (`rp.id`); defaults to `CONSOLE_HOSTNAME`. Must match the dashboard hostname or a registrable parent domain. |
+| `MINICLOUD_PASSKEY_RP_ORIGINS` | Optional. Allowed HTTPS WebAuthn origins (`rp.origins`); defaults to `CONSOLE_URL`. |
 | `MINICLOUD_EMAIL_RECOVERY_ENABLED` | Unset by default; set to `true` only when the verified installer selects `compose.email-recovery.yml` for an explicit first-install `emailRecovery.enabled` opt-in. Basic password installs need no SMTP configuration. |
 | `MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED` | Defaults to `true`. Offers the per-user **Keep me signed in** option; when `false`, existing remembered sessions follow the standard limits. |
 | `MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES`, `MINICLOUD_PORTAL_STANDARD_MAX_MINUTES` | Dashboard inactivity timeout and absolute lifetime for standard sessions. Default `120` (2 hours) and `720` (12 hours). |
@@ -247,6 +251,56 @@ existing sessions immediately, which may sign users out; lengthening it applies
 to the idle window at the next renewal but never extends a session's original
 absolute lifetime. Disabling `keepSignedInEnabled` makes existing remembered
 sessions follow the standard limits.
+
+### Passkey sign-in and WebAuthn configuration
+
+Minicloud supports WebAuthn passkeys (platform authenticators such as Touch ID,
+Face ID and Windows Hello, as well as discoverable hardware security keys) via
+Ory Kratos's `passkey` strategy (`selfservice.methods.passkey`). Signed-in
+operators can register, name, rename and remove multiple passkeys in **Account
+settings** (`/settings/account`) after re-authenticating within Kratos's
+privileged session window (`privileged_session_max_age: 15m`), then sign in
+without a password while keeping the same session controls (**Keep me signed
+in** and activity renewal).
+
+- **HTTPS is required.** Browsers only allow WebAuthn credential creation and
+  assertion on a trusted HTTPS origin (`https://...` via Caddy on
+  `CONSOLE_URL`). Plain HTTP and raw IP addresses are rejected by browsers and
+  never supported for hosted passkeys.
+- **Relying Party ID (`rp.id`).** `compose.yml` sets
+  `SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ID` to `CONSOLE_HOSTNAME` by default
+  (overridable via `MINICLOUD_PASSKEY_RP_ID`). `rp.id` must be a valid DNS
+  domain without scheme, port or path, and must equal `CONSOLE_HOSTNAME` or a
+  registrable parent domain of `CONSOLE_HOSTNAME` (never a public suffix such
+  as `com` or `co.uk`).
+- **Allowed origins (`rp.origins`).** `compose.yml` sets
+  `SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ORIGINS` to `CONSOLE_URL` by default
+  (overridable via `MINICLOUD_PASSKEY_RP_ORIGINS`). Because Kratos's internal
+  `serve.public.base_url` is `http://kratos:4433/` on the private Compose
+  network, `rp.origins` **must** remain set to the public HTTPS dashboard
+  origin (`CONSOLE_URL`); omitting it would cause WebAuthn origin verification
+  to fail.
+- **Changing the dashboard hostname.** Passkeys are cryptographically bound to
+  the `rp.id` used when they were created:
+  - Under the default configuration (`rp.id = CONSOLE_HOSTNAME`), changing
+    `CONSOLE_HOSTNAME` (for example from `console.old.example` to
+    `console.new.example` or `cloud.example.com`) makes previously enrolled
+    passkeys unusable on the new hostname. Users must sign in with their
+    password (or configured email/code recovery), register new passkeys under
+    the new hostname, and remove stale passkeys in **Account settings**.
+  - If you anticipate moving the dashboard between subdomains of the same
+    registrable domain (for example `console.example.com` to
+    `cloud.example.com`), setting `MINICLOUD_PASSKEY_RP_ID=example.com`
+    **before** passkeys are enrolled allows existing passkeys to keep working
+    after `CONSOLE_URL` / `MINICLOUD_PASSKEY_RP_ORIGINS` is updated to the new
+    HTTPS subdomain origin. Note the security tradeoff: a parent-domain `rp.id`
+    scopes credentials to all subdomains of that domain, so use it only when
+    you control every subdomain under that domain.
+- **Backup credentials and fallback.** Registering a second passkey (such as a
+  hardware security key or another device) protects against losing a single
+  device. Password sign-in and any configured email/code recovery flow remain
+  available as fallback even when passkeys are enabled or disabled
+  (`MINICLOUD_PASSKEY_ENABLED=false`).
 
 ### Optional packaged Google OIDC
 

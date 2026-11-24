@@ -120,10 +120,15 @@ public sealed class KratosSessionValidator(HttpClient client, IOptions<KratosOpt
                 expiresElement.TryGetDateTimeOffset(out var parsedExpiry)
                     ? parsedExpiry
                     : null;
+            DateTimeOffset? authenticatedAt = root.TryGetProperty("authenticated_at", out var authenticatedElement) &&
+                authenticatedElement.ValueKind == JsonValueKind.String &&
+                authenticatedElement.TryGetDateTimeOffset(out var parsedAuthenticatedAt)
+                    ? parsedAuthenticatedAt
+                    : null;
             return active &&
                 string.Equals(returnedId, sessionId, StringComparison.Ordinal) &&
                 string.Equals(returnedIdentityId, identityId, StringComparison.Ordinal)
-                    ? new KratosSessionState(expiresAt)
+                    ? new KratosSessionState(expiresAt, authenticatedAt)
                     : null;
         }
         catch (KratosUnavailableException)

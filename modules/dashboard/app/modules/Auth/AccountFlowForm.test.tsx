@@ -2,7 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { AuthContext } from "../../core/auth/AuthProvider";
-import { accountCapabilities, accountSession, authFixture, browserFlow, googleFlow, googleUrl, jsonResponse } from "../../test/accountFixtures";
+import {
+  accountCapabilities, accountSession, authFixture, browserFlow, googleFlow, googleUrl, jsonResponse,
+  passkeyLoginFlow, passkeySettingsFlow
+} from "../../test/accountFixtures";
 import { AccountFlowForm } from "./AccountFlowForm";
 import { SessionSettingsCard } from "./SessionSettingsCard";
 import { routes } from "../../routes";
@@ -366,5 +369,246 @@ describe("keep me signed in", () => {
     expect(JSON.parse(init.body as string)).toEqual({ keepSignedIn: true });
     expect((init.headers as Record<string, string>)["X-Minicloud-CSRF"]).toBe("synthetic-csrf");
     expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
+  });
+});
+
+describe("passkey authentication and settings", () => {
+  const originalPublicKeyCredential = window.PublicKeyCredential;
+  const originalCredentials = navigator.credentials;
+
+  function stubBrowserWebAuthn(overrides: Partial<CredentialsContainer> = {}) {
+    Object.defineProperty(window, "PublicKeyCredential", {
+      configurable: true,
+      value: function PublicKeyCredential() {}
+    });
+    const container = {
+      create: vi.fn().mockResolvedValue({
+        id: "AQIDBA",
+        rawId: new Uint8Array([1, 2, 3, 4]).buffer,
+        type: "public-key",
+        response: {
+          attestationObject: new Uint8Array([10, 11, 12]).buffer,
+          clientDataJSON: new Uint8Array([20, 21, 22]).buffer
+        }
+      }),
+      get: vi.fn().mockResolvedValue({
+        id: "AQIDBA",
+        rawId: new Uint8Array([1, 2, 3, 4]).buffer,
+        type: "public-key",
+        response: {
+          authenticatorData: new Uint8Array([5, 6]).buffer,
+          clientDataJSON: new Uint8Array([7, 8]).buffer,
+          signature: new Uint8Array([9, 10]).buffer,
+          userHandle: new Uint8Array([11, 12]).buffer
+        }
+      }),
+      ...overrides
+    };
+    Object.defineProperty(navigator, "credentials", { configurable: true, value: container });
+    return container;
+  }
+
+  afterEach(() => {
+    window.localStorage.clear();
+    Object.defineProperty(window, "PublicKeyCredential", { configurable: true, value: originalPublicKeyCredential });
+    Object.defineProperty(navigator, "credentials", { configurable: true, value: originalCredentials });
+  });
+
+  function mountPasskey(
+    kind: "login" | "settings",
+    capabilityOverrides: Partial<typeof accountCapabilities & { keepSignedIn?: boolean }> = {}
+  ) {
+    const auth = authFixture({
+      capabilities: { ...accountCapabilities, passkey: true, ...capabilityOverrides }
+    });
+    render(<AuthContext.Provider value={auth}><MemoryRouter><AccountFlowForm kind={kind} /></MemoryRouter></AuthContext.Provider>);
+    return auth;
+  }
+
+  it("hides passkey sign-in when disabled in capabilities or unsupported by the browser", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ flow: passkeyLoginFlow(), session: null })));
+    stubBrowserWebAuthn();
+    mountPasskey("login", { passkey: false });
+    await screen.findByLabelText("Email");
+    expect(screen.queryByRole("button", { name: "Sign in with a passkey" })).not.toBeInTheDocument();
+    cleanup();
+
+    Object.defineProperty(window, "PublicKeyCredential", { configurable: true, value: undefined });
+    mountPasskey("login", { passkey: true });
+    await screen.findByLabelText("Email");
+    expect(screen.queryByRole("button", { name: "Sign in with a passkey" })).not.toBeInTheDocument();
+  });
+
+  it("signs in passwordlessly with a passkey and preserves Keep me signed in", async () => {
+    const credentials = stubBrowserWebAuthn();
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ flow: passkeyLoginFlow(), session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: { ...accountSession, keepSignedIn: true } }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const auth = mountPasskey("login", { keepSignedIn: true });
+    const checkbox = await screen.findByRole("checkbox", { name: "Keep me signed in on this device" });
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with a passkey" }));
+
+    await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
+    expect(credentials.get).toHaveBeenCalledOnce();
+    const [url, init] = fetcher.mock.calls[1] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/account\/flows\/login\?flow=[0-9a-f-]+&keepSignedIn=true$/);
+    const body = JSON.parse(init.body as string);
+    expect(body.method).toBe("passkey");
+    expect(body.csrf_token).toBe("upstream-csrf");
+    expect(JSON.parse(body.passkey_login)).toMatchObject({ id: "AQIDBA", type: "public-key" });
+    expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
+  });
+
+  it("returns to a usable sign-in screen with password and recovery fallback after cancel or rejected passkey", async () => {
+    const get = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("cancelled"), { name: "NotAllowedError" }))
+      .mockResolvedValueOnce({
+        id: "CgsMDQ",
+        rawId: new Uint8Array([10, 11, 12, 13]).buffer,
+        type: "public-key",
+        response: {
+          authenticatorData: new Uint8Array([5, 6]).buffer,
+          clientDataJSON: new Uint8Array([7, 8]).buffer,
+          signature: new Uint8Array([9, 10]).buffer,
+          userHandle: new Uint8Array([11, 12]).buffer
+        }
+      });
+    stubBrowserWebAuthn({ get });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ flow: passkeyLoginFlow(), session: null }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: "auth_passkey_rejected", message: "private diagnostic" } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ flow: passkeyLoginFlow(), session: null }))
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const auth = mountPasskey("login", { emailRecovery: true });
+    const passkeyButton = await screen.findByRole("button", { name: "Sign in with a passkey" });
+    expect(screen.getByRole("link", { name: "Forgot password?" })).toBeInTheDocument();
+
+    // Cancelled browser ceremony does not submit or lock the form.
+    fireEvent.click(passkeyButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Passkey sign-in was cancelled");
+    expect(passkeyButton).toBeEnabled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    // Rejected/removed passkey reloads the flow and keeps sign-in usable.
+    fireEvent.click(passkeyButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Passkey verification failed");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled());
+
+    // Password fallback still signs in cleanly.
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "operator@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "synthetic-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
+  });
+
+  it("enrolls named multiple passkeys, renames, removes, and respects non-removable last credential", async () => {
+    stubBrowserWebAuthn();
+    setCsrfToken("synthetic-csrf");
+    const emptyFlow = passkeySettingsFlow([]);
+    const oneFlow = passkeySettingsFlow([{ id: "01020304", displayName: "MacBook Touch ID", canRemove: true }]);
+    const twoFlow = passkeySettingsFlow([
+      { id: "01020304", displayName: "MacBook Touch ID", canRemove: true },
+      { id: "0a0b0c0d", displayName: "YubiKey Backup", canRemove: true }
+    ]);
+    const finalFlow = passkeySettingsFlow([
+      { id: "01020304", displayName: "Work MacBook", canRemove: false }
+    ]);
+
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ flow: emptyFlow, session: null }))
+      // Enroll first passkey -> submit + reload
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }))
+      .mockResolvedValueOnce(jsonResponse({ flow: oneFlow, session: null }))
+      // Enroll second backup passkey -> submit + reload
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }))
+      .mockResolvedValueOnce(jsonResponse({ flow: twoFlow, session: null }))
+      // Rename first passkey -> PUT
+      .mockResolvedValueOnce(jsonResponse({ id: "01020304", displayName: "Work MacBook" }))
+      // Remove second passkey -> submit + reload
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }))
+      .mockResolvedValueOnce(jsonResponse({ flow: finalFlow, session: null }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const auth = mountPasskey("settings");
+    expect(await screen.findByText("No passkeys registered yet.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Passkey name"), { target: { value: "MacBook Touch ID" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add passkey" }));
+    expect(await screen.findByText("MacBook Touch ID")).toBeInTheDocument();
+    const firstSubmit = JSON.parse((fetcher.mock.calls[1][1] as RequestInit).body as string);
+    expect(firstSubmit).toMatchObject({
+      csrf_token: "upstream-csrf",
+      method: "passkey",
+      passkey_display_name: "MacBook Touch ID"
+    });
+    expect(JSON.parse(firstSubmit.passkey_settings_register)).toMatchObject({ id: "AQIDBA", type: "public-key" });
+
+    fireEvent.change(screen.getByLabelText("Passkey name"), { target: { value: "YubiKey Backup" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add passkey" }));
+    expect(await screen.findByText("YubiKey Backup")).toBeInTheDocument();
+
+    // Rename first passkey inline.
+    fireEvent.click(screen.getByRole("button", { name: "Rename MacBook Touch ID" }));
+    fireEvent.change(screen.getByLabelText("Edit passkey name"), { target: { value: "Work MacBook" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    expect(await screen.findByText("Work MacBook")).toBeInTheDocument();
+    expect(fetcher.mock.calls[5][0]).toContain("/api/account/passkeys/01020304");
+
+    // Remove second passkey.
+    fireEvent.click(screen.getByRole("button", { name: "Remove YubiKey Backup" }));
+    await waitFor(() => expect(screen.queryByText("YubiKey Backup")).not.toBeInTheDocument());
+    expect(JSON.parse((fetcher.mock.calls[6][1] as RequestInit).body as string)).toEqual({
+      csrf_token: "upstream-csrf",
+      method: "passkey",
+      passkey_remove: "0a0b0c0d"
+    });
+
+    // Remaining non-removable credential disables Remove with explanation.
+    expect(screen.getByRole("button", { name: "Remove Work MacBook" })).toBeDisabled();
+    expect(screen.getByText(/Keep at least one sign-in method/)).toBeInTheDocument();
+    expect(auth.refreshSession).toHaveBeenCalledTimes(3);
+  });
+
+  it("supports inline re-authentication with password or passkey on session_refresh_required", async () => {
+    const credentials = stubBrowserWebAuthn();
+    setCsrfToken("synthetic-csrf");
+    const settingsFlow = passkeySettingsFlow([{ id: "01020304", displayName: "MacBook", canRemove: true }]);
+    const refreshLoginFlow = passkeyLoginFlow("22222222-3333-4444-8555-666666666666");
+
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ flow: settingsFlow, session: null }))
+      // Stale session blocks rename -> 403 session_refresh_required
+      .mockResolvedValueOnce(jsonResponse({ error: { code: "session_refresh_required", message: "Refresh" } }, 403))
+      // User clicks "Verify identity to continue" -> starts refresh login flow
+      .mockResolvedValueOnce(jsonResponse({ flow: refreshLoginFlow, session: null }))
+      // User clicks "Verify with passkey" -> submits passkey login
+      .mockResolvedValueOnce(jsonResponse({ flow: null, session: accountSession }))
+      // Fresh settings flow loaded automatically after verification
+      .mockResolvedValueOnce(jsonResponse({ flow: settingsFlow, session: null }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const auth = mountPasskey("settings");
+    fireEvent.click(await screen.findByRole("button", { name: "Rename MacBook" }));
+    fireEvent.change(screen.getByLabelText("Edit passkey name"), { target: { value: "Office Laptop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Log out and sign in again before updating account settings.");
+    // Must not auto-start login before user clicks the explicit verification button.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Verify identity to continue" }));
+    const verifyPasskey = await screen.findByRole("button", { name: "Verify with passkey" });
+    expect(fetcher.mock.calls[2][0]).toContain("/api/account/flows/login/browser?returnTo=");
+
+    fireEvent.click(verifyPasskey);
+    expect(await screen.findByText(/Identity verified/)).toBeInTheDocument();
+    expect(credentials.get).toHaveBeenCalledOnce();
+    expect(auth.refreshSession).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Add passkey" })).toBeEnabled();
   });
 });

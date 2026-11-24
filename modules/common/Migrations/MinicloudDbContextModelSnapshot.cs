@@ -3914,6 +3914,36 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("users", (string)null);
                 });
 
+            modelBuilder.Entity("Minicloud.Common.Models.UserPasskey", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasColumnType("text")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("CredentialId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("credential_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("display_name");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("UserId", "CredentialId");
+
+                    b.ToTable("user_passkeys", (string)null);
+                });
+
             modelBuilder.Entity("Minicloud.Common.Models.ApiKey", b =>
                 {
                     b.HasOne("Minicloud.Common.Models.Organization", "Organization")
@@ -4607,6 +4637,17 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("App");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Minicloud.Common.Models.UserPasskey", b =>
+                {
+                    b.HasOne("Minicloud.Common.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Minicloud.Common.Models.Deployment", b =>

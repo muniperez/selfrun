@@ -3,7 +3,7 @@ import type { AuthContext } from "../core/auth/AuthProvider";
 import type { BrowserFlow } from "../api/accountApi";
 import { vi } from "vitest";
 
-export const accountCapabilities = { password: true, google: false, emailRecovery: false, bootstrapState: "ready" as const };
+export const accountCapabilities = { password: true, google: false, passkey: false, emailRecovery: false, bootstrapState: "ready" as const };
 export const accountSession = {
   userId: "user-1", csrfToken: "synthetic-csrf",
   expiresAt: "2099-01-01T00:00:00Z", idleExpiresAt: "2099-01-01T00:00:00Z"
@@ -42,3 +42,52 @@ export function googleFlow(kind: "login" | "settings" = "login"): BrowserFlow {
   return { ...flow, ui: { ...flow.ui, providers: [{ id: "google", action: `/api/account/flows/${kind}/oidc?flow=${flow.id}`, method: "POST" }] } };
 }
 export const googleUrl = "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic&response_type=code&state=synthetic-state";
+export const passkeyChallengeOptions = JSON.stringify({
+  publicKey: {
+    challenge: "c3ludGhldGljLWNoYWxsZW5nZQ",
+    rpId: "dashboard.example.test",
+    allowCredentials: [],
+    userVerification: "preferred"
+  }
+});
+export const passkeyRegistrationOptions = JSON.stringify({
+  publicKey: {
+    challenge: "c3ludGhldGljLXJlZ2lzdGVy",
+    rp: { id: "dashboard.example.test", name: "Minicloud" },
+    user: { id: "dXNlci0x", name: "operator@example.test", displayName: "operator@example.test" },
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }]
+  }
+});
+export function passkeyLoginFlow(id = "11111111-2222-4333-8444-555555555555"): BrowserFlow {
+  const flow = browserFlow("login");
+  return {
+    ...flow,
+    id,
+    ui: {
+      ...flow.ui,
+      action: `/api/account/flows/login?flow=${id}`,
+      passkey: { challengeOptions: passkeyChallengeOptions }
+    }
+  };
+}
+export function passkeySettingsFlow(
+  credentials: Array<{ id: string; displayName: string; addedAt?: string | null; canRemove?: boolean }> = []
+): BrowserFlow {
+  const flow = browserFlow("settings");
+  return {
+    ...flow,
+    ui: {
+      ...flow.ui,
+      nodes: flow.ui.nodes.filter(node => node.name !== "identifier"),
+      passkey: {
+        registrationOptions: passkeyRegistrationOptions,
+        credentials: credentials.map(credential => ({
+          id: credential.id,
+          displayName: credential.displayName,
+          addedAt: credential.addedAt ?? "2026-11-24T00:00:00Z",
+          canRemove: credential.canRemove ?? true
+        }))
+      }
+    }
+  };
+}

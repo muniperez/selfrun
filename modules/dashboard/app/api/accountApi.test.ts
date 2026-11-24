@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiDownload, apiRequest, apiUrl, setCsrfToken, subscribeAuthFailures } from "./apiClient";
-import { parseProviderContinuation, safeReturnPath, startAccountFlow, startProviderRedirect, submitAccountFlow, validateFlow } from "./accountApi";
-import { browserFlow, googleFlow, googleUrl, jsonResponse } from "../test/accountFixtures";
+import { parseProviderContinuation, renamePasskey, safeReturnPath, startAccountFlow, startProviderRedirect, submitAccountFlow, validateFlow } from "./accountApi";
+import { browserFlow, googleFlow, googleUrl, jsonResponse, passkeyLoginFlow, passkeySettingsFlow } from "../test/accountFixtures";
 
 beforeEach(() => setCsrfToken(null));
 afterEach(() => vi.unstubAllGlobals());
@@ -116,4 +116,40 @@ it("preserves dashboard deep links and query strings", () => {
   expect(safeReturnPath("/cli/login?session=request-1")).toBe("/cli/login?session=request-1");
   expect(safeReturnPath("/apps/app/environments/prod/services?service=web")).toBe("/apps/app/environments/prod/services?service=web");
   expect(safeReturnPath("/deployments/20261110.1?organizationId=org%2F2&tab=logs")).toBe("/deployments/20261110.1?organizationId=org%2F2&tab=logs");
+});
+
+describe("passkey browser flow transport", () => {
+  it("validates passkey login and settings UI payloads and rejects malformed credentials", () => {
+    const login = passkeyLoginFlow();
+    expect(validateFlow(login, "login")).toBe(login);
+
+    const settings = passkeySettingsFlow([{ id: "01020304", displayName: "Work laptop", canRemove: true }]);
+    expect(validateFlow(settings, "settings")).toBe(settings);
+
+    const badCredential = passkeySettingsFlow();
+    badCredential.ui.passkey!.credentials = [{ id: "", displayName: "Empty", addedAt: null, canRemove: true }];
+    expect(() => validateFlow(badCredential, "settings")).toThrow("Invalid passkey identifier.");
+
+    const crossFlow = passkeyLoginFlow();
+    crossFlow.ui.passkey!.registrationOptions = "{}";
+    expect(() => validateFlow(crossFlow, "login")).toThrow("Invalid account passkey configuration.");
+  });
+
+  it("renames a passkey via fixed PUT endpoint with session CSRF and rejects invalid credential IDs locally", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ id: "01020304", displayName: "YubiKey" }));
+    vi.stubGlobal("fetch", fetcher);
+    setCsrfToken("synthetic-csrf");
+
+    await expect(renamePasskey("01020304", "YubiKey")).resolves.toEqual({ id: "01020304", displayName: "YubiKey" });
+    expect(fetcher).toHaveBeenCalledWith(apiUrl("/api/account/passkeys/01020304"), expect.objectContaining({
+      method: "PUT",
+      headers: expect.objectContaining({ "X-Minicloud-CSRF": "synthetic-csrf" }),
+      body: JSON.stringify({ displayName: "YubiKey" })
+    }));
+
+    for (const invalid of ["../admin", "not-hex!", ""]) {
+      await expect(renamePasskey(invalid, "YubiKey")).rejects.toThrow("Invalid passkey identifier");
+    }
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

@@ -7,7 +7,8 @@ public sealed record AccountCapabilitiesResponse(
     bool Google,
     bool EmailRecovery,
     string BootstrapState,
-    bool KeepSignedIn = false);
+    bool KeepSignedIn = false,
+    bool Passkey = false);
 
 /// <param name="KeepSignedIn">Whether this session is a remembered ("Keep me signed in") session.</param>
 /// <param name="RenewAfter">Earliest time <c>POST /api/account/session/renew</c> extends the idle deadline; null at the cap.</param>
@@ -40,7 +41,28 @@ public sealed record AccountFlowUi(
     IReadOnlyList<AccountFlowMessage> Messages,
     // Omitted unless an enabled optional provider is offered by this flow.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<AccountFlowProvider>? Providers = null);
+    IReadOnlyList<AccountFlowProvider>? Providers = null,
+    // Omitted unless passkeys are enabled and offered by this flow.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    AccountFlowPasskey? Passkey = null);
+
+public sealed record AccountFlowPasskey(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ChallengeOptions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? RegistrationOptions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<AccountPasskeyCredential>? Credentials = null);
+
+public sealed record AccountPasskeyCredential(
+    string Id,
+    string DisplayName,
+    DateTimeOffset? AddedAt,
+    bool CanRemove);
+
+public sealed record AccountPasskeyRenameRequest(string DisplayName);
+
+public sealed record AccountPasskeyRenameResponse(string Id, string DisplayName);
 
 public sealed record AccountFlowProvider(
     string Id,

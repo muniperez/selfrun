@@ -130,6 +130,24 @@ public sealed class KratosSessionValidatorTests
         Assert.DoesNotContain(requests, request => request.Method == HttpMethod.Patch);
     }
 
+    [Fact]
+    public async Task ActiveSessionParsesAuthenticatedAtTimestamp()
+    {
+        var handler = new ResponseHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"id":"session-1","active":true,"expires_at":"2026-01-02T00:00:00Z","authenticated_at":"2026-01-01T23:55:00Z","identity":{"id":"identity-1"}}""")
+        });
+        using var client = new HttpClient(handler);
+        var validator = new KratosSessionValidator(
+            client,
+            Options.Create(new KratosOptions { AdminBaseUrl = "http://kratos:4434" }));
+
+        var state = await validator.GetActiveSessionAsync("session-1", "identity-1", CancellationToken.None);
+        Assert.NotNull(state);
+        Assert.Equal(DateTimeOffset.Parse("2026-01-02T00:00:00Z"), state.ExpiresAt);
+        Assert.Equal(DateTimeOffset.Parse("2026-01-01T23:55:00Z"), state.AuthenticatedAt);
+    }
+
     private sealed class ChunkedStream(byte[] bytes) : MemoryStream(bytes)
     {
         public override bool CanSeek => false;

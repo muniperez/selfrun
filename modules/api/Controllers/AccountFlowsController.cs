@@ -161,16 +161,78 @@ public sealed class AccountFlowsController(
                 Request.Cookies.ToDictionary(x => x.Key, x => x.Value), cancellationToken);
             if (result.IdentityId is null || result.SessionId is null)
             {
+                var flow = kind == "settings" && principal?.UserId is { } userId && result.Flow is not null
+                    ? await OverlayPasskeyNamesAsync(userId, result.Flow, cancellationToken)
+                    : result.Flow;
                 WriteCookies(result.Cookies);
-                return Results.Ok(new AccountFlowResponse(result.Flow, null));
+                return Results.Ok(new AccountFlowResponse(flow, null));
             }
             var (session, problem) = await AdmitAsync(kind, principal, result.IdentityId, result.SessionId, result.Cookies,
                 keepSignedIn, cancellationToken);
-            return problem ?? Results.Ok(new AccountFlowResponse(null, session));
+            if (problem is not null)
+                return problem;
+            if (kind == "settings" && session is not null && result.PasskeyMutation is { } mutation)
+                await ApplyPasskeyMutationAsync(session.UserId, mutation, cancellationToken);
+            return Results.Ok(new AccountFlowResponse(null, session));
         }
         catch (AccountFlowException exception)
         {
             return EndpointResults.Problem(exception.Code, exception.Message, exception.StatusCode);
+        }
+    }
+
+    private async Task<AccountBrowserFlow> OverlayPasskeyNamesAsync(
+        string userId,
+        AccountBrowserFlow flow,
+        CancellationToken cancellationToken)
+    {
+        if (flow.Ui.Passkey?.Credentials is not { Count: > 0 } credentials)
+            return flow;
+        var labels = await db.UserPasskeys.AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .ToDictionaryAsync(x => x.CredentialId, x => x.DisplayName, StringComparer.Ordinal, cancellationToken);
+        if (labels.Count == 0)
+            return flow;
+        var updated = credentials
+            .Select(cred => labels.TryGetValue(cred.Id, out var displayName)
+                ? cred with { DisplayName = displayName }
+                : cred)
+            .ToArray();
+        return flow with { Ui = flow.Ui with { Passkey = flow.Ui.Passkey with { Credentials = updated } } };
+    }
+
+    private async Task ApplyPasskeyMutationAsync(
+        string userId,
+        KratosPasskeyMutation mutation,
+        CancellationToken cancellationToken)
+    {
+        var existing = await db.UserPasskeys.FindAsync([userId, mutation.CredentialId], cancellationToken);
+        if (mutation.Action == "register")
+        {
+            var now = DateTimeOffset.UtcNow;
+            var displayName = mutation.DisplayName ?? "Passkey";
+            if (existing is null)
+            {
+                db.UserPasskeys.Add(new Minicloud.Common.Models.UserPasskey
+                {
+                    UserId = userId,
+                    CredentialId = mutation.CredentialId,
+                    DisplayName = displayName,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+            else
+            {
+                existing.DisplayName = displayName;
+                existing.UpdatedAt = now;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        else if (mutation.Action == "remove" && existing is not null)
+        {
+            db.UserPasskeys.Remove(existing);
+            await db.SaveChangesAsync(cancellationToken);
         }
     }
 
@@ -181,15 +243,24 @@ public sealed class AccountFlowsController(
         var user = await db.Users.SingleOrDefaultAsync(x => x.KratosIdentityId == identityId, cancellationToken);
         if (user is null || kind == "settings" && user.Id != principal?.UserId)
             return (null, EndpointResults.Problem("forbidden", "This identity is not admitted to this instance.", 403));
-        // Login applies the explicit sign-in choice; settings keeps the current session's choice; recovery is standard.
+        // Login applies the explicit sign-in choice (or preserves it on same-user inline re-authentication);
+        // settings keeps the current session's choice; recovery is standard.
         var remembered = false;
         if (kind == "login")
         {
-            remembered = keepSignedIn == true && sessions.Policy.KeepSignedInEnabled;
-            if (keepSignedIn is not null && user.KeepSignedIn != keepSignedIn.Value)
+            if (keepSignedIn is null && principal?.UserId == user.Id && principal.BrowserSessionId is { } currentLoginSessionId)
             {
-                user.KeepSignedIn = keepSignedIn.Value;
-                await db.SaveChangesAsync(cancellationToken);
+                remembered = sessions.Policy.KeepSignedInEnabled &&
+                    (await sessions.FindByIdAsync(currentLoginSessionId, cancellationToken))?.Persistent == true;
+            }
+            else
+            {
+                remembered = keepSignedIn == true && sessions.Policy.KeepSignedInEnabled;
+                if (keepSignedIn is not null && user.KeepSignedIn != keepSignedIn.Value)
+                {
+                    user.KeepSignedIn = keepSignedIn.Value;
+                    await db.SaveChangesAsync(cancellationToken);
+                }
             }
         }
         else if (kind == "settings" && principal?.BrowserSessionId is { } currentSessionId)

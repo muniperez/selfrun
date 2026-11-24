@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Minicloud.Api.Auth;
 using Minicloud.Api.Services;
 using Minicloud.Common.Contracts;
+using Minicloud.Common.Data;
 using Minicloud.Common.Services;
 using static Minicloud.Api.Controllers.EndpointResults;
 
@@ -19,7 +20,9 @@ public sealed class AccountController(
     GrafanaSessionService grafanaSessions,
     IKratosSessionValidator kratosSessions,
     IOptions<KratosOptions> kratosOptions,
-    IConfiguration configuration) : ControllerBase
+    IConfiguration configuration,
+    MinicloudDbContext db,
+    TimeProvider timeProvider) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet("capabilities")]
@@ -41,7 +44,8 @@ public sealed class AccountController(
             Google: kratosOptions.Value.GoogleEnabled,
             EmailRecovery: kratosOptions.Value.EmailRecoveryEnabled,
             BootstrapState: state,
-            KeepSignedIn: sessions.Policy.KeepSignedInEnabled));
+            KeepSignedIn: sessions.Policy.KeepSignedInEnabled,
+            Passkey: kratosOptions.Value.PasskeyEnabled));
     }
 
     [Authorize]
@@ -175,6 +179,73 @@ public sealed class AccountController(
                 // Revoked or superseded meanwhile: the revoker or the newer generation owns the upstream session.
                 return Unauthenticated();
         }
+    }
+
+    /// <summary>Renames a registered passkey label after verifying that the upstream Kratos session is freshly authenticated.</summary>
+    [Authorize]
+    [HttpPut("passkeys/{credentialId}")]
+    public async Task<IResult> RenamePasskey(
+        string credentialId,
+        [FromBody] AccountPasskeyRenameRequest request,
+        CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!kratosOptions.Value.PasskeyEnabled)
+        {
+            return EndpointResults.Problem("auth_flow_invalid", "Passkeys are not enabled on this instance.", StatusCodes.Status400BadRequest);
+        }
+        var (session, _, _) = await LoadCurrentSessionAsync(cancellationToken);
+        if (session is null)
+        {
+            return Unauthenticated();
+        }
+        if (!KratosBrowserFlowClient.TryNormalizePasskeyCredentialId(credentialId, out var normalizedCredentialId))
+        {
+            return EndpointResults.Problem("validation_failed", "The passkey identifier is invalid.", StatusCodes.Status400BadRequest);
+        }
+        if (!KratosBrowserFlowClient.TryNormalizePasskeyDisplayName(request.DisplayName, required: true, out var displayName))
+        {
+            return EndpointResults.Problem("validation_failed", "Enter a passkey name up to 120 characters without control characters.", StatusCodes.Status400BadRequest);
+        }
+
+        KratosSessionState? upstream;
+        try
+        {
+            upstream = await kratosSessions.GetActiveSessionAsync(session.KratosSessionId, session.KratosIdentityId, cancellationToken);
+        }
+        catch (KratosUnavailableException)
+        {
+            return EndpointResults.Problem("auth_unavailable", "Identity service is temporarily unavailable.", StatusCodes.Status503ServiceUnavailable);
+        }
+        if (upstream is null)
+        {
+            await sessions.RevokeByIdAsync(session.Id, CancellationToken.None);
+            ClearAuthCookies();
+            return Unauthenticated();
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var maxAge = TimeSpan.FromMinutes(Math.Max(1, kratosOptions.Value.PrivilegedSessionMaxAgeMinutes));
+        if (upstream.AuthenticatedAt is not { } authenticatedAt ||
+            now - authenticatedAt > maxAge ||
+            authenticatedAt > now.AddMinutes(5))
+        {
+            return EndpointResults.Problem(
+                "session_refresh_required",
+                "Log out and sign in again before updating account settings.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        var passkey = await db.UserPasskeys.FindAsync([session.UserId, normalizedCredentialId], cancellationToken);
+        if (passkey is null)
+        {
+            return EndpointResults.Problem("not_found", "The passkey was not found.", StatusCodes.Status404NotFound);
+        }
+
+        passkey.DisplayName = displayName!;
+        passkey.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.Ok(new AccountPasskeyRenameResponse(passkey.CredentialId, passkey.DisplayName));
     }
 
     [Authorize]

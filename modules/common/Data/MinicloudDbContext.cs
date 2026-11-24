@@ -8,6 +8,7 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<BrowserSession> BrowserSessions => Set<BrowserSession>();
+    public DbSet<UserPasskey> UserPasskeys => Set<UserPasskey>();
     public DbSet<BootstrapRecord> BootstrapRecords => Set<BootstrapRecord>();
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
@@ -311,6 +312,18 @@ public sealed partial class MinicloudDbContext(DbContextOptions<MinicloudDbConte
             entity.HasIndex(x => x.UserId);
             entity.HasIndex(x => x.KratosSessionId).IsUnique();
             entity.HasIndex(x => new { x.UserId, x.RevokedAt, x.IdleExpiresAt });
+            entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserPasskey>(entity =>
+        {
+            entity.ToTable("user_passkeys");
+            entity.HasKey(x => new { x.UserId, x.CredentialId });
+            entity.Property(x => x.UserId).HasColumnName("user_id");
+            entity.Property(x => x.CredentialId).HasColumnName("credential_id").HasMaxLength(512);
+            entity.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(120);
+            entity.Property(x => x.CreatedAt).HasColumnName("created_at");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 

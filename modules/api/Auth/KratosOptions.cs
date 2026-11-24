@@ -9,12 +9,15 @@ public sealed class KratosOptions
     public string DashboardOrigin { get; set; } = "";
     public bool GoogleEnabled { get; set; }
     public bool EmailRecoveryEnabled { get; set; }
+    public bool PasskeyEnabled { get; set; }
+    public int PrivilegedSessionMaxAgeMinutes { get; set; } = 15;
 }
 
 public sealed class KratosUnavailableException() : Exception("The identity service is temporarily unavailable.");
 
 /// <param name="ExpiresAt">Upstream session expiry; null when the upstream did not report one.</param>
-public sealed record KratosSessionState(DateTimeOffset? ExpiresAt);
+/// <param name="AuthenticatedAt">Most recent upstream authentication timestamp; used to enforce privileged session freshness.</param>
+public sealed record KratosSessionState(DateTimeOffset? ExpiresAt, DateTimeOffset? AuthenticatedAt = null);
 
 public interface IKratosSessionValidator
 {

@@ -105,6 +105,11 @@ public sealed class SelfHostingComposeBundleTests
         var kratosEnvironment = Environment(Service("kratos"));
         Assert.Equal(api["Kratos__GoogleEnabled"], kratosEnvironment["SELFSERVICE_METHODS_OIDC_ENABLED"]);
         Assert.Equal("${API_URL:?set API_URL}/api/account/oidc", kratosEnvironment["SELFSERVICE_METHODS_OIDC_CONFIG_BASE_REDIRECT_URI"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_ENABLED:-true}", api["Kratos__PasskeyEnabled"]);
+        Assert.Equal(api["Kratos__PasskeyEnabled"], kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_ENABLED"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_RP_DISPLAY_NAME:-Minicloud}", kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_DISPLAY_NAME"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_RP_ID:-${CONSOLE_HOSTNAME:?set CONSOLE_HOSTNAME}}", kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ID"]);
+        Assert.Equal("${MINICLOUD_PASSKEY_RP_ORIGINS:-${CONSOLE_URL:?set CONSOLE_URL}}", kratosEnvironment["SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ORIGINS"]);
         Assert.Equal("${CONSOLE_URL:?set CONSOLE_URL}/sign-in", kratosEnvironment["SELFSERVICE_FLOWS_LOGIN_UI_URL"]);
         Assert.Equal(kratosEnvironment, Environment(Service("kratos-migrate")));
         // The upstream Kratos lifespan defaults to the default remembered idle timeout so renewal can always extend it.
@@ -137,7 +142,8 @@ public sealed class SelfHostingComposeBundleTests
         Assert.Equal(
             ["API_HOSTNAME", "API_URL", "APP_DOMAIN", "CONSOLE_HOSTNAME", "CONSOLE_URL", "MANAGE_DNS_RECORDS",
              "MINICLOUD_GOOGLE_OIDC_ENABLED", "MINICLOUD_HOST_ID", "MINICLOUD_INSTALLATION_ID",
-             "MINICLOUD_KRATOS_SESSION_LIFESPAN", "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED",
+             "MINICLOUD_KRATOS_SESSION_LIFESPAN", "MINICLOUD_PASSKEY_ENABLED", "MINICLOUD_PASSKEY_RP_DISPLAY_NAME",
+             "MINICLOUD_PASSKEY_RP_ID", "MINICLOUD_PASSKEY_RP_ORIGINS", "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED",
              "MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES", "MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES",
              "MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES", "MINICLOUD_PORTAL_STANDARD_MAX_MINUTES", "MINICLOUD_SECRETS_DIR",
              "MINICLOUD_SOURCE_URL", "OPENBAO_ROOT_TOKEN_FILE"],

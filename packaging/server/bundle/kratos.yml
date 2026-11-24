@@ -33,6 +33,14 @@ selfservice:
       enabled: false
     password:
       enabled: true
+    passkey:
+      enabled: false
+      config:
+        rp:
+          display_name: Minicloud
+          id: localhost
+          origins:
+            - https://localhost
   flows:
     error:
       ui_url: https://localhost/sign-in
