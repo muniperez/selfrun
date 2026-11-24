@@ -154,6 +154,9 @@ public sealed class LocalBuildConfigTests
             var application = new CliApplication(console, environment, tokens, new MinicloudApiClient(environment, tokens, http));
             Assert.Equal(CliExitCodes.ValidationError, await application.RunAsync(["deploy", "--config", path], default));
             Assert.Contains("local_build_unavailable", console.Output);
+            Assert.Contains("--build-mode source", console.Output);
+            Assert.Contains("buildMode: source", console.Output);
+            Assert.Contains("Nothing has been uploaded", console.Output);
             Assert.Equal(["GET /api/me", "GET /api/apps/app_demo", "GET /api/environments/app_demo", "GET /api/environments/app_demo/image-build-target"], handler.Requests);
             Assert.False(File.Exists(Path.Combine(directory.FullName, "Dockerfile")));
         }

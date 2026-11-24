@@ -125,6 +125,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             context.ServerInstanceId = await SaveServerInstanceAsync(context, mapping,
                 new ProviderServerInfo(existing.ProviderServerId, "", status.Ipv4Address, status.Status), cancellationToken);
             context.ServerIp = status.Ipv4Address;
+            context.ServerIpv6 = status.Ipv6Address;
             await RecordEventAsync(context.DeploymentId, EventLevel.Info,
                 $"Resolved registered server {existing.ProviderServerId} ({status.Ipv4Address}).", cancellationToken);
             return;
@@ -249,6 +250,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         var instanceId = await SaveServerInstanceAsync(context, mapping, server, cancellationToken);
         context.ServerInstanceId = instanceId;
         context.ServerIp = server.Ipv4Address;
+        context.ServerIpv6 = server.Ipv6Address;
         await RecordEventAsync(context.DeploymentId, EventLevel.Info,
             $"Server ready: {server.Id} ({server.Ipv4Address}).", cancellationToken);
         if (enrollingInstanceId is null)

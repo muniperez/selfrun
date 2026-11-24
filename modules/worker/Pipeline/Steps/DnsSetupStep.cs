@@ -13,11 +13,13 @@ namespace Minicloud.Worker.Pipeline.Steps;
 /// <summary>
 /// Step 2: compute public hostnames and upsert Cloudflare DNS records
 /// pointing at the provisioned server IP, then wait for propagation.
-/// DNS failures surface as <c>provider_provision_failed</c> since they
-/// block the provisioning phase.
+/// Manual propagation timeouts surface as <c>dns_pending</c>; managed DNS
+/// failures retain <c>provider_provision_failed</c>.
 /// </summary>
 public sealed class DnsSetupStep : IPipelineStep
 {
+    public const string PendingFailureCode = "dns_pending";
+
     public string Name => "dns-setup";
 
     private readonly IServiceScopeFactory _scopeFactory;
@@ -92,18 +94,32 @@ public sealed class DnsSetupStep : IPipelineStep
                 },
                 async (hostname, ct) =>
                 {
-                    _logger?.LogInformation("Upserting DNS record {Hostname} -> {Ip}", hostname, context.ServerIp);
-                    if (_managedDomains.ManageDnsRecords)
+                    var managed = _managedDomains.ManageDnsRecords;
+                    if (managed)
                     {
+                        _logger?.LogInformation("Upserting DNS record {Hostname} -> {Ip}", hostname, context.ServerIp);
                         await _dnsClient.UpsertDnsRecordAsync(hostname, context.ServerIp, ct);
                     }
                     else
                     {
                         await RecordEventAsync(context.DeploymentId, context.OwnershipToken, EventLevel.Info,
-                            $"Manual DNS: set {hostname} to {context.ServerIp}; waiting for propagation.", ct);
+                            $"Manual DNS: {ManualDnsInstructions(context, [hostname])} Waiting for propagation.", ct);
                     }
-                    await _dnsClient.WaitForPropagationAsync(hostname, context.ServerIp, _options.DnsPropagationTimeout, ct);
+                    try
+                    {
+                        await _dnsClient.WaitForPropagationAsync(hostname, context.ServerIp, _options.DnsPropagationTimeout, ct);
+                    }
+                    catch (TimeoutException ex) when (!managed)
+                    {
+                        throw new PipelineStepException(PendingFailureCode,
+                            $"DNS pending for {hostname}. {ManualDnsInstructions(context, hostnames.Where(host => _managedDomains.Contains(host)))} " +
+                            "Wait for DNS propagation, then retry the deployment on the existing server; do not provision a replacement.", ex);
+                    }
                 });
+        }
+        catch (PipelineStepException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -115,6 +131,16 @@ public sealed class DnsSetupStep : IPipelineStep
         await PersistDnsStateAsync(context, hostnames, cancellationToken);
         await RecordEventAsync(context.DeploymentId, context.OwnershipToken, EventLevel.Info,
             $"DNS ready: {string.Join(", ", hostnames)} -> {context.ServerIp}.", cancellationToken);
+    }
+
+    private static string ManualDnsInstructions(PipelineStepContext context, IEnumerable<string> hostnames)
+    {
+        var records = hostnames.Select(host =>
+            $"A {host} -> {context.ServerIp}; " +
+            (string.IsNullOrWhiteSpace(context.ServerIpv6)
+                ? $"remove any AAAA record for {host} (no public IPv6 address was reported)"
+                : $"if using IPv6, AAAA {host} -> {context.ServerIpv6}, otherwise remove its AAAA record"));
+        return $"Set these records at your DNS provider: {string.Join("; ", records)}. Use the application server IP, not the control-plane IP.";
     }
 
     public async Task<List<string>> ResolveAndAssignHostnamesAsync(

@@ -312,6 +312,7 @@ public sealed class DnsSetupStepTests : IClassFixture<WorkerSqliteTestHarness>
         Assert.Equal(expected, context.Hostnames);
         Assert.Equal(managed, upserted);
         Assert.Equal(managed, waited);
+        Assert.DoesNotContain("custom.example.com", waited);
         Assert.False(context.ServiceHostnames.ContainsKey("worker"));
     }
 
@@ -335,6 +336,92 @@ public sealed class DnsSetupStepTests : IClassFixture<WorkerSqliteTestHarness>
 
         var ex = await Assert.ThrowsAsync<PipelineStepException>(() => step.ExecuteAsync(context, CancellationToken.None));
         Assert.Equal("provider_provision_failed", ex.FailureCode);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2001:db8::42")]
+    public async Task ManualDnsTimeout_NamesAllRequiredRecordsAndAllowsRetry(string? ipv6)
+    {
+        const string hostname = "web.apps.example.test";
+        var pending = true;
+        var upserts = 0;
+        var step = new DnsSetupStep(_harness.CreateScopeFactory(),
+            new MockCloudflareDnsClient(
+                upsert: (_, _) => { upserts++; return Task.CompletedTask; },
+                waitForProp: (host, ip, _) =>
+                {
+                    Assert.EndsWith(".apps.example.test", host);
+                    Assert.Equal("192.0.2.42", ip);
+                    return pending ? Task.FromException(new TimeoutException("not propagated")) : Task.CompletedTask;
+                }),
+            Options.Create(new DeploymentPipelineOptions()), TimeProvider.System,
+            managedDomains: Options.Create(new ManagedDomainOptions { Suffix = "apps.example.test", ManageDnsRecords = false }));
+        var context = new PipelineStepContext
+        {
+            DeploymentId = "dep-manual-records", OrganizationId = "org-manual", AppId = "app-manual",
+            ServerIp = "192.0.2.42", ServerIpv6 = ipv6, DnsHostnamesResolved = true,
+            Hostnames = [hostname, "second." + hostname, "custom.example.test"]
+        };
+
+        var failure = await Assert.ThrowsAsync<PipelineStepException>(() => step.ExecuteAsync(context, default));
+
+        Assert.Equal("dns_pending", failure.FailureCode);
+        foreach (var host in context.Hostnames.Where(host => host.EndsWith(".apps.example.test")))
+        {
+            Assert.Contains($"A {host} -> 192.0.2.42", failure.Message);
+            Assert.Contains(ipv6 is null ? $"remove any AAAA record for {host}" : $"AAAA {host} -> {ipv6}", failure.Message);
+        }
+        Assert.Contains("retry the deployment on the existing server", failure.Message);
+        Assert.DoesNotContain("custom.example.test", failure.Message);
+        Assert.Equal(0, upserts);
+
+        pending = false;
+        await step.ExecuteAsync(context, default);
+        Assert.Equal(0, upserts);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CustomHostOutsideManagedSuffix_DoesNotRequireRawServerIpPropagation(bool manageDnsRecords)
+    {
+        var step = new DnsSetupStep(_harness.CreateScopeFactory(),
+            new MockCloudflareDnsClient(
+                upsert: (_, _) => throw new InvalidOperationException("Custom DNS must not be changed"),
+                waitForProp: (_, _, _) => throw new TimeoutException("Synthetic CDN hostname does not resolve to the origin IP")),
+            Options.Create(new DeploymentPipelineOptions()), TimeProvider.System,
+            managedDomains: Options.Create(new ManagedDomainOptions { Suffix = "apps.example.test", ManageDnsRecords = manageDnsRecords }));
+        var context = new PipelineStepContext
+        {
+            DeploymentId = "dep-custom-proxy", OrganizationId = "org-custom", AppId = "app-custom",
+            ServerIp = "192.0.2.42", DnsHostnamesResolved = true, Hostnames = ["custom.example.test"]
+        };
+
+        await step.ExecuteAsync(context, default);
+
+        Assert.Equal("custom.example.test", context.PrimaryHostname);
+    }
+
+    [Fact]
+    public async Task ManagedDnsTimeout_RetainsProvisioningFailureCode()
+    {
+        var upserted = false;
+        var step = new DnsSetupStep(_harness.CreateScopeFactory(),
+            new MockCloudflareDnsClient(
+                upsert: (_, _) => { upserted = true; return Task.CompletedTask; },
+                waitForProp: (_, _, _) => Task.FromException(new TimeoutException("not propagated"))),
+            Options.Create(new DeploymentPipelineOptions()), TimeProvider.System);
+        var context = new PipelineStepContext
+        {
+            DeploymentId = "dep-managed-timeout", OrganizationId = "org-managed", AppId = "app-managed",
+            ServerIp = "192.0.2.43", DnsHostnamesResolved = true, Hostnames = ["web.app.muni.dev"]
+        };
+
+        var failure = await Assert.ThrowsAsync<PipelineStepException>(() => step.ExecuteAsync(context, default));
+
+        Assert.Equal("provider_provision_failed", failure.FailureCode);
+        Assert.True(upserted);
     }
 
     private sealed class MockCloudflareDnsClient(

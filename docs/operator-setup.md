@@ -69,6 +69,31 @@ the guide and use `/apps`. `/onboarding` remains exclusively the existing
 authenticated organization-creation flow for users without an organization;
 it is never installation bootstrap.
 
+### First application deployment with manual DNS
+
+When DNS management is disabled (`MANAGE_DNS_RECORDS=false`), MiniCloud
+provisions or reuses the **application environment's server**, then waits for
+each enabled public service hostname within the configured managed suffix to
+resolve to that server before releasing the rollout gate. Custom hostnames
+outside that suffix retain their existing domain-verification and public HTTPS
+health checks; this propagation step does not require them to resolve directly
+to the server IP (for example, when using a CNAME, CDN or proxy).
+
+A propagation timeout fails the deployment with `dns_pending`, not
+`health_check_failed`. Its message lists the exact hostnames and A record
+values from the resolved application server. Create those records at your DNS
+provider. If using IPv6, point AAAA records at the reported application server
+IPv6 address; otherwise remove stale AAAA records. Do not point application DNS
+at the dashboard/control-plane server or assume a control-plane wildcard routes
+applications on another VPS.
+
+After DNS propagates, rerun the deployment for the same app/environment.
+MiniCloud reuses its registered server; do not delete it or provision another
+VPS to fix DNS. Waiting resources remain billable. DNS failure does not release
+the rollout gate or trigger rollback of an existing running revision. Once DNS
+is ready, genuine build, runtime, TLS or public HTTP health failures retain their
+existing failure codes and rollback behavior.
+
 ## HTTP interface
 
 - `GET /api/account/setup` returns the shared `BootstrapStatusResponse`

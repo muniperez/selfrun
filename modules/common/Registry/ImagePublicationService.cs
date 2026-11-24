@@ -25,7 +25,7 @@ public sealed class ImagePublicationService(
         if (!_options.Enabled || !Uri.TryCreate(_options.PublicUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "https" && !(_options.AllowInsecureLoopback && uri.Scheme == "http" && uri.IsLoopback)))
         {
-            throw Error(ImagePublicationErrors.Unavailable, "Local image publication is not enabled.");
+            throw Error(ImagePublicationErrors.Unavailable, "Local image publication is not enabled. Retry with minicloud deploy --build-mode source, or set buildMode: source on each sourcePath service in minicloud.yml.");
         }
     }
 

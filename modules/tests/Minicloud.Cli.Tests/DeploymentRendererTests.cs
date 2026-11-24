@@ -299,6 +299,31 @@ public sealed class DeploymentRendererTests
         Assert.DoesNotContain("100%", output);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Renderer_preserves_manual_dns_handoff_records_and_retry_guidance(bool interactive)
+    {
+        var console = new TestConsole { SupportsAnsi = interactive, WindowWidth = 120 };
+        var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+        using IDeploymentRenderer renderer = interactive
+            ? new InteractiveDeploymentRenderer(console, time, enableSpinnerTimer: false)
+            : new PlainTextDeploymentRenderer(console, time);
+        renderer.Initialize(new DeploymentPlan(false, 0, false, [], true, 1));
+        renderer.DeploymentCreated("20261110.110", "deploying");
+        renderer.DeploymentFailed(new DeploymentFailureResult("20261110.110", "dns_pending",
+            "Set A web.apps.example.test -> 192.0.2.42; AAAA web.apps.example.test -> 2001:db8::42. " +
+            "Wait for DNS propagation, then retry the deployment on the existing server.", null));
+
+        var output = TerminalTextHelper.StripAnsi(console.Output);
+        Assert.Contains("dns_pending", output);
+        Assert.Contains("A web.apps.example.test -> 192.0.2.42", output);
+        Assert.Contains("AAAA web.apps.example.test -> 2001:db8::42", output);
+        Assert.Contains("retry the deployment on the existing server", output);
+        Assert.DoesNotContain("health_check_failed", output);
+        Assert.DoesNotContain("100%", output);
+    }
+
     [Fact]
     public void InteractiveRenderer_hides_and_restores_cursor_on_dispose()
     {
