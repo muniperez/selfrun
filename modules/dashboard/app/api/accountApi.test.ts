@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiDownload, apiRequest, apiUrl, setCsrfToken, subscribeAuthFailures } from "./apiClient";
-import { parseProviderContinuation, safeReturnPath, startAccountFlow, startProviderRedirect, submitAccountFlow, validateFlow } from "./accountApi";
-import { browserFlow, googleFlow, googleUrl, jsonResponse } from "../test/accountFixtures";
+import {
+  parseProviderContinuation, safeReturnPath, startAccountFlow, startProviderRedirect, submitAccountFlow,
+  submitPasskeyLogin, submitPasskeyRegistration, submitPasskeyRemoval, validateFlow
+} from "./accountApi";
+import {
+  accountSession, browserFlow, googleFlow, googleUrl, jsonResponse, passkeyLoginFlow, passkeySettingsFlow
+} from "../test/accountFixtures";
 
 beforeEach(() => setCsrfToken(null));
 afterEach(() => vi.unstubAllGlobals());
@@ -106,6 +111,60 @@ describe("optional Google provider transport", () => {
     expect(parseProviderContinuation(new URLSearchParams("result=other&kind=admin&returnTo=https%3A%2F%2Fevil.test&flow=..%2Fadmin")))
       .toEqual({ result: "failed", kind: "login", flowId: null, returnTo: "/apps" });
     expect(safeReturnPath("/sign-in/continue?result=success")).toBe("/apps");
+  });
+});
+
+describe("passkey flow validation and transport", () => {
+  it("validates passkey options per flow kind and rejects mismatched or malformed shapes", () => {
+    const login = passkeyLoginFlow();
+    const settings = passkeySettingsFlow([{ id: "63726564", displayName: "Touch ID", addedAt: null, canRemove: true }]);
+    expect(validateFlow(login, "login")).toBe(login);
+    expect(validateFlow(settings, "settings")).toBe(settings);
+    // .NET System.Text.Json serializes unused nullable fields as explicit nulls.
+    expect(validateFlow({ ...browserFlow("login"), ui: { ...browserFlow("login").ui, passkey: null } }, "login")).toBeTruthy();
+    expect(validateFlow({
+      ...login,
+      ui: { ...login.ui, passkey: { ...login.ui.passkey!, registrationOptions: null } }
+    }, "login")).toBeTruthy();
+    expect(validateFlow({
+      ...settings,
+      ui: { ...settings.ui, passkey: { ...settings.ui.passkey!, loginOptions: null } }
+    }, "settings")).toBeTruthy();
+
+    const recovery = browserFlow("recovery");
+    expect(() => validateFlow({ ...recovery, ui: { ...recovery.ui, passkey: login.ui.passkey } }, "recovery")).toThrow();
+    expect(() => validateFlow({ ...login, ui: { ...login.ui, passkey: settings.ui.passkey } }, "login")).toThrow();
+    expect(() => validateFlow({ ...settings, ui: { ...settings.ui, passkey: login.ui.passkey } }, "settings")).toThrow();
+    expect(() => validateFlow({
+      ...login,
+      ui: { ...login.ui, passkey: { loginOptions: { publicKey: { challenge: "" } }, credentials: [] } }
+    }, "login")).toThrow();
+  });
+
+  it("submits passkey login, registration, and removal with exact CSRF boundaries", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => jsonResponse({ flow: null, session: accountSession }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const login = passkeyLoginFlow();
+    await submitPasskeyLogin(login, '{"id":"cred-1"}', true);
+    expect(fetcher.mock.calls[0][0]).toContain(`flow=${login.id}&keepSignedIn=true`);
+    expect(fetcher.mock.calls[0][1].headers).not.toHaveProperty("X-Minicloud-CSRF");
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({
+      csrf_token: "upstream-csrf", method: "passkey", passkey_login: '{"id":"cred-1"}'
+    });
+
+    setCsrfToken("session-csrf");
+    const settings = passkeySettingsFlow();
+    await submitPasskeyRegistration(settings, '{"id":"cred-2"}');
+    expect(fetcher.mock.calls[1][1].headers).toHaveProperty("X-Minicloud-CSRF", "session-csrf");
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
+      csrf_token: "upstream-csrf", method: "passkey", passkey_settings_register: '{"id":"cred-2"}'
+    });
+
+    await submitPasskeyRemoval(settings, "637265642d31");
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
+      csrf_token: "upstream-csrf", method: "passkey", passkey_remove: "637265642d31"
+    });
   });
 });
 

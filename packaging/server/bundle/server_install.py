@@ -160,7 +160,7 @@ def configuration(path):
     value = read_json(path)
     required = {"apiUrl", "consoleUrl", "apiHostname", "consoleHostname", "appDomain"}
     require(isinstance(value, dict) and required <= value.keys()
-            and value.keys() <= required | {"manageDnsRecords", "sourceUrl", "recovery", "googleOidc", "portalSessions", "emailRecovery"},
+            and value.keys() <= required | {"manageDnsRecords", "sourceUrl", "recovery", "googleOidc", "portalSessions", "passkeys", "emailRecovery"},
             "Unknown/missing configuration fields.")
     for key in ("apiHostname", "consoleHostname", "appDomain"):
         hostname(value[key])
@@ -189,6 +189,8 @@ def configuration(path):
                 and not source.password and not source.fragment, "Invalid HTTPS source URL.")
     if "portalSessions" in value:
         portal_sessions(value)
+    if "passkeys" in value:
+        passkeys(value)
     if "emailRecovery" in value:
         email = value["emailRecovery"]
         require(isinstance(email, dict) and type(email.get("enabled")) is bool
@@ -235,6 +237,32 @@ def portal_sessions(config):
             and policy["rememberedMaxMinutes"] >= policy["standardMaxMinutes"],
             "portalSessions remembered durations must not be shorter than standard durations.")
     return policy
+
+
+PASSKEY_DEFAULTS = {
+    "enabled": True,
+    "rpDisplayName": "Minicloud",
+}
+
+
+def passkeys(config):
+    """Return validated WebAuthn passkey configuration scoped to the HTTPS dashboard origin."""
+    supplied = config.get("passkeys", {})
+    require(isinstance(supplied, dict) and supplied.keys() <= {"enabled", "rpDisplayName", "rpId"},
+            "Invalid passkeys configuration.")
+    policy = PASSKEY_DEFAULTS | supplied
+    require(type(policy["enabled"]) is bool, "passkeys.enabled must be boolean.")
+    display_name = policy["rpDisplayName"]
+    require(isinstance(display_name, str) and 1 <= len(display_name.strip()) <= 64
+            and display_name == display_name.strip()
+            and not any(ord(char) < 32 or ord(char) == 127 for char in display_name),
+            "passkeys.rpDisplayName must be a single-line non-empty string up to 64 characters.")
+    console_host = config["consoleHostname"]
+    rp_id = policy.get("rpId", console_host)
+    hostname(rp_id)
+    require(rp_id == console_host or console_host.endswith("." + rp_id),
+            "passkeys.rpId must equal consoleHostname or be a dot-separated parent domain suffix of consoleHostname.")
+    return {"enabled": policy["enabled"], "rpDisplayName": display_name, "rpId": rp_id}
 
 
 def google_provider(config, root, recovery_dir, assets_dir):
@@ -753,6 +781,12 @@ class Installer:
             "MINICLOUD_KRATOS_SESSION_LIFESPAN": "%dm" % (sessions["rememberedIdleMinutes"]
                                                          if sessions["keepSignedInEnabled"]
                                                          else sessions["standardIdleMinutes"]),
+        })
+        passkey_policy = passkeys(self.config)
+        env.update({
+            "MINICLOUD_PASSKEY_ENABLED": str(passkey_policy["enabled"]).lower(),
+            "MINICLOUD_PASSKEY_RP_DISPLAY_NAME": passkey_policy["rpDisplayName"],
+            "MINICLOUD_PASSKEY_RP_ID": passkey_policy["rpId"],
         })
         for component, reference in (self.installed["images"] | self.installed["dependencies"]).items():
             env[f"MINICLOUD_{component.upper()}_IMAGE"] = reference

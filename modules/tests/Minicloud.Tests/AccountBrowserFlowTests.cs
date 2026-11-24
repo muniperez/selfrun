@@ -1145,6 +1145,284 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.GoogleEnabled = true;
     }
 
+    private void EnablePasskey()
+    {
+        _factory.Upstream.Passkey = true;
+        _factory.Services.GetRequiredService<IOptions<KratosOptions>>().Value.PasskeyEnabled = true;
+    }
+
+    private static string SyntheticPasskeyAssertionJson() => JsonSerializer.Serialize(new
+    {
+        id = "Y3JlZC0x",
+        rawId = "Y3JlZC0x",
+        type = "public-key",
+        response = new
+        {
+            authenticatorData = "YXV0aC1kYXRh",
+            clientDataJSON = "Y2xpZW50LWRhdGE",
+            signature = "c2lnbmF0dXJl",
+            userHandle = "dXNlci1oYW5kbGU"
+        }
+    });
+
+    private static string SyntheticPasskeyRegistrationJson() => JsonSerializer.Serialize(new
+    {
+        id = "Y3JlZC0y",
+        rawId = "Y3JlZC0y",
+        type = "public-key",
+        authenticatorAttachment = "platform",
+        response = new
+        {
+            attestationObject = "YXR0ZXN0YXRpb24",
+            clientDataJSON = "Y2xpZW50LWRhdGE",
+            transports = new[] { "internal", "hybrid" }
+        }
+    });
+
+    [Fact]
+    public async Task DisabledPasskeyOmitsPasskeyOptionsAndRejectsSubmissionsWithoutUpstreamCalls()
+    {
+        _factory.Upstream.Passkey = true;
+        var caps = (await (await _client.GetAsync("/api/account/capabilities")).Content.ReadFromJsonAsync<AccountCapabilitiesResponse>())!;
+        Assert.False(caps.Passkey);
+
+        var response = await _client.GetAsync("/api/account/flows/login/browser");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("passkey", json);
+        Assert.DoesNotContain("webauthn", json);
+        Assert.DoesNotContain("kratos-webauthn-script", json);
+
+        var (cookie, csrf) = await Login();
+        _factory.Upstream.Requests.Clear();
+
+        using var loginSubmit = Submit("login", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_login = SyntheticPasskeyAssertionJson()
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(loginSubmit)).StatusCode);
+
+        using var registerSubmit = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_settings_register = SyntheticPasskeyRegistrationJson()
+        }, cookie);
+        registerSubmit.Headers.Add("X-Minicloud-CSRF", csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(registerSubmit)).StatusCode);
+
+        using var removeSubmit = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_remove = "637265642d31"
+        }, cookie);
+        removeSubmit.Headers.Add("X-Minicloud-CSRF", csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(removeSubmit)).StatusCode);
+        Assert.Empty(_factory.Upstream.Requests);
+    }
+
+    [Fact]
+    public async Task EnabledPasskeyProjectsSanitizedLoginOptionsAndCompletesPasswordlessSignIn()
+    {
+        EnablePasskey();
+        var caps = (await (await _client.GetAsync("/api/account/capabilities")).Content.ReadFromJsonAsync<AccountCapabilitiesResponse>())!;
+        Assert.True(caps.Passkey);
+        Assert.True(caps.Password);
+
+        var start = await _client.GetAsync("/api/account/flows/login/browser");
+        Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        var raw = await start.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("kratos-webauthn-script", raw);
+        Assert.DoesNotContain("injected_upstream_field", raw);
+        var flow = JsonSerializer.Deserialize<AccountFlowResponse>(raw, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Flow!;
+        Assert.DoesNotContain(flow.Ui.Nodes, node => node.Group is "passkey" or "webauthn");
+        var loginOptions = flow.Ui.Passkey!.LoginOptions!.Value.GetProperty("publicKey");
+        Assert.Equal("c3ludGhldGljLWNoYWxsZW5nZQ", loginOptions.GetProperty("challenge").GetString());
+        Assert.Equal("dashboard.example.test", loginOptions.GetProperty("rpId").GetString());
+
+        using var request = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = SyntheticPasskeyAssertionJson()
+        }, keepSignedIn: true);
+        var loginResponse = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+        var loginBody = (await loginResponse.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        Assert.Null(loginBody.Flow);
+        Assert.True(loginBody.Session!.KeepSignedIn);
+        Assert.NotEmpty(LocalCookie(loginResponse));
+
+        var upstreamSubmit = _factory.Upstream.Requests.First(x => x.Uri.AbsolutePath == "/self-service/login" && x.Body.Length > 0);
+        using var forwarded = JsonDocument.Parse(upstreamSubmit.Body);
+        Assert.Equal("passkey", forwarded.RootElement.GetProperty("method").GetString());
+        Assert.Equal("synthetic-flow-csrf", forwarded.RootElement.GetProperty("csrf_token").GetString());
+        using var forwardedAssertion = JsonDocument.Parse(forwarded.RootElement.GetProperty("passkey_login").GetString()!);
+        Assert.Equal("Y3JlZC0x", forwardedAssertion.RootElement.GetProperty("id").GetString());
+
+        // Unbound identities are still rejected for passkey login.
+        _factory.Upstream.Identity = "44444444-2222-4333-8444-555555555555";
+        using var unbound = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = SyntheticPasskeyAssertionJson()
+        });
+        var rejected = await _client.SendAsync(unbound);
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        Assert.False(rejected.Headers.Contains("Set-Cookie"));
+    }
+
+    [Fact]
+    public async Task PasskeySettingsExposesMultipleCredentialsAndEnrollsOrRemovesWithSessionRotation()
+    {
+        EnablePasskey();
+        var (cookie, csrf) = await Login();
+        _factory.Upstream.PasskeyCredentials =
+        [
+            ("637265642d31", "Touch ID", 1775001600, false),
+            ("637265642d32", "unnamed", 1775088000, true)
+        ];
+
+        using (var read = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/settings/browser"))
+        {
+            read.Headers.Add("Cookie", cookie + "; ory_kratos_session=synthetic-ory-session");
+            var res = await _client.SendAsync(read);
+            Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+            var raw = await res.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("kratos-webauthn-script", raw);
+            var flow = JsonSerializer.Deserialize<AccountFlowResponse>(raw, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Flow!;
+            var passkey = flow.Ui.Passkey!;
+            Assert.NotNull(passkey.RegistrationOptions);
+            Assert.Equal("Minicloud", passkey.RegistrationOptions!.Value.GetProperty("publicKey").GetProperty("rp").GetProperty("name").GetString());
+            Assert.Equal(2, passkey.Credentials.Count);
+            Assert.Equal("Touch ID", passkey.Credentials[0].DisplayName);
+            Assert.True(passkey.Credentials[0].CanRemove);
+            Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1775001600), passkey.Credentials[0].AddedAt);
+            Assert.Equal("Passkey", passkey.Credentials[1].DisplayName);
+            Assert.False(passkey.Credentials[1].CanRemove);
+        }
+
+        // Missing CSRF or malformed/mixed passkey payloads fail without calling Kratos.
+        _factory.Upstream.Requests.Clear();
+        using (var noCsrf = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_settings_register = SyntheticPasskeyRegistrationJson()
+        }, cookie))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(noCsrf)).StatusCode);
+        }
+        using (var mixed = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey",
+            passkey_settings_register = SyntheticPasskeyRegistrationJson(),
+            passkey_remove = "637265642d31"
+        }, cookie))
+        {
+            mixed.Headers.Add("X-Minicloud-CSRF", csrf);
+            Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(mixed)).StatusCode);
+        }
+        using (var extraField = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey",
+            passkey_remove = "637265642d31",
+            password = "should-not-be-allowed"
+        }, cookie))
+        {
+            extraField.Headers.Add("X-Minicloud-CSRF", csrf);
+            Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(extraField)).StatusCode);
+        }
+        Assert.Empty(_factory.Upstream.Requests);
+
+        // Enroll a passkey -> rotates session.
+        using var enroll = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_settings_register = SyntheticPasskeyRegistrationJson()
+        }, cookie);
+        enroll.Headers.Add("X-Minicloud-CSRF", csrf);
+        var enrolled = await _client.SendAsync(enroll);
+        Assert.Equal(HttpStatusCode.OK, enrolled.StatusCode);
+        var enrolledBody = (await enrolled.Content.ReadFromJsonAsync<AccountFlowResponse>())!;
+        var rotatedCookie = LocalCookie(enrolled);
+        var rotatedCsrf = enrolledBody.Session!.CsrfToken;
+        Assert.NotEqual(cookie, rotatedCookie);
+
+        // Remove a passkey using the rotated session -> rotates again.
+        using var remove = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_remove = "637265642d31"
+        }, rotatedCookie);
+        remove.Headers.Add("X-Minicloud-CSRF", rotatedCsrf);
+        var removed = await _client.SendAsync(remove);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.NotEqual(rotatedCookie, LocalCookie(removed));
+    }
+
+    [Fact]
+    public async Task PasskeySettingsSessionRefreshRequiredPreservesSessionAndAllowsReauthRetry()
+    {
+        EnablePasskey();
+        var (cookie, csrf) = await Login();
+        _factory.Upstream.SettingsPasskeyError = (403,
+            """{"error":{"id":"session_refresh_required","code":403,"reason":"private upstream diagnostic"},"redirect_browser_to":"http://kratos:4433/self-service/login/browser?refresh=true"}""");
+
+        using var enroll = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_settings_register = SyntheticPasskeyRegistrationJson()
+        }, cookie);
+        enroll.Headers.Add("X-Minicloud-CSRF", csrf);
+        var staleResponse = await _client.SendAsync(enroll);
+        Assert.Equal(HttpStatusCode.Forbidden, staleResponse.StatusCode);
+        var staleBody = await staleResponse.Content.ReadAsStringAsync();
+        Assert.Contains("session_refresh_required", staleBody);
+        Assert.DoesNotContain("private upstream diagnostic", staleBody);
+        Assert.False(staleResponse.Headers.Contains("Set-Cookie"));
+
+        // Existing session remains active until re-authentication completes.
+        using (var check = new HttpRequestMessage(HttpMethod.Get, "/api/account/session"))
+        {
+            check.Headers.Add("Cookie", cookie);
+            Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(check)).StatusCode);
+        }
+
+        // In-place re-authentication via refresh login flow with passkey, then retry enrollment.
+        _factory.Upstream.SettingsPasskeyError = null;
+        using var reauthStart = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/login/browser?returnTo=%2Fsettings%2Faccount");
+        reauthStart.Headers.Add("Cookie", cookie + "; ory_kratos_session=synthetic-ory-session");
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(reauthStart)).StatusCode);
+        Assert.Contains("refresh=true", _factory.Upstream.Requests.Last().Uri.Query);
+
+        using var reauthSubmit = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = SyntheticPasskeyAssertionJson()
+        }, cookie);
+        var reauthed = await _client.SendAsync(reauthSubmit);
+        Assert.Equal(HttpStatusCode.OK, reauthed.StatusCode);
+        var refreshedCookie = LocalCookie(reauthed);
+        var refreshedCsrf = (await reauthed.Content.ReadFromJsonAsync<AccountFlowResponse>())!.Session!.CsrfToken;
+
+        using var retry = Submit("settings", new
+        {
+            csrf_token = "flow-csrf", method = "passkey", passkey_settings_register = SyntheticPasskeyRegistrationJson()
+        }, refreshedCookie);
+        retry.Headers.Add("X-Minicloud-CSRF", refreshedCsrf);
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(retry)).StatusCode);
+    }
+
+    [Fact]
+    public async Task RemovedPasskeyLoginFailureIsSanitizedAndPasswordFallbackRemainsIntact()
+    {
+        EnablePasskey();
+        _factory.Upstream.LoginPasskeyError = (400, """{"error":{"reason":"private upstream diagnostic: unknown credential"}}""");
+        using var badPasskey = Submit("login", new
+        {
+            csrf_token = "synthetic-flow-csrf", method = "passkey", passkey_login = SyntheticPasskeyAssertionJson()
+        });
+        var failed = await _client.SendAsync(badPasskey);
+        Assert.Equal(HttpStatusCode.BadRequest, failed.StatusCode);
+        var body = await failed.Content.ReadAsStringAsync();
+        Assert.Contains("auth_flow_invalid", body);
+        Assert.DoesNotContain("private upstream diagnostic", body);
+
+        // Password sign-in still succeeds cleanly.
+        var (cookie, csrf) = await Login();
+        Assert.NotEmpty(cookie);
+        Assert.NotEmpty(csrf);
+    }
+
     private static string StateHash(string state) => Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(
         System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(state)));
 
@@ -1283,7 +1561,11 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         public TimeSpan SettingsPasswordDelay { get; set; }
         public (int Status, string Body)? SettingsPasswordError { get; set; }
         public Func<string, HttpResponseMessage>? RecoverySubmit { get; set; }
+        public (int Status, string Body)? SettingsPasskeyError { get; set; }
+        public (int Status, string Body)? LoginPasskeyError { get; set; }
         public bool Google { get; set; }
+        public bool Passkey { get; set; }
+        public List<(string Id, string DisplayName, long AddedAtUnix, bool Disabled)> PasskeyCredentials { get; set; } = [];
         public string ProviderRedirect { get; set; } = GoogleUrl;
         public int ProviderStatus { get; set; } = 422;
         public int CallbackStatus { get; set; } = 200;
@@ -1316,6 +1598,25 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
                 };
                 accepted.Headers.Add("Set-Cookie", "ory_kratos_session=updated-ory-session; Path=/; HttpOnly");
                 return accepted;
+            }
+            if (request.RequestUri.AbsolutePath == "/self-service/settings" && request.Method == HttpMethod.Post &&
+                body.Contains("\"method\":\"passkey\"", StringComparison.Ordinal) && SettingsPasskeyError is { } settingsPasskeyError)
+            {
+                var rejected = new HttpResponseMessage((HttpStatusCode)settingsPasskeyError.Status)
+                {
+                    Content = new StringContent(settingsPasskeyError.Body, Encoding.UTF8, "application/json")
+                };
+                if (settingsPasskeyError.Status == 403)
+                    rejected.Headers.Add("Set-Cookie", "ory_kratos_continuity=synthetic-continuity; Path=/; HttpOnly");
+                return rejected;
+            }
+            if (request.RequestUri.AbsolutePath == "/self-service/login" && request.Method == HttpMethod.Post &&
+                body.Contains("\"method\":\"passkey\"", StringComparison.Ordinal) && LoginPasskeyError is { } loginPasskeyError)
+            {
+                return new HttpResponseMessage((HttpStatusCode)loginPasskeyError.Status)
+                {
+                    Content = new StringContent(loginPasskeyError.Body, Encoding.UTF8, "application/json")
+                };
             }
             return Respond(request, body);
         }
@@ -1369,6 +1670,77 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
                 return response;
             }
             var kind = request.RequestUri.AbsolutePath.Split('/')[2];
+            var nodes = new List<object>
+            {
+                new { group = "default", attributes = new { name = "csrf_token", type = "hidden", value = "synthetic-csrf", required = true } },
+                new { group = "default", attributes = new { name = "evil", type = "script", value = "private upstream diagnostic", required = false } }
+            };
+            if (kind == "settings")
+            {
+                // Profile nodes captured from Kratos v1.3.1 with the packaged identity schema.
+                nodes.Add(new { group = "profile", attributes = new { name = "traits.email", type = "email", value = "operator@example.test", required = true } });
+                nodes.Add(new { group = "profile", attributes = new { name = "traits.name.first", type = "text", value = "Synthetic", required = false } });
+                nodes.Add(new { group = "profile", attributes = new { name = "traits.name.last", type = "text", value = "Operator", required = false } });
+                nodes.Add(new { group = "profile", attributes = new { name = "method", type = "submit", value = "profile", required = false } });
+            }
+            if (Google)
+            {
+                nodes.Add(new { group = "oidc", attributes = new { name = kind == "settings" ? "link" : "provider", type = "submit", value = "google", required = false } });
+            }
+            if (Passkey && kind == "login")
+            {
+                var challengeJson = JsonSerializer.Serialize(new
+                {
+                    publicKey = new
+                    {
+                        challenge = "c3ludGhldGljLWNoYWxsZW5nZQ",
+                        rpId = "dashboard.example.test",
+                        timeout = 60000,
+                        userVerification = "preferred",
+                        injected_upstream_field = "must-not-forward"
+                    }
+                });
+                nodes.Add(new { group = "webauthn", attributes = new { name = "webauthn_script", type = "script", value = "kratos-webauthn-script", required = false } });
+                nodes.Add(new { group = "passkey", attributes = new { name = "passkey_challenge", type = "hidden", value = challengeJson, required = false } });
+                nodes.Add(new { group = "passkey", attributes = new { name = "passkey_login", type = "hidden", value = "", required = false } });
+                nodes.Add(new { group = "passkey", attributes = new { name = "passkey_login_trigger", type = "button", value = "", required = false } });
+            }
+            if (Passkey && kind == "settings")
+            {
+                var createDataJson = JsonSerializer.Serialize(new
+                {
+                    publicKey = new
+                    {
+                        challenge = "c3ludGhldGljLXJlZy1jaGFsbGVuZ2U",
+                        rp = new { name = "Minicloud", id = "dashboard.example.test" },
+                        user = new { id = "dXNlci1pZA", name = "operator@example.test", displayName = "operator@example.test" },
+                        pubKeyCredParams = new[] { new { type = "public-key", alg = -7 }, new { type = "public-key", alg = -257 } },
+                        timeout = 60000,
+                        authenticatorSelection = new { authenticatorAttachment = "platform", residentKey = "required", requireResidentKey = true, userVerification = "preferred" }
+                    }
+                });
+                nodes.Add(new { group = "webauthn", attributes = new { name = "webauthn_script", type = "script", value = "kratos-webauthn-script", required = false } });
+                nodes.Add(new { group = "passkey", attributes = new { name = "passkey_create_data", type = "hidden", value = createDataJson, required = false } });
+                nodes.Add(new { group = "passkey", attributes = new { name = "passkey_settings_register", type = "hidden", value = "", required = false } });
+                foreach (var cred in PasskeyCredentials)
+                {
+                    nodes.Add(new
+                    {
+                        group = "passkey",
+                        attributes = new { name = "passkey_remove", type = "submit", value = cred.Id, required = false, disabled = cred.Disabled },
+                        meta = new
+                        {
+                            label = new
+                            {
+                                id = 1050018,
+                                text = $"Remove passkey \"{cred.DisplayName}\"",
+                                type = "info",
+                                context = new { display_name = cred.DisplayName, added_at_unix = cred.AddedAtUnix }
+                            }
+                        }
+                    });
+                }
+            }
             var flowResponse = new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(new
@@ -1377,21 +1749,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
                     ui = new
                     {
                         action = $"http://kratos:4433/self-service/{kind}?flow={FlowId}", method = "POST",
-                        nodes = new[]
-                        {
-                            new { group = "default", attributes = new { name = "csrf_token", type = "hidden", value = "synthetic-csrf", required = true } },
-                            new { group = "default", attributes = new { name = "evil", type = "script", value = "private upstream diagnostic", required = false } }
-                        }.Concat(kind == "settings"
-                            ? [
-                                // Profile nodes captured from Kratos v1.3.1 with the packaged identity schema.
-                                new { group = "profile", attributes = new { name = "traits.email", type = "email", value = "operator@example.test", required = true } },
-                                new { group = "profile", attributes = new { name = "traits.name.first", type = "text", value = "Synthetic", required = false } },
-                                new { group = "profile", attributes = new { name = "traits.name.last", type = "text", value = "Operator", required = false } },
-                                new { group = "profile", attributes = new { name = "method", type = "submit", value = "profile", required = false } }
-                            ]
-                            : []).Concat(Google
-                            ? [new { group = "oidc", attributes = new { name = kind == "settings" ? "link" : "provider", type = "submit", value = "google", required = false } }]
-                            : []),
+                        nodes,
                         messages = new[] { new { id = 1, type = "error", text = "private upstream diagnostic" } }
                     }
                 }), Encoding.UTF8, "application/json")
