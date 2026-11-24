@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Minicloud.Common.Providers.Common;
 using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Dns;
+using Minicloud.Common.Providers.Extensibility;
 using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Providers.Vultr;
 using System.Net.Http;
@@ -16,6 +17,7 @@ public static class ProviderServiceCollectionExtensions
 
     public static IServiceCollection AddMinicloudProviders(this IServiceCollection services, IConfiguration configuration)
     {
+        services.Configure<ProviderRegistryOptions>(configuration.GetSection(ProviderRegistryOptions.SectionName));
         services.Configure<HetznerOptions>(configuration.GetSection(HetznerOptions.SectionName));
         services.Configure<DigitalOceanOptions>(configuration.GetSection(DigitalOceanOptions.SectionName));
         services.Configure<VultrOptions>(configuration.GetSection(VultrOptions.SectionName));
@@ -25,6 +27,12 @@ public static class ProviderServiceCollectionExtensions
         services.TryAddSingleton<IDnsResolver, SystemDnsResolver>();
         services.AddHttpClient(ProviderAccountClientFactory.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         services.AddScoped<ProviderAccountClientFactory>();
+
+        // Built-in qualified provider registrations
+        services.AddVpsProvider<HetznerProviderRegistration>();
+        services.AddVpsProvider<DigitalOceanProviderRegistration>();
+        services.AddVpsProvider<VultrProviderRegistration>();
+        services.TryAddSingleton<IVpsProviderRegistry, VpsProviderRegistry>();
 
         // Hetzner
         services.AddHttpClient<HetznerClient>()
@@ -55,9 +63,24 @@ public static class ProviderServiceCollectionExtensions
             CloudProvider.Hetzner => sp.GetRequiredService<HetznerClient>(),
             CloudProvider.DigitalOcean => sp.GetRequiredService<DigitalOceanClient>(),
             CloudProvider.Vultr => sp.GetRequiredService<VultrClient>(),
-            _ => throw new NotSupportedException($"VPS provider {provider} is not supported.")
+            _ => sp.GetKeyedService<IVpsProviderClient>(provider)
+                ?? throw new NotSupportedException($"VPS provider {provider} is not supported.")
         });
 
+        return services;
+    }
+
+    public static IServiceCollection AddVpsProvider<TRegistration>(this IServiceCollection services)
+        where TRegistration : class, IVpsProviderRegistration
+    {
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IVpsProviderRegistration, TRegistration>());
+        return services;
+    }
+
+    public static IServiceCollection AddVpsProvider(this IServiceCollection services, IVpsProviderRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        services.AddSingleton<IVpsProviderRegistration>(registration);
         return services;
     }
 }

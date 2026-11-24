@@ -6,14 +6,18 @@ using Minicloud.Api.Auth;
 using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
+using Minicloud.Common.Providers.Extensibility;
 using Minicloud.Common.Services;
 using static Minicloud.Api.Controllers.EndpointResults;
 
 namespace Minicloud.Api.Controllers;
 
 [ApiController, Authorize, Route("api/database-repositories")]
-public sealed class DatabaseRepositoriesController(MinicloudDbContext db, DatabaseManagementService service, ProviderCatalogService catalog, IIdGenerator ids, TimeProvider clock) : ControllerBase
+public sealed class DatabaseRepositoriesController(MinicloudDbContext db, DatabaseManagementService service, ProviderCatalogService catalog, IIdGenerator ids, TimeProvider clock, IVpsProviderRegistry? registry = null) : ControllerBase
 {
+    private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();
+    private readonly IVpsProviderRegistry _registry = registry ?? DefaultRegistry;
+
     [HttpGet]
     public Task<IResult> List(string organizationId, CancellationToken ct) => DatabasesController.Handle(async () =>
     {
@@ -39,7 +43,8 @@ public sealed class DatabaseRepositoriesController(MinicloudDbContext db, Databa
         await service.RequireAsync(actor, request.OrganizationId, true, ct);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 63 || request.SizeGb is < 10 or > 10000) { throw new ArgumentException("Repository name or size is invalid."); }
         var plan = await catalog.ResolveAsync(request.OrganizationId, request.Plan, ct);
-        if (plan.ProviderAccount.ProviderType != Minicloud.Common.Providers.CloudProvider.Hetzner) { throw new ArgumentException("Managed repository volumes currently require a Hetzner plan."); }
+        var supportsVolumes = _registry.TryGet(plan.ProviderAccount.ProviderType, out var registration) && registration.Descriptor.Capabilities.SupportsDurableVolumes;
+        if (!supportsVolumes) { throw new ArgumentException("Managed repository volumes require a provider plan that supports durable volumes."); }
         var appId = ids.NewId("app");
         var app = new MinicloudApp { Id = appId, OrganizationId = request.OrganizationId, Name = request.Name, Slug = "dbrepo-" + appId[4..], Database = DatabaseMode.None, PlanId = plan.Id, EnvironmentName = "production", EnvironmentKind = EnvironmentKinds.Internal, EnvironmentKey = appId + ":production", CreatedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
         db.Apps.Add(app);

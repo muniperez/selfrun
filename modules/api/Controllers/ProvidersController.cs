@@ -8,21 +8,50 @@ using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
 using Minicloud.Common.Providers.Common;
+using Minicloud.Common.Providers.Extensibility;
 using Minicloud.Common.Services;
 
 namespace Minicloud.Api.Controllers;
 
 [ApiController, Authorize, Route("api/providers")]
 public sealed class ProvidersController(MinicloudDbContext db, ControlPlaneAuthorization authorization,
-    ProviderAccountService accounts, AuditEventService audit) : ControllerBase
+    ProviderAccountService accounts, AuditEventService audit, IVpsProviderRegistry? registry = null) : ControllerBase
 {
+    private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();
+    private readonly IVpsProviderRegistry _registry = registry ?? DefaultRegistry;
+
     [HttpGet("/api/provider-types")]
-    public IResult Types() => Results.Ok(new[]
+    public IResult Types() => Results.Ok(_registry.GetSupported().Select(ToTypeResponse));
+
+    private static ProviderTypeResponse ToTypeResponse(ProviderDescriptor descriptor)
     {
-        new ProviderTypeResponse("hetzner", "Hetzner", true, "ubuntu-24.04"),
-        new ProviderTypeResponse("digital-ocean", "DigitalOcean", false, "ubuntu-24-04-x64"),
-        new ProviderTypeResponse("vultr", "Vultr", false, null, 2284)
-    });
+        var capabilities = descriptor.Capabilities;
+        return new ProviderTypeResponse(
+            descriptor.WireType,
+            descriptor.DisplayName,
+            capabilities.SupportsDurableVolumes,
+            descriptor.Placement.DefaultImage,
+            descriptor.Placement.DefaultOsId,
+            new ProviderTypeCapabilitiesDto(
+                capabilities.ComputeFamilyWireNames(),
+                capabilities.SupportedArchitectures,
+                ProviderCapabilities.ToWireValue(capabilities.LocationGranularity),
+                capabilities.SupportsSshKeyInventory,
+                capabilities.SupportsCloudInit,
+                capabilities.SupportsDurableVolumes,
+                capabilities.SupportsVolumeResize,
+                capabilities.SupportsSnapshots,
+                capabilities.SupportsPrivateNetworks,
+                capabilities.SupportsPublicIpv4,
+                capabilities.SupportsPublicIpv6,
+                capabilities.SupportsLabelsOrTags,
+                capabilities.SupportsScopeIdentityDiscovery,
+                capabilities.SupportsQuotaDiscovery,
+                capabilities.SupportsCatalogDiscovery,
+                capabilities.SupportsAsynchronousOperations,
+                capabilities.SupportsIdempotencyTokens),
+            ProviderCapabilities.ToWireValue(descriptor.QualificationState));
+    }
 
     [HttpGet]
     public async Task<IResult> List(string organizationId, CancellationToken ct)

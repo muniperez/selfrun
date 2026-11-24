@@ -5,6 +5,7 @@ using Minicloud.Common.Contracts;
 using Minicloud.Common.Data;
 using Minicloud.Common.Models;
 using Minicloud.Common.Providers;
+using Minicloud.Common.Providers.Extensibility;
 
 namespace Minicloud.Common.Services;
 
@@ -14,8 +15,12 @@ public sealed class ProviderCatalogException(string code, string message) : Exce
 }
 
 public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator ids, TimeProvider clock,
-    ISecretStore? secrets = null, IOptions<ProviderCatalogOptions>? policy = null)
+    ISecretStore? secrets = null, IOptions<ProviderCatalogOptions>? policy = null,
+    IVpsProviderRegistry? registry = null)
 {
+    private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();
+    private readonly IVpsProviderRegistry _registry = registry ?? DefaultRegistry;
+
     public static string NormalizeName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 128 || name.Any(char.IsControl))
@@ -133,13 +138,13 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         var name = request.Name is null ? Guid.NewGuid().ToString() : request.Name.Trim();
         var key = NormalizeName(name);
         await CheckNameAsync(request.OrganizationId, key, null, ct);
-        ValidatePlacement(request.Region, request.Sku, request.BuildPlatform, request.Image, account.ProviderType);
+        ValidatePlacement(account.Id, request.Region, request.Sku, request.BuildPlatform, request.Image, account.ProviderType);
         var now = clock.GetUtcNow();
         var plan = new ProviderPlan
         {
             Id = ids.NewId("plan"), OrganizationId = request.OrganizationId, ProviderAccountId = account.Id,
             ProviderAccount = account, Name = name, NormalizedName = key, Region = request.Region.Trim(), Sku = request.Sku.Trim(),
-            Image = string.IsNullOrWhiteSpace(request.Image) ? DefaultImage(account.ProviderType) : request.Image.Trim(),
+            Image = string.IsNullOrWhiteSpace(request.Image) ? DefaultImageFor(account.ProviderType) : request.Image.Trim(),
             BuildPlatform = request.BuildPlatform, Enabled = request.Enabled, CreatedAt = now, UpdatedAt = now
         };
         db.ProviderPlans.Add(plan);
@@ -154,7 +159,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         var sku = request.Sku?.Trim() ?? plan.Sku;
         var image = request.Image?.Trim() ?? plan.Image;
         var platform = request.BuildPlatform ?? plan.BuildPlatform;
-        ValidatePlacement(region, sku, platform, image, plan.ProviderAccount.ProviderType);
+        ValidatePlacement(plan.ProviderAccountId, region, sku, platform, image, plan.ProviderAccount.ProviderType);
         if (plan.ProvisioningLockedAt is not null && (region != plan.Region || sku != plan.Sku || image != plan.Image || platform != plan.BuildPlatform))
             throw new ProviderCatalogException("plan_mapping_locked", "This plan has been reserved for provisioning. Duplicate it to change its mapping.");
         if (request.Name is not null)
@@ -231,20 +236,27 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         var value = await secrets.GetAsync(new StoredSecretReference(account.CredentialStoreProvider, account.CredentialPath, account.CredentialVersion), ct);
         if (string.IsNullOrWhiteSpace(value)) throw new SecretStoreUnavailableException("Provider account credentials are empty.");
     }
-    public static string? DefaultImage(CloudProvider type) => type switch
-    {
-        CloudProvider.Hetzner => "ubuntu-24.04", CloudProvider.DigitalOcean => "ubuntu-24-04-x64", _ => null
-    };
 
-    private static void ValidatePlacement(string region, string sku, string platform, string? image, CloudProvider provider)
+    public static string? DefaultImage(CloudProvider type) => BuiltInProviderDescriptors.ForBuiltIn(type).Placement.DefaultImage;
+
+    private string? DefaultImageFor(CloudProvider type) =>
+        _registry.TryGet(type, out var registration)
+            ? registration.Descriptor.Placement.DefaultImage
+            : DefaultImage(type);
+
+    private void ValidatePlacement(string providerAccountId, string region, string sku, string platform, string? image, CloudProvider provider)
     {
-        if (provider == CloudProvider.Vultr && !string.IsNullOrWhiteSpace(image)
-            && (!int.TryParse(image.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var osId) || osId <= 0))
-            throw new ProviderCatalogException("plan_mapping_invalid", "Vultr plan OS overrides must be positive numeric OS IDs.");
-        if (string.IsNullOrWhiteSpace(region) || region.Length > 128 || region.Any(char.IsControl)
-            || string.IsNullOrWhiteSpace(sku) || sku.Length > 128 || sku.Any(char.IsControl)
-            || image is { Length: > 128 } || image?.Any(char.IsControl) == true
-            || platform is not ("linux/amd64" or "linux/arm64"))
-            throw new ProviderCatalogException("plan_mapping_invalid", "Specify a region, provider SKU, supported image and linux/amd64 or linux/arm64 platform.");
+        var descriptor = _registry.TryGet(provider, out var registration)
+            ? registration.Descriptor
+            : BuiltInProviderDescriptors.ForBuiltIn(provider);
+        var result = ProviderPlacementValidator.Validate(
+            descriptor,
+            new ProviderPlacement(descriptor.WireType, providerAccountId, region, sku, image, platform));
+        if (!result.IsValid)
+        {
+            throw new ProviderCatalogException(
+                result.ErrorCode ?? "plan_mapping_invalid",
+                result.ErrorMessage ?? "Specify a region, provider SKU, supported image and linux/amd64 or linux/arm64 platform.");
+        }
     }
 }

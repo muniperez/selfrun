@@ -174,7 +174,9 @@ Do not clear deletion state or edit provider-account IDs directly in the databas
 Verify all live resource bindings before reopening admissions. Once account-aware
 allocations begin, old workers are not a safe rollback target.
 
-The [specification](specs/provider-accounts-and-plans.md) describes the contracts
-and acceptance matrix. Source/local tests and live provider qualification are
-separate checks; no live cloud acceptance is implied by installation or import
+The [provider accounts and plans specification](specs/provider-accounts-and-plans.md) describes
+account/plan contracts and acceptance criteria, and the [provider extension architecture specification](specs/provider-extension-architecture.md)
+defines the shared registry, capability, placement, credential, lifecycle, and qualification contracts
+used to add future providers behind qualification gates. Source/local tests and live provider
+qualification are separate checks; no live cloud acceptance is implied by installation or import
 command availability.

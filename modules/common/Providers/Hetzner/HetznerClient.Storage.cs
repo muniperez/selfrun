@@ -1,13 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Minicloud.Common.Providers.Extensibility;
 
 namespace Minicloud.Common.Providers.Hetzner;
 
 public sealed partial class HetznerClient : IStorageVolumeProvider
 {
     // Mutation POSTs are not blindly retried: the next reconciliation reads provider state.
-    public static readonly HttpRequestOptionsKey<bool> NoRetry = new("minicloud.no-retry");
+    public static readonly HttpRequestOptionsKey<bool> NoRetry = ProviderHttpOptions.NoRetry;
 
     public async Task<ProviderStorageVolume?> FindVolumeAsync(string name, CancellationToken ct)
     {
