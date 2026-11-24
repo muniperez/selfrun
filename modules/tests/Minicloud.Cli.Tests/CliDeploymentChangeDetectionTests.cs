@@ -14,6 +14,59 @@ namespace Minicloud.Tests;
 public sealed class CliDeploymentChangeDetectionTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Seed_default_deploy_fails_before_upload_and_source_retry_succeeds(bool saveSourceMode)
+    {
+        var directory = Directory.CreateTempSubdirectory("minicloud-seed-deploy-");
+        try
+        {
+            var source = Directory.CreateDirectory(Path.Combine(directory.FullName, "app"));
+            File.WriteAllText(Path.Combine(source.FullName, "Dockerfile"), "FROM node:20\nEXPOSE 3000\nCMD [\"node\", \"index.js\"]");
+            File.WriteAllText(Path.Combine(source.FullName, "index.js"), "console.log('test');");
+            var configPath = Path.Combine(directory.FullName, "minicloud.yml");
+            var yaml = $$"""
+                app: demo
+                appId: app_main
+                services:
+                  web:
+                    sourcePath: {{source.FullName}}
+                    port: 3000
+                    public: true
+                    path: /
+                    healthPath: /health
+                """;
+            File.WriteAllText(configPath, yaml);
+            var console = new TestConsole();
+            var environment = CliEnvironment.ForTests("https://api.example", directory.FullName);
+            var tokens = new TokenStore(environment);
+            tokens.SaveToken("mc_test");
+            var handler = new ChangeDetectionHandler(new Dictionary<string, string>(), registryUnavailable: true);
+            using var http = new HttpClient(handler);
+            var app = new CliApplication(console, environment, tokens, new MinicloudApiClient(environment, tokens, http));
+
+            Assert.Equal(CliExitCodes.ValidationError, await app.RunAsync(["deploy", "--config", configPath], default));
+            Assert.Contains("local_build_unavailable", console.Output);
+            Assert.Contains("--build-mode source", console.Output);
+            Assert.Contains("buildMode: source", console.Output);
+            Assert.Contains("Nothing has been uploaded", console.Output);
+            Assert.Equal(0, handler.ArtifactsCreatedCount);
+            Assert.Equal(0, handler.DeploymentsCreatedCount);
+
+            if (saveSourceMode) { File.WriteAllText(configPath, yaml + "\n    buildMode: source\n"); }
+            var args = saveSourceMode
+                ? new[] { "deploy", "--config", configPath }
+                : new[] { "deploy", "--config", configPath, "--build-mode", "source" };
+            Assert.True(await app.RunAsync(args, default) == CliExitCodes.Success, console.Output);
+            Assert.Equal(1, handler.ImageBuildTargetsRequestedCount);
+            Assert.Equal(1, handler.ArtifactsCreatedCount);
+            Assert.Equal(1, handler.DeploymentsCreatedCount);
+            Assert.NotNull(handler.LastCreatedRequest!.Services.Single().ArtifactId);
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Theory]
     [InlineData("source")]
     [InlineData("local")]
     public async Task Deploy_skips_deployment_when_no_services_have_changed(string buildMode)
@@ -468,7 +521,8 @@ public sealed class CliDeploymentChangeDetectionTests
     private sealed class ChangeDetectionHandler(
         IReadOnlyDictionary<string, string> deployedHashes,
         bool failArtifactUpload = false,
-        bool failDeploymentValidation = false) : HttpMessageHandler
+        bool failDeploymentValidation = false,
+        bool registryUnavailable = false) : HttpMessageHandler
     {
         public int DeploymentsCreatedCount { get; private set; }
         public int ArtifactsCreatedCount { get; private set; }
@@ -517,6 +571,13 @@ public sealed class CliDeploymentChangeDetectionTests
             if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/api/environments/app_main/image-build-target")
             {
                 ImageBuildTargetsRequestedCount++;
+                if (registryUnavailable)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = JsonContent.Create(new { error = new { code = "local_build_unavailable", message = "Local image publication is not enabled." } })
+                    };
+                }
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = JsonContent.Create(new { registry = "registry.example", repository = "example", platform = "linux/amd64" })

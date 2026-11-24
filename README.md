@@ -87,7 +87,7 @@ minicloud init
 minicloud deploy
 ```
 
-The default local build uses Docker with Buildx. On a machine without Docker, use `minicloud deploy --build-mode source` to build on the server. If the app has multiple environments, add `--environment <name>`. Open the service URL printed by the CLI to try the deployment. [App configuration](docs/cli.md#create-a-deployment-config) · [Build and deploy options](docs/cli.md#deploy)
+The default local build uses Docker with Buildx and requires managed image publication. Seed installs do not enable it by default: use `minicloud deploy --build-mode source` to build on the server, or save `buildMode: source` on each source service in `minicloud.yml`. This mode also works without local Docker. If the app has multiple environments, add `--environment <name>`. Open the service URL printed by the CLI to try the deployment. [App configuration](docs/cli.md#create-a-deployment-config) · [Build and deploy options](docs/cli.md#deploy)
 
 ## Develop from source
 

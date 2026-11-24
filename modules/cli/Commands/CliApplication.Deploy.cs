@@ -165,8 +165,11 @@ public sealed partial class CliApplication
         if (hasLocalCandidate)
         {
             try { buildTarget = await _apiClient.GetImageBuildTargetAsync(app.Id, cancellationToken); }
-            catch (ApiException ex) when (ex.StatusCode == 404)
-            { throw new CliCommandException(CliExitCodes.ValidationError, "local_build_unavailable: this API does not support local image publication."); }
+            catch (ApiException ex) when (ex.StatusCode == 404 || ex.Code == ImagePublicationErrors.Unavailable)
+            {
+                throw new CliCommandException(CliExitCodes.ValidationError,
+                    "local_build_unavailable: this API does not support or enable local image publication. Nothing has been uploaded. Retry with minicloud deploy --build-mode source, or set buildMode: source on each sourcePath service in minicloud.yml.");
+            }
             localBuilderName = await LocalImageBuilder.PreflightAsync(buildTarget.Platform, cancellationToken);
             config = config with { Services = config.Services.ToDictionary(x => x.Key, x => x.Value.BuildMode == ServiceBuildModes.Local && !string.IsNullOrWhiteSpace(x.Value.SourcePath) ? x.Value with { BuildPlatform = buildTarget.Platform } : x.Value) };
         }

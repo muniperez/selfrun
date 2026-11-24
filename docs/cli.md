@@ -558,7 +558,14 @@ On deploy, the CLI requires `appId` in the selected config. App selection or app
 By default, Docker/buildx builds selected services on this machine for the target
 Linux platform, pushes images to Minicloud's private registry, and deploys verified
 immutable digests. Docker must be running. Use `--build-mode source` or service-level
-`buildMode: source` only to select the older source-upload/server-build mode.
+`buildMode: source` to select source-upload/server-build mode.
+
+Seed installs do not enable managed image publication by default. `init` still
+writes source services with the default local build mode. On these instances,
+run `minicloud deploy --build-mode source` for the first deploy and subsequent
+deploys, or set `buildMode: source` under each `sourcePath` service in
+`minicloud.yml`. A default deploy fails with `local_build_unavailable` and this
+remedy before building or uploading anything; it does not silently change modes.
 
 CLI 2.0.0 shows image preparation in a colored panel with a ready/total service count,
 current activity, elapsed time, and a fixed-height recent-output box. Warnings are
