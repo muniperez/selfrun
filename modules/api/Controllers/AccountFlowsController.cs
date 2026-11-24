@@ -162,7 +162,7 @@ public sealed class AccountFlowsController(
         {
             var reauthentication = kind == "reauthentication";
             var current = reauthentication
-                ? await sessions.FindByIdAsync(principal!.BrowserSessionId!, cancellationToken)
+                ? await sessions.FindCommittedAsync(principal!.BrowserSessionId!, cancellationToken)
                 : null;
             if (reauthentication)
             {
@@ -221,9 +221,12 @@ public sealed class AccountFlowsController(
     {
         if (kind == "reauthentication")
         {
-            var validation = await sessions.ValidateAsync(Request.Cookies[BrowserSessionCookie.Name] ?? "", cancellationToken);
-            if (validation.Session is not { } current || current.Id != principal?.BrowserSessionId ||
-                current.UserId != principal.UserId)
+            var current = principal?.BrowserSessionId is { } currentId
+                ? await sessions.FindCommittedAsync(currentId, cancellationToken)
+                : null;
+            if (current is null || current.UserId != principal?.UserId || current.RevokedAt is not null ||
+                sessions.IsExpired(current) ||
+                sessions.GetCsrfToken(current, Request.Cookies[BrowserSessionCookie.Name] ?? "") is null)
                 return (null, EndpointResults.Problem("unauthenticated", "A browser session is required.", 401));
         }
         var user = await db.Users.SingleOrDefaultAsync(x => x.KratosIdentityId == identityId, cancellationToken);

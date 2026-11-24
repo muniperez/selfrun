@@ -1485,6 +1485,28 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReauthenticationCannotRestoreASessionRevokedWhileIdentityIsBeingConfirmed()
+    {
+        var (cookie, csrf) = await Login();
+        using var start = new HttpRequestMessage(HttpMethod.Get, "/api/account/flows/reauthentication/browser");
+        start.Headers.Add("Cookie", cookie);
+        var started = await _client.SendAsync(start);
+        var binding = started.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("__Host-minicloud-reauthentication=")).Split(';')[0];
+        _factory.Upstream.DuringLogin = async () =>
+        {
+            await using var scope = _factory.Services.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<BrowserSessionService>().RevokeAsync(cookie.Split('=')[1], default);
+        };
+        using var submit = Submit("reauthentication", LoginFields(), cookie + "; " + binding);
+        submit.Headers.Add("X-Minicloud-CSRF", csrf);
+        var rejected = await _client.SendAsync(submit);
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        Assert.False(rejected.Headers.Contains("Set-Cookie"));
+        await using var check = _factory.Services.CreateAsyncScope();
+        Assert.NotNull((await check.ServiceProvider.GetRequiredService<MinicloudDbContext>().BrowserSessions.SingleAsync()).RevokedAt);
+    }
+
+    [Fact]
     public async Task RemovedPasskeyLoginFailureIsSanitizedAndPasswordFallbackRemainsIntact()
     {
         EnablePasskey();
@@ -1646,6 +1668,7 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
         public Func<string, HttpResponseMessage>? RecoverySubmit { get; set; }
         public (int Status, string Body)? SettingsPasskeyError { get; set; }
         public (int Status, string Body)? LoginPasskeyError { get; set; }
+        public Func<Task>? DuringLogin { get; set; }
         public bool Google { get; set; }
         public bool Passkey { get; set; }
         public List<(string Id, string DisplayName, long AddedAtUnix, bool Disabled)> PasskeyCredentials { get; set; } = [];
@@ -1657,6 +1680,12 @@ public sealed class AccountBrowserFlowTests : IAsyncLifetime
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             Requests.Add((request.RequestUri!, request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single() : "",
                 request.Headers.TryGetValues("Origin", out var origin) ? origin.Single() : "", body, request.Headers.Accept.ToString()));
+            if (request.RequestUri.AbsolutePath == "/self-service/login" && request.Method == HttpMethod.Post &&
+                DuringLogin is { } during)
+            {
+                DuringLogin = null;
+                await during();
+            }
             if (request.RequestUri!.AbsolutePath == "/self-service/recovery" && request.Method == HttpMethod.Post &&
                 RecoverySubmit is { } recoverySubmit)
                 return recoverySubmit(body);
