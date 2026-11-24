@@ -260,8 +260,6 @@ jobs:
             fi
             export SELFRUN_API_URL="$SELF_HOSTED_API_URL"
             export MINICLOUD_API_URL="$SELF_HOSTED_API_URL"
-            export SELFRUN_APP_DOMAIN="$TARGET_APP_DOMAIN"
-            export MINICLOUD_APP_DOMAIN="$TARGET_APP_DOMAIN"
             TARGET_ENVIRONMENT=self-hosted
           else
             case "${TARGET_ENVIRONMENT}" in
@@ -278,6 +276,11 @@ jobs:
               exit 1
               ;;
             esac
+          fi
+
+          if [[ -n "$TARGET_APP_DOMAIN" ]]; then
+            export SELFRUN_APP_DOMAIN="$TARGET_APP_DOMAIN"
+            export MINICLOUD_APP_DOMAIN="$TARGET_APP_DOMAIN"
           fi
 
           args=(deploy --all --config selfrun.yml)

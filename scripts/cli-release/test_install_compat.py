@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -97,6 +98,51 @@ class InstallerAndWorkflowCompatibilityTests(unittest.TestCase):
             'export MINICLOUD_API_URL=',
         ):
             self.assertIn(needle, text)
+
+    def test_customer_deploy_dispatch_resolves_domain_aliases_for_every_target(self):
+        text = CUSTOMER_DEPLOY.read_text(encoding="utf-8")
+        step = text.split("      - name: Deploy with Selfrun CLI\n", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        stub = """selfrun() {
+          printf 'dispatch=%s|%s|%s|%s\\n' "$SELFRUN_API_URL" "$MINICLOUD_API_URL" "${SELFRUN_APP_DOMAIN-<discovery>}" "${MINICLOUD_APP_DOMAIN-<discovery>}"
+          printf 'arg=%s\\n' "$@"
+        }
+        """
+        for target in ("prod", "staging", "self-hosted"):
+            for primary, legacy, expected in (
+                ("apps.selfrun.test", "apps.legacy.test", "apps.selfrun.test"),
+                ("", "apps.legacy.test", "apps.legacy.test"),
+                ("apps.selfrun.test", "", "apps.selfrun.test"),
+                ("", "", "<discovery>"),
+            ):
+                with self.subTest(target=target, primary=primary, legacy=legacy), tempfile.TemporaryDirectory() as tmp:
+                    api = {
+                        "prod": "https://api.cloud.muni.dev",
+                        "staging": "https://api.cloud-dev.muni.dev",
+                        "self-hosted": "https://api.instance.test",
+                    }[target]
+                    env = {
+                        "PATH": os.defpath, "SELFRUN_API_KEY_SECRET": "synthetic-token",
+                        "MINICLOUD_API_KEY_SECRET": "", "POSTGRES_PASSWORD": "",
+                        "SELFRUN_ENV_INPUT": "" if target == "self-hosted" else target,
+                        "MINICLOUD_ENV_INPUT": "staging",
+                        "SELFRUN_API_URL_INPUT": api if target == "self-hosted" else "",
+                        "MINICLOUD_API_URL_INPUT": "",
+                        "SELFRUN_APP_DOMAIN_INPUT": primary, "MINICLOUD_APP_DOMAIN_INPUT": legacy,
+                        "DATABASE": "none", "APP_ID": "app_synthetic",
+                        "GITHUB_STEP_SUMMARY": str(Path(tmp) / "summary"),
+                        "GITHUB_RUN_ID": "1", "GITHUB_SERVER_URL": "https://github.example.test",
+                        "GITHUB_REPOSITORY": "synthetic/example",
+                    }
+                    result = subprocess.run(["bash", "-c", stub + script], env=env, capture_output=True, text=True)
+                    if target == "self-hosted" and expected == "<discovery>":
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("is required for a self-hosted instance", result.stderr)
+                        self.assertNotIn("dispatch=", result.stdout)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn(f"dispatch={api}|{api}|{expected}|{expected}", result.stdout)
+                        self.assertIn("arg=deploy\narg=--all\narg=--config\narg=selfrun.yml", result.stdout)
 
 
 if __name__ == "__main__":
