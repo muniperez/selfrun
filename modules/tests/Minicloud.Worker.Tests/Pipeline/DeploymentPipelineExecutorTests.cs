@@ -796,7 +796,7 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
             if (failTransfer) { throw new IOException("Artifact transfer failed"); }
             throw new InvalidOperationException("Remote execution must not start");
         }
-        public async Task<int> ExecuteCommandAsync(string host, string username, string privateKeyContent, string command, Func<string, string, Task> onLogLine, CancellationToken cancellationToken)
+        public async Task<int> ExecuteCommandAsync(SshTarget target, string username, string privateKeyContent, string command, Func<string, string, Task> onLogLine, CancellationToken cancellationToken)
         {
             if (command.Contains("preparation.ready", StringComparison.Ordinal))
             {
@@ -851,14 +851,14 @@ public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqlite
                 : Task.FromResult(new SshDeploymentResult(0, true, "sha123", ["__MINICLOUD_DEPLOY_COMPLETE__=sha123"]));
 
         public Task<int> ExecuteCommandAsync(
-            string serverIp,
+            SshTarget target,
             string username,
             string privateKey,
             string command,
             Func<string, string, Task>? onOutputLine = null,
             CancellationToken cancellationToken = default) =>
             execCmd is not null
-                ? execCmd(serverIp, username, privateKey, command)
+                ? execCmd(target.Host, username, privateKey, command)
                 : Task.FromResult(0);
     }
 

@@ -74,7 +74,7 @@ public sealed class ServerHostKeyEnrollmentTests
         var blob = Ed25519Blob();
         var script = ServerHostKeyEnrollment.CloudInitScript(ServerId, secret);
         var cloudInit = ResolveProvisionServerStep.BuildCloudInit("myorg", "myapp", "ssh-ed25519 AAAAKEY", script);
-        var directory = Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "host-enrollment-" + Guid.NewGuid().ToString("N")));
+        var directory = CreateFixtureDirectory("host-enrollment-");
         try
         {
             var userData = Path.Combine(directory.FullName, "user-data");
@@ -103,15 +103,17 @@ public sealed class ServerHostKeyEnrollmentTests
         }
     }
 
-    [Fact]
-    public async Task SshClientRefusesHostsWithoutAnyPinBeforeConnecting()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SshClientRefusesHostsWithoutAnyPinBeforeConnecting(bool configureFile)
     {
-        var directory = Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "host-pins-" + Guid.NewGuid().ToString("N")));
+        var directory = CreateFixtureDirectory("host-pins-");
         try
         {
             var pins = Path.Combine(directory.FullName, "host-pins");
             await File.WriteAllTextAsync(pins, "");
-            var client = new SshDeploymentClient(new SshDeploymentOptions { HostKeyPinsFile = pins }, null, new FixedPins(null));
+            var client = new SshDeploymentClient(new SshDeploymentOptions { HostKeyPinsFile = configureFile ? pins : "" }, null, new FixedPins(null));
 
             var refused = await Assert.ThrowsAsync<SshHostKeyTrustException>(() => client.ExecuteCommandAsync(
                 "192.0.2.10", "minicloud", "unused-key", "true", (_, _) => Task.CompletedTask, CancellationToken.None));
@@ -142,14 +144,15 @@ public sealed class ServerHostKeyEnrollmentTests
         Assert.Equal(sshd.Fingerprint, fingerprint);
         Assert.Null(ServerHostKeyEnrollment.Verify(ServerId, ServerHostKeyEnrollment.CreateSecret(), observation));
 
-        // The static host-pins file is empty: only the enrolled database pin can authorize this host.
-        var pins = await sshd.WriteAsync("host-pins", "");
+        var other = "SHA256:" + Convert.ToBase64String(SHA256.HashData(Ed25519Blob())).TrimEnd('=');
+        // A conflicting operator entry must not widen enrolled trust.
+        var pins = await sshd.WriteAsync("host-pins", $"127.0.0.1 {other}\n");
         var options = new SshDeploymentOptions { Port = sshd.Port, HostKeyPinsFile = pins, ConnectionTimeout = TimeSpan.FromSeconds(10) };
         var trusted = new SshDeploymentClient(options, null, new FixedPins(fingerprint));
         Assert.Equal(0, await trusted.ExecuteCommandAsync("127.0.0.1", Environment.UserName, sshd.ClientPrivateKey, "true",
             (_, _) => Task.CompletedTask, CancellationToken.None));
 
-        var other = "SHA256:" + Convert.ToBase64String(SHA256.HashData(Ed25519Blob())).TrimEnd('=');
+        await sshd.WriteAsync("host-pins", $"127.0.0.1 {fingerprint}\n");
         var mismatch = await Assert.ThrowsAsync<SshHostKeyTrustException>(() => new SshDeploymentClient(options, null, new FixedPins(other))
             .ExecuteCommandAsync("127.0.0.1", Environment.UserName, sshd.ClientPrivateKey, "true", (_, _) => Task.CompletedTask, CancellationToken.None));
         Assert.Equal("ssh_host_key_mismatch", mismatch.FailureCode);
@@ -158,7 +161,17 @@ public sealed class ServerHostKeyEnrollmentTests
 
     internal sealed class FixedPins(string? fingerprint) : ISshHostKeyPinSource
     {
-        public Task<string?> GetPinnedFingerprintAsync(string host, CancellationToken cancellationToken) => Task.FromResult(fingerprint);
+        public Task<string?> GetPinnedFingerprintAsync(SshTarget target, CancellationToken cancellationToken) => Task.FromResult(fingerprint);
+    }
+
+    internal static DirectoryInfo CreateFixtureDirectory(string prefix)
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (!File.Exists(Path.Combine(root.FullName, "Minicloud.slnx")))
+        {
+            root = root.Parent ?? throw new InvalidOperationException("Repository root not found for disposable test artifacts.");
+        }
+        return Directory.CreateDirectory(Path.Combine(root.FullName, ".local", "artifacts", prefix + Guid.NewGuid().ToString("N")));
     }
 
     private static async Task<string> RunAsync(string fileName, params string[] arguments)
@@ -173,7 +186,7 @@ public sealed class ServerHostKeyEnrollmentTests
         return await output;
     }
 
-    private sealed class LocalSshd : IAsyncDisposable
+    internal sealed class LocalSshd : IAsyncDisposable
     {
         private readonly DirectoryInfo _directory;
         private Process? _process;
@@ -191,7 +204,7 @@ public sealed class ServerHostKeyEnrollmentTests
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             listener.Stop();
-            var sshd = new LocalSshd(Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "sshd-" + Guid.NewGuid().ToString("N"))), port);
+            var sshd = new LocalSshd(CreateFixtureDirectory("sshd-"), port);
             var dir = sshd._directory.FullName;
             await RunAsync("/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", Path.Combine(dir, "host_key"));
             await RunAsync("/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", Path.Combine(dir, "client_key"));

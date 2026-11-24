@@ -34,7 +34,7 @@ public sealed partial class DatabaseOperationProcessor
                     var repository = await BackupRepositoryAsync(new DatabaseBackupPolicy { OrganizationId = database.OrganizationId, RepositoryAppId = repositoryId }, ct);
                     var binding = new { environment = BackupNamespace(database.OrganizationId), databaseId = database.Id, token = material.RepositoryToken,
                         retentionDays = policy.RetentionDays, minimumComplete = policy.MinimumCopies, enabled = false, keepLastCopies = false, policyRevision = policy.Revision };
-                    await ExecuteRemoteAsync(operation, repository.Host.IpAddress!, "repository-control.py", new
+                    await ExecuteRemoteAsync(operation, repository.Host, "repository-control.py", new
                     {
                         container = "minicloud-" + repository.App.Slug + "-repository-1", binding,
                         backupIds = Array.Empty<string>(), operationId = operation.Id
@@ -42,7 +42,7 @@ public sealed partial class DatabaseOperationProcessor
                     int remaining;
                     do
                     {
-                        var result = await ExecuteRemoteAsync(operation, repository.Host.IpAddress!, "repository-control.py", new
+                        var result = await ExecuteRemoteAsync(operation, repository.Host, "repository-control.py", new
                         {
                             action = "purge-source", container = "minicloud-" + repository.App.Slug + "-repository-1", binding,
                             expectedRepositoryId = repository.App.Id, operationId = operation.Id

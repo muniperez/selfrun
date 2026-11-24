@@ -50,7 +50,7 @@ public sealed partial class DatabaseOperationProcessor
         }
         var cutoverStarted = false;
         await RequireApplicationMutationAsync(operation, sourceApp.Id, ct);
-        await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "migration-fence.py", new { action = "fence", databaseName = credentials.DatabaseName, container, operationId = operation.Id }, ct);
+        await ExecuteRemoteAsync(operation, sourceHost, "migration-fence.py", new { action = "fence", databaseName = credentials.DatabaseName, container, operationId = operation.Id }, ct);
         try
         {
             ManagedDatabase target;
@@ -109,7 +109,7 @@ public sealed partial class DatabaseOperationProcessor
         catch
         {
             if (!cutoverStarted)
-                await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "migration-fence.py", new { action = "unfence", databaseName = credentials.DatabaseName, container, operationId = operation.Id }, CancellationToken.None);
+                await ExecuteRemoteAsync(operation, sourceHost, "migration-fence.py", new { action = "unfence", databaseName = credentials.DatabaseName, container, operationId = operation.Id }, CancellationToken.None);
             throw;
         }
     }

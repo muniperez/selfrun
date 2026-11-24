@@ -181,11 +181,31 @@ and retry; an interrupted enrollment resumes on the next deployment.
 
 `ssh/host-pins` is only for hosts that the worker did not enroll. These include
 manually added servers, servers created before this enrollment existed, and
-servers rediscovered by name after the worker lost its creation record. Each
+servers rediscovered by name after the worker lost its creation record. It
+also recovers a worker-created server whose first-boot enrollment never
+completed: verify the current provider address and Ed25519 key out of band,
+add its pin, then retry deployment. The resolve step skips the proof wait and
+records a warning mentioning `host-pins`; each SSH connection still enforces
+the operator pin. The fingerprint stays unset and the enrollment secret is
+retained, so removing the entry resumes proof-based enrollment on a later
+deployment. A mismatching entry never authorizes the presented key. Each
 line is `<host> SHA256:<fingerprint>`; verify the fingerprint out of band before
-adding it. The worker trusts a host whose key matches its database pin or a
-`host-pins` line. It refuses a host with neither (`ssh_host_key_untrusted`) and
-a host that presents a different key (`ssh_host_key_mismatch`).
+adding it. SSH trust is bound to the selected server record, which must be
+active, hold that address, and not share it with another active record.
+Database operations also verify that the selected provider server is running
+at the stored address before SSH; reconcile changed addresses before retrying.
+An enrolled server trusts only its database pin: conflicting `host-pins` lines
+are ignored with a warning. Operator pins are a fallback only for records
+without an enrolled fingerprint. The worker refuses a host with neither
+(`ssh_host_key_untrusted`), even when no pins file is configured, and a host
+that presents a different key (`ssh_host_key_mismatch`).
+
+For a legitimately rebuilt server, verify its new Ed25519 fingerprint out of
+band. Stop operations for that server, reconcile its provider/address
+registration, explicitly clear that selected record's `host_key_fingerprint`
+and `host_key_verified_at` in the control-plane database, and add the verified
+key to `ssh/host-pins` before retrying. Remove obsolete entries. A pins-file
+entry alone never overrides an enrolled key.
 
 ### Dashboard sign-in sessions
 

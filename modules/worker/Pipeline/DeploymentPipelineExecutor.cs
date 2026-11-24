@@ -529,7 +529,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         {
             var lines = new List<string>();
             var exitCode = await _sshClient.ExecuteCommandAsync(
-                context.ServerIp,
+                new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp),
                 string.IsNullOrWhiteSpace(context.SshUsername) ? _sshOptions.Username : context.SshUsername,
                 privateKey,
                 rollbackCommand,

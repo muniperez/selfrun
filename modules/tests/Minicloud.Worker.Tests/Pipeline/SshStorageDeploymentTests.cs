@@ -68,7 +68,7 @@ public sealed class SshStorageDeploymentTests : IClassFixture<WorkerSqliteTestHa
         public SshDeploymentRequest? Request;
         public Task<SshDeploymentResult> ExecuteDeploymentAsync(SshDeploymentRequest request, Func<string, string, Task> onLogLine, CancellationToken cancellationToken)
         { Request = request; return Task.FromResult(new SshDeploymentResult(0, true, "fixture", [])); }
-        public Task<int> ExecuteCommandAsync(string host, string username, string privateKeyContent, string command, Func<string, string, Task> onLogLine, CancellationToken cancellationToken) => Task.FromResult(0);
+        public Task<int> ExecuteCommandAsync(SshTarget target, string username, string privateKeyContent, string command, Func<string, string, Task> onLogLine, CancellationToken cancellationToken) => Task.FromResult(0);
     }
     private sealed class NoArtifacts : IArtifactRetriever
     { public Task<Stream> OpenArtifactStreamAsync(string artifactId, CancellationToken cancellationToken = default) => throw new InvalidOperationException("No source artifact expected"); }

@@ -84,7 +84,7 @@ public sealed partial class SshDeployStep
         SshDeploymentResult result;
         try
         {
-            result = await _sshClient.ExecuteDeploymentAsync(new(context.ServerIp, string.IsNullOrWhiteSpace(context.SshUsername) ? _sshOptions.Username : context.SshUsername,
+            result = await _sshClient.ExecuteDeploymentAsync(new(new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp), string.IsNullOrWhiteSpace(context.SshUsername) ? _sshOptions.Username : context.SshUsername,
                 key, context.RemoteDirectory, payload, script, uploads, _options.SshCommandTimeout),
                 (source, line) => logs.AppendAsync(ClassifySource(line), line, ct), ct);
             await logs.FlushAsync(ct);

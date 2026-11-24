@@ -54,7 +54,8 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var trust = await ResolveTrustAsync(request.Host, cancellationToken);
+        var trust = await ResolveTrustAsync(request.Target, cancellationToken);
+        request = request with { Target = request.Target with { ExpectedFingerprint = trust.EnrolledFingerprint } };
         try
         {
             return await ExecuteDeploymentCoreAsync(request, trust, onLogLine, cancellationToken);
@@ -86,7 +87,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                   case "$status" in 0|2) ;; *) exit 41 ;; esac
                 fi'
                 """;
-            var bootstrapExit = await ExecuteCommandAsync(request.Host, request.Username,
+            var bootstrapExit = await ExecuteCommandAsync(request.Target, request.Username,
                 request.PrivateKeyContent, bootstrapWait, (_, _) => Task.CompletedTask, cancellationToken);
             if (bootstrapExit != 0)
             {
@@ -100,7 +101,7 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                 docker buildx version >/dev/null 2>&1
                 docker buildx inspect --builder "$(docker context show)" | grep -E "^Driver:[[:space:]]+docker$" >/dev/null'
                 """;
-            var preflightExit = await ExecuteCommandAsync(request.Host, request.Username,
+            var preflightExit = await ExecuteCommandAsync(request.Target, request.Username,
                 request.PrivateKeyContent, builderPreflight, (_, _) => Task.CompletedTask, cancellationToken);
             if (preflightExit != 0)
             {
@@ -236,21 +237,34 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         return document.RootElement.TryGetProperty("deployment_id", out var id) ? id.GetString() ?? "unknown" : "unknown";
     }
 
-    public async Task<int> ExecuteCommandAsync(
+    public Task<int> ExecuteCommandAsync(
         string host,
+        string username,
+        string privateKeyContent,
+        string command,
+        Func<string, string, Task> onLogLine,
+        CancellationToken cancellationToken) =>
+        ExecuteCommandAsync(new SshTarget(string.Empty, host), username, privateKeyContent,
+            command, onLogLine, cancellationToken);
+
+    public async Task<int> ExecuteCommandAsync(
+        SshTarget target,
         string username,
         string privateKeyContent,
         string command,
         Func<string, string, Task> onLogLine,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(target);
+        var host = target.Host;
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
         ArgumentException.ThrowIfNullOrWhiteSpace(privateKeyContent);
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         ArgumentNullException.ThrowIfNull(onLogLine);
 
-        var trust = await ResolveTrustAsync(host, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var trust = await ResolveTrustAsync(target, cancellationToken);
         try
         {
             return await RunRemoteCommandAsync(
@@ -388,31 +402,32 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
         };
     }
 
-    /// <summary>
-    /// Trusted keys for <paramref name="host"/>: the pin verified when this worker provisioned the server,
-    /// plus any operator entries in the static host-pins file for manually added or pre-enrollment servers.
-    /// Only a development worker with neither source configured connects without a pin.
-    /// </summary>
-    private async Task<HostKeyTrust> ResolveTrustAsync(string host, CancellationToken cancellationToken)
+    private async Task<HostKeyTrust> ResolveTrustAsync(SshTarget target, CancellationToken cancellationToken)
     {
-        var pins = new HashSet<string>(StringComparer.Ordinal);
-        if (_pinSource is not null &&
-            await _pinSource.GetPinnedFingerprintAsync(host, cancellationToken) is { Length: > 0 } enrolled)
+        var host = target.Host;
+        if (_pinSource is null && !string.IsNullOrWhiteSpace(target.ServerInstanceId))
         {
-            pins.Add(enrolled);
+            throw new SshHostKeyTrustException(SshHostKeyTrustException.UntrustedFailureCode,
+                $"Selected server {target.ServerInstanceId}'s registration cannot be verified without a pin source; refusing SSH.");
         }
-
-        if (string.IsNullOrWhiteSpace(_options.HostKeyPinsFile))
+        var enrolled = _pinSource is null
+            ? null
+            : await _pinSource.GetPinnedFingerprintAsync(target, cancellationToken);
+        if (target.ExpectedFingerprint is not null && enrolled != target.ExpectedFingerprint)
         {
-            if (pins.Count == 0) { return new HostKeyTrust(host, null); }
+            throw new SshHostKeyTrustException(SshHostKeyTrustException.UntrustedFailureCode,
+                $"Selected server {target.ServerInstanceId}'s enrolled SSH host key changed during the operation; refusing SSH.");
         }
-        else if (File.Exists(_options.HostKeyPinsFile))
+        var operatorPins = SshHostPins.Read(_options.HostKeyPinsFile, host);
+        IReadOnlySet<string> pins = operatorPins;
+        if (enrolled is not null)
         {
-            pins.UnionWith(File.ReadLines(_options.HostKeyPinsFile)
-                .Select(line => line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-                .Where(fields => fields.Length == 2 && fields[0].Equals(host, StringComparison.OrdinalIgnoreCase) &&
-                    fields[1].StartsWith("SHA256:", StringComparison.Ordinal))
-                .Select(fields => fields[1]));
+            if (operatorPins.Any(pin => pin != enrolled))
+            {
+                _logger?.LogWarning("Ignoring conflicting host-pins entries for enrolled server {ServerInstanceId} at {Host}.",
+                    target.ServerInstanceId, host);
+            }
+            pins = new HashSet<string>(StringComparer.Ordinal) { enrolled };
         }
 
         if (pins.Count == 0)
@@ -423,29 +438,27 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
                 $"Ed25519 key in the worker host-pins file as '{host} SHA256:<fingerprint>' before retrying.");
         }
 
-        return new HostKeyTrust(host, pins);
+        return new HostKeyTrust(host, pins, enrolled);
     }
 
     private static T CreateClient<T>(HostKeyTrust trust, Func<T> factory) where T : BaseClient
     {
         var client = factory();
-        if (trust.Pins is { } expected)
+        client.HostKeyReceived += (_, key) =>
         {
-            client.HostKeyReceived += (_, key) =>
-            {
-                var fingerprint = "SHA256:" + key.FingerPrintSHA256;
-                key.CanTrust = expected.Contains(fingerprint);
-                if (!key.CanTrust) { trust.RejectedFingerprint = fingerprint; }
-            };
-        }
+            var fingerprint = "SHA256:" + key.FingerPrintSHA256;
+            key.CanTrust = trust.Pins.Contains(fingerprint);
+            if (!key.CanTrust) { trust.RejectedFingerprint = fingerprint; }
+        };
         return client;
     }
 
-    private sealed class HostKeyTrust(string host, IReadOnlySet<string>? pins)
+    private sealed class HostKeyTrust(string host, IReadOnlySet<string> pins, string? enrolledFingerprint)
     {
         private string? _rejected;
 
-        public IReadOnlySet<string>? Pins { get; } = pins;
+        public IReadOnlySet<string> Pins { get; } = pins;
+        public string? EnrolledFingerprint { get; } = enrolledFingerprint;
 
         public string? RejectedFingerprint
         {

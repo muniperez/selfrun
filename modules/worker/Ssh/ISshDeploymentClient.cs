@@ -62,17 +62,30 @@ public sealed record SshDeploymentArtifactUpload(
     long SizeBytes = 0);
 
 /// <summary>
-/// Input for a full VPS deployment over SSH/SFTP.
+/// Selected server registration and address for an SSH operation.
 /// </summary>
+public sealed record SshTarget(string ServerInstanceId, string Host, string? ExpectedFingerprint = null);
+
+/// <summary>Input for a full VPS deployment over SSH/SFTP.</summary>
 public sealed record SshDeploymentRequest(
-    string Host,
+    SshTarget Target,
     string Username,
     string PrivateKeyContent,
     string RemoteDirectory,
     string PayloadJson,
     string RemoteDeployScriptContent,
     IReadOnlyList<SshDeploymentArtifactUpload> Artifacts,
-    TimeSpan CommandTimeout);
+    TimeSpan CommandTimeout)
+{
+    public string Host => Target.Host;
+
+    // Host-only callers can use operator pins, but cannot select a database enrollment.
+    public SshDeploymentRequest(string host, string username, string privateKeyContent,
+        string remoteDirectory, string payloadJson, string remoteDeployScriptContent,
+        IReadOnlyList<SshDeploymentArtifactUpload> artifacts, TimeSpan commandTimeout)
+        : this(new SshTarget(string.Empty, host), username, privateKeyContent, remoteDirectory,
+            payloadJson, remoteDeployScriptContent, artifacts, commandTimeout) { }
+}
 
 /// <summary>
 /// Result of the remote-deploy.sh execution.
@@ -102,7 +115,7 @@ public interface ISshDeploymentClient
     /// Runs an ad-hoc command over SSH (health probes, rollback) and streams output.
     /// </summary>
     Task<int> ExecuteCommandAsync(
-        string host,
+        SshTarget target,
         string username,
         string privateKeyContent,
         string command,

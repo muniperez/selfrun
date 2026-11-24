@@ -103,7 +103,7 @@ public sealed partial class DatabaseOperationProcessor
                 environment["SQLITE_PATH"] = "/opt/minicloud/apps/" + sourceApp.Slug + "/data/sqlite/app.db";
             }
             else { throw new InvalidOperationException("Unsupported backup engine."); }
-            var result = await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "dispatch.py", new { action = "backup", environment, operationId = operation.Id }, ct);
+            var result = await ExecuteRemoteAsync(operation, sourceHost, "dispatch.py", new { action = "backup", environment, operationId = operation.Id }, ct);
             var now = clock.GetUtcNow();
             var backupId = result.GetProperty("backupId").GetString() ?? throw new InvalidOperationException();
             if (!await db.DatabaseBackupArtifacts.AnyAsync(x => x.DatabaseId == database.Id && x.BackupId == backupId, ct))
@@ -158,7 +158,7 @@ public sealed partial class DatabaseOperationProcessor
             var active = policy.Enabled && database.Status != "deleted" && repositoryId == policy.RepositoryAppId;
             var artifacts = await db.DatabaseBackupArtifacts.Where(x => x.DatabaseId == database.Id && x.OrganizationId == database.OrganizationId && x.RepositoryAppId == repositoryId && x.Status == "complete")
                 .OrderBy(x => x.UpdatedAt).Take(100).ToListAsync(ct);
-            var result = await ExecuteRemoteAsync(operation, repository.Host.IpAddress!, "repository-control.py", new
+            var result = await ExecuteRemoteAsync(operation, repository.Host, "repository-control.py", new
             {
                 container = "minicloud-" + repository.App.Slug + "-repository-1",
                 binding = new { environment = BackupNamespace(database.OrganizationId), databaseId = database.Id, token = material.RepositoryToken,
@@ -237,7 +237,7 @@ public sealed partial class DatabaseOperationProcessor
             var source = await BackupSourceAsync(database, ct);
             var fileName = operation.Id + ".db";
             var target = "/opt/minicloud/apps/" + source.App.Slug + "/data/sqlite/recovery-" + fileName;
-            var result = await ExecuteRemoteAsync(operation, source.Host.IpAddress!, "dispatch.py", new
+            var result = await ExecuteRemoteAsync(operation, source.Host, "dispatch.py", new
             {
                 action = "restore", repositoryUrl = repository.Url, @namespace = BackupNamespace(database.OrganizationId),
                 sourceDatabaseId = database.Id, backupId = artifact.BackupId, repositoryToken = material.RepositoryToken,
@@ -296,9 +296,9 @@ public sealed partial class DatabaseOperationProcessor
             await SaveOwnedDatabaseChangesAsync(operation, ct);
         }
         var targetCredentials = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(targetDatabase.EncryptedCredentialsJson!), Json)!;
-        await ExecuteRemoteAsync(operation, targetHost.IpAddress!, "operation.py", new { action = "create", container = "minicloud-" + targetApp.Slug + "-db-1", databaseName = targetCredentials.DatabaseName,
+        await ExecuteRemoteAsync(operation, targetHost, "operation.py", new { action = "create", container = "minicloud-" + targetApp.Slug + "-db-1", databaseName = targetCredentials.DatabaseName,
             username = targetCredentials.Username, password = targetCredentials.Password, adminUser = "minicloud", operationId = operation.Id }, ct);
-        await ExecuteRemoteAsync(operation, targetHost.IpAddress!, "dispatch.py", new
+        await ExecuteRemoteAsync(operation, targetHost, "dispatch.py", new
         {
             action = "restore", repositoryUrl = repository.Url, @namespace = BackupNamespace(database.OrganizationId), sourceDatabaseId = database.Id,
             backupId = artifact.BackupId, repositoryToken = material.RepositoryToken, encryptionKey = material.EncryptionKey,

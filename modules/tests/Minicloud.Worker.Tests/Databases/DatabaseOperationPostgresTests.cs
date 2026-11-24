@@ -141,8 +141,10 @@ public sealed class DatabaseOperationPostgresTests
         });
     }
 
-    [Fact]
-    public async Task DatabaseCreationStagesItsActualSshRequestsUnderExistingTemporaryParent()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DatabaseCreationStagesItsActualSshRequestsUnderExistingTemporaryParent(bool providerAddressChanged)
     {
         await WithPostgres(async options =>
         {
@@ -153,7 +155,7 @@ public sealed class DatabaseOperationPostgresTests
             db.Apps.Add(new MinicloudApp { Id = "app-runtime", OrganizationId = "org", Name = "Runtime", Slug = "runtime" });
             db.ServerInstances.Add(new ServerInstance { Id = "server-runtime", OrganizationId = "org", AppId = "app-runtime",
                 Provider = "hetzner", ProviderServerId = "synthetic-provider-server", IpAddress = "192.0.2.77",
-                Region = "fsn1", Status = "running", BootstrapStatus = "ready", CreatedAt = now, UpdatedAt = now });
+                Region = "fsn1", Status = "active", BootstrapStatus = "ready", CreatedAt = now, UpdatedAt = now });
             db.ManagedDatabases.Add(new ManagedDatabase { Id = "database_fixture", OrganizationId = "org", Name = "Synthetic",
                 Engine = "postgres", RecoverySourceAppId = "app-runtime", Status = "creating", Placement = "application", AccessMode = "internal" });
             db.ApiKeys.Add(new ApiKey { Id = "key", OrganizationId = "org", Name = "Synthetic", KeyPrefix = "synthetic",
@@ -169,15 +171,27 @@ public sealed class DatabaseOperationPostgresTests
             var encryption = new SecretEncryptionService(Options.Create(new SecretEncryptionOptions { EncryptionKey = "synthetic-staging-key" }));
             var processor = new DatabaseOperationProcessor(db, new ControlPlaneAuthorization(db), null!, null!, null!, encryption,
                 new IdGenerator(), TimeProvider.System, ssh, Options.Create(new SshDeploymentOptions { PrivateKeyContent = "MOCK_KEY" }),
-                Options.Create(new DatabasePlatformOptions()), null!);
+                Options.Create(new DatabasePlatformOptions()), null!, providerResolver: _ =>
+                    new Minicloud.Worker.Tests.Pipeline.ServerHostKeyPinSourceTests.StatusProvider(
+                        new Minicloud.Common.Providers.Models.ProviderServerStatus("synthetic-provider-server", "running",
+                            providerAddressChanged ? "192.0.2.78" : "192.0.2.77", IsRunning: true)));
 
             Assert.True(await processor.ProcessNextAsync(default));
 
+            if (providerAddressChanged)
+            {
+                Assert.Empty(ssh.Requests);
+                var failed = await db.DatabaseOperations.AsNoTracking().SingleAsync();
+                Assert.Equal("failed", failed.Status);
+                Assert.Equal("ssh_host_key_untrusted", failed.ErrorCode);
+                return;
+            }
             Assert.Equal(2, ssh.Requests.Count); // Database creation and its access reconciliation.
             Assert.All(ssh.Requests, request =>
             {
                 Assert.Equal(SshDeployStep.RemoteDirectoryFor(operation.Id), request.RemoteDirectory);
                 Assert.Equal("/tmp", Path.GetDirectoryName(request.RemoteDirectory));
+                Assert.Equal(new SshTarget("server-runtime", "192.0.2.77"), request.Target);
             });
             Assert.Equal("completed", (await db.DatabaseOperations.AsNoTracking().SingleAsync()).Status);
             Assert.Equal("ready", (await db.ManagedDatabases.AsNoTracking().SingleAsync()).Status);
@@ -306,7 +320,7 @@ public sealed class DatabaseOperationPostgresTests
             return Task.FromResult(new SshDeploymentResult(0, true, operationId,
                 ["__MINICLOUD_DATABASE_RESULT__={\"status\":\"completed\"}"]));
         }
-        public Task<int> ExecuteCommandAsync(string host, string username, string key, string command,
+        public Task<int> ExecuteCommandAsync(SshTarget target, string username, string key, string command,
             Func<string, string, Task> onLogLine, CancellationToken cancellationToken) => throw new InvalidOperationException("Unexpected remote command");
     }
 

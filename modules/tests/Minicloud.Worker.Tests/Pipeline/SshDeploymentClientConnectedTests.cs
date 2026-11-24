@@ -27,7 +27,7 @@ public sealed class SshDeploymentClientConnectedTests
         var operationId = "dbop_" + Guid.NewGuid().ToString("N");
         var client = new SshDeploymentClient(new SshDeploymentOptions
         {
-            Port = host.Port, ConnectionTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5)
+            Port = host.Port, HostKeyPinsFile = host.HostPinsFile, ConnectionTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5)
         });
         var request = new SshDeploymentRequest("127.0.0.1", "root", host.PrivateKey,
             missingParent + operationId, "{}",
@@ -55,7 +55,7 @@ public sealed class SshDeploymentClientConnectedTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var client = new SshDeploymentClient(new SshDeploymentOptions
         {
-            Port = host.Port, ConnectionTimeout = TimeSpan.FromSeconds(30), CommandTimeout = TimeSpan.FromSeconds(30)
+            Port = host.Port, HostKeyPinsFile = host.HostPinsFile, ConnectionTimeout = TimeSpan.FromSeconds(30), CommandTimeout = TimeSpan.FromSeconds(30)
         });
         var missing = new System.Collections.Concurrent.ConcurrentBag<string>();
         await Parallel.ForEachAsync(Enumerable.Range(0, runs),
@@ -88,10 +88,11 @@ public sealed class SshDeploymentClientConnectedTests
 
         public int Port { get; }
         public string PrivateKey { get; }
+        public string HostPinsFile => Path.Combine(_fixture.FullName, "host-pins");
 
         public static async Task<DisposableSshHost> StartAsync(string prefix, params string[] sshdOptions)
         {
-            var fixture = Directory.CreateTempSubdirectory(prefix);
+            var fixture = ServerHostKeyEnrollmentTests.CreateFixtureDirectory(prefix);
             var container = prefix + Guid.NewGuid().ToString("N");
             var started = false;
             try
@@ -120,6 +121,7 @@ public sealed class SshDeploymentClientConnectedTests
                     }
                     catch (SocketException) { await Task.Delay(50, timeout.Token); }
                 }
+                await WriteContainerPinsAsync(fixture, container);
                 return new DisposableSshHost(fixture, container, port, privateKey);
             }
             catch
@@ -146,7 +148,7 @@ public sealed class SshDeploymentClientConnectedTests
         int bootstrapStatus, bool dockerFails)
     {
         if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
-        var fixture = Directory.CreateTempSubdirectory("minicloud-preflight-");
+        var fixture = ServerHostKeyEnrollmentTests.CreateFixtureDirectory("minicloud-preflight-");
         var container = "minicloud-preflight-" + Guid.NewGuid().ToString("N");
         var containerStarted = false;
         try
@@ -211,6 +213,7 @@ public sealed class SshDeploymentClientConnectedTests
             var client = new SshDeploymentClient(new SshDeploymentOptions
             {
                 Port = port, ConnectionTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+                HostKeyPinsFile = await WriteContainerPinsAsync(fixture, container),
             });
             var error = await Assert.ThrowsAnyAsync<Exception>(() => client.ExecuteDeploymentAsync(
                 new SshDeploymentRequest("127.0.0.1", "root", privateKey, "/tmp/preflight",
@@ -244,6 +247,15 @@ public sealed class SshDeploymentClientConnectedTests
             if (containerStarted) await RunFixtureCommand("docker", "rm", "-f", container);
             fixture.Delete(recursive: true);
         }
+    }
+
+    private static async Task<string> WriteContainerPinsAsync(DirectoryInfo fixture, string container)
+    {
+        var output = await RunFixtureCommand("docker", "exec", container, "ssh-keygen", "-l", "-E", "sha256",
+            "-f", "/etc/ssh/ssh_host_ed25519_key.pub");
+        var path = Path.Combine(fixture.FullName, "host-pins");
+        await File.WriteAllTextAsync(path, "127.0.0.1 " + output.Split(' ')[1] + "\n");
+        return path;
     }
 
     private static async Task<string> RunFixtureCommand(string file, params string[] arguments)
@@ -287,7 +299,9 @@ public sealed class SshDeploymentClientConnectedTests
             while true; do sleep 1; done
             touch "$base/activated"
             """;
-        var client = new SshDeploymentClient(new SshDeploymentOptions { Port = int.Parse(port), ConnectionTimeout = TimeSpan.FromSeconds(10) });
+        var client = new SshDeploymentClient(new SshDeploymentOptions { Port = int.Parse(port),
+            HostKeyPinsFile = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SSH_HOST_PINS") ?? "",
+            ConnectionTimeout = TimeSpan.FromSeconds(10) });
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = new CancellationTokenSource();
         var username = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SSH_USERNAME") ?? "minicloud";
@@ -346,6 +360,7 @@ public sealed class SshDeploymentClientConnectedTests
             var client = new SshDeploymentClient(new SshDeploymentOptions
             {
                 Port = int.Parse(portText),
+                HostKeyPinsFile = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SSH_HOST_PINS") ?? "",
                 ConnectionTimeout = TimeSpan.FromSeconds(20),
                 CommandTimeout = TimeSpan.FromMinutes(2),
                 MaxParallelArtifactTransfers = 1,
@@ -398,6 +413,7 @@ public sealed class SshDeploymentClientConnectedTests
         var client = new SshDeploymentClient(new SshDeploymentOptions
         {
             Port = int.Parse(port), ConnectionTimeout = TimeSpan.FromSeconds(10),
+            HostKeyPinsFile = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SSH_HOST_PINS") ?? "",
         });
         var result = await client.ExecuteDeploymentAsync(new SshDeploymentRequest(
             "127.0.0.1", Environment.GetEnvironmentVariable("MINICLOUD_TEST_SSH_USERNAME") ?? "minicloud",

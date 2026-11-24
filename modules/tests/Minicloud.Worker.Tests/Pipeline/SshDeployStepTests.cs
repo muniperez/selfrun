@@ -455,6 +455,7 @@ public sealed class SshDeployStepTests : IClassFixture<WorkerSqliteTestHarness>
                 OwnershipToken = "owner-ssh-1",
                 OrganizationId = org.Id,
                 AppId = app.Id,
+                ServerInstanceId = "selected-server",
                 ServerIp = "192.0.2.77"
             };
 
@@ -462,6 +463,7 @@ public sealed class SshDeployStepTests : IClassFixture<WorkerSqliteTestHarness>
 
             Assert.NotNull(capturedRequest);
             Assert.Equal("192.0.2.77", capturedRequest.Host);
+            Assert.Equal("selected-server", capturedRequest.Target.ServerInstanceId);
             Assert.Equal("minicloud", capturedRequest.Username);
             Assert.Equal("MOCK_PRIVATE_KEY", capturedRequest.PrivateKeyContent);
             Assert.Contains("build_artifacts", capturedRequest.PayloadJson);
@@ -768,7 +770,7 @@ public sealed class SshDeployStepTests : IClassFixture<WorkerSqliteTestHarness>
                 : Task.FromResult(new SshDeploymentResult(0, true, "sha123", []));
 
         public Task<int> ExecuteCommandAsync(
-            string serverIp,
+            SshTarget target,
             string username,
             string privateKey,
             string command,

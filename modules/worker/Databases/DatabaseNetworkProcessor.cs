@@ -22,12 +22,12 @@ public sealed partial class DatabaseOperationProcessor
         var port = 20000 + (int)(BinaryPrimitives.ReadUInt32BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes(binding.Id))) % 40001);
         if (await db.ManagedDatabaseBindings.AnyAsync(x => x.AppId == app.Id && x.Id != binding.Id && x.Port == port && x.Status == "applied", ct))
         { throw new InvalidOperationException("Private connection port conflicts with another binding."); }
-        var client = await ExecuteRemoteAsync(operation, host.IpAddress, "private-network.py", new { action = "prepare-client", bindingId = binding.Id, dockerNetwork = "minicloud-" + app.Slug + "_default", operationId = operation.Id }, ct);
+        var client = await ExecuteRemoteAsync(operation, host, "private-network.py", new { action = "prepare-client", bindingId = binding.Id, dockerNetwork = "minicloud-" + app.Slug + "_default", operationId = operation.Id }, ct);
         await RequireApplicationMutationAsync(operation, app.Id, ct);
-        var server = await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "private-network.py", new { action = "authorize-client", bindingId = binding.Id, container = "minicloud-" + sourceApp.Slug + "-db-1", publicKey = client.GetProperty("publicKey").GetString(), operationId = operation.Id }, ct);
+        var server = await ExecuteRemoteAsync(operation, sourceHost, "private-network.py", new { action = "authorize-client", bindingId = binding.Id, container = "minicloud-" + sourceApp.Slug + "-db-1", publicKey = client.GetProperty("publicKey").GetString(), operationId = operation.Id }, ct);
         await RequireApplicationMutationAsync(operation, app.Id, ct);
         var credentials = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(database.EncryptedCredentialsJson!), Json)!;
-        var connection = await ExecuteRemoteAsync(operation, host.IpAddress, "private-network.py", new { action = "connect-client", bindingId = binding.Id, gateway = client.GetProperty("gateway").GetString(), serverIp = sourceHost.IpAddress, target = server.GetProperty("target").GetString(), hostKey = server.GetProperty("hostKey").GetString(), sshUser = server.GetProperty("sshUser").GetString(), credentials, port, operationId = operation.Id }, ct);
+        var connection = await ExecuteRemoteAsync(operation, host, "private-network.py", new { action = "connect-client", bindingId = binding.Id, gateway = client.GetProperty("gateway").GetString(), serverIp = sourceHost.IpAddress, target = server.GetProperty("target").GetString(), hostKey = server.GetProperty("hostKey").GetString(), sshUser = server.GetProperty("sshUser").GetString(), credentials, port, operationId = operation.Id }, ct);
         await RequireApplicationMutationAsync(operation, app.Id, ct);
         binding.Host = connection.GetProperty("host").GetString();
         binding.Port = port;
@@ -51,7 +51,7 @@ public sealed partial class DatabaseOperationProcessor
         {
             if (request.NetworkId is null) { throw new InvalidOperationException("A native network is required."); }
             var attached = await privateNetworks.AttachAsync(request.NetworkId, database.OrganizationId, sourceHost.Id, ct);
-            await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "native-network.py", new { privateIp = attached.IpAddress, subnetRange = attached.SubnetRange, operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, sourceHost, "native-network.py", new { privateIp = attached.IpAddress, subnetRange = attached.SubnetRange, operationId = operation.Id }, ct);
             if (!await db.ManagedDatabaseNetworks.AnyAsync(x => x.Id == attached.NetworkId && x.OrganizationId == database.OrganizationId && x.Status == "ready", ct))
             { throw new InvalidOperationException("Native network ownership changed."); }
             database.NetworkId = attached.NetworkId;
@@ -104,7 +104,7 @@ public sealed partial class DatabaseOperationProcessor
                 mode = fenced ? "internal" : neighbor.Id == database.Id ? mode : neighbor.AccessMode, privateIp = neighbor.PrivateIp, privateSubnet = subnet,
                 allowedCidrs = neighbor.Id == database.Id ? cidrs : JsonSerializer.Deserialize<string[]>(neighbor.AllowedCidrsJson, Json) });
         }
-        var applied = await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "dispatch.py", new { action = "access", appSlug = sourceApp.Slug, serverIp = sourceHost.IpAddress, databases = effective, operationId = operation.Id }, ct);
+        var applied = await ExecuteRemoteAsync(operation, sourceHost, "dispatch.py", new { action = "access", appSlug = sourceApp.Slug, serverIp = sourceHost.IpAddress, databases = effective, operationId = operation.Id }, ct);
         database.AccessMode = mode;
         database.AllowedCidrsJson = JsonSerializer.Serialize(cidrs, Json);
         var credentials = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(database.EncryptedCredentialsJson!), Json)!;
@@ -120,10 +120,10 @@ public sealed partial class DatabaseOperationProcessor
         var binding = await db.ManagedDatabaseBindings.SingleAsync(x => x.Id == request.RootElement.GetProperty("bindingId").GetString() && x.DatabaseId == database.Id && x.OrganizationId == operation.OrganizationId, ct);
         await RequireApplicationMutationAsync(operation, binding.AppId, ct);
         var host = await db.ServerInstances.SingleOrDefaultAsync(x => x.AppId == binding.AppId && x.OrganizationId == operation.OrganizationId, ct);
-        await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "private-network.py", new { action = "revoke-client", bindingId = binding.Id, operationId = operation.Id }, ct);
+        await ExecuteRemoteAsync(operation, sourceHost, "private-network.py", new { action = "revoke-client", bindingId = binding.Id, operationId = operation.Id }, ct);
         var deleting = await db.Apps.AnyAsync(x => x.Id == binding.AppId && x.OrganizationId == operation.OrganizationId && x.DeletionStatus != null, ct);
         if (host is not null && !deleting)
-            await ExecuteRemoteAsync(operation, host.IpAddress!, "private-network.py", new { action = "stop-client", bindingId = binding.Id, operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, host, "private-network.py", new { action = "stop-client", bindingId = binding.Id, operationId = operation.Id }, ct);
         binding.Status = "revoked";
         binding.Host = null;
         binding.UpdatedAt = clock.GetUtcNow();
