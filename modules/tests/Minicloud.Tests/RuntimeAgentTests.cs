@@ -54,6 +54,15 @@ public sealed class RuntimeAgentTests
     }
 
     [Fact]
+    public void JournalParsingSuppressesNoEntriesSentinel()
+    {
+        var records = LogParsing.ParseJournalLine("caddy", "caddy", 10,
+            "-- No entries --", DateTimeOffset.UnixEpoch);
+
+        Assert.Empty(records);
+    }
+
+    [Fact]
     public async Task CursorStore_ReloadsAcceptedCursors()
     {
         var path = Path.Combine(Path.GetTempPath(), $"minicloud-agent-state-{Guid.NewGuid():N}.json");

@@ -65,6 +65,12 @@ public sealed class RuntimeController : ControllerBase
 
             foreach (var record in request.Records)
             {
+                if (string.Equals(record.Message?.Trim(), "-- No entries --", StringComparison.Ordinal))
+                {
+                    rejected++;
+                    continue;
+                }
+
                 if (!RuntimeSourceAllowedForServices(record.Source, record.Service, deployedServices))
                 {
                     rejected++;

@@ -73,6 +73,10 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
         var caddyLogs = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "journalctl", ["-u", "caddy", "--since", "20 seconds ago", "--output", "short-iso", "--no-pager"], cancellationToken);
         foreach (var line in Lines(caddyLogs.ExitCode == 0 ? caddyLogs.Stdout : caddyLogs.Stderr))
         {
+            if (IsJournalNoEntriesSentinel(line))
+            {
+                continue;
+            }
             foreach (var record in LogParsing.ParseJournalLine("caddy", "caddy", StableSequence(line), line, now))
             {
                 Add(record);
@@ -102,6 +106,8 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
     public void Dispose() => _containers?.Dispose();
 
     private static string ServiceName(JsonElement container) => container.GetProperty("Config").GetProperty("Labels").GetProperty("com.docker.compose.service").GetString()!;
+    private static bool IsJournalNoEntriesSentinel(string line) =>
+        string.Equals(line.Trim(), "-- No entries --", StringComparison.Ordinal);
     private static void RequireSuccess(ProcessResult result, string operation)
     {
         if (result.ExitCode != 0)
