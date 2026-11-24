@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace Minicloud.Common.Providers.Aws;
 
@@ -18,6 +19,13 @@ public sealed class AwsOptions
     public string? RoleArn { get; set; }
     public string? SubnetId { get; set; }
     public string? SecurityGroupId { get; set; }
+
+    public static string ValidateRegion(string region)
+    {
+        if (region.Length > 63 || !Regex.IsMatch(region, @"\A[a-z]{2}(?:-[a-z]+){1,3}-[1-9][0-9]?\z", RegexOptions.CultureInvariant))
+            throw new FormatException("AWS region must be a valid region hostname component.");
+        return region;
+    }
 }
 
 public sealed record AwsParsedCredentials(
@@ -96,6 +104,8 @@ public sealed record AwsParsedCredentials(
             throw new InvalidOperationException("AWS credential accountId does not match the configured provider account scope.");
         }
 
+        if (parsed.Region is not null)
+            AwsOptions.ValidateRegion(parsed.Region);
         return parsed;
     }
 }

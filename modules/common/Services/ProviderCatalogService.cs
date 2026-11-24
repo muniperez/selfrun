@@ -134,6 +134,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
     public async Task<ProviderPlan> CreateAsync(CreateProviderPlanRequest request, CancellationToken ct)
     {
         var account = await LockAccountAsync(db, request.OrganizationId, request.ProviderAccountId, ct);
+        ProviderQualificationGate.EnsureQualified(account.ProviderType);
         if (!account.Enabled) throw new ProviderCatalogException("provider_disabled", "Enable the provider account before adding a plan.");
         var name = request.Name is null ? Guid.NewGuid().ToString() : request.Name.Trim();
         var key = NormalizeName(name);
@@ -222,6 +223,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
 
     public static void EnsureEnabled(ProviderPlan plan)
     {
+        ProviderQualificationGate.EnsureQualified(plan.ProviderAccount.ProviderType);
         if (!plan.Enabled) throw new ProviderCatalogException("plan_disabled", "This plan is disabled for new provisioning.");
         if (!plan.ProviderAccount.Enabled) throw new ProviderCatalogException("provider_disabled", "This provider account is disabled for new provisioning.");
     }

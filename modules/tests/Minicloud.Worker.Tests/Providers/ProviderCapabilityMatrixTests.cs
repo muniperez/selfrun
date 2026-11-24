@@ -45,7 +45,7 @@ public sealed class ProviderCapabilityMatrixTests
     [InlineData("akamai", CloudProvider.Linode)]
     [InlineData("scaleway", CloudProvider.Scaleway)]
     [InlineData("scw", CloudProvider.Scaleway)]
-    public void WireTypeAndAliasesResolveCleanlyAndGateOptInWorks(string alias, CloudProvider expected)
+    public void WireTypeAndAliasesRemainRegisteredButConfigurationCannotBypassQualification(string alias, CloudProvider expected)
     {
         var defaultRegistry = VpsProviderRegistry.CreateDefault();
         Assert.True(defaultRegistry.TryGetByWireType(alias, out var registration));
@@ -59,21 +59,24 @@ public sealed class ProviderCapabilityMatrixTests
                 EnabledGatedProviders = new HashSet<string>([alias], StringComparer.OrdinalIgnoreCase)
             }));
 
-        Assert.True(gated.IsSupported(expected));
-        Assert.True(gated.TryParseBuiltIn(alias, out var parsed));
-        Assert.Equal(expected, parsed);
-        Assert.Contains(gated.GetSupported(), d => d.BuiltInProvider == expected);
+        Assert.False(gated.IsSupported(expected));
+        Assert.False(gated.TryParseBuiltIn(alias, out _));
+        Assert.DoesNotContain(gated.GetSupported(), d => d.BuiltInProvider == expected);
+        var exception = Assert.Throws<Minicloud.Common.Services.ProviderCatalogException>(() =>
+            ProviderQualificationGate.EnsureQualified(expected));
+        Assert.Equal("provider_not_qualified", exception.Code);
+        Assert.True(gated.TryGet(expected, out _));
     }
 
     [Fact]
-    public void PerProviderEnabledOptionUnlocksSingleExperimentalProvider()
+    public void PerProviderEnabledOptionCannotUnlockExperimentalProviders()
     {
         var registry = VpsProviderRegistry.CreateDefault(
             aws: Options.Create(new AwsOptions { Enabled = true }),
             ovhcloud: Options.Create(new OvhcloudOptions { Enabled = true }));
 
-        Assert.True(registry.IsSupported(CloudProvider.Aws));
-        Assert.True(registry.IsSupported(CloudProvider.Ovhcloud));
+        Assert.False(registry.IsSupported(CloudProvider.Aws));
+        Assert.False(registry.IsSupported(CloudProvider.Ovhcloud));
         Assert.False(registry.IsSupported(CloudProvider.Azure));
         Assert.False(registry.IsSupported(CloudProvider.GoogleCloud));
         Assert.False(registry.IsSupported(CloudProvider.Linode));

@@ -489,6 +489,7 @@ public sealed class AwsClient :
 
     private Uri BuildEndpointUri(string region, string relativeQuery)
     {
+        AwsOptions.ValidateRegion(region);
         var rawBase = string.IsNullOrWhiteSpace(_options.BaseUrl)
             ? "https://ec2.{region}.amazonaws.com/"
             : _options.BaseUrl;

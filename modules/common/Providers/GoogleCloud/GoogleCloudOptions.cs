@@ -59,6 +59,8 @@ public sealed record GoogleCloudParsedCredentials(
 
         var payload = JsonSerializer.Deserialize<CredentialPayload>(trimmed)
             ?? throw new FormatException("Google Cloud credential JSON could not be parsed.");
+        if (payload.TokenUri is not null && payload.TokenUri != "https://oauth2.googleapis.com/token")
+            throw new FormatException("Google Cloud account credentials must use the canonical token URI.");
 
         var payloadProjectId = !string.IsNullOrWhiteSpace(payload.ProjectId)
             ? payload.ProjectId.Trim()

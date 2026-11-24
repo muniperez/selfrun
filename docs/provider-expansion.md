@@ -9,7 +9,7 @@ This guide documents the six SDK-independent cloud provider adapters built on to
 - **Akamai Connected Cloud / Linode** — `#350` (`linode`)
 - **Scaleway (Instances + Block Storage)** — `#351` (`scaleway`)
 
-> **Qualification gate**: None of the six expansion providers are advertised as live-qualified by default. `/api/provider-types` advertises only live-qualified providers (`hetzner`, `digital-ocean`, `vultr`) unless an operator explicitly enables an experimental provider via configuration (`<Provider>:Enabled=true` or `Providers:Registry:EnabledGatedProviders`). Do **not** promote a provider to `Qualified` until disposable live-account qualification passes for that provider.
+> **Qualification gate**: All six expansion providers remain unavailable for account onboarding, new plan selection and new server/volume allocations until individually qualified. `/api/provider-types` advertises only qualified built-ins (`hetzner`, `digital-ocean`, `vultr`). Neither `<Provider>:Enabled=true` nor `Providers:Registry:EnabledGatedProviders` bypasses this built-in gate. Adapter registrations and known-resource lookup/cleanup remain available. Do **not** promote a provider to `Qualified` until separately authorized qualification passes for that provider.
 
 ---
 
@@ -26,27 +26,22 @@ All nine built-in providers register through the shared extension contracts unde
 | `IBareMetalProviderClient` | `Providers/IBareMetalProviderClient.cs` | Dedicated bare-metal contract separating Public Cloud VMs from physical server inventory/provisioning, with an explicit commercial-ordering opt-in gate. |
 | `TokenRedactor` | `Providers/Common/TokenRedactor.cs` | Strips bearer tokens, AWS SigV4 credentials/signatures, OVH `$1$` signatures/keys, PEM private keys, `X-Auth-Token`, `clientSecret`, `secretAccessKey`, and `root_pass` from errors and logs. |
 
-### Enabling an Experimental Provider in Non-Production / Qualification Environments
+### Deferred adapters
 
-Enable individual adapters via standard ASP.NET Core / worker configuration:
+`ProviderQualificationGate` enforces the built-in descriptor's qualification state
+at allocation boundaries; registry admission uses the same qualification state.
+The adapter implementations remain available for local synthetic contract tests
+and known-resource management, not as qualified onboarding options. No live
+qualification or production activation is implied by these tests. Direct adapter
+construction is a low-level operator/test seam, not an onboarding bypass exposed
+by the API.
 
-```bash
-# Example: enable AWS and Scaleway for isolated qualification testing
-Aws__Enabled=true
-Scaleway__Enabled=true
-```
-
-Or via the central registry feature-gate list (`ProviderRegistryOptions`):
-
-```json
-{
-  "Providers": {
-    "Registry": {
-      "EnabledGatedProviders": ["aws", "azure", "gcp", "ovhcloud", "linode", "scaleway"]
-    }
-  }
-}
-```
+Account credentials cannot choose arbitrary authentication/API destinations.
+Azure and Google token endpoints come from trusted operator options; Google
+service-account JSON may retain its canonical `token_uri`. OVH account endpoint
+selection accepts only `ovh-eu`, `ovh-ca`, or `ovh-us`, mapped to canonical HTTPS
+origins. Custom endpoints belong in operator configuration. AWS region values
+must pass strict hostname-component validation before endpoint construction.
 
 ### Write-Only Credential Handling
 

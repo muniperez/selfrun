@@ -67,10 +67,6 @@ public sealed class GoogleCloudClient :
             _options.ClientEmail = parsed.ClientEmail;
             _options.PrivateKeyPem = parsed.PrivateKeyPem;
             _options.AccessToken = parsed.AccessToken;
-            if (!string.IsNullOrWhiteSpace(parsed.TokenUri))
-            {
-                _options.TokenEndpoint = parsed.TokenUri;
-            }
         }
     }
 

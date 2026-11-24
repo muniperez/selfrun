@@ -24,10 +24,12 @@ public sealed class ProviderExpansionCatalogApiTests
 {
     private const string OrganizationId = "org_provider_expansion";
 
-    [Fact]
-    public async Task DefaultConfigurationGatesExperimentalProvidersBeforeSecretsOrCloudDispatch()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnqualifiedProvidersAreGatedBeforeSecretsOrCloudDispatchEvenWhenEnabled(bool enableExperimental)
     {
-        await using var harness = await ApiHarness.CreateAsync(enableExperimental: false);
+        await using var harness = await ApiHarness.CreateAsync(enableExperimental);
         using var client = harness.CreateAuthenticatedClient();
 
         var types = (await client.GetFromJsonAsync<ProviderTypeResponse[]>("/api/provider-types"))!;
@@ -49,84 +51,7 @@ public sealed class ProviderExpansionCatalogApiTests
     }
 
     [Fact]
-    public async Task EnabledExperimentalProvidersAdvertiseCapabilitiesAndCreateWriteOnlyAccountsAndPlans()
-    {
-        await using var harness = await ApiHarness.CreateAsync(enableExperimental: true);
-        using var client = harness.CreateAuthenticatedClient();
-
-        var types = (await client.GetFromJsonAsync<ProviderTypeResponse[]>("/api/provider-types"))!;
-        Assert.Equal(9, types.Length);
-
-        var byType = types.ToDictionary(t => t.Type, StringComparer.Ordinal);
-        Assert.Equal("experimental", byType["aws"].QualificationState);
-        Assert.True(byType["aws"].SupportsStorage);
-        Assert.DoesNotContain("bare-metal", byType["aws"].Capabilities!.ComputeFamilies);
-        Assert.False(byType["aws"].RequiresProjectId);
-
-        Assert.Equal("experimental", byType["azure"].QualificationState);
-        Assert.True(byType["azure"].SupportsStorage);
-        Assert.True(byType["azure"].RequiresProjectId);
-
-        Assert.Equal("experimental", byType["gcp"].QualificationState);
-        Assert.True(byType["gcp"].SupportsStorage);
-        Assert.True(byType["gcp"].RequiresProjectId);
-
-        Assert.Equal("experimental", byType["ovhcloud"].QualificationState);
-        Assert.True(byType["ovhcloud"].SupportsStorage);
-        Assert.Contains("bare-metal", byType["ovhcloud"].Capabilities!.ComputeFamilies);
-        Assert.True(byType["ovhcloud"].RequiresProjectId);
-
-        Assert.Equal("experimental", byType["linode"].QualificationState);
-        Assert.True(byType["linode"].SupportsStorage);
-        Assert.False(byType["linode"].RequiresProjectId);
-
-        Assert.Equal("experimental", byType["scaleway"].QualificationState);
-        Assert.True(byType["scaleway"].SupportsStorage);
-        Assert.True(byType["scaleway"].RequiresProjectId);
-
-        var accountsToCreate = new (string WireType, string Name, string Credential, string? ProjectId, string Region, string Sku)[]
-        {
-            ("aws", "AWS Primary", """{"accessKeyId":"AKIATESTKEY","secretAccessKey":"synthetic-aws-secret"}""", "123456789012", "us-east-1", "t3.small"),
-            ("azure", "Azure Primary", """{"subscriptionId":"00000000-0000-0000-0000-000000000001","resourceGroup":"rg-mc","accessToken":"synthetic-azure-bearer"}""", "00000000-0000-0000-0000-000000000001/rg-mc", "eastus", "Standard_B2s"),
-            ("gcp", "GCP Primary", """{"projectId":"mc-gcp-proj","accessToken":"synthetic-gcp-bearer"}""", "mc-gcp-proj", "us-central1-a", "e2-small"),
-            ("ovhcloud", "OVH Primary", """{"applicationKey":"appkey","applicationSecret":"synthetic-ovh-appsec","consumerKey":"synthetic-ovh-ckey","projectId":"ovh-proj-1"}""", "ovh-proj-1", "GRA11", "d2-4"),
-            ("linode", "Linode Primary", "synthetic-linode-pat", null, "us-east", "g6-standard-1"),
-            ("scaleway", "Scaleway Primary", """{"secretKey":"synthetic-scw-secret","projectId":"scw-proj-1"}""", "scw-proj-1", "fr-par-1", "DEV1-S")
-        };
-
-        foreach (var spec in accountsToCreate)
-        {
-            var createResponse = await client.PostAsJsonAsync(
-                "/api/providers",
-                new CreateProviderRequest(OrganizationId, spec.Name, spec.WireType, spec.Credential, spec.ProjectId));
-            Assert.True(createResponse.IsSuccessStatusCode, $"{spec.WireType}: HTTP {(int)createResponse.StatusCode} {await createResponse.Content.ReadAsStringAsync()}");
-
-            var rawAccount = await createResponse.Content.ReadAsStringAsync();
-            Assert.DoesNotContain("synthetic-", rawAccount, StringComparison.OrdinalIgnoreCase);
-
-            var account = JsonSerializer.Deserialize<ProviderAccountResponse>(rawAccount, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-            Assert.Equal(spec.WireType, account.ProviderType);
-            Assert.Equal("valid", account.ValidationStatus);
-
-            var planResponse = await client.PostAsJsonAsync(
-                "/api/plans",
-                new CreateProviderPlanRequest(OrganizationId, account.Id, spec.Region, spec.Sku, Name: $"{spec.WireType}-small"));
-            Assert.True(planResponse.IsSuccessStatusCode, $"{spec.WireType} plan: HTTP {(int)planResponse.StatusCode} {await planResponse.Content.ReadAsStringAsync()}");
-        }
-
-        Assert.Equal(6, harness.Secrets.Values.Count);
-        Assert.NotEmpty(harness.Cloud.Requests);
-        Assert.All(harness.Cloud.Requests, req => Assert.Equal(HttpMethod.Get, req.Method));
-
-        await using var scope = harness.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
-        var storedAccounts = await db.ProviderAccounts.AsNoTracking().ToListAsync();
-        Assert.Equal(6, storedAccounts.Count);
-        Assert.DoesNotContain("synthetic-", JsonSerializer.Serialize(storedAccounts), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task MalformedStructuredCredentialsFailBeforeSecretStorageOrHttpDispatch()
+    public async Task MalformedStructuredCredentialsCannotBypassQualification()
     {
         await using var harness = await ApiHarness.CreateAsync(enableExperimental: true);
         using var client = harness.CreateAuthenticatedClient();
@@ -136,14 +61,14 @@ public sealed class ProviderExpansionCatalogApiTests
             "/api/providers",
             new CreateProviderRequest(OrganizationId, "Bad AWS", "aws", """{"accessKeyId":"AKIAONLY"}"""));
         Assert.Equal(HttpStatusCode.BadRequest, awsBad.StatusCode);
-        Assert.Equal("provider_credential_invalid", (await awsBad.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        Assert.Equal("provider_type_unsupported", (await awsBad.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
 
         // GCP mismatched projectId vs account.ProjectId
         var gcpMismatch = await client.PostAsJsonAsync(
             "/api/providers",
             new CreateProviderRequest(OrganizationId, "Mismatch GCP", "gcp", """{"projectId":"proj-a","accessToken":"tok"}""", "proj-b"));
         Assert.Equal(HttpStatusCode.BadRequest, gcpMismatch.StatusCode);
-        Assert.Equal("provider_credential_invalid", (await gcpMismatch.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
+        Assert.Equal("provider_type_unsupported", (await gcpMismatch.Content.ReadFromJsonAsync<ErrorResponse>())!.Error.Code);
 
         Assert.Empty(harness.Secrets.Values);
         Assert.Empty(harness.Cloud.Requests);

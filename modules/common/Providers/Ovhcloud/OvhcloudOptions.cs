@@ -77,6 +77,13 @@ public sealed record OvhcloudParsedCredentials(
             payload.ApplicationSecret.Trim(),
             payload.ConsumerKey.Trim(),
             projectId,
-            payload.Endpoint?.Trim());
+            payload.Endpoint?.Trim() switch
+            {
+                null or "" => null,
+                "ovh-eu" or "https://eu.api.ovh.com/1.0/" => "https://eu.api.ovh.com/1.0/",
+                "ovh-ca" or "https://ca.api.ovh.com/1.0/" => "https://ca.api.ovh.com/1.0/",
+                "ovh-us" or "https://api.us.ovhcloud.com/1.0/" => "https://api.us.ovhcloud.com/1.0/",
+                _ => throw new FormatException("OVHcloud account endpoint must be ovh-eu, ovh-ca, or ovh-us; configure custom endpoints through trusted operator options.")
+            });
     }
 }

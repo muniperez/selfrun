@@ -33,8 +33,9 @@ public sealed partial class SshDeployStep
             : await scope.ServiceProvider.GetRequiredService<ProviderAccountClientFactory>().CreateAsync(context.OrganizationId, server.ProviderAccountId, ct);
         var provider = client as IStorageVolumeProvider
             ?? throw new PipelineStepException("storage_provider_unsupported", "Provider does not support customer storage.");
-        var allowAllocation = server.ProviderAccountId is null || await db.ProviderAccounts.AnyAsync(x => x.Id == server.ProviderAccountId &&
-            x.OrganizationId == context.OrganizationId && x.Enabled, ct);
+        var allowAllocation = ProviderQualificationGate.IsQualified(context.Provider) &&
+            (server.ProviderAccountId is null || await db.ProviderAccounts.AnyAsync(x => x.Id == server.ProviderAccountId &&
+            x.OrganizationId == context.OrganizationId && x.Enabled, ct));
         var service = new AppStorageService(db, provider);
         try
         {

@@ -29,6 +29,8 @@ public class ProviderAccountClientFactory(
             ?? throw new ProviderCatalogException("provider_not_found", "Provider account was not found in this organization.");
         if (!allowDisabled && !account.Enabled)
             throw new ProviderCatalogException("provider_disabled", "This provider account is disabled for new allocation.");
+        if (!allowDisabled)
+            ProviderQualificationGate.EnsureQualified(account.ProviderType);
         if (account.CredentialStoreProvider != OpenBaoSecretStore.ProviderName || string.IsNullOrWhiteSpace(account.CredentialPath))
             throw new SecretStoreUnavailableException("Provider account credentials are unavailable.");
         var credential = await secrets.GetAsync(new StoredSecretReference(account.CredentialStoreProvider,

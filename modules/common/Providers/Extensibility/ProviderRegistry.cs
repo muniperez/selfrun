@@ -45,8 +45,8 @@ public sealed class ProviderRegistryOptions
 
     /// <summary>
     /// Optional explicit allowlist of gated/experimental provider wire types enabled
-    /// for local testing or disposable qualification runs. Empty in production so
-    /// unqualified providers are never advertised or selectable.
+    /// for custom extension testing. Built-in providers still require individual
+    /// qualification; configuration cannot bypass that gate.
     /// </summary>
     public HashSet<string> EnabledGatedProviders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
@@ -183,6 +183,10 @@ public sealed class VpsProviderRegistry : IVpsProviderRegistry
     private bool IsRegistrationSupported(IVpsProviderRegistration registration)
     {
         var descriptor = registration.Descriptor;
+        if (descriptor.BuiltInProvider is not null && descriptor.QualificationState != ProviderQualificationState.Qualified)
+        {
+            return false;
+        }
         if (descriptor.QualificationState == ProviderQualificationState.Qualified)
         {
             return true;
@@ -222,6 +226,18 @@ public sealed class VpsProviderRegistry : IVpsProviderRegistry
             new LinodeProviderRegistration(linode ?? Options.Create(new LinodeOptions())),
             new ScalewayProviderRegistration(scaleway ?? Options.Create(new ScalewayOptions()))
         ], options);
+    }
+}
+
+public static class ProviderQualificationGate
+{
+    public static bool IsQualified(CloudProvider provider) =>
+        BuiltInProviderDescriptors.ForBuiltIn(provider).QualificationState == ProviderQualificationState.Qualified;
+
+    public static void EnsureQualified(CloudProvider provider)
+    {
+        if (!IsQualified(provider))
+            throw new ProviderCatalogException("provider_not_qualified", "This provider is unavailable for new allocation until individually qualified.");
     }
 }
 

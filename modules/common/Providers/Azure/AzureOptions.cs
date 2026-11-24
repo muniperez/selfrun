@@ -62,6 +62,8 @@ public sealed record AzureParsedCredentials(
 
         var payload = JsonSerializer.Deserialize<CredentialPayload>(trimmed)
             ?? throw new FormatException("Azure credential JSON could not be parsed.");
+        if (payload.TokenEndpoint is not null)
+            throw new FormatException("Configure Azure token endpoints through trusted operator options, not account credentials.");
 
         var subscriptionId = string.IsNullOrWhiteSpace(payload.SubscriptionId) ? expectedSub : payload.SubscriptionId.Trim();
         var resourceGroup = string.IsNullOrWhiteSpace(payload.ResourceGroup) ? expectedRg : payload.ResourceGroup.Trim();

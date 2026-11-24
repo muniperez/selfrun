@@ -401,6 +401,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
 
     private async Task EnsureAllocationEnabledAsync(PipelineStepContext context, CancellationToken ct)
     {
+        ProviderQualificationGate.EnsureQualified(context.Provider);
         if (context.ProviderAccountId is null) { return; }
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();

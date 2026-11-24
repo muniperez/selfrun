@@ -96,7 +96,7 @@ public sealed class AzureProviderRegistration(IOptions<AzureOptions> options) : 
         {
             Enabled = options.Value.Enabled,
             BaseUrl = options.Value.BaseUrl,
-            TokenEndpoint = parsed.TokenEndpoint ?? options.Value.TokenEndpoint,
+            TokenEndpoint = options.Value.TokenEndpoint,
             ApiVersion = options.Value.ApiVersion,
             DefaultLocation = options.Value.DefaultLocation,
             DefaultImage = options.Value.DefaultImage,
@@ -129,7 +129,7 @@ public sealed class GoogleCloudProviderRegistration(IOptions<GoogleCloudOptions>
         {
             Enabled = options.Value.Enabled,
             BaseUrl = options.Value.BaseUrl,
-            TokenEndpoint = parsed.TokenUri ?? options.Value.TokenEndpoint,
+            TokenEndpoint = options.Value.TokenEndpoint,
             DefaultZone = options.Value.DefaultZone,
             DefaultImage = options.Value.DefaultImage,
             ProjectId = parsed.ProjectId,
