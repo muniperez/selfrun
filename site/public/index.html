@@ -4,14 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Self-hosted application hosting. Deploy and manage Docker services in your own cloud account.">
-  <title>MiniCloud | Self-hosted application hosting</title>
+  <meta property="og:title" content="Selfrun | Self-hosted application hosting">
+  <meta property="og:description" content="Deploy and manage Docker services in your own cloud account.">
+  <meta property="og:url" content="https://selfrun.dev/">
+  <link rel="canonical" href="https://selfrun.dev/">
+  <title>Selfrun | Self-hosted application hosting</title>
   <link rel="icon" href="./mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <header class="frame header">
-    <a class="brand" href="./"><img src="./mark.svg" alt="" width="30" height="30">MiniCloud</a>
+    <a class="brand" href="./"><img src="./mark.svg" alt="" width="30" height="30">Selfrun</a>
     <nav aria-label="Main">
       <a href="#deployments">Deployments</a>
       <a href="#setup">Setup</a>
@@ -21,10 +25,10 @@
 
   <main class="frame" id="main">
     <section class="hero" aria-labelledby="headline">
-      <h1 id="headline">MiniCloud hosts apps on your servers</h1>
-      <p>Use the MiniCloud CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
+      <h1 id="headline">Selfrun hosts apps on your servers</h1>
+      <p>Use the Selfrun CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
       <div class="actions">
-        <a class="primary" href="#setup">Set up MiniCloud</a>
+        <a class="primary" href="#setup">Set up Selfrun</a>
         <a class="secondary" href="https://github.com/muniventures/minicloud">View source on GitHub</a>
       </div>
     </section>
@@ -32,43 +36,43 @@
     <section class="feature" id="deployments" aria-labelledby="deployments-title">
       <div>
         <h2 id="deployments-title">Deploy Docker services</h2>
-        <p>Run <code>minicloud init</code> in an app repo and select the services to deploy. By default, <code>minicloud deploy</code> builds images with Docker Buildx, publishes them to MiniCloud's registry, and deploys the selected services.</p>
+        <p>Run <code>selfrun init</code> in an app repo and select the services to deploy. By default, <code>selfrun deploy</code> builds images with Docker Buildx, publishes them to Selfrun's registry, and deploys the selected services.</p>
         <p>One app can have a public frontend, a private API, and a worker. Update them separately, give staging its own environment, and attach an HTTPS domain to a public service. The dashboard shows deployment history and which services are running.</p>
         <a href="#first-deploy">Deploy an app</a>
       </div>
       <figure>
-        <a href="./media/services.png"><img src="./media/services.png" width="1679" height="850" alt="MiniCloud dashboard showing public and private services, their addresses, and whether they are running" loading="lazy"></a>
+        <a href="./media/services.png"><img src="./media/services.png" width="1679" height="850" alt="Selfrun dashboard showing public and private services, their addresses, and whether they are running" loading="lazy"></a>
       </figure>
     </section>
 
     <section class="section" id="setup" aria-labelledby="setup-title">
-      <h2 id="setup-title">Set up MiniCloud</h2>
-      <p class="intro">A <strong>MiniCloud instance</strong> is your installation of MiniCloud. Its dashboard, API, container registry, and deployment worker run together on one virtual private server (VPS). It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
-      <p class="intro">If someone already runs MiniCloud for your team, get the dashboard address and sign-in details from them and <a href="#cli-login">sign in from your terminal</a>.</p>
+      <h2 id="setup-title">Set up Selfrun</h2>
+      <p class="intro">A <strong>Selfrun instance</strong> is your installation of Selfrun. Its dashboard, API, container registry, and deployment worker run together on one virtual private server (VPS). It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
+      <p class="intro">If someone already runs Selfrun for your team, get the dashboard address and sign-in details from them and <a href="#cli-login">sign in from your terminal</a>.</p>
 
       <ol class="setup-list">
         <li id="self-host">
-          <h3>Install MiniCloud on a VPS</h3>
+          <h3>Install Selfrun on a VPS</h3>
           <ol class="install-list">
             <li><a href="./downloads.html">Download the CLI for your platform</a> or <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#publish-from-a-clone">build it from source</a>.</li>
-            <li>Run the setup wizard.<pre tabindex="0"><code>minicloud seed</code></pre></li>
+            <li>Run the setup wizard.<pre tabindex="0"><code>selfrun seed</code></pre></li>
           </ol>
         </li>
 
         <li id="cli-login">
           <h3>Sign in from your terminal</h3>
           <p>Use the CLI you set up above. If you’re joining an existing server, use the <a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md">CLI version your team provides</a>. Replace <code>cloud.example.com</code> with your dashboard hostname.</p>
-          <pre tabindex="0"><code>minicloud instance add work cloud.example.com
-minicloud login</code></pre>
+          <pre tabindex="0"><code>selfrun instance add work cloud.example.com
+selfrun login</code></pre>
           <p><code>work</code> is a name for this server on your computer. Complete sign-in in the browser, then return to your terminal.</p>
         </li>
 
         <li id="first-deploy">
           <h3>Deploy your first app</h3>
           <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
-          <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>minicloud init</code> to select or create an app, choose the folders and plan, and write <code>minicloud.yml</code>. Your first deployment can create a billable VPS under that plan.</p>
-          <pre tabindex="0"><code>minicloud init</code></pre>
-          <p>Before deploying, review <code>minicloud.yml</code>. Keep the app ID that <code>init</code> wrote and check each service’s folder, Dockerfile, port, and public access. Here is an example <code>services</code> section for a public frontend and a private API:</p>
+          <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>selfrun init</code> to select or create an app, choose the folders and plan, and write <code>selfrun.yml</code> (existing <code>minicloud.yml</code> files remain supported). Your first deployment can create a billable VPS under that plan.</p>
+          <pre tabindex="0"><code>selfrun init</code></pre>
+          <p>Before deploying, review <code>selfrun.yml</code>. Keep the app ID that <code>init</code> wrote and check each service’s folder, Dockerfile, port, and public access. Here is an example <code>services</code> section for a public frontend and a private API:</p>
           <pre tabindex="0"><code>services:
   web:
     sourcePath: web
@@ -81,8 +85,8 @@ minicloud login</code></pre>
     port: 8080
     public: false</code></pre>
           <p>Deploy the configured services:</p>
-          <pre tabindex="0"><code>minicloud deploy</code></pre>
-          <p>For a public service, use the hostname under your configured app domain. With Cloudflare DNS management enabled, MiniCloud creates the record. Otherwise open the run in <strong>Deployments</strong> and follow its DNS message: create an A record for the printed hostname pointing to the app VPS IP. After DNS resolves and deployment completes, open the public URL.</p>
+          <pre tabindex="0"><code>selfrun deploy</code></pre>
+          <p>For a public service, use the hostname under your configured app domain. With Cloudflare DNS management enabled, Selfrun creates the record. Otherwise open the run in <strong>Deployments</strong> and follow its DNS message: create an A record for the printed hostname pointing to the app VPS IP. After DNS resolves and deployment completes, open the public URL.</p>
           <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#create-a-deployment-config">Configure service folders, ports, and Dockerfiles</a></p>
         </li>
 
@@ -91,11 +95,11 @@ minicloud login</code></pre>
           <ul class="manage-list">
             <li><strong>Deployments</strong> shows whether a deploy is queued, running, or finished. Open a deployment to see its progress and logs.</li>
             <li><strong>Apps → your app → Services</strong> shows which services are running and their addresses. Choose the environment first if you have more than one.</li>
-            <li><strong>Apps → your app → Logs</strong> shows runtime output when log collection is enabled. Set regular variables in <code>minicloud.yml</code> with <code>env</code>. Store secret values under <strong>Secrets</strong> and reference them with <code>secretEnv</code>.</li>
+            <li><strong>Apps → your app → Logs</strong> shows runtime output when log collection is enabled. Set regular variables in <code>selfrun.yml</code> with <code>env</code>. Store secret values under <strong>Secrets</strong> and reference them with <code>secretEnv</code>.</li>
             <li><strong>Apps → your app → Domains</strong> is where you add a hostname, verify it with DNS, and attach it to a public service.</li>
             <li><strong>App settings</strong> has controls to delete an app or environment. Back up data before deleting it and confirm the VPS is gone in your provider console. Retained volumes can still incur charges.</li>
           </ul>
-          <p>After changing code or configuration, run <code>minicloud deploy</code> again to update the changed services. Use <code>minicloud status --watch</code> to follow a deploy and <code>minicloud logs my-app</code> for runtime logs when log collection is enabled.</p>
+          <p>After changing code or configuration, run <code>selfrun deploy</code> again to update the changed services. Use <code>selfrun status --watch</code> to follow a deploy and <code>selfrun logs my-app</code> for runtime logs when log collection is enabled.</p>
           <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#status-logs-and-apps">Deployment status and runtime logs</a></p>
         </li>
 
@@ -106,7 +110,7 @@ minicloud login</code></pre>
       <h2 id="architecture-title">What runs on each server</h2>
       <p class="intro">The instance VPS hosts the dashboard, API, registry, and worker. PostgreSQL stores control-plane state, and OpenBao stores secrets. A separate app VPS runs your containers. OpenTelemetry log ingestion is optional.</p>
       <figure class="diagram">
-        <a href="./media/minicloud-architecture.svg"><img src="./media/minicloud-architecture.svg" alt="The dashboard and CLI call the MiniCloud API on the control plane. The worker deploys Docker services to app servers." width="1120" height="480" loading="lazy"></a>
+        <a href="./media/selfrun-architecture.svg"><img src="./media/selfrun-architecture.svg" alt="The dashboard and CLI call the Selfrun API on the control plane. The worker deploys Docker services to app servers." width="1120" height="480" loading="lazy"></a>
       </figure>
       <ul class="projects" aria-label="Open-source components">
         <li><a href="https://www.postgresql.org/"><img src="./media/postgresql.svg" alt="" width="28" height="28">PostgreSQL</a></li>
@@ -117,7 +121,7 @@ minicloud login</code></pre>
   </main>
 
   <footer class="frame footer">
-    <span>MiniCloud</span>
+    <span>Selfrun</span>
     <a href="https://github.com/muniventures/minicloud">Source and documentation</a>
   </footer>
 </body>

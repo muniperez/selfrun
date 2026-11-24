@@ -20,8 +20,15 @@ acceptance are separate. Date: 2026-11-09.
 
 ## Brand
 
+Product name: **Selfrun** (`selfrun.dev`, formerly MiniCloud; see
+[Selfrun Rename Migration Guide](docs/selfrun-rename-migration.md)).
 Practical, restrained and operational. Preserve the dashboard shell and existing
 theme. Avoid decorative metrics, large promotional headers and new design systems.
+
+- **Logo mark**: Monochrome **Split S** geometric mark (`site/public/mark.svg`
+  for the marketing site; `modules/dashboard/public/favicon.svg` and
+  `modules/dashboard/app/core/layout/SelfrunMark.tsx` for the dashboard).
+  Palette: ink `#171717`, paper `#fafafa`; inline UI mark uses `currentColor`.
 
 ## Product goals
 
@@ -90,7 +97,7 @@ success state or imply that a credential check proves available provider quota.
 
 Use Plans, Provider accounts, Add plan, Edit, Duplicate plan and Save changes.
 Use Server type as the user-facing label for the provider SKU. Use Location for
-region codes. Keep provider accounts distinct from Minicloud API keys. Avoid
+region codes. Keep provider accounts distinct from Selfrun API keys. Avoid
 backend identifiers and secret-store implementation details in ordinary forms.
 
 ## Implementation constraints

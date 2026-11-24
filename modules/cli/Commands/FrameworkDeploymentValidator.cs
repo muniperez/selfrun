@@ -79,7 +79,7 @@ internal static class FrameworkDeploymentValidator
     private static ConfigDiagnostic ViteDiagnostic(string serviceName, string hostname, string appDomain) =>
         new(
             $"services.{serviceName}.sourcePath",
-            $"Vite preview blocks the Minicloud host '{hostname}'. Add preview.allowedHosts: ['.{appDomain}'] or the exact hostname to vite.config.* before deploying.");
+            $"Vite preview blocks the Selfrun host '{hostname}'. Add preview.allowedHosts: ['.{appDomain}'] or the exact hostname to vite.config.* before deploying.");
 
     private static bool ConfigAllowsHost(string configText, string hostname, string appDomain)
     {

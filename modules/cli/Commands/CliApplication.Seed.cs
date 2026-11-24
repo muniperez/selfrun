@@ -35,7 +35,7 @@ public sealed partial class CliApplication
             {
                 var name = args[i];
                 SeedGuard.Require(SeedFlags.Contains(name) || SeedValues.Contains(name),
-                    "Unknown seed option. Credentials are accepted only by hidden prompt or --credential-file; see minicloud help seed.");
+                    "Unknown seed option. Credentials are accepted only by hidden prompt or --credential-file; see selfrun help seed.");
                 var value = "true";
                 if (!SeedFlags.Contains(name))
                 {
@@ -86,7 +86,7 @@ public sealed partial class CliApplication
                 journal.Save(state);
                 _console.WriteLine(JsonSerializer.Serialize(state.Plan, SeedJournal.Json));
                 _console.WriteLine("Approval digest: " + state.Plan.Approval);
-                _console.WriteLine($"No provider mutations. Review all costs/restrictions, then: minicloud seed resume {operation} --approve {state.Plan.Approval} --credential-file <protected-path>");
+                _console.WriteLine($"No provider mutations. Review all costs/restrictions, then: selfrun seed resume {operation} --approve {state.Plan.Approval} --credential-file <protected-path>");
                 return CliExitCodes.Success;
             }
             SeedGuard.Require(operation is not null, "Supply the recorded operation ID.");
@@ -188,15 +188,15 @@ public sealed partial class CliApplication
         var profile = new InstanceProfile(name, "https://" + state.Plan.Selection.Domain, state.Plan.Selection.AppDomain);
         _environment.Instances.AddWithoutSelecting(profile);
         state.InstanceName = name; journal.Save(state);
-        _console.WriteLine($"Saved instance {name} without changing active selection/authentication. Select it explicitly: minicloud instance use {name}");
+        _console.WriteLine($"Saved instance {name} without changing active selection/authentication. Select it explicitly: selfrun instance use {name}");
     }
 
     private async Task<int> RegisterSeedProviderAsync(SeedState state, SeedJournal journal, IReadOnlyDictionary<string, string> options, CancellationToken ct)
     {
         SeedGuard.Require(state.Phase == "complete", "Complete verified browser setup and independent recovery handoff first.");
         SeedGuard.Require(options.ContainsKey("--register-provider"), "Provider registration is optional and defaults to no import. Explicitly supply --register-provider to opt in.");
-        SeedGuard.Require(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(CliEnvironment.TokenEnvironmentVariable)),
-            "Unset MINICLOUD_TOKEN. Seed never silently reuses an environment token; select normal instance-scoped authentication explicitly.");
+        SeedGuard.Require(string.IsNullOrWhiteSpace(CliEnvironment.GetTokenEnvironmentVariable()),
+            "Unset SELFRUN_TOKEN / MINICLOUD_TOKEN. Seed never silently reuses an environment token; select normal instance-scoped authentication explicitly.");
         await new SeedHost().VerifyHttpsAsync(state, ct);
         var environment = CliEnvironment.ForInstance(new(state.InstanceName ?? state.Id, "https://" + state.Plan.Selection.Domain, state.Plan.Selection.AppDomain), _environment.ConfigHome);
         var store = new TokenStore(environment);
@@ -260,15 +260,15 @@ public sealed partial class CliApplication
 
     private void PrintSeedHelp()
     {
-        _console.WriteLine("minicloud seed [--state-dir PROTECTED_DIR]  Guided first install or resume in a terminal; no JSON to write.");
+        _console.WriteLine("selfrun seed [--state-dir PROTECTED_DIR]  Guided first install or resume in a terminal; no JSON to write.");
         _console.WriteLine("New guided installs manage SSH automatically. Preserve the protected state to resume.");
         _console.WriteLine("Choose an exact signed server release or explicitly choose a local-source TEST install when available.");
         _console.WriteLine(SeedLocalSource.EmbeddedTag is { } tag ? $"Embedded TEST source: {tag}"
             : "No embedded TEST source in this build. See docs/stateless-seed.md for builds that carry it.");
-        _console.WriteLine("Stateless seed: minicloud seed new-id (generate once; retain the caller-owned seedId).");
-        _console.WriteLine("minicloud seed plan|apply|check --config PROTECTED_JSON --report NONSECRET_JSON [--ssh-key USER_PRIVATE_KEY] [--use-ssh-agent] [--credential-file PATH]");
+        _console.WriteLine("Stateless seed: selfrun seed new-id (generate once; retain the caller-owned seedId).");
+        _console.WriteLine("selfrun seed plan|apply|check --config PROTECTED_JSON --report NONSECRET_JSON [--ssh-key USER_PRIVATE_KEY] [--use-ssh-agent] [--credential-file PATH]");
         _console.WriteLine("Initial creation only: plan/apply --new-seed plus explicit config initialCreationIntent; apply --approve EXACT_DIGEST. Never repeat an uncertain create.");
-        _console.WriteLine("minicloud seed export --config PROTECTED_JSON --report NONSECRET_JSON --ssh-key USER_PRIVATE_KEY --recovery-dir SEPARATE_PRIVATE_DIR [--setup-token]");
+        _console.WriteLine("selfrun seed export --config PROTECTED_JSON --report NONSECRET_JSON --ssh-key USER_PRIVATE_KEY --recovery-dir SEPARATE_PRIVATE_DIR [--setup-token]");
         _console.WriteLine("Optional plan key generation: --generate-ssh-key EXPLICIT_NEW_PATH [--ssh-key-passphrase | --no-ssh-key-passphrase]; default question protects the key.");
         _console.WriteLine("Explicit local source alternative (plan/apply only): --local-source PROTECTED_ARCHIVE --source-sha256 REVIEWED_SHA256. Builds on the dedicated VPS; no GitHub release or product registry. See docs/stateless-seed.md.");
         _console.WriteLine("Explicit --refresh-partial-source requires local mode and a prepared installation before OpenBao initialization; preserves original IDs/credentials and retains the previous bundle.");
@@ -278,10 +278,10 @@ public sealed partial class CliApplication
         _console.WriteLine("Standalone seed (no instance/login): --provider hetzner|digitalocean|vultr --region ID --size ID --domain HOST --app-domain SUFFIX --server-version server-vX.Y.Z [--credential-file PATH]");
         _console.WriteLine("Operator access: [--ssh-public-key PUBLIC_FILE ...] [--generate-ssh-key NEW_PRIVATE_PATH [--ssh-key-passphrase | --no-ssh-key-passphrase]] or --no-operator-ssh-key.");
         _console.WriteLine("Interactive planning offers public-key input or generation and asks about passphrase protection (default yes). Only public keys reach the VPS; the bootstrap identity stays separate.");
-        _console.WriteLine("minicloud seed status OP | resume OP [--approve DIGEST] [--confirm-console-fingerprint SHA256:...] [--instance-name NAME] [--credential-file PATH]");
-        _console.WriteLine("minicloud seed cleanup OP [--confirm-cleanup DIGEST] [--credential-file PATH] (forbidden after installation starts)");
-        _console.WriteLine("minicloud seed export OP --recovery-dir NEW_LOCAL_PATH [--setup-token [--rotate-setup-token]] [--ack-recovery INSTALLATION_ID]");
-        _console.WriteLine("minicloud seed register-provider OP --register-provider --organization ID --provider-name NAME [--use-existing-auth] [--credential-file PATH] [--confirm-provider-import DIGEST | --confirm-provider-account ID]");
+        _console.WriteLine("selfrun seed status OP | resume OP [--approve DIGEST] [--confirm-console-fingerprint SHA256:...] [--instance-name NAME] [--credential-file PATH]");
+        _console.WriteLine("selfrun seed cleanup OP [--confirm-cleanup DIGEST] [--credential-file PATH] (forbidden after installation starts)");
+        _console.WriteLine("selfrun seed export OP --recovery-dir NEW_LOCAL_PATH [--setup-token [--rotate-setup-token]] [--ack-recovery INSTALLATION_ID]");
+        _console.WriteLine("selfrun seed register-provider OP --register-provider --organization ID --provider-name NAME [--use-existing-auth] [--credential-file PATH] [--confirm-provider-import DIGEST | --confirm-provider-account ID]");
         _console.WriteLine("Legacy journal mode requires an exact signed published server, public HTTPS and an independent console SSH fingerprint. See docs/seed.md.");
     }
 }

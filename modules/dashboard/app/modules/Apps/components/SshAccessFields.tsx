@@ -108,7 +108,7 @@ export function SshAccessFields({
     onChange({ ...draft, publicKey: value });
   };
   const modes: { value: SshAccessMode; label: string }[] = [
-    { value: "none", label: "Minicloud access only" },
+    { value: "none", label: "Selfrun access only" },
     { value: "existing", label: "Use existing key" },
     { value: "new", label: "Add new public key" },
   ];
@@ -136,7 +136,7 @@ export function SshAccessFields({
         ))}
       </div>
       {draft.mode === "none" ? (
-        <p className="text-xs text-muted-foreground">Minicloud keeps its own deployment access. No personal key is added to the server.</p>
+        <p className="text-xs text-muted-foreground">Selfrun keeps its own deployment access. No personal key is added to the server.</p>
       ) : null}
       {draft.mode === "existing" && account ? (
         <ExistingKeyPicker idPrefix={idPrefix} state={inventory.state} retry={inventory.retry} draft={draft} accountId={account.id} onChange={onChange} />
@@ -198,7 +198,7 @@ function ExistingKeyPicker({
     return (
       <div role="alert" data-inventory-state={state.status} className="grid gap-2 text-xs text-destructive">
         <p><span className="font-medium">{title}.</span> {state.message}</p>
-        <p className="text-muted-foreground">You can still choose Minicloud access only or add a new public key.</p>
+        <p className="text-muted-foreground">You can still choose Selfrun access only or add a new public key.</p>
         {state.status !== "denied" ? <Button type="button" size="sm" variant="outline" className="w-fit" onClick={retry}>Retry</Button> : null}
       </div>
     );

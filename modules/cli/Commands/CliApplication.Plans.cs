@@ -8,7 +8,7 @@ public sealed partial class CliApplication
     private async Task<int> RunPlansAsync(string[] args, CancellationToken ct)
     {
         if (args.FirstOrDefault() != "list")
-            throw new CliCommandException(CliExitCodes.ValidationError, "Usage: minicloud plans list [--organization <id>] [--config path]");
+            throw new CliCommandException(CliExitCodes.ValidationError, "Usage: selfrun plans list [--organization <id>] [--config path]");
         var me = await _apiClient.GetMeAsync(ct);
         var organizationId = GetOption(args, "--organization");
         if (organizationId is null)

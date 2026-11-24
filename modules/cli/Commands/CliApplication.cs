@@ -183,7 +183,7 @@ public sealed partial class CliApplication
 
     private void PrintVersion()
     {
-        _console.WriteLine($"minicloud version {GetVersion()}");
+        _console.WriteLine($"selfrun version {GetVersion()}");
         var source = typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         var match = System.Text.RegularExpressions.Regex.Match(source ?? "", @"(?:sha\.|\+)([0-9a-f]{40})(?:$|\.)");
         if (match.Success) _console.WriteLine("source " + match.Groups[1].Value);
@@ -191,18 +191,18 @@ public sealed partial class CliApplication
 
     private void PrintHelp()
     {
-        _console.WriteLine($"Minicloud CLI version {GetVersion()}");
+        _console.WriteLine($"Selfrun CLI version {GetVersion()} (formerly MiniCloud)");
         _console.WriteLine("Deploy and manage containerized services on your private infrastructure.");
         _console.WriteLine();
         _console.WriteLine("Usage:");
-        _console.WriteLine("  minicloud <command> [arguments] [options]");
+        _console.WriteLine("  selfrun <command> [arguments] [options]");
         _console.WriteLine();
         _console.WriteLine("Commands:");
         _console.WriteLine("  github          Set up and inspect your organization-owned GitHub connection");
         _console.WriteLine("  seed            Provision the first control plane without an instance/login");
-        _console.WriteLine("  init            Initialize a new application and generate minicloud.yml");
+        _console.WriteLine("  init            Initialize a new application and generate selfrun.yml");
         _console.WriteLine("  add-service     Add a new service configuration to an existing application");
-        _console.WriteLine("  deploy          Deploy changed services to Minicloud (or 'all' / '--all' to deploy all)");
+        _console.WriteLine("  deploy          Deploy changed services to Selfrun (or 'all' / '--all' to deploy all)");
         _console.WriteLine("  environments    List, create, update, or rename application environments");
         _console.WriteLine("  plans           List named plans in an organization");
         _console.WriteLine("  providers       Add provider accounts, list SSH keys, or import legacy bindings");
@@ -213,10 +213,10 @@ public sealed partial class CliApplication
         _console.WriteLine("  apps            List or inspect applications");
         _console.WriteLine("  domains         Manage custom domains and service subdomains");
         _console.WriteLine("  secrets         Manage encrypted environment secrets");
-        _console.WriteLine("  login           Log in to Minicloud using an API token");
+        _console.WriteLine("  login           Log in to Selfrun using an API token");
         _console.WriteLine("  token           Set active API authentication token");
-        _console.WriteLine("  instance        Add, list, or switch Minicloud instances");
-        _console.WriteLine("  help            Show help for Minicloud commands (or 'minicloud help <command>')");
+        _console.WriteLine("  instance        Add, list, or switch Selfrun instances");
+        _console.WriteLine("  help            Show help for Selfrun commands (or 'selfrun help <command>')");
         _console.WriteLine("  version         Show the current CLI version (-v, --version)");
         _console.WriteLine();
         _console.WriteLine("Options:");
@@ -224,8 +224,8 @@ public sealed partial class CliApplication
         _console.WriteLine("  -v, --version   Show the current CLI version");
         _console.WriteLine("  --env           Show active CLI environment configuration");
         _console.WriteLine();
-        _console.WriteLine("Run 'minicloud help <command>' or 'minicloud <command> --help' for details on a command.");
-        _console.WriteLine("Documentation: https://github.com/muniventures/minicloud");
+        _console.WriteLine("Run 'selfrun help <command>' or 'selfrun <command> --help' for details on a command.");
+        _console.WriteLine("Documentation: https://selfrun.dev (source: https://github.com/muniventures/minicloud)");
     }
 
     private int PrintCommandHelp(string command)
@@ -245,82 +245,82 @@ public sealed partial class CliApplication
             case "instance add":
             case "instance list":
             case "instance use":
-                _console.WriteLine("Manage Minicloud instances (add validates and activates the instance)");
-                _console.WriteLine("  minicloud instance add <name> <url>");
-                _console.WriteLine("  minicloud instance list");
-                _console.WriteLine("  minicloud instance use <name>");
+                _console.WriteLine("Manage Selfrun instances (add validates and activates the instance)");
+                _console.WriteLine("  selfrun instance add <name> <url>");
+                _console.WriteLine("  selfrun instance list");
+                _console.WriteLine("  selfrun instance use <name>");
                 _console.WriteLine("URL is the main service hostname, e.g. cloud.example.com; the API is api.cloud.example.com.");
                 return CliExitCodes.Success;
             case "assets":
             case "assets publish":
-                _console.WriteLine("Usage: minicloud assets publish <name> [--config minicloud.yml]");
+                _console.WriteLine("Usage: selfrun assets publish <name> [--config selfrun.yml]");
                 _console.WriteLine("Publishes an assets.<name> source definition through the deployment queue. Builds stay on the customer VPS.");
                 _console.WriteLine("Activation requires an explicit service assetMounts.<name>.releaseId pin.");
                 return CliExitCodes.Success;
             case "deploy cancel":
-                _console.WriteLine("Usage: minicloud deploy cancel <deployment-number> [--organization <id>]");
+                _console.WriteLine("Usage: selfrun deploy cancel <deployment-number> [--organization <id>]");
                 _console.WriteLine("Stops further deployment work. Changes already applied are not restored.");
                 _console.WriteLine("Deployment numbers look like 20261110.1 and are scoped to an organization.");
                 return CliExitCodes.Success;
             case "deploy":
-                _console.WriteLine("Deploy services to Minicloud");
+                _console.WriteLine("Deploy services to Selfrun");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud deploy [service ...] [--all] [--config minicloud.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
-                _console.WriteLine("  minicloud deploy cancel <deployment-number> [--organization <id>]");
-                _console.WriteLine("  minicloud deploy branch [--config minicloud.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
+                _console.WriteLine("  selfrun deploy [service ...] [--all] [--config selfrun.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
+                _console.WriteLine("  selfrun deploy cancel <deployment-number> [--organization <id>]");
+                _console.WriteLine("  selfrun deploy branch [--config selfrun.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
                 _console.WriteLine();
                 _console.WriteLine("Details:");
                 _console.WriteLine("  - Automatically checks SHA-256 checksums of each service against active API state and deploys only changed services.");
-                _console.WriteLine("  - Specify service names (e.g. 'minicloud deploy api') to deploy only those services.");
+                _console.WriteLine("  - Specify service names (e.g. 'selfrun deploy api') to deploy only those services.");
                 _console.WriteLine("  - Local image builds are the default for sourcePath services; buildMode: source opts into server builds.");
                 _console.WriteLine("  - --build-mode source|local overrides selected services; local requires a local Docker buildx builder.");
-                _console.WriteLine("  - 'minicloud deploy all' or '--all' deploys all configured services unconditionally.");
+                _console.WriteLine("  - 'selfrun deploy all' or '--all' deploys all configured services unconditionally.");
                 _console.WriteLine("  - --environment <name> selects a named environment; required when more than one exists.");
                 _console.WriteLine("  - --plan <name> overrides YAML plan, then the selected environment's saved plan. No provider argument is needed.");
-                _console.WriteLine("  - 'minicloud deploy branch' deploys all configured services into an isolated preview branch environment.");
+                _console.WriteLine("  - 'selfrun deploy branch' deploys all configured services into an isolated preview branch environment.");
                 _console.WriteLine();
                 _console.WriteLine("Options:");
                 _console.WriteLine("  --all                   Deploy all configured services unconditionally");
-                _console.WriteLine("  --config <path>         Path to config file (default: minicloud.yml)");
+                _console.WriteLine("  --config <path>         Path to config file (default: selfrun.yml, fallback: minicloud.yml)");
                 _console.WriteLine("  --database <type>       Provision database (e.g. postgres, none)");
                 _console.WriteLine("  --pgpassword <pwd>      Postgres database password");
-                _console.WriteLine($"  --build-jobs N          Run 1 to {MinicloudConfigValidator.MaxDeploymentServices} local builds at once. Overrides buildJobs in minicloud.yml (default: {DefaultBuildJobs})");
+                _console.WriteLine($"  --build-jobs N          Run 1 to {MinicloudConfigValidator.MaxDeploymentServices} local builds at once. Overrides buildJobs in selfrun.yml (default: {DefaultBuildJobs})");
                 _console.WriteLine("  --no-publish            Deploy pre-built images without building or publishing");
                 return CliExitCodes.Success;
 
             case "environments":
-                _console.WriteLine("minicloud environments list [--config path]");
-                _console.WriteLine($"minicloud environments create <name> --plan <plan> [--database sqlite|postgres] {SshOptionsUsage} [--config path]");
-                _console.WriteLine($"minicloud environments update <name> {SshOptionsUsage} [--config path]");
-                _console.WriteLine("minicloud environments rename <name> <new-name> [--config path]");
+                _console.WriteLine("selfrun environments list [--config path]");
+                _console.WriteLine($"selfrun environments create <name> --plan <plan> [--database sqlite|postgres] {SshOptionsUsage} [--config path]");
+                _console.WriteLine($"selfrun environments update <name> {SshOptionsUsage} [--config path]");
+                _console.WriteLine("selfrun environments rename <name> <new-name> [--config path]");
                 _console.WriteLine("SSH options select a personal key installed when the environment's VPS is first provisioned:");
-                _console.WriteLine("  --ssh-key <key-id>            Existing key from 'minicloud providers ssh-keys --plan <plan>' (providers:read)");
+                _console.WriteLine("  --ssh-key <key-id>            Existing key from 'selfrun providers ssh-keys --plan <plan>' (providers:read)");
                 _console.WriteLine("  --ssh-public-key-file <path>  New OpenSSH public key (.pub) registered at provisioning (providers:write)");
                 _console.WriteLine("  --ssh-key-name <name>         Name for the new key (default: key comment or file name)");
-                _console.WriteLine("Omitting SSH options keeps Minicloud-only access on create and the current selection on update. Selections are immutable after server allocation.");
+                _console.WriteLine("Omitting SSH options keeps Selfrun-only access on create and the current selection on update. Selections are immutable after server allocation.");
                 return CliExitCodes.Success;
 
             case "plans":
-                _console.WriteLine("minicloud plans list [--organization <id>] [--config path]");
+                _console.WriteLine("selfrun plans list [--organization <id>] [--config path]");
                 return CliExitCodes.Success;
             case "providers":
-                _console.WriteLine("minicloud providers add --organization <id> --name <name> --provider hetzner|digital-ocean|vultr [--project-id <id>] [--os-id <id>]");
+                _console.WriteLine("selfrun providers add --organization <id> --name <name> --provider hetzner|digital-ocean|vultr [--project-id <id>] [--os-id <id>]");
                 _console.WriteLine("Reads the cloud token from the provider environment variable; tokens are never command arguments.");
-                _console.WriteLine("minicloud providers import-legacy --manifest <path>");
-                _console.WriteLine("minicloud providers ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");
+                _console.WriteLine("selfrun providers import-legacy --manifest <path>");
+                _console.WriteLine("selfrun providers ssh-keys <provider-account-id> | --plan <plan> [--organization <id>]");
                 return CliExitCodes.Success;
             case "github":
-                _console.WriteLine("minicloud github setup [--organization <id>] [--no-browser]");
-                _console.WriteLine("minicloud github status [--organization <id>] [--json]");
-                _console.WriteLine("minicloud github repositories|disconnect|reconnect|reconcile [--organization <id>]");
+                _console.WriteLine("selfrun github setup [--organization <id>] [--no-browser]");
+                _console.WriteLine("selfrun github status [--organization <id>] [--json]");
+                _console.WriteLine("selfrun github repositories|disconnect|reconnect|reconcile [--organization <id>]");
                 _console.WriteLine("Setup opens the dashboard; approve App creation and installation separately. No App credentials are returned to the CLI.");
                 return CliExitCodes.Success;
             case "deploy branch":
                 _console.WriteLine("Deploy all services to an isolated branch environment");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud deploy branch [--config minicloud.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
+                _console.WriteLine("  selfrun deploy branch [--config selfrun.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
                 _console.WriteLine();
                 _console.WriteLine("Details:");
                 _console.WriteLine("  Creates or reuses an isolated child preview app for the current Git branch and deploys all services.");
@@ -331,18 +331,18 @@ public sealed partial class CliApplication
                 _console.WriteLine("Manage branch environments");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud deploy branch [--config minicloud.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
-                _console.WriteLine("  minicloud branch destroy [branch] [--config minicloud.yml]");
+                _console.WriteLine("  selfrun deploy branch [--config selfrun.yml] [--database db] [--pgpassword password] [--build-mode source|local] [--build-jobs N] [--no-publish]");
+                _console.WriteLine("  selfrun branch destroy [branch] [--config selfrun.yml]");
                 _console.WriteLine();
                 _console.WriteLine("Details:");
-                _console.WriteLine("  'minicloud branch destroy' tears down the preview environment and VPS for the specified or current branch.");
+                _console.WriteLine("  'selfrun branch destroy' tears down the preview environment and VPS for the specified or current branch.");
                 return CliExitCodes.Success;
 
             case "status":
                 _console.WriteLine("Show deployment status and service URLs");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud status [deployment-number] [--watch] [--organization <id>] [--diagnostics]");
+                _console.WriteLine("  selfrun status [deployment-number] [--watch] [--organization <id>] [--diagnostics]");
                 _console.WriteLine();
                 _console.WriteLine("Details:");
                 _console.WriteLine("  Deployment numbers look like 20261110.1 and are scoped to an organization.");
@@ -350,7 +350,7 @@ public sealed partial class CliApplication
                 _console.WriteLine();
                 _console.WriteLine("Options:");
                 _console.WriteLine("  --watch                 Continuously watch and stream deployment status until finished");
-                _console.WriteLine("  --organization <id>     Organization to resolve the number in (default: the token's only organization, or the app in minicloud.yml)");
+                _console.WriteLine("  --organization <id>     Organization to resolve the number in (default: the token's only organization, or the app in selfrun.yml)");
                 _console.WriteLine("  --diagnostics           Also print the internal deployment ID for support correlation");
                 return CliExitCodes.Success;
 
@@ -358,14 +358,14 @@ public sealed partial class CliApplication
                 _console.WriteLine("View and tail logs for an application or deployment");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud logs [app|deployment-number] [--service service] [--source source] [--tail count] [--since duration] [--organization <id>]");
+                _console.WriteLine("  selfrun logs [app|deployment-number] [--service service] [--source source] [--tail count] [--since duration] [--organization <id>]");
                 _console.WriteLine();
                 _console.WriteLine("Details:");
                 _console.WriteLine("  A deployment number such as 20261110.1 shows that deployment's logs; any other value is an app name or ID.");
                 _console.WriteLine("  Without an argument, shows logs of the latest deployment in the selected organization.");
                 _console.WriteLine();
                 _console.WriteLine("Options:");
-                _console.WriteLine("  --organization <id>     Organization for deployment numbers (default: the token's only organization, or the app in minicloud.yml)");
+                _console.WriteLine("  --organization <id>     Organization for deployment numbers (default: the token's only organization, or the app in selfrun.yml)");
                 _console.WriteLine("  --service <name>        Filter logs by service name");
                 _console.WriteLine("  --source <name>         Filter by log source (e.g. docker, system)");
                 _console.WriteLine("  --tail <count>          Number of log lines to show (default: 100)");
@@ -373,14 +373,14 @@ public sealed partial class CliApplication
                 return CliExitCodes.Success;
 
             case "init":
-                _console.WriteLine("Initialize a new Minicloud application");
+                _console.WriteLine("Initialize a new Selfrun application");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine($"  minicloud init [--advanced] [--config minicloud.yml] [--force] {SshOptionsUsage}");
+                _console.WriteLine($"  selfrun init [--advanced] [--config selfrun.yml] [--force] {SshOptionsUsage}");
                 _console.WriteLine();
                 _console.WriteLine("Options:");
                 _console.WriteLine("  --advanced              Interactive prompt for advanced routing, ports, and domains");
-                _console.WriteLine("  --config <path>         Output configuration file path (default: minicloud.yml)");
+                _console.WriteLine("  --config <path>         Output configuration file path (default: selfrun.yml)");
                 _console.WriteLine("  --force                 Overwrite existing configuration file without prompting");
                 _console.WriteLine("  --ssh-key <key-id>      Existing provider SSH key for a newly created app's first environment");
                 _console.WriteLine("  --ssh-public-key-file <path>  New OpenSSH public key for a newly created app; never a private key");
@@ -388,23 +388,23 @@ public sealed partial class CliApplication
                 return CliExitCodes.Success;
 
             case "add-service":
-                _console.WriteLine("Add a new service to an existing Minicloud application");
+                _console.WriteLine("Add a new service to an existing Selfrun application");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud add-service [app] [--app app] [--advanced] [--config minicloud.service.yml] [--force]");
+                _console.WriteLine("  selfrun add-service [app] [--app app] [--advanced] [--config selfrun.service.yml] [--force]");
                 _console.WriteLine();
                 _console.WriteLine("Options:");
                 _console.WriteLine("  --app <app>             App slug or ID (defaults to interactive selection)");
                 _console.WriteLine("  --advanced              Interactive prompt for advanced routing and domains");
-                _console.WriteLine("  --config <path>         Output configuration file path (default: minicloud.service.yml)");
+                _console.WriteLine("  --config <path>         Output configuration file path (default: selfrun.service.yml)");
                 _console.WriteLine("  --force                 Overwrite existing service configuration without prompting");
                 return CliExitCodes.Success;
 
             case "login":
-                _console.WriteLine("Log in to Minicloud");
+                _console.WriteLine("Log in to Selfrun");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud login --token <token>");
+                _console.WriteLine("  selfrun login --token <token>");
                 return CliExitCodes.Success;
 
             case "token":
@@ -412,17 +412,17 @@ public sealed partial class CliApplication
                 _console.WriteLine("Set active API authentication token");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud token set <token>");
+                _console.WriteLine("  selfrun token set <token>");
                 return CliExitCodes.Success;
 
             case "apps":
             case "apps list":
             case "apps inspect":
-                _console.WriteLine("Manage Minicloud applications");
+                _console.WriteLine("Manage Selfrun applications");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud apps list");
-                _console.WriteLine("  minicloud apps inspect <app>");
+                _console.WriteLine("  selfrun apps list");
+                _console.WriteLine("  selfrun apps inspect <app>");
                 return CliExitCodes.Success;
 
             case "domains":
@@ -433,10 +433,10 @@ public sealed partial class CliApplication
                 _console.WriteLine("Manage custom domains and service subdomains");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud domains list --app <app>");
-                _console.WriteLine("  minicloud domains add-subdomain --app <app> --service <service> [--label label]");
-                _console.WriteLine("  minicloud domains disable --app <app> --hostname <host>");
-                _console.WriteLine("  minicloud domains delete --app <app> --hostname <host>");
+                _console.WriteLine("  selfrun domains list --app <app>");
+                _console.WriteLine("  selfrun domains add-subdomain --app <app> --service <service> [--label label]");
+                _console.WriteLine("  selfrun domains disable --app <app> --hostname <host>");
+                _console.WriteLine("  selfrun domains delete --app <app> --hostname <host>");
                 return CliExitCodes.Success;
 
             case "secrets":
@@ -446,9 +446,9 @@ public sealed partial class CliApplication
                 _console.WriteLine("Manage application environment secrets");
                 _console.WriteLine();
                 _console.WriteLine("Usage:");
-                _console.WriteLine("  minicloud secrets list [--app app]");
-                _console.WriteLine("  minicloud secrets set [--app app] <NAME> [--value value]");
-                _console.WriteLine("  minicloud secrets remove [--app app] <NAME>");
+                _console.WriteLine("  selfrun secrets list [--app app]");
+                _console.WriteLine("  selfrun secrets set [--app app] <NAME> [--value value]");
+                _console.WriteLine("  selfrun secrets remove [--app app] <NAME>");
                 return CliExitCodes.Success;
 
             case "help":
@@ -469,7 +469,7 @@ public sealed partial class CliApplication
 
     private void PrintEnvironment()
     {
-        _console.WriteLine("Minicloud CLI environment");
+        _console.WriteLine("Selfrun CLI environment");
         _environment.LoadActiveInstance();
         _console.WriteLine($"Active instance: {_environment.ActiveInstanceName ?? "none"}");
         _console.WriteLine($"API URL: {(string.IsNullOrEmpty(_environment.ApiBaseUrl) ? "not configured" : _environment.ApiBaseUrl)}");

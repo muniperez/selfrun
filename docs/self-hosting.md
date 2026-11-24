@@ -1,4 +1,9 @@
-# Self-hosting Minicloud
+# Self-hosting Selfrun
+
+> **Rename note:** MiniCloud is transitioning to **Selfrun** (`selfrun.dev`).
+> Server bundle paths, `MINICLOUD_SECRETS_DIR`, `/opt/minicloud`, and `server-v*`
+> package conventions are intentionally preserved during Stages 1–2; see
+> [Selfrun Rename Migration Guide](selfrun-rename-migration.md).
 
 The packaged self-hosting stack is under active development. T40's server
 release foundation is merged, but no server images or release bundle have been

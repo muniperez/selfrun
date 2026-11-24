@@ -1,9 +1,16 @@
-# CLI Documentation
+# Selfrun CLI Documentation
 
-The current command is `minicloud`.
+> **Rename note:** MiniCloud is transitioning to **Selfrun** (`selfrun.dev`).
+> The primary command is `selfrun`. Installers also retain the `minicloud`
+> binary/alias, and the CLI accepts both `SELFRUN_*` and `MINICLOUD_*`
+> environment variables as well as `selfrun.yml` / `minicloud.yml` and
+> `selfrun.secrets.env` / `minicloud.secrets.env`. See
+> [Selfrun Rename Migration Guide](selfrun-rename-migration.md).
 
-For owner-controlled GitHub App setup, run `minicloud github setup --no-browser`,
-then inspect `minicloud github status` and `minicloud github repositories`.
+The primary command is `selfrun` (legacy alias `minicloud` remains supported).
+
+For owner-controlled GitHub App setup, run `selfrun github setup --no-browser`,
+then inspect `selfrun github status` and `selfrun github repositories`.
 See [GitHub App setup, installation and recovery](github-app.md).
 
 CLI source builds remain supported. A new exact signed binary distribution
@@ -13,19 +20,21 @@ To retain the source workflow, use Git and the .NET 10 SDK:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh |
-  MINICLOUD_INSTALL_MODE=source sh
+  SELFRUN_INSTALL_MODE=source sh
 ```
 
 In explicit source mode, the installer defaults to source commit
-`7416e1408ecd9d11f58c638f0caf1c28e5fa6e3f`. Set `MINICLOUD_VERSION` to a full
-lowercase commit SHA or an exact CLI version tag such as `v3.1.0` to select
-another revision; branches, `latest`, and `server-v*` tags are rejected.
-`MINICLOUD_INSTALL_DIR` selects a writable install directory; `MINICLOUD_REPO`
-is accepted only as `muniventures/minicloud`. Windows users can run `install.ps1`
-with the same environment variables. Git and the .NET 10 SDK are needed to
-build; the self-contained installed CLI does not need a separate .NET runtime.
-Historical release assets remain available but are not used by these installers
-or the reusable customer workflow without the new signed delivery contract.
+`7416e1408ecd9d11f58c638f0caf1c28e5fa6e3f`. Set `SELFRUN_VERSION` (or legacy
+`MINICLOUD_VERSION`) to a full lowercase commit SHA or an exact CLI version tag
+such as `v3.1.0` to select another revision; branches, `latest`, and `server-v*`
+tags are rejected. `SELFRUN_INSTALL_DIR` (or `MINICLOUD_INSTALL_DIR`) selects a
+writable install directory; `SELFRUN_REPO` / `MINICLOUD_REPO` is accepted only
+as `muniventures/minicloud`. Windows users can run `install.ps1` with the same
+environment variables. Git and the .NET 10 SDK are needed to build; the
+self-contained installed CLI does not need a separate .NET runtime. Both
+`selfrun` and `minicloud` commands are installed. Historical release assets
+remain available but are not used by these installers or the reusable customer
+workflow without the new signed delivery contract.
 
 For the unpublished `0.0.1-rc.1` server candidate, explicitly select merged CLI
 source `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` instead of the historical
@@ -33,18 +42,19 @@ installer default:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/muniventures/minicloud/main/install.sh |
-  MINICLOUD_INSTALL_MODE=source MINICLOUD_VERSION=2a5ae0ccea6c3dd680b4146586ec0668c60c8b93 sh
+  SELFRUN_INSTALL_MODE=source SELFRUN_VERSION=2a5ae0ccea6c3dd680b4146586ec0668c60c8b93 sh
 ```
 
-In PowerShell, set `$env:MINICLOUD_INSTALL_MODE = "source"` and
-`$env:MINICLOUD_VERSION` to that same SHA before invoking
-`install.ps1`. The reusable workflow already defaults to this source revision.
-This is a candidate source/protocol pairing, **not tested runtime compatibility**;
-see the [candidate handoff and remaining gates](public-candidate-handoff.md).
+In PowerShell, set `$env:SELFRUN_INSTALL_MODE = "source"` and
+`$env:SELFRUN_VERSION` (or the legacy `MINICLOUD_*` equivalents) to that same
+SHA before invoking `install.ps1`. The reusable workflow already defaults to
+this source revision. This is a candidate source/protocol pairing, **not tested
+runtime compatibility**; see the
+[candidate handoff and remaining gates](public-candidate-handoff.md).
 
 ## Seed the first control plane
 
-`minicloud seed` plans independently of instance discovery/login for Hetzner,
+`selfrun seed` plans independently of instance discovery/login for Hetzner,
 DigitalOcean and Vultr. Explicit region/size/current-price approval, independently
 verified SSH identity, manual dashboard/API DNS, signed installer, public HTTPS,
 protected independent recovery export and normal browser onboarding are required.
@@ -63,28 +73,31 @@ without credentials before saving the instance and its application domain.
 Configure DNS and TLS for the derived API hostname on your installation.
 
 ```sh
-minicloud instance add personal cloud.example.com
-minicloud instance add work https://cloud.company.com
-minicloud instance list
-minicloud instance use personal
-minicloud login
+selfrun instance add personal cloud.example.com
+selfrun instance add work https://cloud.company.com
+selfrun instance list
+selfrun instance use personal
+selfrun login
 ```
 
 Adding an instance validates it and makes it active. Listing marks the active
 instance with `*`. Switching revalidates the instance. Each instance keeps its
 own authentication token; log in once per instance. Saved instances and the active
-selection live under `~/.config/minicloud/` (or `$XDG_CONFIG_HOME/minicloud/`).
-Help and version commands work without configuring an instance.
-HTTP is supported only for local development, e.g. `http://localhost:3210`
-with the API reachable at `http://api.localhost:3210`.
+selection live under `~/.config/selfrun/` (or `$XDG_CONFIG_HOME/selfrun/`); if
+that directory does not yet exist and a legacy `~/.config/minicloud/` directory
+is present, the CLI falls back to it automatically. Override with
+`SELFRUN_CONFIG_DIR` (or `MINICLOUD_CONFIG_DIR`). Help and version commands work
+without configuring an instance. HTTP is supported only for local development,
+e.g. `http://localhost:3210` with the API reachable at
+`http://api.localhost:3210`.
 
 Existing users must add their instance explicitly and log in again; the previous
 shared token file is not reused. For the hosted installation, use
-`minicloud instance add muni cloud.muni.dev`.
+`selfrun instance add muni cloud.muni.dev`.
 
 ## Authenticate
 
-Create an API key in the Minicloud console with these scopes:
+Create an API key in the Selfrun console with these scopes:
 
 - `apps:read`
 - `apps:write`
@@ -93,25 +106,27 @@ Create an API key in the Minicloud console with these scopes:
 - `plans:read`
 
 Existing API keys retain their original scopes. Named-plan listing and the
-new-app wizard require `plans:read`; log in again with `minicloud login` or use
+new-app wizard require `plans:read`; log in again with `selfrun login` or use
 an appropriately scoped key when upgrading from an older CLI login.
 
 Then log in:
 
 ```bash
-minicloud login --token <MINICLOUD_API_KEY>
+selfrun login --token <SELFRUN_API_KEY>
 ```
 
 Or store the token directly:
 
 ```bash
-minicloud token set <MINICLOUD_API_KEY>
+selfrun token set <SELFRUN_API_KEY>
 ```
 
 For CI or temporary shell use:
 
 ```bash
-export MINICLOUD_TOKEN=<MINICLOUD_API_KEY>
+export SELFRUN_TOKEN=<SELFRUN_API_KEY>
+# Legacy alias also supported:
+# export MINICLOUD_TOKEN=<SELFRUN_API_KEY>
 ```
 
 ## Create A Deployment Config
@@ -119,28 +134,28 @@ export MINICLOUD_TOKEN=<MINICLOUD_API_KEY>
 From your app repository:
 
 ```bash
-minicloud init
+selfrun init
 ```
 
-The wizard first lists existing apps in your organization and includes `Create new app`. The generated config always includes the selected or newly created `appId`.
+The wizard first lists existing apps in your organization and includes `Create new app`. The generated config (`selfrun.yml`) always includes the selected or newly created `appId`. Existing `minicloud.yml` and `minicloudconfig.yml` files continue to be auto-discovered when `selfrun.yml` is not present.
 
-Next, `minicloud init` scans up to five folder levels for web services, excluding generated dependency/build folders such as `node_modules`, `.git`, `.next`, `bin`, `obj`, `target`, `dist`, `build`, and `out`. It detects common Node web frameworks, .NET web projects, Spring Boot web projects, and Dockerfile-backed service folders. Non-web .NET projects and Android projects are ignored. Detected services are shown in a multi-select list; use Space to select one or more services and Enter to save. The final `Custom` row is selected with Enter and lets you provide a service name, path, and Dockerfile path manually.
+Next, `selfrun init` scans up to five folder levels for web services, excluding generated dependency/build folders such as `node_modules`, `.git`, `.next`, `bin`, `obj`, `target`, `dist`, `build`, and `out`. It detects common Node web frameworks, .NET web projects, Spring Boot web projects, and Dockerfile-backed service folders. Non-web .NET projects and Android projects are ignored. Detected services are shown in a multi-select list; use Space to select one or more services and Enter to save. The final `Custom` row is selected with Enter and lets you provide a service name, path, and Dockerfile path manually.
 
 If a selected service folder does not contain `Dockerfile` and no custom Dockerfile path is configured, init still creates the config. On deploy, the CLI generates a Dockerfile for recognized app types such as Vite, Next.js, Node API, .NET web, and Spring Boot services before validation and artifact upload. Unsupported project types still need a checked-in Dockerfile or `services.<name>.dockerfile`.
 
-Public Vite services must allow the generated Minicloud host or `.app.muni.dev` in `preview.allowedHosts`. Public Next.js services must run a production server such as `next start`, not `next dev`, from Dockerfile CMD/ENTRYPOINT.
+Public Vite services must allow the generated Selfrun host or `.app.muni.dev` in `preview.allowedHosts`. Public Next.js services must run a production server such as `next start`, not `next dev`, from Dockerfile CMD/ENTRYPOINT.
 
 To add another service to an existing app:
 
 ```bash
-minicloud add-service
+selfrun add-service
 ```
 
 Pass the app slug or ID to skip the app picker:
 
 ```bash
-minicloud add-service teamcore-dev
-minicloud add-service --app teamcore-dev --config minicloud.api.yml
+selfrun add-service teamcore-dev
+selfrun add-service --app teamcore-dev --config selfrun.api.yml
 ```
 
 `add-service` uses the same service detection and custom-service flow, writes a config for the selected services, and uses the selected app's existing `appId`.
@@ -148,26 +163,26 @@ minicloud add-service --app teamcore-dev --config minicloud.api.yml
 For more prompts:
 
 ```bash
-minicloud init --advanced
-minicloud add-service --advanced
+selfrun init --advanced
+selfrun add-service --advanced
 ```
 
 Use another config path:
 
 ```bash
-minicloud init --config path/to/minicloud.yml
-minicloud deploy --config path/to/minicloud.yml
+selfrun init --config path/to/selfrun.yml
+selfrun deploy --config path/to/selfrun.yml
 ```
 
 ## Managed VPS Plans
 
-The CLI deploys to an environment of the logical application identified by `appId` in `minicloud.yml`. Configure provider accounts and their plan mappings in the portal's **Providers** section. An organization can have multiple accounts of the same provider. Each plan selects one account, region and provider SKU; the CLI only needs the plan's name.
+The CLI deploys to an environment of the logical application identified by `appId` in `selfrun.yml` (or legacy `minicloud.yml`). Configure provider accounts and their plan mappings in the portal's **Providers** section. An organization can have multiple accounts of the same provider. Each plan selects one account, region and provider SKU; the CLI only needs the plan's name.
 
 New plans start with a UUID name and can be renamed. Names are unique within the organization, including across provider accounts. Discover the current names with:
 
 ```sh
-minicloud plans list
-minicloud plans list --organization org_example
+selfrun plans list
+selfrun plans list --organization org_example
 ```
 
 Select a plan with optional top-level YAML `plan` or `--plan`:
@@ -186,9 +201,9 @@ services:
 ```
 
 ```sh
-minicloud deploy --plan "Hetzner secondary small"
-minicloud deploy --environment staging --plan "Hetzner secondary small"
-minicloud environments create staging --plan "Hetzner secondary small"
+selfrun deploy --plan "Hetzner secondary small"
+selfrun deploy --environment staging --plan "Hetzner secondary small"
+selfrun environments create staging --plan "Hetzner secondary small"
 ```
 
 The command flag overrides YAML; YAML overrides the selected environment's saved plan. Omitting both keeps that saved plan. The environment is selected before resolving its plan name. Do not put cloud API credentials or provider selectors in the YAML.
@@ -198,8 +213,8 @@ Selecting a different plan is supported before an environment has resources or a
 Operators can add an account using an existing environment token, then import explicitly listed legacy resource bindings:
 
 ```sh
-minicloud providers add --organization org_example --name "Hetzner primary" --provider hetzner
-minicloud providers import-legacy --manifest legacy-bindings.json
+selfrun providers add --organization org_example --name "Hetzner primary" --provider hetzner
+selfrun providers import-legacy --manifest legacy-bindings.json
 ```
 
 Use an organization API key with `providers:write` for these operator commands; ordinary login/deployment keys do not grant credential management. `providers add` reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`/`DIGITALOCEAN_TOKEN`, or `VULTR_API_KEY`/`VULTR_KEY` according to the selected type. Credentials are sent directly to the authenticated API for storage in OpenBao. Do not pass them as command arguments or put them in the import manifest. DigitalOcean supports `--project-id` (or `DIGITALOCEAN_PROJECT_ID`); Vultr supports `--os-id`.
@@ -240,10 +255,10 @@ Legacy installations may retain these imported plan names during migration. They
 Deploy every configured service from the currently checked-out Git branch:
 
 ```bash
-minicloud deploy branch
+selfrun deploy branch
 ```
 
-Minicloud creates or reuses a child environment under the configured main app.
+Selfrun creates or reuses a child environment under the configured main app.
 Each new branch inherits its parent's plan unless `--plan` or YAML `plan` selects another one. Each branch environment has its own VPS, runtime, database,
 deployments, and domains. The main app's secrets are copied when the branch is
 first created. A branch such as `feature/cart` is normalized to `feature-cart`;
@@ -252,14 +267,16 @@ its public service hostname ends in `-feature-cart.app.muni.dev`.
 Destroy a branch environment:
 
 ```bash
-minicloud branch destroy
+selfrun branch destroy
 ```
 
 When several branches exist, the CLI shows a selection list. Destruction always
 requires confirmation. You can select directly with
-`minicloud branch destroy feature-cart`.
+`selfrun branch destroy feature-cart`.
 
-## `minicloud.yml` Reference
+## `selfrun.yml` Reference
+
+Default config resolution checks `selfrun.yml`, then falls back to `minicloud.yml` and `minicloudconfig.yml`.
 
 Minimal backend app:
 
@@ -280,7 +297,7 @@ services:
 Independent frontend and backend configs can point at the same app:
 
 ```yaml
-# minicloud.frontend.yml
+# selfrun.frontend.yml
 app: teamcore
 appId: app_123
 database: postgres
@@ -294,7 +311,7 @@ services:
 ```
 
 ```yaml
-# minicloud.backend.yml
+# selfrun.backend.yml
 app: teamcore
 appId: app_123
 database: postgres
@@ -313,9 +330,9 @@ services:
 Deploy each service independently:
 
 ```bash
-minicloud deploy backend --config minicloud.yml
-minicloud deploy --config minicloud.backend.yml
-minicloud deploy --config minicloud.frontend.yml
+selfrun deploy backend --config selfrun.yml
+selfrun deploy --config selfrun.backend.yml
+selfrun deploy --config selfrun.frontend.yml
 ```
 
 Custom multi-service deployment file:
@@ -362,7 +379,7 @@ services:
 Deploy prebuilt images with:
 
 ```bash
-minicloud deploy --no-publish
+selfrun deploy --no-publish
 ```
 
 ## Root Fields
@@ -384,7 +401,7 @@ One config file targets one app. Multiple config files can share the same `appId
 `postgres` adds a managed Postgres service next to your app. Pass a password on first deploy:
 
 ```bash
-minicloud deploy --pgpassword '<strong-password>'
+selfrun deploy --pgpassword '<strong-password>'
 ```
 
 ## Service Fields
@@ -411,7 +428,7 @@ Environment variable names must match:
 
 ## Runtime Environment Variables And Secrets
 
-Use `services.<name>.env` in `minicloud.yml` to set runtime environment variables for one service. `env` is a YAML mapping whose keys are environment variable names and whose values are strings:
+Use `services.<name>.env` in `selfrun.yml` to set runtime environment variables for one service. `env` is a YAML mapping whose keys are environment variable names and whose values are strings:
 
 ```yaml
 services:
@@ -459,14 +476,14 @@ env:
   JOB_CONCURRENCY: "4"
   FEATURE_ENABLED: "true"
   EMPTY_VALUE: ""
-  CALLBACK_URL: "https://example.com/callback?source=minicloud"
+  CALLBACK_URL: "https://example.com/callback?source=selfrun"
 ```
 
-During `minicloud deploy`, the CLI sends `services.<name>.env` to the Minicloud API with the deployment request. Minicloud stores those values with the deployment service record and forwards them to the deployment workflow as `services_json`. The runtime writes them into the generated Docker Compose `environment:` block for that service.
+During `selfrun deploy`, the CLI sends `services.<name>.env` to the Selfrun API with the deployment request. Selfrun stores those values with the deployment service record and forwards them to the deployment workflow as `services_json`. The runtime writes them into the generated Docker Compose `environment:` block for that service.
 
-Do not commit sensitive values in `minicloud.yml`. Use `env` for non-sensitive runtime configuration only.
+Do not commit sensitive values in `selfrun.yml`. Use `env` for non-sensitive runtime configuration only.
 
-Use `secretEnv` when a service needs sensitive runtime environment variables. `secretEnv` maps the environment variable name that the container receives to a stored Minicloud secret name:
+Use `secretEnv` when a service needs sensitive runtime environment variables. `secretEnv` maps the environment variable name that the container receives to a stored Selfrun secret name:
 
 ```yaml
 services:
@@ -485,86 +502,86 @@ services:
 Set those stored secrets before deploying. Without `--service`, the CLI creates an app-scoped secret that any service can reference by name:
 
 ```bash
-minicloud secrets set --app my-api MAPBOX_ACCESS_TOKEN
-minicloud secrets list --app my-api
+selfrun secrets set --app my-api MAPBOX_ACCESS_TOKEN
+selfrun secrets list --app my-api
 ```
 
 Use `--service` to create a service-scoped secret. Service-scoped secrets are only available to the matching service:
 
 ```bash
-minicloud secrets set --app my-api --service backend STRIPE_SECRET_KEY --value "$STRIPE_SECRET_KEY"
-minicloud secrets list --app my-api --service backend
-minicloud secrets remove --app my-api --service backend STRIPE_SECRET_KEY
+selfrun secrets set --app my-api --service backend STRIPE_SECRET_KEY --value "$STRIPE_SECRET_KEY"
+selfrun secrets list --app my-api --service backend
+selfrun secrets remove --app my-api --service backend STRIPE_SECRET_KEY
 ```
 
-If you keep local secret values in `minicloud.secrets.env`, use dotenv-style `NAME=value` lines. Do not commit this file:
+If you keep local secret values in `selfrun.secrets.env` (legacy `minicloud.secrets.env` is also detected automatically), use dotenv-style `NAME=value` lines. Do not commit this file:
 
 ```dotenv
-# minicloud.secrets.env
+# selfrun.secrets.env
 MAPBOX_ACCESS_TOKEN=pk_live_example
 STRIPE_SECRET_KEY=sk_live_example
 OPENAI_API_KEY=sk-proj-example
 ```
 
-Then load it in your shell and write the values to Minicloud:
+Then load it in your shell and write the values to Selfrun:
 
 ```bash
 set -a
-. ./minicloud.secrets.env
+. ./selfrun.secrets.env
 set +a
 
-minicloud secrets set --app my-api MAPBOX_ACCESS_TOKEN --value "$MAPBOX_ACCESS_TOKEN"
-minicloud secrets set --app my-api --service backend STRIPE_SECRET_KEY --value "$STRIPE_SECRET_KEY"
-minicloud secrets set --app my-api --service worker OPENAI_API_KEY --value "$OPENAI_API_KEY"
+selfrun secrets set --app my-api MAPBOX_ACCESS_TOKEN --value "$MAPBOX_ACCESS_TOKEN"
+selfrun secrets set --app my-api --service backend STRIPE_SECRET_KEY --value "$STRIPE_SECRET_KEY"
+selfrun secrets set --app my-api --service worker OPENAI_API_KEY --value "$OPENAI_API_KEY"
 ```
 
-`minicloud.secrets.env` is a local helper file. During `minicloud deploy`, if the selected service's `sourcePath` contains this file, the CLI reads it and saves each `NAME=value` pair as a service-scoped Minicloud secret before creating the deployment. You can also store values manually with `minicloud secrets set`.
+`selfrun.secrets.env` (or `minicloud.secrets.env`) is a local helper file. During `selfrun deploy`, if the selected service's `sourcePath` contains this file, the CLI reads it and saves each `NAME=value` pair as a service-scoped Selfrun secret before creating the deployment. Both filenames are automatically excluded from source upload bundles. You can also store values manually with `selfrun secrets set`.
 
 Prefer the interactive prompt. `--value` is intended for controlled CI scripts; values passed on a command line can be captured by shell history or process listings.
 
 The left side of each `secretEnv` entry is the environment variable that the container receives. The right side is the stored secret name to read. Both must match `^[A-Za-z_][A-Za-z0-9_]*$`. `env` and `secretEnv` cannot define the same runtime environment variable.
 
-Secret values do not belong in a deploy config. Keep `secretEnv` references in the selected deploy config, normally `minicloud.yml`, then write the actual values with `minicloud secrets set`.
+Secret values do not belong in a deploy config. Keep `secretEnv` references in the selected deploy config, normally `selfrun.yml`, then write the actual values with `selfrun secrets set`.
 
-Minicloud stores secret values in its OpenBao-backed secret store and stores only secret metadata in the control-plane database. During deployment:
+Selfrun stores secret values in its OpenBao-backed secret store and stores only secret metadata in the control-plane database. During deployment:
 
 - App-scoped secrets can be used by any service that references them in `secretEnv`.
 - Service-scoped secrets can be used only by the matching service.
 - If an app-scoped secret and a service-scoped secret have the same name, an explicit `secretEnv` reference uses the app-scoped secret.
-- If a service has no `secretEnv` mapping, Minicloud injects all service-scoped secrets whose service name matches the deployed service, using each stored secret name as the container environment variable name.
+- If a service has no `secretEnv` mapping, Selfrun injects all service-scoped secrets whose service name matches the deployed service, using each stored secret name as the container environment variable name.
 
-App-scoped secrets are never injected automatically. Secret values are not returned by `minicloud secrets list`.
+App-scoped secrets are never injected automatically. Secret values are not returned by `selfrun secrets list`.
 
 The reusable GitHub Actions workflow can pass `secretEnv` references, but it never accepts runtime secret values. Create or update secrets through the CLI or portal before deployment. See [GitHub Actions workflow documentation](github-actions.md#runtime-secrets).
 
 Postgres passwords are handled separately. For Postgres deployments, pass the password with:
 
 ```bash
-minicloud deploy --pgpassword '<strong-password>'
+selfrun deploy --pgpassword '<strong-password>'
 ```
 
-Minicloud stores that app-level Postgres password encrypted and reuses it on later deploys.
+Selfrun stores that app-level Postgres password encrypted and reuses it on later deploys.
 
 ## Deploy
 
 Build, publish, create deployment, and wait:
 
 ```bash
-minicloud deploy
+selfrun deploy
 ```
 
-On deploy, the CLI requires `appId` in the selected config. App selection or app creation happens in `minicloud init`, not during deploy.
+On deploy, the CLI requires `appId` in the selected config. App selection or app creation happens in `selfrun init`, not during deploy.
 
 By default, Docker/buildx builds selected services on this machine for the target
-Linux platform, pushes images to Minicloud's private registry, and deploys verified
+Linux platform, pushes images to Selfrun's private registry, and deploys verified
 immutable digests. Docker must be running. Use `--build-mode source` or service-level
 `buildMode: source` to select source-upload/server-build mode.
 
 Seed installs do not enable managed image publication by default. `init` still
 writes source services with the default local build mode. On these instances,
-run `minicloud deploy --build-mode source` for the first deploy and subsequent
+run `selfrun deploy --build-mode source` for the first deploy and subsequent
 deploys, or set `buildMode: source` under each `sourcePath` service in
-`minicloud.yml`. A default deploy fails with `local_build_unavailable` and this
+`selfrun.yml`. A default deploy fails with `local_build_unavailable` and this
 remedy before building or uploading anything; it does not silently change modes.
 
 Run deploy from the app's own repository or a directory that Git includes.
@@ -585,41 +602,41 @@ Deploy is service-scoped. The CLI publishes and sends only the selected services
 For a config with multiple services:
 
 ```bash
-minicloud deploy backend
-minicloud deploy frontend backend
-minicloud deploy all
-minicloud deploy --all
+selfrun deploy backend
+selfrun deploy frontend backend
+selfrun deploy all
+selfrun deploy --all
 ```
 
-Running `minicloud deploy` without arguments automatically checks the SHA-256 checksum of each service against active services in the Minicloud API and deploys only changed or newly added services without prompting. If no services have changed, it informs you and exits cleanly. To deploy every service unconditionally, run `minicloud deploy all` (or `minicloud deploy --all`). To deploy a branch environment, `minicloud deploy branch` always deploys all services.
+Running `selfrun deploy` without arguments automatically checks the SHA-256 checksum of each service against active services in the Selfrun API and deploys only changed or newly added services without prompting. If no services have changed, it informs you and exits cleanly. To deploy every service unconditionally, run `selfrun deploy all` (or `selfrun deploy --all`). To deploy a branch environment, `selfrun deploy branch` always deploys all services.
 
 Common overrides:
 
 ```bash
-minicloud deploy --database postgres
+selfrun deploy --database postgres
 ```
 
 Deploy already-published images:
 
 ```bash
-minicloud deploy --no-publish
+selfrun deploy --no-publish
 ```
 
 ## Status, Logs, And Apps
 
 ```bash
-minicloud status
-minicloud status <deployment-number>
-minicloud status [deployment-number] --watch
-minicloud logs [app-or-deployment-number]
-minicloud deploy cancel <deployment-number>
-minicloud apps list
-minicloud apps inspect <app>
+selfrun status
+selfrun status <deployment-number>
+selfrun status [deployment-number] --watch
+selfrun logs [app-or-deployment-number]
+selfrun deploy cancel <deployment-number>
+selfrun apps list
+selfrun apps inspect <app>
 ```
 
 Deployments are identified by a number such as `20261110.1`: the UTC creation date and a counter for that organization and day. `deploy` prints the number it created, and `status`, `logs`, `deploy cancel` and `apps inspect` accept or display the same number. Numbers are validated locally; opaque internal IDs such as `dep_...` are not accepted.
 
-A deployment number is only unique within its organization, so the CLI always sends the organization with it. The organization is `--organization <id>` when given; otherwise the token's only organization; otherwise the organization of the app in `minicloud.yml` (or `--config`). With several organizations and no config, pass `--organization`. Without a number, `status` and `logs` use the latest deployment in that organization.
+A deployment number is only unique within its organization, so the CLI always sends the organization with it. The organization is `--organization <id>` when given; otherwise the token's only organization; otherwise the organization of the app in `selfrun.yml` (or `--config`). With several organizations and no config, pass `--organization`. Without a number, `status` and `logs` use the latest deployment in that organization.
 
 `logs` treats a deployment number as a deployment and any other value as an app name or ID; app logs are runtime logs for that app.
 
@@ -635,13 +652,13 @@ the CLI does not provide a delete command.
 
 ## Service Subdomains
 
-Public services get Minicloud subdomains under `app.muni.dev`.
+Public services get Selfrun subdomains under `app.muni.dev` (or your instance's `APP_DOMAIN`).
 
 ```bash
-minicloud domains list --app <app>
-minicloud domains add-subdomain --app <app> --service <service> --label <label>
-minicloud domains disable --app <app> --hostname <host>
-minicloud domains delete --app <app> --hostname <host>
+selfrun domains list --app <app>
+selfrun domains add-subdomain --app <app> --service <service> --label <label>
+selfrun domains disable --app <app> --hostname <host>
+selfrun domains delete --app <app> --hostname <host>
 ```
 
 `domains list` includes each hostname's service, status, runtime apply state,
@@ -652,22 +669,22 @@ TLS state, last applied timestamp, and last updated timestamp.
 Check the installed CLI version:
 
 ```bash
-minicloud --version
-minicloud -v
+selfrun --version
+selfrun -v
 ```
 
 View CLI help, available commands, and options:
 
 ```bash
-minicloud help
-minicloud --help
+selfrun help
+selfrun --help
 ```
 
 Get detailed help for a specific command:
 
 ```bash
-minicloud help deploy
-minicloud deploy --help
+selfrun help deploy
+selfrun deploy --help
 ```
 
 ## Environment Defaults
@@ -675,16 +692,18 @@ minicloud deploy --help
 Show the active instance and resolved API URL:
 
 ```bash
-minicloud --env
+selfrun --env
 ```
 
-Supported environment variables:
+Supported environment variables (`SELFRUN_*` takes precedence when both are set; legacy `MINICLOUD_*` aliases remain supported):
 
-| Variable | Description |
-| --- | --- |
-| `MINICLOUD_TOKEN` | API key used by CLI commands. |
-| `MINICLOUD_APP_DOMAIN` | Application domain for an explicit API URL override; otherwise discovered from the instance. |
-| `MINICLOUD_API_URL` | Explicit API base URL override for CI/development. Takes precedence over the saved active instance; has no default. |
+| Variable | Legacy Alias | Description |
+| --- | --- | --- |
+| `SELFRUN_TOKEN` | `MINICLOUD_TOKEN` | API key used by CLI commands. |
+| `SELFRUN_APP_DOMAIN` | `MINICLOUD_APP_DOMAIN` | Application domain for an explicit API URL override; otherwise discovered from the instance. |
+| `SELFRUN_API_URL` | `MINICLOUD_API_URL` | Explicit API base URL override for CI/development. Takes precedence over the saved active instance; has no default. |
+| `SELFRUN_CONFIG_DIR` | `MINICLOUD_CONFIG_DIR` | Explicit directory for saved instances and tokens (defaults to `~/.config/selfrun`, falling back to `~/.config/minicloud` if present). |
+| `SELFRUN_DEPLOY_TIMING` | `MINICLOUD_DEPLOY_TIMING` | Enable verbose deployment phase timing output (`1`/`true`). |
 
 ### Dockerfile port detection
 
@@ -699,13 +718,13 @@ Deploy completion and status output list every assigned service URL with its ser
 ## Deployment failures
 
 The CLI checks required `secretEnv` names before image builds and uploads. Secrets
-from each service's `minicloud.secrets.env` are synchronized during deployment;
+from each service's `selfrun.secrets.env` (or `minicloud.secrets.env`) are synchronized during deployment;
 other references must already exist for that service or at app scope. A missing
 reference reports `missing_service_secret`, including the service, secret name and
 environment variable, and exits with validation code 2. Configure the real secret
 or remove its deployment reference until that integration is configured.
 
-`minicloud status <deployment-number>` and `minicloud logs <deployment-number>` include
+`selfrun status <deployment-number>` and `selfrun logs <deployment-number>` include
 the deployment failure code and message. Secret-store outages report
 `secret_store_unavailable`; preparation failures do not wait for an unrelated SSH
 readiness timeout. CLI 2.0.1 requires the updated control API's
@@ -714,7 +733,7 @@ readiness timeout. CLI 2.0.1 requires the updated control API's
 If an app revision fails its health check on the server, the deployment stays
 failed with `health_check_failed`. The failure message leads with the rollback
 outcome and the failed local health check; full container and proxy diagnostics
-remain in `minicloud logs <deployment-number>`. Minicloud stops the candidate and
+remain in `selfrun logs <deployment-number>`. Selfrun stops the candidate and
 restores the previous running revision when available. The public URL never reaches
 a candidate before it passes its health check. While an existing app's services are
 replaced, its hostnames return `503 Deployment in progress` with `Retry-After: 30`.
@@ -739,25 +758,25 @@ close the waiting record; an abandoned client expires after five minutes without
 a heartbeat. Total elapsed time includes local preparation; queue time starts at
 admission. Unchanged-service deployments do not create a waiting record.
 
-Upgrade Minicloud's API, worker and dashboard before installing CLI 2.0.2. Local
+Upgrade Selfrun's API, worker and dashboard before installing CLI 2.0.2. Local
 builds require the new deployment preparation endpoints.
 
 ## Parallel local builds
 
-Set `buildJobs` at the top level of `minicloud.yml` in CLI 2.1.1:
+Set `buildJobs` at the top level of `selfrun.yml` in CLI 2.1.1:
 
 ```yaml
 buildJobs: 5
 ```
 
 The default is 2 and the supported range is 1 to 10. Use
-`minicloud deploy --build-jobs 3` to override the setting for one invocation.
+`selfrun deploy --build-jobs 3` to override the setting for one invocation.
 All selected local builds finish before any uploads start. The CLI stages
 images in the local Docker image store and uploads up to two at a time.
 
 ## Publish versioned assets
 
-Define a build under `assets.<name>` in `minicloud.yml` with its `sourcePath`, `dockerfile`, and `outputPath`. Run `minicloud assets publish <name>` from the project. The CLI uploads the source for a server build, follows the deployment, and prints the release ID. With multiple environments, pass `--environment <name>`.
+Define a build under `assets.<name>` in `selfrun.yml` with its `sourcePath`, `dockerfile`, and `outputPath`. Run `selfrun assets publish <name>` from the project. The CLI uploads the source for a server build, follows the deployment, and prints the release ID. With multiple environments, pass `--environment <name>`.
 
 A service can consume the asset through `assetMounts.<name>`. Unpinned mounts pick up a published release without restarting the service. Set the mount's `releaseId` to keep using a specific version.
 
@@ -777,22 +796,22 @@ name in the dashboard when creating the app, or rename it later. Existing apps
 retain their runtime and URLs as their `production` environment.
 
 ```sh
-minicloud environments list
-minicloud environments rename production prod
-minicloud environments create staging --plan p0-v-0
-minicloud deploy --environment staging
-minicloud deploy all --environment prod
-minicloud deploy api --environment staging
+selfrun environments list
+selfrun environments rename production prod
+selfrun environments create staging --plan p0-v-0
+selfrun deploy --environment staging
+selfrun deploy all --environment prod
+selfrun deploy api --environment staging
 ```
 
 The plan determines the provider: for example, `p0-v-0` selects Vultr and
 `p0-h-0` selects Hetzner. Plans are selected independently when environments are
 created. Use `--database sqlite|postgres` on `environments create` to override the
-application's database mode. All commands accept `--config path/to/minicloud.yml`.
+application's database mode. All commands accept `--config path/to/selfrun.yml` (or legacy `minicloud.yml`).
 The dashboard's app header switches environments; application settings manage the environment collection.
 
 New configs store the logical application's `appId`; existing root and child runtime IDs remain supported through explicit server identity mappings. One config can target any persistent environment in that application. With one active environment,
-`minicloud deploy` selects it automatically. With multiple active environments,
+`selfrun deploy` selects it automatically. With multiple active environments,
 `--environment <name>` is required, including when the config points at an
 environment's runtime ID. The dashboard default does not select a CLI target. Unknown names, zero-environment apps, and deleting/deletion-failed targets fail before building or uploading. `logs`, secrets, domains, and `assets publish` accept the same `--environment` selection when targeting an application. Deployment IDs remain direct targets.
 Names use 1–63 letters, digits, dashes or underscores, starting with a letter or
@@ -813,18 +832,18 @@ registered provider account before the application records are removed.
 
 ### Personal SSH keys
 
-Environments can install one personal SSH key on the VPS Minicloud provisions
-for them, in addition to Minicloud's own deployment access. Select a key when
-creating an environment, or when `minicloud init` creates a new app:
+Environments can install one personal SSH key on the VPS Selfrun provisions
+for them, in addition to Selfrun's own deployment access. Select a key when
+creating an environment, or when `selfrun init` creates a new app:
 
 ```sh
-minicloud providers ssh-keys --plan small
-minicloud environments create staging --plan small --ssh-key <key-id>
-minicloud environments create staging --plan small --ssh-public-key-file ~/.ssh/id_ed25519.pub --ssh-key-name "Work laptop"
-minicloud environments update staging --ssh-key <key-id>
+selfrun providers ssh-keys --plan small
+selfrun environments create staging --plan small --ssh-key <key-id>
+selfrun environments create staging --plan small --ssh-public-key-file ~/.ssh/id_ed25519.pub --ssh-key-name "Work laptop"
+selfrun environments update staging --ssh-key <key-id>
 ```
 
-- `--ssh-key` selects an existing key by the Minicloud key ID listed by
+- `--ssh-key` selects an existing key by the Selfrun key ID listed by
   `providers ssh-keys` for the plan's provider account (`--organization <id>`
   selects among multiple organizations; a provider account ID can be given
   instead of `--plan`). It requires an API key with `providers:read`.
@@ -835,14 +854,14 @@ minicloud environments update staging --ssh-key <key-id>
   then the file name) and is only valid with a file. Adding a new key requires
   `providers:write` (organization owner or admin).
 - The two options are mutually exclusive. Omitting them creates an environment
-  with Minicloud-only access; `environments update` without them is rejected,
+  with Selfrun-only access; `environments update` without them is rejected,
   and `rename` never changes the saved selection. Updates send the current
   selection revision and fail if it changed concurrently.
 - Nothing is registered with the provider when you save. The key is registered
-  and installed when Minicloud first provisions the environment's VPS. The
+  and installed when Selfrun first provisions the environment's VPS. The
   selection is immutable once server allocation starts and never changes keys
   on a running server. `apps inspect` shows the selection, its registration
   state and, once known, the verified `ssh <user>@<address>` target.
 
-Keep SSH selection out of `minicloud.yml`; it is environment provisioning
+Keep SSH selection out of `selfrun.yml`; it is environment provisioning
 configuration. The CLI does not generate keys or open SSH sessions.

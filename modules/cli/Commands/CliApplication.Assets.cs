@@ -10,12 +10,12 @@ public sealed partial class CliApplication
     private async Task<int> RunAssetsAsync(string[] args, CancellationToken ct)
     {
         if (args.Length < 2 || args[0] != "publish")
-        { throw new CliCommandException(CliExitCodes.ValidationError, "Usage: minicloud assets publish <name> [--config path]"); }
+        { throw new CliCommandException(CliExitCodes.ValidationError, "Usage: selfrun assets publish <name> [--config path]"); }
         var loaded = MinicloudConfigLoader.Load(GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath());
         if (!loaded.IsValid || loaded.Config is null) { PrintDiagnostics(loaded.Diagnostics); return CliExitCodes.ValidationError; }
         var config = loaded.Config;
         if (!config.Assets.TryGetValue(args[1], out var asset))
-        { throw new CliCommandException(CliExitCodes.ValidationError, "Asset is not declared in minicloud.yml."); }
+        { throw new CliCommandException(CliExitCodes.ValidationError, "Asset is not declared in selfrun.yml (or minicloud.yml)."); }
         var app = await ResolveAppOptionAsync(args, ct);
         var plan = GetOption(args, "--plan") ?? config.Plan;
         if (args.Any(x => x == "--plan" || x.StartsWith("--plan=", StringComparison.Ordinal)) && string.IsNullOrWhiteSpace(GetOption(args, "--plan")))

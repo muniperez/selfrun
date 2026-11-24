@@ -950,7 +950,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
               }
             >
               {canManage
-                ? "Create a named plan for your provider accounts to reference in the CLI and minicloud.yml."
+                ? "Create a named plan for your provider accounts to reference in the CLI and selfrun.yml."
                 : "No deployment plans are configured yet. An organization owner or admin can connect a provider account and add plans."}
             </EmptyState>
           ) : null}
@@ -1529,7 +1529,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                 <DialogDescription>
                   {editor.kind === "edit-plan"
                     ? "Update the plan configuration."
-                    : "Reference the plan name in the CLI or minicloud.yml. Names are unique across this organization."}
+                    : "Reference the plan name in the CLI or selfrun.yml. Names are unique across this organization."}
                 </DialogDescription>
               </DialogHeader>
               {formError ? (
@@ -1598,7 +1598,7 @@ export function ProvidersModule({ view }: { view?: "plans" | "accounts" } = {}) 
                 <DialogTitle>Delete plan?</DialogTitle>
                 <DialogDescription>
                   Delete plan <strong className="font-medium text-foreground">{editor.plan.name}</strong>?
-                  This removes the plan configuration from Minicloud and does not delete cloud
+                  This removes the plan configuration from Selfrun and does not delete cloud
                   servers, volumes, or running services. Referenced plans cannot be removed.
                 </DialogDescription>
               </DialogHeader>
@@ -1975,8 +1975,8 @@ function PlanDialogForm({
         />
         <p id="plan-name-help" className="text-xs text-muted-foreground">
           {mode === "edit"
-            ? "After renaming, update the name in minicloud.yml and CLI commands. Existing app bindings are preserved."
-            : "Unique across this organization. Used in the CLI and minicloud.yml."}
+            ? "After renaming, update the name in selfrun.yml and CLI commands. Existing app bindings are preserved."
+            : "Unique across this organization. Used in the CLI and selfrun.yml."}
         </p>
       </div>
 

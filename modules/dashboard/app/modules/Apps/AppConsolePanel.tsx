@@ -197,7 +197,7 @@ export function AppConsolePanel({ app }: Props) {
           ) : (
             <div className="p-4">
               <EmptyState title={status?.agentInstalled ? "Waiting for status" : "Agent not installed"}>
-                {status?.agentInstalled ? "The agent has not reported container status yet." : "Install the Minicloud runtime agent during the next deployment."}
+                {status?.agentInstalled ? "The agent has not reported container status yet." : "Install the Selfrun runtime agent during the next deployment."}
               </EmptyState>
             </div>
           )}

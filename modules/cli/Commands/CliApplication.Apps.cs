@@ -11,7 +11,7 @@ public sealed partial class CliApplication
     {
         if (args.Length == 0)
         {
-            _console.WriteError("Usage: minicloud apps list|inspect <app>");
+            _console.WriteError("Usage: selfrun apps list|inspect <app>");
             return CliExitCodes.ValidationError;
         }
 
@@ -51,7 +51,7 @@ public sealed partial class CliApplication
         var appIdOrSlug = args.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(appIdOrSlug))
         {
-            _console.WriteError("Usage: minicloud apps inspect <app>");
+            _console.WriteError("Usage: selfrun apps inspect <app>");
             return CliExitCodes.ValidationError;
         }
 
@@ -140,7 +140,7 @@ public sealed partial class CliApplication
     {
         if (sshAccess is not null)
             throw new CliCommandException(CliExitCodes.ValidationError,
-                $"SSH options apply only when creating a new app. To change SSH access for '{app.Slug}', run 'minicloud environments update <name> {SshOptionsUsage}'.");
+                $"SSH options apply only when creating a new app. To change SSH access for '{app.Slug}', run 'selfrun environments update <name> {SshOptionsUsage}'.");
     }
 
     private async Task<ApplicationResponse> PromptExistingAppSelectionAsync(OrganizationSummaryDto organization, string? requestedApp, CancellationToken cancellationToken)
@@ -159,7 +159,7 @@ public sealed partial class CliApplication
 
         if (apps.Count == 0)
         {
-            throw new CliCommandException(CliExitCodes.ValidationError, $"No apps found in organization '{organization.Name}'. Run 'minicloud init' to create an app first.");
+            throw new CliCommandException(CliExitCodes.ValidationError, $"No apps found in organization '{organization.Name}'. Run 'selfrun init' to create an app first.");
         }
 
         var choices = apps
@@ -223,7 +223,7 @@ public sealed partial class CliApplication
         {
             var config = MinicloudConfigLoader.Load(GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath());
             if (!config.IsValid || string.IsNullOrWhiteSpace(config.Config?.AppId))
-                throw new CliCommandException(CliExitCodes.ValidationError, "Missing --app <app> and no valid appId was found in minicloud.yml.");
+                throw new CliCommandException(CliExitCodes.ValidationError, "Missing --app <app> and no valid appId was found in selfrun.yml (or minicloud.yml).");
             application = await GetApplicationContextAsync(config.Config.AppId, ct);
         }
         else
@@ -263,7 +263,7 @@ public sealed partial class CliApplication
         EnsureApplicationActive(application);
         var environments = application.Environments.Where(x => x.Kind == "persistent").ToArray();
         if (environments.Length == 0)
-            throw new CliCommandException(CliExitCodes.ValidationError, $"Application '{application.Name}' has no persistent environments. Create one with 'minicloud environments create <name> --plan <plan>' first.");
+            throw new CliCommandException(CliExitCodes.ValidationError, $"Application '{application.Name}' has no persistent environments. Create one with 'selfrun environments create <name> --plan <plan>' first.");
         ApplicationEnvironmentResponse? selected;
         if (name is null)
         {

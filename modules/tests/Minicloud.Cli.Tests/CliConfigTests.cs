@@ -471,11 +471,11 @@ public sealed class CliConfigTests
     }
 
     [Fact]
-    public void Init_suggests_default_config_when_minicloud_yml_is_absent()
+    public void Init_suggests_default_config_when_selfrun_yml_is_absent()
     {
         var path = CliApplication.SuggestedInitConfigPath();
 
-        Assert.Equal("minicloud.yml", path);
+        Assert.Equal("selfrun.yml", path);
     }
 
     [Fact]
@@ -483,7 +483,7 @@ public sealed class CliConfigTests
     {
         var path = CliApplication.SuggestedInitConfigPath();
 
-        Assert.Equal("minicloud.yml", path);
+        Assert.Equal("selfrun.yml", path);
     }
 
     [Fact]

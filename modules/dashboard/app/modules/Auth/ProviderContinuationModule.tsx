@@ -7,7 +7,7 @@ import { AccountFlowForm } from "./AccountFlowForm";
 
 const failureMessages = {
   failed: "Google sign-in did not complete. Try again or use your password.",
-  forbidden: "This Google account is not admitted to this Minicloud instance.",
+  forbidden: "This Google account is not admitted to this Selfrun instance.",
   unavailable: "Account service is unavailable. Retry when it is available."
 } as const;
 
@@ -34,7 +34,7 @@ export function ProviderContinuationModule() {
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle>{continuation.kind === "settings" ? "Account settings" : "Sign in"}</CardTitle>
-            <CardDescription>{status === "initializing" ? "Loading account" : "Access your Minicloud account."}</CardDescription>
+            <CardDescription>{status === "initializing" ? "Loading account" : "Access your Selfrun account."}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <p role="alert" className="text-sm text-destructive">{message}</p>

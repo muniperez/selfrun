@@ -218,7 +218,7 @@ export function AccountFlowForm({ kind, returnTo = "/apps", flowId, notice }: {
     <Card className="w-full max-w-md">
       <CardHeader>
         <CardTitle>{kind === "login" ? "Sign in" : kind === "settings" ? "Account settings" : "Recover account"}</CardTitle>
-        <CardDescription>{kind === "settings" ? "Change your password." : "Access your Minicloud account."}</CardDescription>
+        <CardDescription>{kind === "settings" ? "Change your password." : "Access your Selfrun account."}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {!enabled ? <p>This authentication method is not enabled. Contact the host administrator.</p> : null}

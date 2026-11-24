@@ -52,7 +52,7 @@ export function AppStoragePanel({ appId, services }: { appId: string; services: 
     <Card>
       <CardHeader><CardTitle>Add storage to a service</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-sm">
-        <p>Add this mapping under a service in <code>minicloud.yml</code>, adjust the name, size, path and container user, then run <code>minicloud deploy</code>. Available on Hetzner apps only.</p>
+        <p>Add this mapping under a service in <code>selfrun.yml</code>, adjust the name, size, path and container user, then run <code>selfrun deploy</code>. Available on Hetzner apps only.</p>
         <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">{example}</pre>
         <CopyButton value={example} label="Copy storage configuration" />
         <p className="text-muted-foreground">Use 10–10,000 GB per volume. Increase the size to grow; shrinking and automatic ownership changes are unsupported. Reuse a name to reconnect its data. Renaming creates an empty volume. New disks incur provider charges; backups are separate.</p>

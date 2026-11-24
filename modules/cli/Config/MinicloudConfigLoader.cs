@@ -18,19 +18,23 @@ public static partial class MinicloudConfigLoader
         return Parse(File.ReadAllLines(path));
     }
 
-    public static string ResolveDefaultPath()
+    public const string DefaultFileName = "selfrun.yml";
+    public const string LegacyFileName = "minicloud.yml";
+    public const string LegacyAltFileName = "minicloudconfig.yml";
+
+    public static string ResolveDefaultPath() => ResolveDefaultPath(Directory.GetCurrentDirectory());
+
+    public static string ResolveDefaultPath(string directory)
     {
-        if (File.Exists("minicloud.yml"))
+        foreach (var candidate in new[] { DefaultFileName, LegacyFileName, LegacyAltFileName })
         {
-            return "minicloud.yml";
+            if (File.Exists(Path.Combine(directory, candidate)))
+            {
+                return candidate;
+            }
         }
 
-        if (File.Exists("minicloudconfig.yml"))
-        {
-            return "minicloudconfig.yml";
-        }
-
-        return "minicloud.yml";
+        return DefaultFileName;
     }
 
     public static ConfigLoadResult Parse(IReadOnlyList<string> lines)

@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Code, GalleryVerticalEnd, LogOut, Settings } from "lucide-react";
+import { ChevronsUpDown, Code, LogOut, Settings } from "lucide-react";
 import { runtimeConfig } from "@/core/config/runtimeConfig";
 import { NavLink } from "react-router-dom";
 import {
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "../auth/AuthProvider";
 import { dashboardRoutes, navigationRoutes, settingsRoutes } from "../routing/dashboardRoutes";
+import { SelfrunMark } from "./SelfrunMark";
 
 function getFallbackName(email?: string | null) {
   const localPart = email?.split("@")[0];
@@ -49,10 +50,10 @@ export function SidebarNavigation({ onNavigate }: { onNavigate: () => void }) {
               className="flex h-12 w-full items-center gap-2 rounded-lg p-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <GalleryVerticalEnd className="size-4" aria-hidden="true" />
+                <SelfrunMark className="size-4" aria-hidden="true" />
               </span>
               <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">Minicloud</span>
+                <span className="truncate font-semibold">Selfrun</span>
                 <span className="truncate text-xs">{selectedOrganization?.name || "Workspace"}</span>
               </span>
               <ChevronsUpDown className="ml-auto size-4 shrink-0" aria-hidden="true" />
@@ -67,7 +68,7 @@ export function SidebarNavigation({ onNavigate }: { onNavigate: () => void }) {
             <DropdownMenuLabel className="text-xs text-muted-foreground">Workspace</DropdownMenuLabel>
             <DropdownMenuItem className="gap-2 p-2" onSelect={(event) => event.preventDefault()}>
               <span className="flex size-6 items-center justify-center rounded-sm border">
-                <GalleryVerticalEnd className="size-3.5" aria-hidden="true" />
+                <SelfrunMark className="size-3.5" aria-hidden="true" />
               </span>
               <span className="min-w-0 flex-1 truncate">{selectedOrganization?.name || "Workspace"}</span>
             </DropdownMenuItem>

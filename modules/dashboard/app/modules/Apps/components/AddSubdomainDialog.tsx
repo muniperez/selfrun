@@ -82,7 +82,7 @@ export function AddSubdomainDialog({ appId, serviceName, open, onOpenChange, onS
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add subdomain</DialogTitle>
-          <DialogDescription>{serviceName ? `Route ${serviceName} from an additional Minicloud subdomain.` : ""}</DialogDescription>
+          <DialogDescription>{serviceName ? `Route ${serviceName} from an additional Selfrun subdomain.` : ""}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">

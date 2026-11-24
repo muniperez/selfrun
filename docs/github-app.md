@@ -4,12 +4,12 @@ An organization owner or administrator can open **GitHub** in organization
 administration and select **Set up GitHub**. Alternatively:
 
 ```sh
-minicloud github setup --organization <organization-id> --no-browser
-minicloud github status --organization <organization-id> --json
-minicloud github repositories --organization <organization-id>
+selfrun github setup --organization <organization-id> --no-browser
+selfrun github status --organization <organization-id> --json
+selfrun github repositories --organization <organization-id>
 ```
 
-The CLI prints a dashboard URL, not credentials. Sign in to Minicloud in the
+The CLI prints a dashboard URL, not credentials. Sign in to Selfrun in the
 browser and approve the same dashboard flow. Existing CLI tokens need the
 `github:read` scope; logging in again obtains the current default read scopes.
 CLI disconnect/reconnect/reconcile requires a separately granted `github:write`
@@ -24,14 +24,14 @@ of API-key scopes.
 2. Approve GitHub's generated manifest. GitHub generates the App ID, private key,
    OAuth client credentials and webhook secret. The server exchanges the
    short-lived callback code and writes credentials directly to OpenBao.
-3. Return to GitHub settings in Minicloud and choose **Install App / select
+3. Return to GitHub settings in Selfrun and choose **Install App / select
    repositories**. Install on the same GitHub account/organization and select
-   only the repositories you intend this Minicloud organization to access.
-4. Return to Minicloud and **Verify repository access**. Installation and
+   only the repositories you intend this Selfrun organization to access.
+4. Return to Selfrun and **Verify repository access**. Installation and
    repository ownership are verified with GitHub, not inferred from the
    browser's installation ID.
 
-Each Minicloud organization has its own private, owner-controlled GitHub App,
+Each Selfrun organization has its own private, owner-controlled GitHub App,
 with one installation on that App's owner account. A personal registration
 cannot silently connect another organization. To use organization repositories,
 register the App under that organization. Apps are private intentionally;

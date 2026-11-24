@@ -10,7 +10,7 @@ public sealed partial class CliApplication
         var command = args.FirstOrDefault();
         if (command is not ("setup" or "status" or "repositories" or "disconnect" or "reconnect" or "reconcile"))
             throw new CliCommandException(CliExitCodes.ValidationError,
-                "Usage: minicloud github setup|status|repositories|disconnect|reconnect|reconcile [--organization <id>] [--no-browser]");
+                "Usage: selfrun github setup|status|repositories|disconnect|reconnect|reconcile [--organization <id>] [--no-browser]");
         var me = await _apiClient.GetMeAsync(ct);
         var organizationId = GetOption(args, "--organization");
         if (organizationId is null && me.Organizations.Count == 1) organizationId = me.Organizations[0].Id;
@@ -24,14 +24,14 @@ public sealed partial class CliApplication
             _console.WriteLine("Open this URL and sign in as an organization owner or administrator:");
             _console.WriteLine(link.Url);
             if (!args.Contains("--no-browser", StringComparer.Ordinal)) TryOpenBrowser(link.Url);
-            _console.WriteLine("Create the App, then install it. Run 'minicloud github status' to inspect the result.");
+            _console.WriteLine("Create the App, then install it. Run 'selfrun github status' to inspect the result.");
             return CliExitCodes.Success;
         }
         var status = await _apiClient.GetGitHubStatusAsync(organizationId, ct);
         if (command == "repositories")
         {
             if (status.ConnectionId is null)
-                throw new CliCommandException(CliExitCodes.ValidationError, "Run 'minicloud github setup' first.");
+                throw new CliCommandException(CliExitCodes.ValidationError, "Run 'selfrun github setup' first.");
             var repositories = await _apiClient.GetGitHubRepositoriesAsync(status.ConnectionId, ct);
             foreach (var repository in repositories) _console.WriteLine(repository.FullName + (repository.Private ? " (private)" : ""));
             _console.WriteLine($"Verified repositories: {repositories.Count}");
