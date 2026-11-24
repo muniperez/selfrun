@@ -148,6 +148,38 @@ public sealed class CliHelpAndVersionTests
         Assert.NotEqual("0.0.0", version);
     }
 
+    [Fact]
+    public async Task General_help_excludes_extracted_workspaces_command_and_preserves_app_hosting_commands()
+    {
+        var (app, console) = CreateApp();
+
+        var exitCode = await app.RunAsync(["--help"], CancellationToken.None);
+
+        Assert.Equal(CliExitCodes.Success, exitCode);
+        Assert.DoesNotContain("workspaces", console.Output, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("init", console.Output);
+        Assert.Contains("deploy", console.Output);
+        Assert.Contains("apps", console.Output);
+        Assert.Contains("plans", console.Output);
+        Assert.Contains("providers", console.Output);
+        Assert.Contains("github", console.Output);
+        Assert.Contains("seed", console.Output);
+    }
+
+    [Theory]
+    [InlineData("workspaces")]
+    [InlineData("workspaces", "list")]
+    [InlineData("help", "workspaces")]
+    public async Task Extracted_workspaces_commands_return_unknown_command_validation_error(params string[] args)
+    {
+        var (app, console) = CreateApp();
+
+        var exitCode = await app.RunAsync(args, CancellationToken.None);
+
+        Assert.Equal(CliExitCodes.ValidationError, exitCode);
+        Assert.Contains("Unknown command 'workspaces'", console.Error);
+    }
+
     private sealed class TestConsole : IConsole
     {
         public bool SupportsAnsi => false;

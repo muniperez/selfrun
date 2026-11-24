@@ -8,9 +8,6 @@ import type {
   DomainBindingResponse
 } from "../models/controlPlane";
 
-
-
-
 export function getEnvironmentDetail(appId: string, signal?: AbortSignal) {
   return apiRequest<EnvironmentDetailResponse>(`/api/environments/${encodeURIComponent(appId)}`, { signal });
 }
@@ -106,10 +103,6 @@ export function deleteAppDomain(appId: string, domainId: string) {
     method: "DELETE"
   });
 }
-
-
-
-
 
 export function createAppCustomDomain(appId: string, serviceName: string, hostname: string) {
   return apiRequest<DomainBindingResponse>(`/api/domains?appId=${encodeURIComponent(appId)}`, {
