@@ -6,6 +6,7 @@ using Minicloud.Common.Providers.DigitalOcean;
 using Minicloud.Common.Providers.Dns;
 using Minicloud.Common.Providers.Hetzner;
 using Minicloud.Common.Providers.Vultr;
+using Minicloud.Common.Providers.GoogleCloud;
 using System.Net.Http;
 
 namespace Minicloud.Common.Providers;
@@ -19,6 +20,7 @@ public static class ProviderServiceCollectionExtensions
         services.Configure<HetznerOptions>(configuration.GetSection(HetznerOptions.SectionName));
         services.Configure<DigitalOceanOptions>(configuration.GetSection(DigitalOceanOptions.SectionName));
         services.Configure<VultrOptions>(configuration.GetSection(VultrOptions.SectionName));
+        services.Configure<GoogleCloudOptions>(configuration.GetSection(GoogleCloudOptions.SectionName));
         services.Configure<CloudflareOptions>(configuration.GetSection(CloudflareOptions.SectionName));
 
         services.TryAddTransient<ResilientHttpRetryHandler>();
@@ -41,6 +43,10 @@ public static class ProviderServiceCollectionExtensions
             .AddHttpMessageHandler<ResilientHttpRetryHandler>();
         services.AddKeyedScoped<IVpsProviderClient, VultrClient>(CloudProvider.Vultr);
 
+        services.AddHttpClient<GoogleCloudClient>()
+            .AddHttpMessageHandler<ResilientHttpRetryHandler>();
+        services.AddKeyedScoped<IVpsProviderClient, GoogleCloudClient>(CloudProvider.GoogleCloud);
+
         services.AddHttpClient<ICustomDomainDnsResolver, CustomDomainDnsResolver>(http => http.Timeout = TimeSpan.FromSeconds(10));
         services.AddScoped<Minicloud.Common.Services.CustomDomainVerificationService>();
         services.AddScoped<Minicloud.Common.Services.CustomDomainRegistrationService>();
@@ -55,6 +61,7 @@ public static class ProviderServiceCollectionExtensions
             CloudProvider.Hetzner => sp.GetRequiredService<HetznerClient>(),
             CloudProvider.DigitalOcean => sp.GetRequiredService<DigitalOceanClient>(),
             CloudProvider.Vultr => sp.GetRequiredService<VultrClient>(),
+            CloudProvider.GoogleCloud => sp.GetRequiredService<GoogleCloudClient>(),
             _ => throw new NotSupportedException($"VPS provider {provider} is not supported.")
         });
 
