@@ -111,7 +111,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         using var agentProbeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         agentProbeCts.CancelAfter(TimeSpan.FromSeconds(15));
         var agent = _runtimeAgent is null ? null : await _runtimeAgent.PrepareAsync(context,
-            command => _sshClient.ExecuteCommandAsync(context.ServerIp,
+            command => _sshClient.ExecuteCommandAsync(new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp),
                 string.IsNullOrWhiteSpace(context.SshUsername) ? _sshOptions.Username : context.SshUsername,
                 privateKey, command, (_, _) => Task.CompletedTask, agentProbeCts.Token), cancellationToken);
         if (agent is not null)
@@ -141,7 +141,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         {
             result = await _sshClient.ExecuteDeploymentAsync(
                 new SshDeploymentRequest(
-                    context.ServerIp,
+                    new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp),
                     string.IsNullOrWhiteSpace(context.SshUsername) ? _sshOptions.Username : context.SshUsername,
                     privateKey,
                     context.RemoteDirectory,
@@ -285,7 +285,7 @@ public sealed partial class SshDeployStep : IPipelineStep
             .Select(item => $"docker image inspect {EscapeShell($"minicloud/{context.AppSlug}-{item.Key}:{item.Value}")} >/dev/null 2>&1")
             .ToArray();
         var exitCode = await _sshClient.ExecuteCommandAsync(
-            context.ServerIp!, username, privateKey, string.Join(" && ", checks), (_, _) => Task.CompletedTask, cancellationToken);
+            new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp!), username, privateKey, string.Join(" && ", checks), (_, _) => Task.CompletedTask, cancellationToken);
         if (exitCode != 0)
         {
             throw new PipelineStepException(
@@ -312,7 +312,7 @@ public sealed partial class SshDeployStep : IPipelineStep
             "do sleep 1; i=$((i+1)); done; " +
             preparationReady;
         var exitCode = await _sshClient.ExecuteCommandAsync(
-            context.ServerIp, username, privateKey, waitCommand, (_, _) => Task.CompletedTask, cancellationToken);
+            new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp), username, privateKey, waitCommand, (_, _) => Task.CompletedTask, cancellationToken);
         if (exitCode != 0)
         {
             throw new PipelineStepException(FailureCode, $"SSH preparation did not become ready on {context.ServerIp}.");
@@ -320,7 +320,7 @@ public sealed partial class SshDeployStep : IPipelineStep
 
         await EnsureOwnershipAsync(context, cancellationToken);
         exitCode = await _sshClient.ExecuteCommandAsync(
-            context.ServerIp, username, privateKey,
+            new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp), username, privateKey,
             $"umask 077 && : > {EscapeShell(gatePath)}", (_, _) => Task.CompletedTask, cancellationToken);
         if (exitCode != 0)
         {

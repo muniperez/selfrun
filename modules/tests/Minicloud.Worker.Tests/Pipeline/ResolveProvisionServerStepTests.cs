@@ -248,7 +248,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         }
 
         var pinSource = new ServerHostKeyPinSource(_harness.CreateScopeFactory());
-        Assert.Equal(probe.Fingerprint, await pinSource.GetPinnedFingerprintAsync("198.51.100.77", CancellationToken.None));
+        Assert.Equal(probe.Fingerprint, await pinSource.GetPinnedFingerprintAsync(new SshTarget(serverId, "198.51.100.77"), CancellationToken.None));
     }
 
     [Fact]
@@ -285,8 +285,11 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
             Assert.NotNull(pending.HostKeyEnrollmentSecret);
             Assert.DoesNotContain(EnrollingHostKeyProbe.Material(created!.UserDataCloudInit!).Secret, pending.HostKeyEnrollmentSecret,
                 StringComparison.OrdinalIgnoreCase);
+            var untrusted = await Assert.ThrowsAsync<SshHostKeyTrustException>(() =>
+                new ServerHostKeyPinSource(_harness.CreateScopeFactory()).GetPinnedFingerprintAsync(
+                    new SshTarget(pending.Id, "198.51.100.78"), CancellationToken.None));
+            Assert.Equal("ssh_host_key_untrusted", untrusted.FailureCode);
         }
-        Assert.Null(await new ServerHostKeyPinSource(_harness.CreateScopeFactory()).GetPinnedFingerprintAsync("198.51.100.78", CancellationToken.None));
 
         var proven = new EnrollingHostKeyProbe(() => created?.UserDataCloudInit);
         var retry = new ResolveProvisionServerStep(_harness.CreateScopeFactory(), _ => provider,

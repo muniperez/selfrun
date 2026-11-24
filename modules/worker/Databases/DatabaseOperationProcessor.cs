@@ -11,6 +11,8 @@ using Minicloud.Common.Models;
 using Minicloud.Common.Services;
 using Minicloud.Worker.Ssh;
 using Minicloud.Worker.Pipeline.Steps;
+using Minicloud.Common.Providers;
+using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
 
 namespace Minicloud.Worker.Databases;
 
@@ -21,7 +23,9 @@ public sealed partial class DatabaseOperationProcessor(
     IIdGenerator ids, TimeProvider clock, ISshDeploymentClient ssh,
     IOptions<SshDeploymentOptions> sshOptions, IOptions<DatabasePlatformOptions> databaseOptions,
     DatabaseNetworkService privateNetworks, ILogger<DatabaseOperationProcessor>? logger = null,
-    MaintenanceParticipant? maintenance = null)
+    MaintenanceParticipant? maintenance = null,
+    ProviderAccountClientFactory? providerClients = null,
+    VpsProviderClientResolver? providerResolver = null)
 {
     private readonly MaintenanceParticipant maintenanceAuthority = maintenance ?? MaintenanceParticipant.CreateLocal("worker", clock);
 
@@ -216,7 +220,7 @@ public sealed partial class DatabaseOperationProcessor(
             operation = retained;
             var cancelled = error is not RemoteQuiescenceException && await db.DatabaseOperations.AsNoTracking().AnyAsync(x => x.Id == operation.Id && x.Status == "cancelling" && x.OwnershipToken == operation.OwnershipToken, ct);
             operation.Status = cancelled ? "cancelled" : "failed";
-            operation.ErrorCode = operation.Kind == "migrate" ? "database_migration_reconciliation_required" : error is DatabaseRemoteOperationException remote ? remote.Code : error is UnauthorizedAccessException ? "database_authority_changed" : "database_operation_failed";
+            operation.ErrorCode = operation.Kind == "migrate" ? "database_migration_reconciliation_required" : error is SshHostKeyTrustException trust ? trust.FailureCode : error is DatabaseRemoteOperationException remote ? remote.Code : error is UnauthorizedAccessException ? "database_authority_changed" : "database_operation_failed";
             operation.ErrorMessage = operation.Kind == "migrate" ? "Migration requires explicit reconciliation. The source may remain fenced; inspect source and target before reopening writers." : "Database operation failed; source data was not replaced. Inspect its current state before retrying.";
             operation.CompletedAt = clock.GetUtcNow();
             await MarkFailedResourceAsync(operation, ct);
@@ -339,7 +343,7 @@ public sealed partial class DatabaseOperationProcessor(
         if (operation.Kind == "migrate") { return await MigrateDatabaseAsync(operation, database, app, host, ct); }
         if (operation.Kind == "enroll")
         {
-            await ExecuteRemoteAsync(operation, host.IpAddress, "dispatch.py", new { action = "inspect", engine = database.Engine, sqlitePath = "/opt/minicloud/apps/" + app.Slug + "/data/sqlite/app.db", container = "minicloud-" + app.Slug + "-db-1", databaseName = app.Slug.Replace('-', '_'), operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, host, "dispatch.py", new { action = "inspect", engine = database.Engine, sqlitePath = "/opt/minicloud/apps/" + app.Slug + "/data/sqlite/app.db", container = "minicloud-" + app.Slug + "-db-1", databaseName = app.Slug.Replace('-', '_'), operationId = operation.Id }, ct);
             if (app.Database == DatabaseMode.Postgres)
             {
                 var secret = await db.AppSecrets.SingleOrDefaultAsync(x => x.AppId == app.Id && x.OrganizationId == app.OrganizationId && x.Name == AppSecretService.PostgresPasswordSecretName, ct)
@@ -369,7 +373,7 @@ public sealed partial class DatabaseOperationProcessor(
                 : JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(database.EncryptedCredentialsJson), Json)!;
             database.EncryptedCredentialsJson = encryption.Encrypt(JsonSerializer.Serialize(credentials, Json));
             await SaveOwnedDatabaseChangesAsync(operation, ct);
-            await ExecuteRemoteAsync(operation, host.IpAddress, "operation.py", new { action = operation.Kind == "create-database" ? "create" : "delete", databaseName = credentials.DatabaseName, username = credentials.Username, password = credentials.Password, container = "minicloud-" + app.Slug + "-db-1", adminUser = "minicloud", operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, host, "operation.py", new { action = operation.Kind == "create-database" ? "create" : "delete", databaseName = credentials.DatabaseName, username = credentials.Username, password = credentials.Password, container = "minicloud-" + app.Slug + "-db-1", adminUser = "minicloud", operationId = operation.Id }, ct);
             database.Status = operation.Kind == "delete" ? "deleted" : "ready";
             await ReconcileDatabaseAccessAsync(operation, database, app, host, database.AccessMode, JsonSerializer.Deserialize<string[]>(database.AllowedCidrsJson, Json) ?? [], ct);
             if (operation.Kind == "delete")
@@ -388,9 +392,43 @@ public sealed partial class DatabaseOperationProcessor(
         throw new InvalidOperationException("Operation handler unavailable.");
     }
 
-    private async Task<JsonElement> ExecuteRemoteAsync(DatabaseOperation operation, string host, string scriptName, object payload, CancellationToken ct)
+    internal async Task<SshTarget> ResolveSshTargetAsync(ServerInstance server, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(server.IpAddress) || string.IsNullOrWhiteSpace(server.ProviderServerId) ||
+            server.Status != "active" || !Enum.TryParse<CloudProvider>(server.Provider, true, out var provider))
+        {
+            throw new SshHostKeyTrustException(SshHostKeyTrustException.UntrustedFailureCode,
+                $"Selected database server {server.Id} has no active provider/address registration; refusing SSH.");
+        }
+        IVpsProviderClient client;
+        if (server.ProviderAccountId is not null)
+        {
+            client = await (providerClients ?? throw new InvalidOperationException("Provider account verification is unavailable."))
+                .CreateAsync(server.OrganizationId, server.ProviderAccountId, ct);
+        }
+        else
+        {
+            client = (providerResolver ?? throw new InvalidOperationException("Legacy provider verification is unavailable."))(provider);
+        }
+        if (client.Provider != provider)
+        {
+            throw new SshHostKeyTrustException(SshHostKeyTrustException.UntrustedFailureCode,
+                $"Selected database server {server.Id}'s provider account does not match its registration; refusing SSH.");
+        }
+        var status = await client.GetServerStatusAsync(server.ProviderServerId, ct);
+        if (status.Id != server.ProviderServerId || !status.IsRunning ||
+            string.IsNullOrWhiteSpace(status.Ipv4Address) || status.Ipv4Address != server.IpAddress)
+        {
+            throw new SshHostKeyTrustException(SshHostKeyTrustException.UntrustedFailureCode,
+                $"Selected database server {server.Id} is not running at its registered address; reconcile its provider registration before retrying SSH.");
+        }
+        return new SshTarget(server.Id, server.IpAddress, server.HostKeyFingerprint);
+    }
+
+    private async Task<JsonElement> ExecuteRemoteAsync(DatabaseOperation operation, ServerInstance server, string scriptName, object payload, CancellationToken ct)
     {
         await ValidateDatabaseOperationAuthorityAsync(operation, ct);
+        var target = await ResolveSshTargetAsync(server, ct);
         var options = sshOptions.Value;
         var key = !string.IsNullOrWhiteSpace(options.PrivateKeyContent) ? options.PrivateKeyContent : await File.ReadAllTextAsync(options.PrivateKeyPath, ct);
         var directory = Path.Combine(AppContext.BaseDirectory, "scripts", "database-platform");
@@ -405,7 +443,7 @@ public sealed partial class DatabaseOperationProcessor(
         var script = wrapper.ToString();
         var envelope = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(payload, Json))!.AsObject();
         envelope["ownership_token"] = operation.OwnershipToken;
-        var response = await ssh.ExecuteDeploymentAsync(new SshDeploymentRequest(host, options.Username, key, SshDeployStep.RemoteDirectoryFor(operation.Id), envelope.ToJsonString(), script, [], TimeSpan.FromMinutes(30)), (_, _) => Task.CompletedTask, ct);
+        var response = await ssh.ExecuteDeploymentAsync(new SshDeploymentRequest(target, options.Username, key, SshDeployStep.RemoteDirectoryFor(operation.Id), envelope.ToJsonString(), script, [], TimeSpan.FromMinutes(30)), (_, _) => Task.CompletedTask, ct);
         const string marker = "__MINICLOUD_DATABASE_RESULT__=";
         var result = response.OutputLines.LastOrDefault(x => x.StartsWith(marker, StringComparison.Ordinal))
             ?? throw new DatabaseRemoteOperationException("database_runtime_interrupted", scriptName);

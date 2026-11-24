@@ -39,7 +39,7 @@ public sealed partial class DatabaseOperationProcessor
         if (!state.SqlApplied)
         {
             var changed = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(state.EncryptedCredentials), Json)!;
-            await ExecuteRemoteAsync(operation, sourceHost.IpAddress!, "operation.py", new { action = "rotate", databaseName = changed.DatabaseName, username = changed.Username, password = changed.Password, container = "minicloud-" + sourceApp.Slug + "-db-1", adminUser = "minicloud", operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, sourceHost, "operation.py", new { action = "rotate", databaseName = changed.DatabaseName, username = changed.Username, password = changed.Password, container = "minicloud-" + sourceApp.Slug + "-db-1", adminUser = "minicloud", operationId = operation.Id }, ct);
             database.EncryptedCredentialsJson = state.EncryptedCredentials;
             database.Revision++;
             database.UpdatedAt = clock.GetUtcNow();

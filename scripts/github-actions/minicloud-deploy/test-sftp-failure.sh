@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TEMP_DIR="$(mktemp -d /tmp/minicloud-sftp-test.XXXXXX)"
+mkdir -p "${ROOT_DIR}/.local/artifacts"
+TEMP_DIR="$(mktemp -d "${ROOT_DIR}/.local/artifacts/minicloud-sftp-test.XXXXXX")"
 CONTAINER_NAME="minicloud-sftp-test-$RANDOM"
 PORT="${MINICLOUD_TEST_SFTP_PORT:-}"
 
@@ -49,8 +50,11 @@ if [ "${ready}" != true ]; then
 fi
 docker exec "${CONTAINER_NAME}" mkdir -p /home/minicloud/upload/minicloud-cancel
 docker exec "${CONTAINER_NAME}" chown -R 1001:100 /home/minicloud/upload
+docker exec "${CONTAINER_NAME}" ssh-keygen -l -E sha256 -f /etc/ssh/ssh_host_ed25519_key.pub |
+  awk '{ print "127.0.0.1 " $2 }' > "${TEMP_DIR}/host-pins"
 
 MINICLOUD_TEST_SFTP_KEY="${TEMP_DIR}/id_rsa" \
 MINICLOUD_TEST_SFTP_PORT="${PORT}" \
+MINICLOUD_TEST_SFTP_HOST_PINS="${TEMP_DIR}/host-pins" \
 dotnet test "${ROOT_DIR}/modules/tests/Minicloud.Worker.Tests/Minicloud.Worker.Tests.csproj" \
   --no-restore --filter 'FullyQualifiedName~RealSftp'

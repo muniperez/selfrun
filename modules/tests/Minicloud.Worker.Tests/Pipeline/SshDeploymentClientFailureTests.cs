@@ -21,7 +21,7 @@ public sealed class SshDeploymentClientFailureTests
         {
             Port = port,
             ConnectionTimeout = TimeSpan.FromSeconds(30),
-        });
+        }, pinSource: new ServerHostKeyEnrollmentTests.FixedPins("SHA256:synthetic"));
         using var cancellation = new CancellationTokenSource();
         var execution = client.ExecuteCommandAsync("127.0.0.1", "minicloud",
             rsa.ExportPkcs8PrivateKeyPem(), "touch /tmp/should-not-run",
@@ -50,6 +50,7 @@ public sealed class SshDeploymentClientFailureTests
         var client = new SshDeploymentClient(new SshDeploymentOptions
         {
             Port = port,
+            HostKeyPinsFile = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SFTP_HOST_PINS") ?? "",
             ConnectionTimeout = TimeSpan.FromSeconds(5),
             CommandTimeout = TimeSpan.FromSeconds(5),
         }, NullLogger<SshDeploymentClient>.Instance);
@@ -76,6 +77,7 @@ public sealed class SshDeploymentClientFailureTests
         var client = new SshDeploymentClient(new SshDeploymentOptions
         {
             Port = port,
+            HostKeyPinsFile = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SFTP_HOST_PINS") ?? "",
             ConnectionTimeout = TimeSpan.FromSeconds(5),
             CommandTimeout = TimeSpan.FromSeconds(5),
         });
@@ -118,7 +120,7 @@ public sealed class SshDeploymentClientFailureTests
                 ConnectionTimeout = TimeSpan.FromSeconds(2),
                 CommandTimeout = TimeSpan.FromSeconds(2),
             },
-            NullLogger<SshDeploymentClient>.Instance);
+            NullLogger<SshDeploymentClient>.Instance, new ServerHostKeyEnrollmentTests.FixedPins("SHA256:synthetic"));
         var artifactOpened = false;
         var request = new SshDeploymentRequest(
             "127.0.0.1", "minicloud", rsa.ExportPkcs8PrivateKeyPem(), "/tmp/minicloud-test",
@@ -149,6 +151,7 @@ public sealed class SshDeploymentClientFailureTests
         var client = new SshDeploymentClient(new SshDeploymentOptions
         {
             Port = port, ConnectionTimeout = TimeSpan.FromSeconds(3), CommandTimeout = TimeSpan.FromSeconds(3),
+            HostKeyPinsFile = Environment.GetEnvironmentVariable("MINICLOUD_TEST_SFTP_HOST_PINS") ?? "",
         }, NullLogger<SshDeploymentClient>.Instance);
         var largePayload = new byte[64 * 1024 * 1024];
         var request = new SshDeploymentRequest(
