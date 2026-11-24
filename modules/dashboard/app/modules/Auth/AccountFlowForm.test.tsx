@@ -636,8 +636,14 @@ describe("passkey sign-in and settings", () => {
     expect(fetcher.mock.calls[3][1].headers).toHaveProperty("X-Minicloud-CSRF", "synthetic-csrf");
     expect(auth.refreshSession).toHaveBeenCalledTimes(1);
 
+    await waitFor(() => {
+      expect(fetcher).toHaveBeenCalledTimes(5);
+      expect(fetcher.mock.calls[4][0]).toContain("/flows/settings/browser");
+      expect(screen.getByRole("button", { name: "Add passkey" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Add passkey" }));
     expect(await screen.findByText("Passkey added.")).toBeInTheDocument();
+    expect(fetcher.mock.calls[5][0]).toContain(`flow=${refreshedSettings.id}`);
     expect(screen.getByText("1 passkey enrolled.")).toBeInTheDocument();
     expect(create).toHaveBeenCalledTimes(2);
   });
