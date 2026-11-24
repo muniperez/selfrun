@@ -324,6 +324,30 @@ public sealed class DeploymentRendererTests
         Assert.DoesNotContain("100%", output);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Renderer_displays_health_check_failure_with_rollback_outcome_and_failed_check(bool interactive)
+    {
+        var console = new TestConsole { SupportsAnsi = interactive, WindowWidth = 120 };
+        var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+        using IDeploymentRenderer renderer = interactive
+            ? new InteractiveDeploymentRenderer(console, time, enableSpinnerTimer: false)
+            : new PlainTextDeploymentRenderer(console, time);
+        renderer.Initialize(new DeploymentPlan(false, 0, false, [], true, 1));
+        renderer.DeploymentCreated("20261110.112", "deploying");
+        renderer.DeploymentFailed(new DeploymentFailureResult("20261110.112", "health_check_failed",
+            "Rollback restored the previous app services and their routing. " +
+            "Health check failed for web at http://127.0.0.1:18080/health (curl: (22) The requested URL returned error: 503).", null));
+
+        var output = TerminalTextHelper.StripAnsi(console.Output);
+        Assert.Contains("health_check_failed", output);
+        Assert.Contains("Rollback restored the previous app services and their routing.", output);
+        Assert.Contains("Health check failed for web at http://127.0.0.1:18080/health", output);
+        Assert.Contains("Logs: minicloud logs 20261110.112", output);
+        Assert.DoesNotContain("remote-deploy.sh failed", output);
+    }
+
     [Fact]
     public void InteractiveRenderer_hides_and_restores_cursor_on_dispose()
     {
