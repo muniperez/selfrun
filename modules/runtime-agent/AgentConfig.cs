@@ -11,7 +11,8 @@ public sealed record AgentConfig(
     string ComposeProject,
     string ComposeFile,
     string TokenPath,
-    string StatePath)
+    string StatePath,
+    AgentProfilingConfig? Profiling = null)
 {
     public static AgentConfig Load(string path)
     {
@@ -28,6 +29,11 @@ public sealed record AgentConfig(
             !Regex.IsMatch(config.ComposeProject, @"\Aminicloud-[a-z0-9][a-z0-9-]{0,62}\z"))
         {
             throw new InvalidOperationException("Agent config is missing required fields.");
+        }
+
+        if (config.Profiling is { Enabled: true })
+        {
+            config.Profiling.Validate();
         }
 
         return config;

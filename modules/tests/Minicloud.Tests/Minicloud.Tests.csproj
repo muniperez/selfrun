@@ -27,6 +27,8 @@
     <ProjectReference Include="..\..\common\Minicloud.Common.csproj" />
     <ProjectReference Include="..\..\runtime-agent\Minicloud.RuntimeAgent.csproj" />
     <ProjectReference Include="..\..\telemetry\Minicloud.Telemetry.csproj" />
+    <ProjectReference Include="..\..\..\tools\runtime-agent-allocation-report\RuntimeAgentAllocationReport.csproj" />
+    <ProjectReference Include="..\..\..\tools\runtime-agent-benchmark\RuntimeAgentBenchmark.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

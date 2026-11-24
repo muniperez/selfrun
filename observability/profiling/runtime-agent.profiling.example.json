@@ -1,0 +1,20 @@
+{
+  "serverId": "srv_example_pilot",
+  "organizationId": "org_example_pilot",
+  "appId": "app_example_pilot",
+  "apiBaseUrl": "https://api.example.invalid",
+  "composeProject": "minicloud-example-pilot",
+  "composeFile": "/opt/minicloud/apps/example-pilot/compose.yml",
+  "tokenPath": "/opt/minicloud/agent/runtime.token",
+  "statePath": "/opt/minicloud/agent/state.json",
+  "profiling": {
+    "enabled": false,
+    "receiverUrl": "http://127.0.0.1:4318",
+    "bearerTokenPath": "/opt/minicloud/agent/operator-profiling.token",
+    "summaryIntervalSeconds": 60,
+    "exportTimeoutMs": 2000,
+    "maxQueueSize": 16,
+    "emitJournalSummary": true,
+    "exportOtlp": false
+  }
+}
