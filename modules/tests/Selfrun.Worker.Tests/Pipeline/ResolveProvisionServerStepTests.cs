@@ -350,10 +350,13 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
     [SshdFact]
     public async Task PendingEnrollmentRecoversThroughVerifiedOperatorHostPin()
     {
+        // The pin source rejects duplicate active IPs, including loopback used by other tests.
+        await using var harness = new WorkerSqliteTestHarness();
+        await harness.InitializeAsync();
         await using var sshd = await ServerHostKeyEnrollmentTests.LocalSshd.StartAsync();
         await sshd.WriteAsync("banner", "");
         await sshd.ListenAsync();
-        var (org, app) = await _harness.SeedOrgAndAppAsync("operator-pin-recovery");
+        var (org, app) = await harness.SeedOrgAndAppAsync("operator-pin-recovery");
         const string serverId = "abcdef0123456789abcdef0123456789";
         var secret = ServerHostKeyEnrollment.CreateSecret();
         var encryption = new SecretEncryptionService(Options.Create(new SecretEncryptionOptions
@@ -361,7 +364,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
             EncryptionKey = "synthetic-worker-test-key"
         }));
         var protectedSecret = encryption.Encrypt(Convert.ToHexString(secret));
-        await using (var db = _harness.CreateDbContext())
+        await using (var db = harness.CreateDbContext())
         {
             db.ServerInstances.Add(new ServerInstance
             {
@@ -385,7 +388,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         var file = await sshd.WriteAsync("host-pins", $"192.0.2.97 {sshd.Fingerprint}\n");
         var sshOptions = new SshDeploymentOptions { Port = sshd.Port, HostKeyPinsFile = file };
         var probe = new LocalHostKeyProbe(sshd.Port);
-        var step = new ResolveProvisionServerStep(_harness.CreateScopeFactory(), _ => provider,
+        var step = new ResolveProvisionServerStep(harness.CreateScopeFactory(), _ => provider,
             new DeploymentPipelineOptions { SshReadyTimeout = TimeSpan.FromMilliseconds(300) },
             TimeProvider.System, sshProbe: (_, _, _) => Task.FromResult(true), hostKeyProbe: probe, sshOptions: sshOptions);
 
@@ -401,7 +404,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         var wrongContext = Context("pin-wrong");
         await step.ExecuteAsync(wrongContext, default);
         Assert.Equal(calls, probe.Calls);
-        var client = new SshDeploymentClient(sshOptions, pinSource: new ServerHostKeyPinSource(_harness.CreateScopeFactory()));
+        var client = new SshDeploymentClient(sshOptions, pinSource: new ServerHostKeyPinSource(harness.CreateScopeFactory()));
         var mismatch = await Assert.ThrowsAsync<SshHostKeyTrustException>(() => client.ExecuteCommandAsync(
             new SshTarget(wrongContext.ServerInstanceId, wrongContext.ServerIp), Environment.UserName, sshd.ClientPrivateKey,
             "true", (_, _) => Task.CompletedTask, default));
@@ -415,7 +418,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         Assert.Equal("127.0.0.1", recovered.ServerIp);
         Assert.Equal(0, await client.ExecuteCommandAsync(new SshTarget(serverId, recovered.ServerIp),
             Environment.UserName, sshd.ClientPrivateKey, "true", (_, _) => Task.CompletedTask, default));
-        await using (var db = _harness.CreateDbContext())
+        await using (var db = harness.CreateDbContext())
         {
             var pending = await db.ServerInstances.SingleAsync(s => s.Id == serverId);
             Assert.Null(pending.HostKeyFingerprint);
@@ -435,7 +438,7 @@ public sealed class ResolveProvisionServerStepTests : IClassFixture<WorkerSqlite
         await sshd.WriteAsync("banner", ServerHostKeyEnrollmentTests.Banner(serverId, secret, Convert.FromBase64String(publicKey)));
         await step.ExecuteAsync(Context("pin-enrolled"), default);
         Assert.True(probe.Calls > calls);
-        await using var verify = _harness.CreateDbContext();
+        await using var verify = harness.CreateDbContext();
         var enrolled = await verify.ServerInstances.SingleAsync(s => s.Id == serverId);
         Assert.Equal(sshd.Fingerprint, enrolled.HostKeyFingerprint);
         Assert.Null(enrolled.HostKeyEnrollmentSecret);
