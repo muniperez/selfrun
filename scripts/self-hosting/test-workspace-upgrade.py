@@ -18,7 +18,6 @@ import time
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 MANIFEST = json.loads((HERE / "workspace-upgrade.json").read_text())
-API_PROJECT = Path("modules/api/Selfrun.Api.csproj")
 HISTORY = 'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId"'
 
 
@@ -32,9 +31,10 @@ def loopback_port():
         return sock.getsockname()[1]
 
 
-def build_api(source, output):
-    run("dotnet", "build", source / API_PROJECT, "-c", "Release", "-o", output, "--nologo", "-v", "quiet")
-    return output / "Selfrun.Api.dll"
+def build_api(source, output, revision):
+    project = source / revision["apiProject"]
+    run("dotnet", "build", project, "-c", "Release", "-o", output, "--nologo", "-v", "quiet")
+    return output / project.with_suffix(".dll").name
 
 
 def postgres16_bin():
@@ -122,20 +122,20 @@ class Postgres:
             print(diff, end="", flush=True)
             raise AssertionError(f"{message}; synthetic dump diff: {path}")
 
-    def api_env(self, database):
+    def api_env(self, database, connection_string_key):
         return {
             key: os.environ[key] for key in ("PATH", "DOTNET_ROOT", "LD_LIBRARY_PATH") if key in os.environ
         } | {
             "ASPNETCORE_ENVIRONMENT": "Production",
             "Database__Provider": "Postgres",
             "Database__RunMigrationsOnStartup": "false",
-            "ConnectionStrings__Selfrun":
+            connection_string_key:
                 f"Host=127.0.0.1;Port={self.port};Database={database};Username=synthetic;Password={self.password}",
         }
 
-    def migrate(self, api, database, command, error=None):
+    def migrate(self, api, database, command, error=None, *, revision=MANIFEST["target"]):
         argv = ["dotnet", api]
-        env = self.api_env(database)
+        env = self.api_env(database, revision["connectionStringKey"])
         if command is None:
             env |= {"Database__RunMigrationsOnStartup": "true", "ASPNETCORE_URLS": "http://127.0.0.1:0"}
         else:
@@ -155,7 +155,7 @@ class Postgres:
         port = loopback_port()
         with tempfile.TemporaryFile(mode="w+", dir=self.path) as log:
             with subprocess.Popen(["dotnet", api], cwd=api.parent, stdout=log, stderr=log,
-                                  env=self.api_env(database) | {"ASPNETCORE_URLS": f"http://127.0.0.1:{port}"}) as process:
+                                  env=self.api_env(database, MANIFEST["target"]["connectionStringKey"]) | {"ASPNETCORE_URLS": f"http://127.0.0.1:{port}"}) as process:
                 try:
                     deadline = time.monotonic() + 30
                     while process.poll() is None and time.monotonic() < deadline:
@@ -190,7 +190,7 @@ def rehearse(pg, legacy_api, target_api):
     for db in ("upgraded", "fresh"):
         pg.sql("postgres", f"CREATE DATABASE {db}")
 
-    pg.migrate(legacy_api, "upgraded", command)
+    pg.migrate(legacy_api, "upgraded", command, revision=MANIFEST["installed"])
     pg.command("psql", "upgraded", "-X", "-v", "ON_ERROR_STOP=1", "-f", HERE / "workspace-upgrade-fixture.sql")
     legacy_history = pg.sql("upgraded", HISTORY).splitlines()
     before = pg.snapshot("upgraded")
@@ -267,8 +267,8 @@ def main():
         run("git", "archive", "-o", archive, revision, cwd=ROOT)
         with tarfile.open(archive) as source:
             source.extractall(path / "legacy", filter="data")
-        legacy_api = build_api(path / "legacy", path / "legacy-api")
-        target_api = build_api(ROOT, path / "target-api")
+        legacy_api = build_api(path / "legacy", path / "legacy-api", installed)
+        target_api = build_api(ROOT, path / "target-api", MANIFEST["target"])
         with Postgres(path, pg_bin) as pg:
             rehearse(pg, legacy_api, target_api)
 
