@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers;
+namespace Selfrun.Common.Providers;
 
 public sealed record ProviderStorageVolume(string Id, string Name, int SizeGb, string Region, string? ServerId, IReadOnlyDictionary<string, string> Labels);
 

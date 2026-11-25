@@ -1,8 +1,8 @@
 using System.Net;
 using Microsoft.Extensions.Options;
-using Minicloud.Telemetry.Otlp;
+using Selfrun.Telemetry.Otlp;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed record OtlpForwardOutcome(
     int StatusCode,

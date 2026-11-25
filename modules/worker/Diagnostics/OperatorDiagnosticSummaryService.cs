@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Minicloud.Worker.Diagnostics;
+namespace Selfrun.Worker.Diagnostics;
 
 internal sealed partial class OperatorDiagnosticSummaryService(
     OperatorDiagnostics diagnostics,
@@ -9,7 +9,7 @@ internal sealed partial class OperatorDiagnosticSummaryService(
     TimeProvider timeProvider) : BackgroundService
 {
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
-    private readonly ILogger _logger = loggerFactory.CreateLogger("Minicloud.OperatorDiagnostics");
+    private readonly ILogger _logger = loggerFactory.CreateLogger("Selfrun.OperatorDiagnostics");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

@@ -1,16 +1,16 @@
 using System.Text.Json;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public static class DtoMapping
 {
     public static OrganizationResponse ToResponse(this Organization organization) =>
         new(organization.Id, organization.Name, organization.Slug, organization.CreatedAt);
 
-    public static EnvironmentDetailResponse ToResponse(this MinicloudApp app, bool sshSelectionLocked = false)
+    public static EnvironmentDetailResponse ToResponse(this SelfrunApp app, bool sshSelectionLocked = false)
     {
         var latestDeployment = app.Deployments
             .Where(x => x.AssetReleaseId == null)
@@ -85,7 +85,7 @@ public static class DtoMapping
     }
 
     public static ApplicationEnvironmentResponse ToResponse(
-        this MinicloudApp env,
+        this SelfrunApp env,
         string applicationId,
         EnvironmentRuntimeObservationResponse? runtimeObservation = null,
         bool placementLocked = false,
@@ -143,7 +143,7 @@ public static class DtoMapping
             null);
     }
 
-    private static EnvironmentSshAccessResponse ToSshAccessResponse(MinicloudApp env, bool placementLocked) =>
+    private static EnvironmentSshAccessResponse ToSshAccessResponse(SelfrunApp env, bool placementLocked) =>
         new(env.SshAccessMode,
             env.SshProviderAccountId ?? env.SelectedPlan?.ProviderAccountId,
             env.SshAccessMode == "existing" ? env.SshKeyId : null,
@@ -155,7 +155,7 @@ public static class DtoMapping
             placementLocked);
 
     public static ApplicationResponse ToResponse(
-        this MinicloudApplication application,
+        this SelfrunApplication application,
         IReadOnlyDictionary<string, EnvironmentRuntimeObservationResponse>? runtimeObservations = null,
         IReadOnlySet<string>? placementLockedEnvironmentIds = null,
         IReadOnlySet<string>? sshLockedEnvironmentIds = null)
@@ -191,7 +191,7 @@ public static class DtoMapping
             application.UpdatedAt);
     }
 
-    public static string PlanName(MinicloudApp app) => app.SelectedPlan?.Name ?? app.PlanId ?? ControlPlaneValidation.ToWireValue(app.Plan);
+    public static string PlanName(SelfrunApp app) => app.SelectedPlan?.Name ?? app.PlanId ?? ControlPlaneValidation.ToWireValue(app.Plan);
 
     public static ApiKeyResponse ToResponse(this ApiKey apiKey)
     {

@@ -1,9 +1,9 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class MaintenanceException(string code, string message, bool refused) : Exception(message)
 {
@@ -44,7 +44,7 @@ public sealed record MaintenanceDrainStatus(
 /// Operator-side maintenance authority: fence, release, transfer and drain status. All mutations
 /// lock the singleton authority row so they are ordered against API admissions and worker claims.
 /// </summary>
-public sealed class MaintenanceAuthorityService(MinicloudDbContext db, TimeProvider clock, string? localHostId)
+public sealed class MaintenanceAuthorityService(SelfrunDbContext db, TimeProvider clock, string? localHostId)
 {
     public const int MaxListedIds = 50;
     private static readonly TimeSpan ParticipantStaleAfter = TimeSpan.FromMinutes(5);
@@ -181,7 +181,7 @@ public sealed class MaintenanceAuthorityService(MinicloudDbContext db, TimeProvi
         Add(work, "admitted_activities", "uncertain", activities.Where(x => x.ExpiresAt <= now).Select(x => x.Id), true);
 
         Add(work, "managed_dns", "pending", await db.Domains.AsNoTracking()
-            .Where(d => d.Kind == DomainBindingService.KindMinicloudSubdomain && d.Status != DomainBindingService.StatusDisabled &&
+            .Where(d => d.Kind == DomainBindingService.KindSelfrunSubdomain && d.Status != DomainBindingService.StatusDisabled &&
                 d.App.DeletionStatus == null && (d.TargetIp == null || d.DnsStatus != DomainBindingService.DnsVerified))
             .Select(x => x.Id).ToListAsync(ct), false);
         Add(work, "custom_domain_verification", "pending", await db.CustomDomainRegistrations.AsNoTracking()

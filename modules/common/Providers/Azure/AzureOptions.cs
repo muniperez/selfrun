@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Providers.Azure;
+namespace Selfrun.Common.Providers.Azure;
 
 public sealed class AzureOptions
 {

@@ -1,18 +1,18 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers.Aws;
-using Minicloud.Common.Providers.Azure;
-using Minicloud.Common.Providers.DigitalOcean;
-using Minicloud.Common.Providers.GoogleCloud;
-using Minicloud.Common.Providers.Hetzner;
-using Minicloud.Common.Providers.Linode;
-using Minicloud.Common.Providers.Ovhcloud;
-using Minicloud.Common.Providers.Scaleway;
-using Minicloud.Common.Providers.Vultr;
-using Minicloud.Common.Services;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers.Aws;
+using Selfrun.Common.Providers.Azure;
+using Selfrun.Common.Providers.DigitalOcean;
+using Selfrun.Common.Providers.GoogleCloud;
+using Selfrun.Common.Providers.Hetzner;
+using Selfrun.Common.Providers.Linode;
+using Selfrun.Common.Providers.Ovhcloud;
+using Selfrun.Common.Providers.Scaleway;
+using Selfrun.Common.Providers.Vultr;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Common.Providers.Extensibility;
+namespace Selfrun.Common.Providers.Extensibility;
 
 public sealed record ProviderClientCreationContext(
     ProviderAccount Account,
@@ -418,7 +418,7 @@ public static class BuiltInProviderDescriptors
         Credentials: new ProviderCredentialContract(
             Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
             ScopeBoundary: ProviderScopeBoundaryKind.AccountAndRole,
-            EnvironmentVariableNames: ["SELFRUN_AWS_CREDENTIAL_JSON", "MINICLOUD_AWS_CREDENTIAL_JSON", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+            EnvironmentVariableNames: ["SELFRUN_AWS_CREDENTIAL_JSON", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
             NonSecretSettings:
             [
                 new ProviderSettingField("projectId", "AWS Account ID", Required: false, ImmutableAfterReservation: true,
@@ -466,7 +466,7 @@ public static class BuiltInProviderDescriptors
         Credentials: new ProviderCredentialContract(
             Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
             ScopeBoundary: ProviderScopeBoundaryKind.TenantAndSubscription,
-            EnvironmentVariableNames: ["SELFRUN_AZURE_CREDENTIAL_JSON", "MINICLOUD_AZURE_CREDENTIAL_JSON", "AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_ACCESS_TOKEN"],
+            EnvironmentVariableNames: ["SELFRUN_AZURE_CREDENTIAL_JSON", "AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_ACCESS_TOKEN"],
             NonSecretSettings:
             [
                 new ProviderSettingField("projectId", "Subscription / Resource Group", Required: true, ImmutableAfterReservation: true,
@@ -514,7 +514,7 @@ public static class BuiltInProviderDescriptors
         Credentials: new ProviderCredentialContract(
             Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
             ScopeBoundary: ProviderScopeBoundaryKind.ServiceAndProject,
-            EnvironmentVariableNames: ["SELFRUN_GCP_CREDENTIAL_JSON", "MINICLOUD_GCP_CREDENTIAL_JSON", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_APPLICATION_CREDENTIALS_JSON", "GCP_ACCESS_TOKEN"],
+            EnvironmentVariableNames: ["SELFRUN_GCP_CREDENTIAL_JSON", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_APPLICATION_CREDENTIALS_JSON", "GCP_ACCESS_TOKEN"],
             NonSecretSettings:
             [
                 new ProviderSettingField("projectId", "Project ID", Required: true, ImmutableAfterReservation: true,
@@ -562,7 +562,7 @@ public static class BuiltInProviderDescriptors
         Credentials: new ProviderCredentialContract(
             Format: ProviderCredentialFormat.KeyPairOrStructuredJson,
             ScopeBoundary: ProviderScopeBoundaryKind.ServiceAndProject,
-            EnvironmentVariableNames: ["SELFRUN_OVH_CREDENTIAL_JSON", "MINICLOUD_OVH_CREDENTIAL_JSON", "OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET", "OVH_CONSUMER_KEY", "OVH_PROJECT_ID"],
+            EnvironmentVariableNames: ["SELFRUN_OVH_CREDENTIAL_JSON", "OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET", "OVH_CONSUMER_KEY", "OVH_PROJECT_ID"],
             NonSecretSettings:
             [
                 new ProviderSettingField("projectId", "Project ID", Required: true, ImmutableAfterReservation: true,
@@ -610,7 +610,7 @@ public static class BuiltInProviderDescriptors
         Credentials: new ProviderCredentialContract(
             Format: ProviderCredentialFormat.ApiToken,
             ScopeBoundary: ProviderScopeBoundaryKind.Account,
-            EnvironmentVariableNames: ["SELFRUN_LINODE_TOKEN", "MINICLOUD_LINODE_TOKEN", "LINODE_TOKEN", "LINODE_API_TOKEN"],
+            EnvironmentVariableNames: ["SELFRUN_LINODE_TOKEN", "LINODE_TOKEN", "LINODE_API_TOKEN"],
             NonSecretSettings: [],
             SupportsReadOnlyScopeIdentity: true),
         RetryPolicy: ProviderRetryPolicy.Default);
@@ -653,7 +653,7 @@ public static class BuiltInProviderDescriptors
         Credentials: new ProviderCredentialContract(
             Format: ProviderCredentialFormat.ApiToken,
             ScopeBoundary: ProviderScopeBoundaryKind.Project,
-            EnvironmentVariableNames: ["SELFRUN_SCALEWAY_CREDENTIAL_JSON", "MINICLOUD_SCALEWAY_CREDENTIAL_JSON", "SCW_SECRET_KEY", "SCALEWAY_SECRET_KEY"],
+            EnvironmentVariableNames: ["SELFRUN_SCALEWAY_CREDENTIAL_JSON", "SCW_SECRET_KEY", "SCALEWAY_SECRET_KEY"],
             NonSecretSettings:
             [
                 new ProviderSettingField("projectId", "Project ID", Required: true, ImmutableAfterReservation: true,

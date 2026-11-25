@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-namespace Minicloud.Cli.Rendering;
+namespace Selfrun.Cli.Rendering;
 
 public interface IDeploymentTimingSink
 {
@@ -16,9 +16,7 @@ public sealed class DeploymentTimingSink : IDeploymentTimingSink
 
     public DeploymentTimingSink(string? filePath = null)
     {
-        _filePath = filePath ?? CliEnvironment.GetEnvironmentVariable(
-            CliEnvironment.TimingTraceOutputEnvironmentVariable,
-            CliEnvironment.LegacyTimingTraceOutputEnvironmentVariable);
+        _filePath = filePath ?? CliEnvironment.ReadEnvironmentVariable(CliEnvironment.TimingTraceOutputEnvironmentVariable);
     }
 
     public void RecordTiming(string line)

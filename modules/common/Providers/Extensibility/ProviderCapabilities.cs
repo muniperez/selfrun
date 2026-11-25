@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.Extensibility;
+namespace Selfrun.Common.Providers.Extensibility;
 
 [Flags]
 public enum ProviderComputeFamily

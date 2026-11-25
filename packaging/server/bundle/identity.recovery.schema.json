@@ -1,7 +1,7 @@
 {
-  "$id": "https://minicloud.invalid/identity.schema.json",
+  "$id": "https://selfrun.invalid/identity.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Minicloud operator identity",
+  "title": "Selfrun operator identity",
   "type": "object",
   "properties": {
     "traits": {

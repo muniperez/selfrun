@@ -6,12 +6,12 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Models;
 using System.Net.Http;
 using System.Globalization;
 
-namespace Minicloud.Common.Providers.Vultr;
+namespace Selfrun.Common.Providers.Vultr;
 
 public sealed class VultrClient : IVpsProviderClient, IVpsProviderSshKeyClient
 {
@@ -120,7 +120,7 @@ public sealed class VultrClient : IVpsProviderClient, IVpsProviderSshKeyClient
         }
         var base64UserData = Convert.ToBase64String(Encoding.UTF8.GetBytes(request.UserDataCloudInit ?? string.Empty));
 
-        var tags = new List<string> { "minicloud" };
+        var tags = new List<string> { "selfrun" };
         if (request.Tags != null)
         {
             tags.AddRange(request.Tags);

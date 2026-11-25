@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>
 /// T30 fail-fast concurrency gate for application-log reads. Concurrency is bounded

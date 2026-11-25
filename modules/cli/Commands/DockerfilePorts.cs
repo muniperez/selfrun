@@ -3,7 +3,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal static class DockerfilePorts
 {

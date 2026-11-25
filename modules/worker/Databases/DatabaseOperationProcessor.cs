@@ -4,20 +4,20 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Ssh;
-using Minicloud.Worker.Pipeline.Steps;
-using Minicloud.Common.Providers;
-using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Ssh;
+using Selfrun.Worker.Pipeline.Steps;
+using Selfrun.Common.Providers;
+using static Selfrun.Common.Providers.ProviderServiceCollectionExtensions;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed partial class DatabaseOperationProcessor(
-    MinicloudDbContext db, ControlPlaneAuthorization authorization,
+    SelfrunDbContext db, ControlPlaneAuthorization authorization,
     ProviderCatalogService catalog, DeploymentLifecycleService lifecycle,
     IAppSecretService appSecrets, SecretEncryptionService encryption,
     IIdGenerator ids, TimeProvider clock, ISshDeploymentClient ssh,
@@ -63,7 +63,7 @@ public sealed partial class DatabaseOperationProcessor(
         if (deployment is null)
         {
             var image = databaseOptions.Value.RepositoryImage;
-            if (!image.StartsWith("ghcr.io/muniventures/minicloud-backup-repository:", StringComparison.Ordinal) || image.Contains("latest", StringComparison.OrdinalIgnoreCase))
+            if (!image.StartsWith("ghcr.io/muniperez/selfrun-backup-repository:", StringComparison.Ordinal) || image.Contains("latest", StringComparison.OrdinalIgnoreCase))
             { throw new InvalidOperationException("A versioned repository image is required."); }
             var service = new DeploymentServiceRequest("repository", image, 8080, true, "/", "/health/ready",
                 new Dictionary<string, string> { ["BACKUP_ROOT"] = "/data/backups", ["BACKUP_REPOSITORY_ID"] = app.Id,
@@ -284,7 +284,7 @@ public sealed partial class DatabaseOperationProcessor(
         {
             var plan = await db.ProviderPlans.SingleAsync(x => x.Id == server.PlanId && x.OrganizationId == operation.OrganizationId && x.Enabled, ct);
             var slug = "db-" + server.Id["dbserver_".Length..];
-            var app = new MinicloudApp { Id = ids.NewId("app"), OrganizationId = operation.OrganizationId, Name = server.Name, Slug = slug, PlanId = plan.Id, Database = DatabaseMode.Postgres, EnvironmentName = "production", EnvironmentKind = EnvironmentKinds.Internal, CreatedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
+            var app = new SelfrunApp { Id = ids.NewId("app"), OrganizationId = operation.OrganizationId, Name = server.Name, Slug = slug, PlanId = plan.Id, Database = DatabaseMode.Postgres, EnvironmentName = "production", EnvironmentKind = EnvironmentKinds.Internal, CreatedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
             app.EnvironmentKey = app.Id + ":production";
             db.Apps.Add(app);
             var request = new CreateDeploymentRequest(app.Id, "postgres", null, []);
@@ -343,12 +343,12 @@ public sealed partial class DatabaseOperationProcessor(
         if (operation.Kind == "migrate") { return await MigrateDatabaseAsync(operation, database, app, host, ct); }
         if (operation.Kind == "enroll")
         {
-            await ExecuteRemoteAsync(operation, host, "dispatch.py", new { action = "inspect", engine = database.Engine, sqlitePath = "/opt/minicloud/apps/" + app.Slug + "/data/sqlite/app.db", container = "minicloud-" + app.Slug + "-db-1", databaseName = app.Slug.Replace('-', '_'), operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, host, "dispatch.py", new { action = "inspect", engine = database.Engine, sqlitePath = "/opt/selfrun/apps/" + app.Slug + "/data/sqlite/app.db", container = "selfrun-" + app.Slug + "-db-1", databaseName = app.Slug.Replace('-', '_'), operationId = operation.Id }, ct);
             if (app.Database == DatabaseMode.Postgres)
             {
                 var secret = await db.AppSecrets.SingleOrDefaultAsync(x => x.AppId == app.Id && x.OrganizationId == app.OrganizationId && x.Name == AppSecretService.PostgresPasswordSecretName, ct)
                     ?? throw new InvalidOperationException("Existing database credential custody is unavailable.");
-                var credentials = new DatabaseConnectionCredentials(app.Slug.Replace('-', '_'), "minicloud", encryption.Decrypt(secret.EncryptedValue));
+                var credentials = new DatabaseConnectionCredentials(app.Slug.Replace('-', '_'), "selfrun", encryption.Decrypt(secret.EncryptedValue));
                 database.EncryptedCredentialsJson = encryption.Encrypt(JsonSerializer.Serialize(credentials, Json));
             }
             database.Status = "ready";
@@ -373,7 +373,7 @@ public sealed partial class DatabaseOperationProcessor(
                 : JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(database.EncryptedCredentialsJson), Json)!;
             database.EncryptedCredentialsJson = encryption.Encrypt(JsonSerializer.Serialize(credentials, Json));
             await SaveOwnedDatabaseChangesAsync(operation, ct);
-            await ExecuteRemoteAsync(operation, host, "operation.py", new { action = operation.Kind == "create-database" ? "create" : "delete", databaseName = credentials.DatabaseName, username = credentials.Username, password = credentials.Password, container = "minicloud-" + app.Slug + "-db-1", adminUser = "minicloud", operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, host, "operation.py", new { action = operation.Kind == "create-database" ? "create" : "delete", databaseName = credentials.DatabaseName, username = credentials.Username, password = credentials.Password, container = "selfrun-" + app.Slug + "-db-1", adminUser = "selfrun", operationId = operation.Id }, ct);
             database.Status = operation.Kind == "delete" ? "deleted" : "ready";
             await ReconcileDatabaseAccessAsync(operation, database, app, host, database.AccessMode, JsonSerializer.Deserialize<string[]>(database.AllowedCidrsJson, Json) ?? [], ct);
             if (operation.Kind == "delete")
@@ -432,7 +432,7 @@ public sealed partial class DatabaseOperationProcessor(
         var options = sshOptions.Value;
         var key = !string.IsNullOrWhiteSpace(options.PrivateKeyContent) ? options.PrivateKeyContent : await File.ReadAllTextAsync(options.PrivateKeyPath, ct);
         var directory = Path.Combine(AppContext.BaseDirectory, "scripts", "database-platform");
-        var wrapper = new StringBuilder("#!/bin/bash\nset -euo pipefail\numask 077\nsudo -n install -d -m 755 -o minicloud -g minicloud /opt/minicloud/locks\nsudo -n install -d -m 700 -o minicloud -g minicloud /opt/minicloud/locks/db-backups\nexec 7>/opt/minicloud/locks/docker.deploy.lock\nflock -x 7\ncd -- \"$(dirname -- \"$1\")\"\n");
+        var wrapper = new StringBuilder("#!/bin/bash\nset -euo pipefail\numask 077\nsudo -n install -d -m 755 -o selfrun -g selfrun /opt/selfrun/locks\nsudo -n install -d -m 700 -o selfrun -g selfrun /opt/selfrun/locks/db-backups\nexec 7>/opt/selfrun/locks/docker.deploy.lock\nflock -x 7\ncd -- \"$(dirname -- \"$1\")\"\n");
         foreach (var file in Directory.GetFiles(directory, "*.py").Where(x => !Path.GetFileName(x).StartsWith("test", StringComparison.Ordinal)))
         {
             var content = Convert.ToBase64String(await File.ReadAllBytesAsync(file, ct));
@@ -444,7 +444,7 @@ public sealed partial class DatabaseOperationProcessor(
         var envelope = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(payload, Json))!.AsObject();
         envelope["ownership_token"] = operation.OwnershipToken;
         var response = await ssh.ExecuteDeploymentAsync(new SshDeploymentRequest(target, options.Username, key, SshDeployStep.RemoteDirectoryFor(operation.Id), envelope.ToJsonString(), script, [], TimeSpan.FromMinutes(30)), (_, _) => Task.CompletedTask, ct);
-        const string marker = "__MINICLOUD_DATABASE_RESULT__=";
+        const string marker = "__SELFRUN_DATABASE_RESULT__=";
         var result = response.OutputLines.LastOrDefault(x => x.StartsWith(marker, StringComparison.Ordinal))
             ?? throw new DatabaseRemoteOperationException("database_runtime_interrupted", scriptName);
         if (result.Length > 65536) { throw new InvalidOperationException("Database result exceeds its limit."); }

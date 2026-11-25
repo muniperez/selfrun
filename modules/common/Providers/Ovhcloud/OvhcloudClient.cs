@@ -6,11 +6,11 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers.Ovhcloud;
+namespace Selfrun.Common.Providers.Ovhcloud;
 
 /// <summary>
 /// SDK-independent OVHcloud adapter supporting both Public Cloud virtual servers (project-scoped)

@@ -3,9 +3,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal static class FrameworkDeploymentValidator
 {
@@ -21,7 +21,7 @@ internal static class FrameworkDeploymentValidator
 
     public static IReadOnlyList<ConfigDiagnostic> ValidatePublicHostCompatibility(
         string serviceName,
-        MinicloudServiceConfig service,
+        SelfrunServiceConfig service,
         string organizationSlug,
         string appSlug,
         string appDomain = "app.muni.dev")
@@ -91,7 +91,7 @@ internal static class FrameworkDeploymentValidator
 
     private static void ValidateNextStartCommand(
         string serviceName,
-        MinicloudServiceConfig service,
+        SelfrunServiceConfig service,
         List<ConfigDiagnostic> diagnostics)
     {
         var dockerfilePath = CliApplication.EffectiveDockerfilePath(service);

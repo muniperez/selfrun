@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Maintenance;
+namespace Selfrun.Worker.Maintenance;
 
 public sealed class MaintenanceParticipantRegistrationService(MaintenanceParticipant participant) : BackgroundService
 {

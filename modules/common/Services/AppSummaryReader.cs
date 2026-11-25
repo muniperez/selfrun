@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>Detached response data, with one deployment per environment and no collection joins.</summary>
-public sealed class AppSummaryReader(MinicloudDbContext db)
+public sealed class AppSummaryReader(SelfrunDbContext db)
 {
     public async Task<EnvironmentDetailResponse?> GetAsync(string organizationId, string appId, CancellationToken ct)
     {
@@ -29,11 +29,11 @@ public sealed class AppSummaryReader(MinicloudDbContext db)
     }
 
     // Three sequential queries; the caller owns authorization. Scope is additionally tenant-filtered here.
-    public async Task<List<MinicloudApp>> ReadEnvironmentsAsync(string organizationId, IQueryable<MinicloudApp> scope, CancellationToken ct)
+    public async Task<List<SelfrunApp>> ReadEnvironmentsAsync(string organizationId, IQueryable<SelfrunApp> scope, CancellationToken ct)
     {
         var apps = await scope.AsNoTracking().Where(x => x.OrganizationId == organizationId)
             .OrderBy(x => x.Name).ThenBy(x => x.Id)
-            .Select(x => new MinicloudApp
+            .Select(x => new SelfrunApp
             {
                 Id = x.Id, OrganizationId = x.OrganizationId, Name = x.Name, Slug = x.Slug,
                 ParentAppId = x.ParentAppId, BranchName = x.BranchName, EnvironmentName = x.EnvironmentName,
@@ -44,7 +44,7 @@ public sealed class AppSummaryReader(MinicloudDbContext db)
                 SshRegistrationState = x.SshRegistrationState, SshRevision = x.SshRevision,
                 DeletionStatus = x.DeletionStatus, DeletionError = x.DeletionError, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt,
                 SelectedPlan = x.SelectedPlan == null ? null : new ProviderPlan { Name = x.SelectedPlan.Name, ProviderAccountId = x.SelectedPlan.ProviderAccountId },
-                Application = x.Application == null ? null : new MinicloudApplication
+                Application = x.Application == null ? null : new SelfrunApplication
                 {
                     Id = x.Application.Id, OrganizationId = x.Application.OrganizationId,
                     DefaultEnvironmentId = x.Application.DefaultEnvironmentId

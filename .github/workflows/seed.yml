@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
-# Reusable wrapper around the stateless `minicloud seed` CLI. See docs/github-actions.md.
-name: Minicloud Control-Plane Seed
+# Reusable wrapper around the stateless `selfrun seed` CLI. See docs/github-actions.md.
+name: Selfrun Control-Plane Seed
 
 on:
   workflow_call:
@@ -13,7 +13,7 @@ on:
         description: "GitHub Environment holding the seed secrets and protection rules."
         required: true
         type: string
-      minicloud_version:
+      selfrun_version:
         description: "Exact signed CLI tag (vX.Y.Z[-prerelease]) or full canonical-main commit SHA for an explicit source build."
         required: true
         type: string
@@ -31,15 +31,15 @@ on:
         description: "Name of the uploaded non-secret report artifact."
         required: false
         type: string
-        default: minicloud-seed-report
+        default: selfrun-seed-report
     secrets:
-      MINICLOUD_SEED_CONFIG:
+      SELFRUN_SEED_CONFIG:
         description: "Versioned seed configuration JSON (schemaVersion 1)."
         required: true
-      MINICLOUD_SEED_SSH_KEY:
+      SELFRUN_SEED_SSH_KEY:
         description: "Unencrypted OpenSSH private key for the seed host. Required for plan and apply."
         required: false
-      MINICLOUD_SEED_PROVIDER_CREDENTIAL:
+      SELFRUN_SEED_PROVIDER_CREDENTIAL:
         description: "Provider API credential when it is not part of the seed configuration."
         required: false
     outputs:
@@ -64,7 +64,7 @@ jobs:
     environment: ${{ inputs.environment }}
     # Different Environments can address the same target. Lock all applies in this calling repository.
     concurrency:
-      group: minicloud-seed-${{ inputs.operation == 'apply' && 'apply' || format('{0}-{1}', github.run_id, inputs.environment) }}
+      group: selfrun-seed-${{ inputs.operation == 'apply' && 'apply' || format('{0}-{1}', github.run_id, inputs.environment) }}
       cancel-in-progress: false
     outputs:
       result: ${{ steps.report.outputs.result }}
@@ -79,7 +79,7 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           ENVIRONMENT_NAME: ${{ inputs.environment }}
-          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          SELFRUN_VERSION: ${{ inputs.selfrun_version }}
           APPROVE: ${{ inputs.approve }}
           NEW_SEED: ${{ inputs.new_seed }}
           REPORT_ARTIFACT_NAME: ${{ inputs.report_artifact_name }}
@@ -99,12 +99,12 @@ jobs:
             *) fail "Seed $OPERATION is not allowed from '$EVENT_NAME' events. Use workflow_dispatch (schedule is allowed for check only); apply never runs on push or pull requests." ;;
           esac
 
-          if [[ "$MINICLOUD_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ "$SELFRUN_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
             install_mode=source
-          elif [[ "$MINICLOUD_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+          elif [[ "$SELFRUN_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
             install_mode=binary
           else
-            fail "minicloud_version must be an exact signed CLI tag (for example v3.1.0) or a full lowercase canonical-main commit SHA; branches, latest and server-v tags are rejected."
+            fail "selfrun_version must be an exact signed CLI tag (for example v3.1.0) or a full lowercase canonical-main commit SHA; branches, latest and server-v tags are rejected."
           fi
 
           if [[ "$OPERATION" == apply ]]; then
@@ -151,46 +151,45 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Install the pinned Minicloud CLI and Cosign
+      - name: Install the pinned Selfrun CLI and Cosign
         id: install
         env:
-          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          SELFRUN_VERSION: ${{ inputs.selfrun_version }}
           INSTALL_MODE: ${{ steps.validate.outputs.install_mode }}
           SAFE_BASE: ${{ steps.validate.outputs.safe_base }}
         run: |
           set -euo pipefail
           umask 077
-          url="https://github.com/muniventures/minicloud.git"
-          # GitHub-verified merge of #82; pin the installer bytes independently of the payload.
-          installer_revision=1f40173fbd04d734e0283721cdb2b287350dcaba
-          installer_sha256=78075cfe3cedec9bea41408489eb5aa6c1c558b68fdfe2250c34b74984181ccb
-          stateless_floor=7a4b16130215ea8b2c74221cb02c5e45344d4427 # merged stateless CLI (#102)
+          url="https://github.com/muniperez/selfrun.git"
+          # Pin the reviewed installer bytes independently of the selected CLI revision.
+          installer_blob=45714b36ad25979433b94af200c693317ef436f8
+          installer_sha256=ff6299e6bcdb2dd761a5a2938a10facbf7aa7dc84b22d83a6dbd25f75c02aa4d
           peeled() {
             awk -v ref="$1" '$2 == ref { tag=$1 } $2 == ref "^{}" { peeled=$1 } END { if (peeled != "") print peeled; else print tag }'
           }
 
-          work="$(mktemp -d "$SAFE_BASE/minicloud-cli.XXXXXXXX")"
+          work="$(mktemp -d "$SAFE_BASE/selfrun-cli.XXXXXXXX")"
           echo "dir=$work" >> "$GITHUB_OUTPUT"
           source_dir="$work/source"
 
           if [[ "$INSTALL_MODE" == source ]]; then
-            expected_sha="$MINICLOUD_VERSION"
+            expected_sha="$SELFRUN_VERSION"
           else
-            tag_ref="refs/tags/$MINICLOUD_VERSION"
+            tag_ref="refs/tags/$SELFRUN_VERSION"
             expected_sha="$(git ls-remote "$url" "$tag_ref" "$tag_ref^{}" | peeled "$tag_ref")"
             if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::CLI tag $MINICLOUD_VERSION was not found in the canonical repository."
+              echo "::error::CLI tag $SELFRUN_VERSION was not found in the canonical repository."
               exit 1
             fi
           fi
 
-          git clone --quiet --filter=blob:none --no-checkout --no-tags --single-branch --branch main "$url" "$source_dir"
+          git clone --quiet --no-checkout --no-tags --single-branch --branch main "$url" "$source_dir"
           if [[ "$INSTALL_MODE" == binary ]]; then
             git -C "$source_dir" fetch --quiet --no-tags origin "$tag_ref:$tag_ref"
             fetched_sha="$(git -C "$source_dir" rev-parse "$tag_ref^{commit}")"
             remote_after_sha="$(git ls-remote "$url" "$tag_ref" "$tag_ref^{}" | peeled "$tag_ref")"
             if [[ "$fetched_sha" != "$expected_sha" || "$remote_after_sha" != "$expected_sha" ]]; then
-              echo "::error::CLI tag $MINICLOUD_VERSION changed while it was being resolved; retry with a reviewed exact version."
+              echo "::error::CLI tag $SELFRUN_VERSION changed while it was being resolved; retry with a reviewed exact version."
               exit 1
             fi
           fi
@@ -198,21 +197,17 @@ jobs:
             echo "::error::Selected CLI revision $expected_sha is not in canonical main."
             exit 1
           fi
-          if ! git -C "$source_dir" merge-base --is-ancestor "$stateless_floor" "$expected_sha"; then
-            echo "::error::Selected CLI revision predates supported stateless seed. Select an exact revision containing the canonical stateless seed merge."
-            exit 1
-          fi
-          git -C "$source_dir" show "$installer_revision:install.sh" > "$work/install.sh"
+          git -C "$source_dir" cat-file blob "$installer_blob" > "$work/install.sh"
           if ! echo "$installer_sha256  $work/install.sh" | sha256sum --check --quiet -; then
-            echo "::error::Reviewed Minicloud installer checksum failed."
+            echo "::error::Reviewed Selfrun installer checksum failed."
             exit 1
           fi
 
           # Binary mode verifies the signed release inventory; source mode builds the exact commit.
-          MINICLOUD_INSTALL_MODE="$INSTALL_MODE" MINICLOUD_VERSION="$MINICLOUD_VERSION" MINICLOUD_INSTALL_DIR="$work/bin" \
+          SELFRUN_INSTALL_MODE="$INSTALL_MODE" SELFRUN_VERSION="$SELFRUN_VERSION" SELFRUN_INSTALL_DIR="$work/bin" \
             sh "$work/install.sh"
 
-          version="$("$work/bin/minicloud" --version)"
+          version="$("$work/bin/selfrun" --version)"
           if ! grep -Fxq "source $expected_sha" <<< "$version"; then
             echo "::error::Installed CLI source does not match the reviewed payload revision."
             exit 1
@@ -220,7 +215,7 @@ jobs:
           if [[ "$INSTALL_MODE" == binary ]]; then
             remote_after_sha="$(git ls-remote "$url" "$tag_ref" "$tag_ref^{}" | peeled "$tag_ref")"
             if [[ "$remote_after_sha" != "$expected_sha" ]]; then
-              echo "::error::CLI tag $MINICLOUD_VERSION changed during installation; select a reviewed exact version."
+              echo "::error::CLI tag $SELFRUN_VERSION changed during installation; select a reviewed exact version."
               exit 1
             fi
           fi
@@ -246,13 +241,13 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           SAFE_BASE: ${{ steps.validate.outputs.safe_base }}
-          SEED_CONFIG: ${{ secrets.MINICLOUD_SEED_CONFIG }}
-          SSH_PRIVATE_KEY: ${{ secrets.MINICLOUD_SEED_SSH_KEY }}
-          PROVIDER_CREDENTIAL: ${{ secrets.MINICLOUD_SEED_PROVIDER_CREDENTIAL }}
+          SEED_CONFIG: ${{ secrets.SELFRUN_SEED_CONFIG }}
+          SSH_PRIVATE_KEY: ${{ secrets.SELFRUN_SEED_SSH_KEY }}
+          PROVIDER_CREDENTIAL: ${{ secrets.SELFRUN_SEED_PROVIDER_CREDENTIAL }}
         run: |
           set -euo pipefail
           umask 077
-          dir="$(mktemp -d "$SAFE_BASE/minicloud-seed.XXXXXXXX")"
+          dir="$(mktemp -d "$SAFE_BASE/selfrun-seed.XXXXXXXX")"
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           python3 - "$dir" <<'PY'
           import json, os, subprocess, sys
@@ -283,9 +278,9 @@ jobs:
 
           missing = []
           if not config_text.strip():
-              missing.append("MINICLOUD_SEED_CONFIG")
+              missing.append("SELFRUN_SEED_CONFIG")
           if operation in ("plan", "apply") and not key_text.strip():
-              missing.append("MINICLOUD_SEED_SSH_KEY")
+              missing.append("SELFRUN_SEED_SSH_KEY")
           if missing:
               fail("Required secret(s) are empty or were not passed: " + ", ".join(missing)
                    + ". Define them in the selected Environment and keep the same names in the caller.")
@@ -294,9 +289,9 @@ jobs:
           try:
               config = json.loads(config_text)
           except ValueError:
-              fail("MINICLOUD_SEED_CONFIG is not valid JSON. Its contents are not shown.")
+              fail("SELFRUN_SEED_CONFIG is not valid JSON. Its contents are not shown.")
           if not isinstance(config, dict) or type(config.get("schemaVersion")) is not int or config["schemaVersion"] != 1:
-              fail("MINICLOUD_SEED_CONFIG must be a JSON object with schemaVersion 1.")
+              fail("SELFRUN_SEED_CONFIG must be a JSON object with schemaVersion 1.")
           for name, value in config.items():
               if name.lower() == "providercredential" and isinstance(value, str):
                   mask(value)
@@ -312,10 +307,10 @@ jobs:
               check = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", key_path],
                                      stdin=subprocess.DEVNULL, capture_output=True)
               if check.returncode != 0:
-                  fail("MINICLOUD_SEED_SSH_KEY must be an unencrypted OpenSSH private key. Unattended CI does not use passphrases or an SSH agent.")
+                  fail("SELFRUN_SEED_SSH_KEY must be an unencrypted OpenSSH private key. Unattended CI does not use passphrases or an SSH agent.")
           PY
 
-      - name: Run minicloud seed
+      - name: Run selfrun seed
         id: run
         env:
           OPERATION: ${{ inputs.operation }}
@@ -342,7 +337,7 @@ jobs:
 
           # Only the validated report is public; raw CLI output may contain untrusted or secret text.
           status=0
-          minicloud "${args[@]}" < /dev/null > /dev/null 2>&1 || status=$?
+          selfrun "${args[@]}" < /dev/null > /dev/null 2>&1 || status=$?
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
       - name: Summarize and stage the non-secret report
@@ -351,7 +346,7 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           ENVIRONMENT_NAME: ${{ inputs.environment }}
-          MINICLOUD_VERSION: ${{ inputs.minicloud_version }}
+          SELFRUN_VERSION: ${{ inputs.selfrun_version }}
           NEW_SEED: ${{ inputs.new_seed }}
           REPORT_ARTIFACT_NAME: ${{ inputs.report_artifact_name }}
           EXIT_CODE: ${{ steps.run.outputs.exit_code }}
@@ -477,8 +472,8 @@ jobs:
                       if type(candidate) is not dict:
                           report_error = "The report is not a JSON object."
                       elif type(candidate.get("schemaVersion")) is not int or candidate["schemaVersion"] != 1 \
-                              or candidate.get("kind") != "minicloud-seed-report":
-                          report_error = "The report is not a supported minicloud-seed-report (schemaVersion 1)."
+                              or candidate.get("kind") != "selfrun-seed-report":
+                          report_error = "The report is not a supported selfrun-seed-report (schemaVersion 1)."
                       elif not validate(candidate, schema):
                           report_error = "The report does not match the v1 CLI report structure."
                       elif contains_secret(candidate, raw):
@@ -514,10 +509,10 @@ jobs:
               "error": "The operation failed or its report could not be validated. No automatic retry was attempted. Reconcile any uncertain apply before retrying.",
           }[result]
           summary += [
-              "## Minicloud seed " + operation, "",
+              "## Selfrun seed " + operation, "",
               "| Field | Value |", "| --- | --- |",
               f"| Environment | {code(os.environ['ENVIRONMENT_NAME'][:100])} |",
-              f"| CLI version | {code(os.environ['MINICLOUD_VERSION'][:100])} |",
+              f"| CLI version | {code(os.environ['SELFRUN_VERSION'][:100])} |",
               f"| New seed allowed | `{os.environ['NEW_SEED']}` |",
               f"| Exit code | `{exit_code or 'not run'}` |",
               f"| Result | `{result}` |",
@@ -547,7 +542,7 @@ jobs:
               summary.append(f"No report artifact: {report_error}")
 
           if report is not None:
-              staging = tempfile.mkdtemp(prefix="minicloud-seed-report.", dir=directory)
+              staging = tempfile.mkdtemp(prefix="selfrun-seed-report.", dir=directory)
               with open(os.path.join(staging, "seed-report.json"), "x", encoding="utf-8") as output:
                   output.write(raw)
               outputs.append("path=" + staging)
@@ -604,5 +599,5 @@ jobs:
             10) echo "::warning::Seed is waiting for a user handoff; see the job summary before continuing." ;;
             11) echo "::error::Upgrade required. Use the existing coordinated server maintenance path; this workflow never upgrades."; exit 1 ;;
             12) echo "::error::Reconciliation required. Inspect the provider console and host; do not retry blindly."; exit 1 ;;
-            *) echo "::error::minicloud seed failed with exit code $EXIT_CODE."; exit 1 ;;
+            *) echo "::error::selfrun seed failed with exit code $EXIT_CODE."; exit 1 ;;
           esac

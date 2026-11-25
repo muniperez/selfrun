@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Text.Json;
-using Minicloud.Cli.Seed;
+using Selfrun.Cli.Seed;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {

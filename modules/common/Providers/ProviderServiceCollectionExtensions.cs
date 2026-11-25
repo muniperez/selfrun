@@ -1,27 +1,27 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Minicloud.Common.Providers.Aws;
-using Minicloud.Common.Providers.Azure;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.DigitalOcean;
-using Minicloud.Common.Providers.Dns;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.GoogleCloud;
-using Minicloud.Common.Providers.Hetzner;
-using Minicloud.Common.Providers.Linode;
-using Minicloud.Common.Providers.Ovhcloud;
-using Minicloud.Common.Providers.Scaleway;
-using Minicloud.Common.Providers.Vultr;
+using Selfrun.Common.Providers.Aws;
+using Selfrun.Common.Providers.Azure;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.DigitalOcean;
+using Selfrun.Common.Providers.Dns;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.GoogleCloud;
+using Selfrun.Common.Providers.Hetzner;
+using Selfrun.Common.Providers.Linode;
+using Selfrun.Common.Providers.Ovhcloud;
+using Selfrun.Common.Providers.Scaleway;
+using Selfrun.Common.Providers.Vultr;
 using System.Net.Http;
 
-namespace Minicloud.Common.Providers;
+namespace Selfrun.Common.Providers;
 
 public static class ProviderServiceCollectionExtensions
 {
     public delegate IVpsProviderClient VpsProviderClientResolver(CloudProvider provider);
 
-    public static IServiceCollection AddMinicloudProviders(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddSelfrunProviders(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<ProviderRegistryOptions>(configuration.GetSection(ProviderRegistryOptions.SectionName));
         services.Configure<HetznerOptions>(configuration.GetSection(HetznerOptions.SectionName));
@@ -102,8 +102,8 @@ public static class ProviderServiceCollectionExtensions
         services.AddKeyedScoped<IVpsProviderClient, ScalewayClient>(CloudProvider.Scaleway);
 
         services.AddHttpClient<ICustomDomainDnsResolver, CustomDomainDnsResolver>(http => http.Timeout = TimeSpan.FromSeconds(10));
-        services.AddScoped<Minicloud.Common.Services.CustomDomainVerificationService>();
-        services.AddScoped<Minicloud.Common.Services.CustomDomainRegistrationService>();
+        services.AddScoped<Selfrun.Common.Services.CustomDomainVerificationService>();
+        services.AddScoped<Selfrun.Common.Services.CustomDomainRegistrationService>();
 
         // Cloudflare DNS
         services.AddHttpClient<ICloudflareDnsClient, CloudflareDnsClient>()

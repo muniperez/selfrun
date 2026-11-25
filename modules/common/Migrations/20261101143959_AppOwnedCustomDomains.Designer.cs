@@ -4,14 +4,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
-    [DbContext(typeof(MinicloudDbContext))]
+    [DbContext(typeof(SelfrunDbContext))]
     [Migration("20261101143959_AppOwnedCustomDomains")]
     partial class AppOwnedCustomDomains
     {
@@ -25,7 +25,7 @@ namespace Minicloud.Common.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("Minicloud.Common.Models.ApiKey", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.ApiKey", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -85,7 +85,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("api_keys", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppSecret", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppSecret", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -129,7 +129,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("app_secrets", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppServiceSecret", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppServiceSecret", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -198,7 +198,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("app_service_secrets", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppServiceSecretServiceDefinition", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppServiceSecretServiceDefinition", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -241,7 +241,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("app_service_secret_services", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppTelemetrySettings", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppTelemetrySettings", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -314,7 +314,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("app_telemetry_settings", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AssetRelease", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AssetRelease", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -375,7 +375,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("asset_releases", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AuditEvent", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AuditEvent", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -417,7 +417,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("audit_events", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.CliLoginSession", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.CliLoginSession", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -480,7 +480,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("cli_login_sessions", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.CustomDomainRegistration", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.CustomDomainRegistration", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -539,7 +539,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("custom_domain_registrations", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Deployment", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Deployment", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -649,7 +649,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("deployments", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentArtifact", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentArtifact", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -750,7 +750,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("deployment_artifacts", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentEvent", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentEvent", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -786,7 +786,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("deployment_events", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentLog", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentLog", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -818,7 +818,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("deployment_logs", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentService", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentService", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -901,7 +901,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("deployment_services", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Domain", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Domain", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1005,7 +1005,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("domains", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaDataSourceBinding", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaDataSourceBinding", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1060,7 +1060,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("grafana_data_source_bindings", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaLaunchCode", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaLaunchCode", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1093,10 +1093,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
 
-                    b.Property<string>("MinicloudUserId")
+                    b.Property<string>("SelfrunUserId")
                         .IsRequired()
                         .HasColumnType("text")
-                        .HasColumnName("minicloud_user_id");
+                        .HasColumnName("selfrun_user_id");
 
                     b.Property<string>("OrganizationId")
                         .IsRequired()
@@ -1113,7 +1113,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("grafana_launch_codes", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaOrganizationBinding", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaOrganizationBinding", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1152,7 +1152,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("grafana_organization_bindings", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaProxySession", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaProxySession", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1175,10 +1175,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_seen_at");
 
-                    b.Property<string>("MinicloudUserId")
+                    b.Property<string>("SelfrunUserId")
                         .IsRequired()
                         .HasColumnType("text")
-                        .HasColumnName("minicloud_user_id");
+                        .HasColumnName("selfrun_user_id");
 
                     b.Property<string>("OrganizationId")
                         .IsRequired()
@@ -1199,12 +1199,12 @@ namespace Minicloud.Common.Migrations
                     b.HasIndex("SessionHash")
                         .IsUnique();
 
-                    b.HasIndex("OrganizationId", "MinicloudUserId");
+                    b.HasIndex("OrganizationId", "SelfrunUserId");
 
                     b.ToTable("grafana_proxy_sessions", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaUserBinding", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaUserBinding", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1223,10 +1223,10 @@ namespace Minicloud.Common.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("grafana_user_id");
 
-                    b.Property<string>("MinicloudUserId")
+                    b.Property<string>("SelfrunUserId")
                         .IsRequired()
                         .HasColumnType("text")
-                        .HasColumnName("minicloud_user_id");
+                        .HasColumnName("selfrun_user_id");
 
                     b.Property<string>("OrganizationId")
                         .IsRequired()
@@ -1244,13 +1244,13 @@ namespace Minicloud.Common.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OrganizationId", "MinicloudUserId")
+                    b.HasIndex("OrganizationId", "SelfrunUserId")
                         .IsUnique();
 
                     b.ToTable("grafana_user_bindings", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.ImagePublication", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.ImagePublication", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1362,7 +1362,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("image_publications", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.MinicloudApp", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.SelfrunApp", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1428,7 +1428,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("apps", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Organization", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Organization", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1460,7 +1460,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("organizations", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.OrganizationMember", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.OrganizationMember", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1499,7 +1499,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("organization_members", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RegistryGarbageCandidate", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RegistryGarbageCandidate", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1526,7 +1526,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("registry_garbage_candidates", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RegistryMaintenanceState", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RegistryMaintenanceState", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1554,7 +1554,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("registry_maintenance_states", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RegistrySession", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RegistrySession", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1651,7 +1651,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("registry_sessions", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RegistryUpload", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RegistryUpload", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1673,7 +1673,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("registry_uploads", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeLogRecord", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeLogRecord", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1736,7 +1736,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("runtime_log_records", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeServer", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeServer", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1792,7 +1792,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("runtime_servers", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeStatusSnapshot", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeStatusSnapshot", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1837,7 +1837,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("runtime_status_snapshots", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeToken", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeToken", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1887,7 +1887,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("runtime_tokens", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.ServerInstance", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.ServerInstance", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -1956,7 +1956,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("server_instances", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.TelemetryAuthorityOutbox", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.TelemetryAuthorityOutbox", b =>
                 {
                     b.Property<long>("Sequence")
                         .ValueGeneratedOnAdd()
@@ -1997,7 +1997,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("telemetry_authority_outboxes", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.TelemetryCleanupJob", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.TelemetryCleanupJob", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -2056,7 +2056,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("telemetry_cleanup_jobs", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.TelemetryDailyUsage", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.TelemetryDailyUsage", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -2098,7 +2098,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("telemetry_daily_usages", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.TelemetryIngestionCredential", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.TelemetryIngestionCredential", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -2173,7 +2173,7 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("telemetry_ingestion_credentials", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.User", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.User", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text")
@@ -2212,9 +2212,9 @@ namespace Minicloud.Common.Migrations
                     b.ToTable("users", (string)null);
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.ApiKey", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.ApiKey", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany("ApiKeys")
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2223,15 +2223,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppSecret", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppSecret", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany("Secrets")
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2242,15 +2242,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppServiceSecret", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppServiceSecret", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany("ServiceSecrets")
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2261,15 +2261,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppServiceSecretServiceDefinition", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppServiceSecretServiceDefinition", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany("ServiceSecretServices")
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2280,15 +2280,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AppTelemetrySettings", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AppTelemetrySettings", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2299,15 +2299,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AssetRelease", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AssetRelease", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.DeploymentArtifact", "Artifact")
+                    b.HasOne("Selfrun.Common.Models.DeploymentArtifact", "Artifact")
                         .WithMany()
                         .HasForeignKey("ArtifactId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -2318,13 +2318,13 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Artifact");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.AuditEvent", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.AuditEvent", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId");
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2335,17 +2335,17 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.CliLoginSession", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.CliLoginSession", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.ApiKey", "ApiKey")
+                    b.HasOne("Selfrun.Common.Models.ApiKey", "ApiKey")
                         .WithMany()
                         .HasForeignKey("ApiKeyId");
 
-                    b.HasOne("Minicloud.Common.Models.User", "ApprovedByUser")
+                    b.HasOne("Selfrun.Common.Models.User", "ApprovedByUser")
                         .WithMany()
                         .HasForeignKey("ApprovedByUserId");
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId");
 
@@ -2356,15 +2356,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.CustomDomainRegistration", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.CustomDomainRegistration", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2375,20 +2375,20 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Deployment", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Deployment", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany("Deployments")
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.AssetRelease", "AssetRelease")
+                    b.HasOne("Selfrun.Common.Models.AssetRelease", "AssetRelease")
                         .WithMany()
                         .HasForeignKey("AssetReleaseId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2401,15 +2401,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentArtifact", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentArtifact", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany("DeploymentArtifacts")
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2420,9 +2420,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentEvent", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentEvent", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Deployment", "Deployment")
+                    b.HasOne("Selfrun.Common.Models.Deployment", "Deployment")
                         .WithMany("Events")
                         .HasForeignKey("DeploymentId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2431,9 +2431,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Deployment");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentLog", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentLog", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Deployment", "Deployment")
+                    b.HasOne("Selfrun.Common.Models.Deployment", "Deployment")
                         .WithMany("Logs")
                         .HasForeignKey("DeploymentId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2442,19 +2442,19 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Deployment");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.DeploymentService", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.DeploymentService", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.DeploymentArtifact", "Artifact")
+                    b.HasOne("Selfrun.Common.Models.DeploymentArtifact", "Artifact")
                         .WithMany()
                         .HasForeignKey("ArtifactId");
 
-                    b.HasOne("Minicloud.Common.Models.Deployment", "Deployment")
+                    b.HasOne("Selfrun.Common.Models.Deployment", "Deployment")
                         .WithMany("Services")
                         .HasForeignKey("DeploymentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.ImagePublication", "ImagePublication")
+                    b.HasOne("Selfrun.Common.Models.ImagePublication", "ImagePublication")
                         .WithMany()
                         .HasForeignKey("ImagePublicationId")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -2466,15 +2466,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("ImagePublication");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Domain", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Domain", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany("Domains")
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2485,15 +2485,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaDataSourceBinding", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaDataSourceBinding", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2504,9 +2504,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaOrganizationBinding", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaOrganizationBinding", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2515,9 +2515,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.GrafanaUserBinding", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.GrafanaUserBinding", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2526,9 +2526,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.ImagePublication", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.ImagePublication", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -2537,15 +2537,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("App");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.MinicloudApp", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.SelfrunApp", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany("Apps")
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "ParentApp")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "ParentApp")
                         .WithMany("Branches")
                         .HasForeignKey("ParentAppId")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -2555,15 +2555,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("ParentApp");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.OrganizationMember", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.OrganizationMember", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany("Members")
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.User", "User")
+                    b.HasOne("Selfrun.Common.Models.User", "User")
                         .WithMany("Memberships")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2574,20 +2574,20 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RegistrySession", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RegistrySession", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Deployment", "Deployment")
+                    b.HasOne("Selfrun.Common.Models.Deployment", "Deployment")
                         .WithMany()
                         .HasForeignKey("DeploymentId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("Minicloud.Common.Models.ImagePublication", "ImagePublication")
+                    b.HasOne("Selfrun.Common.Models.ImagePublication", "ImagePublication")
                         .WithMany()
                         .HasForeignKey("ImagePublicationId")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -2599,9 +2599,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("ImagePublication");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RegistryUpload", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RegistryUpload", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.RegistrySession", "Session")
+                    b.HasOne("Selfrun.Common.Models.RegistrySession", "Session")
                         .WithMany()
                         .HasForeignKey("SessionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2610,15 +2610,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Session");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeServer", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeServer", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2629,9 +2629,9 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeToken", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeToken", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.RuntimeServer", "RuntimeServer")
+                    b.HasOne("Selfrun.Common.Models.RuntimeServer", "RuntimeServer")
                         .WithMany("Tokens")
                         .HasForeignKey("RuntimeServerId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2640,15 +2640,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("RuntimeServer");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.ServerInstance", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.ServerInstance", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2659,15 +2659,15 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.TelemetryIngestionCredential", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.TelemetryIngestionCredential", b =>
                 {
-                    b.HasOne("Minicloud.Common.Models.MinicloudApp", "App")
+                    b.HasOne("Selfrun.Common.Models.SelfrunApp", "App")
                         .WithMany()
                         .HasForeignKey("AppId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Minicloud.Common.Models.Organization", "Organization")
+                    b.HasOne("Selfrun.Common.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -2678,7 +2678,7 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Deployment", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Deployment", b =>
                 {
                     b.Navigation("Events");
 
@@ -2687,7 +2687,7 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Services");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.MinicloudApp", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.SelfrunApp", b =>
                 {
                     b.Navigation("Branches");
 
@@ -2704,7 +2704,7 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("ServiceSecrets");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.Organization", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.Organization", b =>
                 {
                     b.Navigation("ApiKeys");
 
@@ -2713,12 +2713,12 @@ namespace Minicloud.Common.Migrations
                     b.Navigation("Members");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.RuntimeServer", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.RuntimeServer", b =>
                 {
                     b.Navigation("Tokens");
                 });
 
-            modelBuilder.Entity("Minicloud.Common.Models.User", b =>
+            modelBuilder.Entity("Selfrun.Common.Models.User", b =>
                 {
                     b.Navigation("Memberships");
                 });

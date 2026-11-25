@@ -1,8 +1,8 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public static class TelemetryLimits
 {
-    public const string ReservedHeadersSecretName = "MINICLOUD_OTLP_LOGS_HEADERS";
+    public const string ReservedHeadersSecretName = "SELFRUN_OTLP_LOGS_HEADERS";
 
     public const long MaxEncodedBytes = 1 * 1024 * 1024;
     public const long MaxDecompressedBytes = 4 * 1024 * 1024;

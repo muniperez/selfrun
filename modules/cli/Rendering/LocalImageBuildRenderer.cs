@@ -2,7 +2,7 @@
 
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Rendering;
+namespace Selfrun.Cli.Rendering;
 
 internal sealed class LocalImageBuildRenderer : IDisposable
 {
@@ -50,7 +50,7 @@ internal sealed class LocalImageBuildRenderer : IDisposable
         _interactive = console.SupportsAnsi && console.WindowWidth >= 30 && console.WindowHeight >= 10;
         if (logPath is null)
         {
-            var directory = Directory.CreateTempSubdirectory("minicloud-build-logs-");
+            var directory = Directory.CreateTempSubdirectory("selfrun-build-logs-");
             if (!OperatingSystem.IsWindows()) { directory.UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute; }
             logPath = Path.Combine(directory.FullName, "build.log");
         }
@@ -198,7 +198,7 @@ internal sealed class LocalImageBuildRenderer : IDisposable
             var failed = _services.Any(x => x.Status is "failed" or "cancelled");
             var lines = new List<string>
             {
-                Paint(Columns($"Minicloud · {_app}", Elapsed(_time.GetElapsedTime(_started))), "1"),
+                Paint(Columns($"Selfrun · {_app}", Elapsed(_time.GetElapsedTime(_started))), "1"),
                 Paint(Columns((_uploading ? "Upload images" : "Build images") + (failed ? " · stopped" : ""), $"{ready}/{_services.Length} ready"), failed ? "31" : "36"),
                 ""
             };

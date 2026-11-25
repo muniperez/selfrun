@@ -1,15 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public static class ManagedServerName
 {
     public static string ForApp(string organizationSlug, string appSlug) =>
-        Bound($"minicloud-{organizationSlug}-production-{appSlug}".ToLowerInvariant());
+        Bound($"selfrun-{organizationSlug}-production-{appSlug}".ToLowerInvariant());
 
     public static string ForHostname(string organizationSlug, string appSlug) =>
-        Bound($"minicloud-{organizationSlug}-{appSlug}");
+        Bound($"selfrun-{organizationSlug}-{appSlug}");
 
     private static string Bound(string canonicalName)
     {

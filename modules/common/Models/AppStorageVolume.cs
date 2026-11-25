@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 // Intentionally retained independently of app deletion; provider disks require explicit cleanup.
 public sealed class AppStorageVolume

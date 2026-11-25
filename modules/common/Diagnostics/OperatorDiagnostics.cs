@@ -9,15 +9,15 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
-namespace Minicloud.Common.Diagnostics;
+namespace Selfrun.Common.Diagnostics;
 
 public static class OperatorDiagnostics
 {
-    public const string Name = "Minicloud.Operator";
+    public const string Name = "Selfrun.Operator";
     public static readonly ActivitySource Activities = new(Name);
     public static readonly Meter Meter = new(Name);
-    private static readonly Counter<long> Commands = Meter.CreateCounter<long>("minicloud.db.commands", "{command}");
-    private static readonly Histogram<double> CommandDuration = Meter.CreateHistogram<double>("minicloud.db.command.duration", "s");
+    private static readonly Counter<long> Commands = Meter.CreateCounter<long>("selfrun.db.commands", "{command}");
+    private static readonly Histogram<double> CommandDuration = Meter.CreateHistogram<double>("selfrun.db.command.duration", "s");
     public static IServiceCollection AddOperatorDiagnostics(
         this IServiceCollection services, IConfiguration configuration, string serviceName,
         Action<TracerProviderBuilder>? configureTracing = null)
@@ -35,19 +35,19 @@ public static class OperatorDiagnostics
                     .AddRuntimeInstrumentation()
                     .AddView(instrument => (instrument.Meter.Name, instrument.Name) switch
                     {
-                        (Name, "minicloud.worker.claims") =>
+                        (Name, "selfrun.worker.claims") =>
                             new MetricStreamConfiguration { TagKeys = ["outcome"] },
-                        (Name, "minicloud.worker.queue.wait") =>
+                        (Name, "selfrun.worker.queue.wait") =>
                             new MetricStreamConfiguration { TagKeys = [] },
-                        (Name, "minicloud.worker.step.duration") =>
+                        (Name, "selfrun.worker.step.duration") =>
                             new MetricStreamConfiguration { TagKeys = ["operation", "outcome"] },
-                        (Name, "minicloud.db.commands" or "minicloud.db.command.duration") =>
+                        (Name, "selfrun.db.commands" or "selfrun.db.command.duration") =>
                             new MetricStreamConfiguration { TagKeys = ["operation", "outcome"] },
-                        (Name, "minicloud.gateway.connections.active") =>
+                        (Name, "selfrun.gateway.connections.active") =>
                             new MetricStreamConfiguration { TagKeys = ["operation"] },
-                        (Name, "minicloud.gateway.admission.wait" or "minicloud.gateway.websocket.closes") =>
+                        (Name, "selfrun.gateway.admission.wait" or "selfrun.gateway.websocket.closes") =>
                             new MetricStreamConfiguration { TagKeys = ["outcome"] },
-                        (Name, "minicloud.gateway.relay.bytes") =>
+                        (Name, "selfrun.gateway.relay.bytes") =>
                             new MetricStreamConfiguration { TagKeys = ["operation", "direction"] },
                         ("Microsoft.AspNetCore.Hosting", "http.server.request.duration") =>
                             new MetricStreamConfiguration { TagKeys = ["http.request.method", "http.response.status_code", "http.route", "network.protocol.version"] },

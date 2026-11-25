@@ -1,8 +1,7 @@
 # Server release assets (T40)
 
-This is the **server** channel, independent of source-built CLI delivery. No
-server assets have been published or qualified by this change. Existing CLI
-installers and the reusable customer deployment workflow retain their meaning.
+This is the **server** release channel for Selfrun. Use the same exact source
+revision to build the CLI for a server release.
 
 The [maintenance implementation](../../docs/server-maintenance.md) provides
 coordinated backup, upgrade, restore and transfer through the durable
@@ -23,10 +22,10 @@ creating a release tag, publishing images or deploying anything.
 The workflow deliberately fails **before registry login or image publication**
 until all of these are present in the selected source revision:
 
-- Every worker image contains both `runtime-agent/linux-x64/minicloud-agent`
-  and `runtime-agent/linux-arm64/minicloud-agent`, published self-contained
+- Every worker image contains both `runtime-agent/linux-x64/selfrun-agent`
+  and `runtime-agent/linux-arm64/selfrun-agent`, published self-contained
   with native runtime libraries included in each single-file executable.
-  The existing `MINICLOUD_AGENT_RID` build argument remains accepted (`linux-x64` or
+  The existing `SELFRUN_AGENT_RID` build argument remains accepted (`linux-x64` or
   `linux-arm64`); it chooses the first publish, not the available target set.
   Release builds no longer derive an agent RID from the worker image platform.
   Before assembling each worker index, T40 extracts **both** agents from each
@@ -40,52 +39,18 @@ until all of these are present in the selected source revision:
   `maintenance.sh`, `release-notes.md` and `upgrade-prerequisites.md`, plus any
   supporting scripts/configuration. Only regular files/directories are allowed.
   Keep operator secrets and generated execution output out of these assets.
-- T80 supplies `packaging/server/release.json` with selected candidate
-  compatibility, schema versions and resolved dependency digests. The
-  `0.0.1-rc.3` input is pending operator review and selects exact CLI source
-  revisions, **not qualified runtime compatibility**. The prior
-  `server-v0.0.1-rc.1` and `server-v0.0.1-rc.2` tags exist from failed publication
-  attempts and are not reused. See the test-prerelease pairing
-  below and the [public candidate handoff](../../docs/public-candidate-handoff.md) for registry
-  evidence, the explicit public-only scope decision and outstanding T90/T91
-  qualification. Input presence or a successful preflight is not release acceptance.
-
-### Selected TEST prerelease pairing (pending operator review)
-
-The pending `server-v0.0.1-rc.3` input preserves customer-workflow
-CLI source `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` and additionally allows seed
-stateless CLI source `7a4b16130215ea8b2c74221cb02c5e45344d4427` (#102).
-The superseded pre-stateless seed source is no longer selected. Both version bounds remain
-`null`; this is an exact-source allowlist, not a version range. Schema versions
-and dependency index digests are unchanged; the prerelease version advances and
-new product builds use dedicated release-only repositories.
-Product image digests must come from the real release build, never placeholders.
-
-The stateless implementation passed all 453 CLI tests in a private local Linux
-arm64 worktree; backend, dashboard and release-contract CI passed on #102.
-This is **automated evidence only**, not a live CLI/server compatibility test. The publisher
-will build the local CLI with informational source exactly
-`7a4b16130215ea8b2c74221cb02c5e45344d4427`; the server manifest's source must
-instead identify the actual merged release-build commit containing this input.
-After operator review, only the authorized publisher may publish this signed **TEST
-prerelease** as the new `server-v0.0.1-rc.3` release; the existing rc1 and rc2 tags must
-not be reused. Preparing or merging this input does not publish it. Live seed/provider,
-native amd64/arm64, full-image, OIDC/signature/anonymous-pull and
-installation/recovery qualification remain
-pending; the earlier workflow source is retained, not newly qualified.
-
-For #261, an exact-source historical `SeedRelease.VerifyAsync` harness accepted
-producer-generated synthetic release-only assets and rejected hash, archive,
-runtime-core and compatibility tampering. External Compose/Cosign calls were
-mocked; this proves the packaging/seed contract, not cryptographic or live
-qualification. See the [handoff evidence](../../docs/public-candidate-handoff.md#deferred-validation-and-release-gates).
+- `packaging/server/release.json` supplies the server version, schema versions,
+  dependency digests and CLI source policy. The current prerelease permits the
+  Selfrun CLI built from the exact server release source revision. See the
+  [public candidate handoff](../../docs/public-candidate-handoff.md) for the
+  remaining live qualification steps.
 
 Compose must reference exactly the three product images and the four dependency
 images. Each image may be a literal manifest-pinned digest or the corresponding
-`${MINICLOUD_API_IMAGE:?required}`, `${MINICLOUD_DASHBOARD_IMAGE:?required}`,
-`${MINICLOUD_WORKER_IMAGE:?required}`, `${MINICLOUD_POSTGRES_IMAGE:?required}`,
-`${MINICLOUD_OPENBAO_IMAGE:?required}`, `${MINICLOUD_KRATOS_IMAGE:?required}` or
-`${MINICLOUD_CADDY_IMAGE:?required}` placeholder (plain `${NAME}` also works).
+`${SELFRUN_API_IMAGE:?required}`, `${SELFRUN_DASHBOARD_IMAGE:?required}`,
+`${SELFRUN_WORKER_IMAGE:?required}`, `${SELFRUN_POSTGRES_IMAGE:?required}`,
+`${SELFRUN_OPENBAO_IMAGE:?required}`, `${SELFRUN_KRATOS_IMAGE:?required}` or
+`${SELFRUN_CADDY_IMAGE:?required}` placeholder (plain `${NAME}` also works).
 Packaging substitutes only these image values and rejects source builds,
 floating/unlisted images or missing manifest images. Other installation inputs
 remain uninterpolated; packaging never needs operator credentials.
@@ -106,35 +71,28 @@ noncanonical product repositories and unsupported architectures are rejected.
 | `identitySchemaVersion`, `configurationSchemaVersion` | Positive integers from the owning task |
 | `cliCompatibility` | Exactly `protocolVersion: 1`, `minimumVersion`, `maximumExclusiveVersion`, `sourceRevisions` |
 
-These are **all** the input fields in `release.json`. Both CLI version bounds
-may be `null` when the nonempty list of full lowercase source SHAs identifies
-explicitly allowed clients. Otherwise both bounds must be semantic versions forming a
-nonempty half-open interval. Source SHAs must be unique. Compatibility means
-matching protocol **and** (explicit source SHA **or** version interval), not
-matching the server's version number. The validator checks the declaration's
-shape, not runtime test evidence. The current candidate allowlist is a selected
-source contract pending T90 acceptance, not a measured compatibility claim.
-Do not publish this candidate as qualified without that evidence.
+With both version bounds set to `null` and an empty `sourceRevisions` list,
+the producer writes the exact server build revision into the signed CLI
+allowlist. A release can also declare explicit source SHAs or a half-open
+semantic version interval. The CLI must match the declared protocol version
+and either an allowed source revision or the version interval. Live
+qualification requires exercising the CLI and server together.
 
 The producer adds `releaseTag`, the exact checked-out `sourceRevision`, and
 `images: {api, dashboard, worker}` with canonical
-`ghcr.io/muniventures/minicloud-release-<component>@sha256:<digest>` values. The workflow
+`ghcr.io/muniperez/selfrun-release-<component>@sha256:<digest>` values. The workflow
 builds both platforms separately, assembles each multi-architecture index,
 records the exact source revision in image labels, then signs the immutable
 index and attaches source/workflow provenance. Dependency indexes must also
 contain both supported platforms.
 
-Schema-1 consumers also support the exact historical
-`ghcr.io/muniventures/minicloud-<component>@sha256:<digest>` family. All three
-components must belong to one family, with exact component-to-repository mapping
-and lowercase immutable SHA-256 digests; mixed families, foreign repositories
-and tagged references are rejected. Producers accept only the release-only
-family. The shared downloaded verifier used by installer and maintenance retains
-the same signed inventory, source and canonical workflow/provenance checks.
+The verifier requires exact component-to-repository mapping and lowercase
+immutable SHA-256 digests. It verifies the signed inventory, source revision
+and canonical workflow provenance.
 
 The final detached `server-manifest.json` additionally contains
 `bundle: {name, sha256}` and `files: {relativePath: sha256}`. The archive is
-`minicloud-server-<VERSION>.tar.gz`. To avoid a circular archive checksum, it
+`selfrun-server-<VERSION>.tar.gz`. To avoid a circular archive checksum, it
 contains `server-release.json` (the identical manifest core without `bundle`
 and `files`) rather than the detached archive-binding manifest. The verifier
 requires byte-for-byte agreement and validates every archive member without
@@ -156,14 +114,14 @@ Install Cosign v2.6.5 independently from its official distribution. Trust is
 Sigstore's public production TUF trust root, Fulcio issuer
 `https://token.actions.githubusercontent.com`, the **exact** certificate
 identity
-`https://github.com/muniventures/minicloud/.github/workflows/server-release.yml@refs/tags/<selected-server-tag>`,
+`https://github.com/muniperez/selfrun/.github/workflows/server-release.yml@refs/tags/<selected-server-tag>`,
 and transparency/inclusion verification. Never disable certificate, transparency,
 or inclusion checks, use a wildcard workflow identity, or trust a checksum
 solely because it was downloaded next to an archive.
 
 For an actual published `$tag`, download these assets from its **exact** release
 URL into `$assets` (the repository's ignored `.local/artifacts/` for development):
-`server-manifest.json`, `minicloud-server-<VERSION>.tar.gz`, `install-server.sh`,
+`server-manifest.json`, `selfrun-server-<VERSION>.tar.gz`, `install-server.sh`,
 `verify-server-release.py`, `checksums.txt`, `checksums.txt.sigstore.json`.
 Do not execute the downloaded installer or verifier before independent
 verification. From the download directory:
@@ -171,7 +129,7 @@ verification. From the download directory:
 ```sh
 cosign verify-blob --new-bundle-format \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity "https://github.com/muniventures/minicloud/.github/workflows/server-release.yml@refs/tags/$tag" \
+  --certificate-identity "https://github.com/muniperez/selfrun/.github/workflows/server-release.yml@refs/tags/$tag" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 sha256sum --check --strict checksums.txt
@@ -189,7 +147,7 @@ changes GHCR visibility to conceal a permission failure. The maintainer must
 enable public package visibility before a release can pass that gate.
 
 Only then may T43's installer perform installation/preflight. Its reserved URL is
-`https://github.com/muniventures/minicloud/releases/download/server-v<VERSION>/install-server.sh`.
+`https://github.com/muniperez/selfrun/releases/download/server-v<VERSION>/install-server.sh`.
 The verifier does not install, extract, start services or mutate customer VPSs.
 Image verification/pulls use the local Docker cache but perform no deployments.
 
@@ -203,13 +161,13 @@ image defaults. Unsupported targets, failed/missing probes, absent target
 executables and mismatched ELF headers fail with `runtime_agent_install_failed`;
 the worker does not upload or run a different-architecture agent.
 
-Uploads keep the existing remote `runtime-agent/minicloud-agent` name and
-`/opt/minicloud/agent/minicloud-agent` installation path. Both pre-install and
+Uploads keep the existing remote `runtime-agent/selfrun-agent` name and
+`/opt/selfrun/agent/selfrun-agent` installation path. Both pre-install and
 final verification hash the selected executable, including reuse/repair paths.
 No provider/model schema or remote installer change is required.
 
 Source/development `Worker:RuntimeAgent:BundlePath` still accepts the original
-flat `minicloud-agent` alongside the three shared installer assets. A flat
+flat `selfrun-agent` alongside the three shared installer assets. A flat
 binary is used only when the target RID path is absent, and its ELF architecture
 must match the probed target; there is no control-plane-architecture fallback.
 Use the RID subdirectories to support both target types from a source worker.
@@ -225,29 +183,12 @@ prereleases marked accordingly. Optional `server-channel/stable.json` discovery
 is not published by this workflow; exact release selection needs no channel.
 Never use repository-wide latest-release discovery or CLI executable archives.
 
-### Previous GHCR failure and owner-only prerequisites
+### GHCR publishing prerequisites
 
-[The rc1 publisher](https://github.com/muniventures/minicloud/actions/runs/43381436203)
-passed contracts, preflight and GHCR login, then failed pushing
-`ghcr.io/muniventures/minicloud-api:0.0.1-rc.1-amd64` with
-`permission_denied: read_package`. Signing and release creation never ran.
-The current publish job already requests `packages: write`, `contents: write`
-and `id-token: write`; the `server-release` environment permits `server-v*` tags.
-
-[The rc2 publisher](https://github.com/muniventures/minicloud/actions/runs/44935673888)
-also failed on its first push with `permission_denied: read_package`, colliding
-with a pre-existing private package (#261). Neither occupied tag may be moved
-or reused.
-
-**Never change access, repository linkage or visibility of the pre-existing
-`minicloud-api`, `minicloud-dashboard` or `minicloud-worker` packages.** Authorized
-rc3 publication instead creates `minicloud-release-api`,
-`minicloud-release-dashboard` and `minicloud-release-worker`. The operator owns
-publication and public visibility of these newly created release-only packages,
-including confirming repository Actions write access for that new family and
-the mandatory anonymous-pull gate. Repository workflow permissions do not
-override package-level access. This repair performs no publication, package
-inspection or permission changes.
+The publish job requires the release-only packages to be publicly accessible
+and writable by this repository's GitHub Actions workflow. The `server-release`
+environment must permit `server-v*` tags. The job requests `packages: write`,
+`contents: write` and `id-token: write`.
 
 ## Focused checks and remaining evidence
 
@@ -256,11 +197,11 @@ From the repository root:
 ```sh
 python3 -B -m unittest discover -s scripts/server-release -p 'test_*.py' -v
 python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -v
-dotnet test modules/tests/Minicloud.Cli.Tests/Minicloud.Cli.Tests.csproj \
+dotnet test modules/tests/Selfrun.Cli.Tests/Selfrun.Cli.Tests.csproj \
   --configuration Release --artifacts-path .local/artifacts/t40-cli-dotnet \
   --results-directory .local/artifacts/t40-cli-results \
   --filter 'FullyQualifiedName~Seed|FullyQualifiedName~Release' -m:1
-dotnet test modules/tests/Minicloud.Tests/Minicloud.Tests.csproj \
+dotnet test modules/tests/Selfrun.Tests/Selfrun.Tests.csproj \
   --configuration Release --artifacts-path .local/artifacts/t40-dotnet \
   --results-directory .local/artifacts/t40-test-results \
   --filter 'FullyQualifiedName~ServerReleaseMetadataTests|FullyQualifiedName~Instance_discovery' -m:1

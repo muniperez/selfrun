@@ -1,11 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 public sealed record DeploymentLookup(Deployment? Deployment, IResult? Error);
 

@@ -1,14 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Extensibility;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Extensibility;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore secrets,
+public sealed class ProviderAccountService(SelfrunDbContext db, ISecretStore secrets,
     ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock, IOptions<OpenBaoSecretStoreOptions> options,
     IVpsProviderRegistry? registry = null)
 {
@@ -157,7 +157,7 @@ public sealed class ProviderAccountService(MinicloudDbContext db, ISecretStore s
     }
 
     private static Task ProbeAsync(IVpsProviderClient client, CancellationToken ct) =>
-        client.FindServerAsync("minicloud-credential-check-" + Guid.NewGuid().ToString("N"), ct);
+        client.FindServerAsync("selfrun-credential-check-" + Guid.NewGuid().ToString("N"), ct);
 
     private static async Task<ProviderScopeIdentity?> VerifyScopeIdentityAsync(
         ProviderAccount account,

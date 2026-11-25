@@ -2,12 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed record GrafanaProvisioningResult(
     bool Ready,
@@ -18,8 +18,8 @@ public sealed record GrafanaProvisioningResult(
     string DataSourceUid);
 
 /// <summary>
-/// T20 idempotent Grafana provisioning: one Grafana organization per Minicloud
-/// organization, one Grafana user identity per (Minicloud user, organization) with
+/// T20 idempotent Grafana provisioning: one Grafana organization per Selfrun
+/// organization, one Grafana user identity per (Selfrun user, organization) with
 /// exactly the Viewer role in exactly that organization, and one non-editable
 /// per-app Loki data source pointing at the private query gateway.
 /// Desired state is durable in the Grafana*Binding tables; every step verifies
@@ -27,7 +27,7 @@ public sealed record GrafanaProvisioningResult(
 /// possible, otherwise recorded as unavailable and sessions stay denied.
 /// </summary>
 public sealed class GrafanaProvisioningService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IGrafanaApiClient grafana,
     IIdGenerator ids,
     TimeProvider timeProvider,
@@ -95,8 +95,8 @@ public sealed class GrafanaProvisioningService(
         }
     }
 
-    public static string ExpectedLogin(string minicloudUserId, string organizationId) =>
-        Minicloud.Common.Services.GrafanaProxyGuard.IdentityFor(minicloudUserId, organizationId);
+    public static string ExpectedLogin(string selfrunUserId, string organizationId) =>
+        Selfrun.Common.Services.GrafanaProxyGuard.IdentityFor(selfrunUserId, organizationId);
 
     public static string DataSourceUidForApp(string appId) => $"mcl-{appId}";
 
@@ -129,7 +129,7 @@ public sealed class GrafanaProvisioningService(
             return binding;
         }
 
-        var org = await grafana.EnsureOrganizationAsync($"minicloud-{organizationId}", cancellationToken);
+        var org = await grafana.EnsureOrganizationAsync($"selfrun-{organizationId}", cancellationToken);
         binding.GrafanaOrgId = org.Id;
         binding.ReconciliationStatus = "ready";
         binding.UpdatedAt = timeProvider.GetUtcNow();
@@ -138,18 +138,18 @@ public sealed class GrafanaProvisioningService(
     }
 
     private async Task<GrafanaUserBinding> EnsureUserBindingAsync(
-        string organizationId, string minicloudUserId, long grafanaOrgId, CancellationToken cancellationToken)
+        string organizationId, string selfrunUserId, long grafanaOrgId, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var binding = await db.GrafanaUserBindings
-            .SingleOrDefaultAsync(x => x.OrganizationId == organizationId && x.MinicloudUserId == minicloudUserId, cancellationToken);
+            .SingleOrDefaultAsync(x => x.OrganizationId == organizationId && x.SelfrunUserId == selfrunUserId, cancellationToken);
         if (binding is null)
         {
             binding = new GrafanaUserBinding
             {
                 Id = ids.NewId("gusr"),
                 OrganizationId = organizationId,
-                MinicloudUserId = minicloudUserId,
+                SelfrunUserId = selfrunUserId,
                 GrafanaUserId = 0,
                 ExpectedRole = ViewerRole,
                 ReconciliationStatus = "pending",
@@ -160,10 +160,10 @@ public sealed class GrafanaProvisioningService(
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == minicloudUserId, cancellationToken);
-        var login = ExpectedLogin(minicloudUserId, organizationId);
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == selfrunUserId, cancellationToken);
+        var login = ExpectedLogin(selfrunUserId, organizationId);
         var grafanaUser = await grafana.EnsureUserAsync(
-            login, user?.Email ?? $"{minicloudUserId}@invalid.local", user?.DisplayName ?? minicloudUserId, cancellationToken);
+            login, user?.Email ?? $"{selfrunUserId}@invalid.local", user?.DisplayName ?? selfrunUserId, cancellationToken);
 
         if (binding.GrafanaUserId == 0)
         {
@@ -223,7 +223,7 @@ public sealed class GrafanaProvisioningService(
     }
 
     private async Task<string> EnsureDataSourceBindingAsync(
-        MinicloudApp app,
+        SelfrunApp app,
         AppTelemetrySettings settings,
         long grafanaOrgId,
         string queryGatewayBaseUrl,
@@ -297,7 +297,7 @@ public sealed class GrafanaProvisioningService(
     }
 
     private async Task MarkBindingsUnavailableAsync(
-        string organizationId, string minicloudUserId, string appId, string reason, CancellationToken cancellationToken)
+        string organizationId, string selfrunUserId, string appId, string reason, CancellationToken cancellationToken)
     {
         try
         {
@@ -310,7 +310,7 @@ public sealed class GrafanaProvisioningService(
             }
 
             var user = await db.GrafanaUserBindings.SingleOrDefaultAsync(
-                x => x.OrganizationId == organizationId && x.MinicloudUserId == minicloudUserId, cancellationToken);
+                x => x.OrganizationId == organizationId && x.SelfrunUserId == selfrunUserId, cancellationToken);
             if (user is not null)
             {
                 user.ReconciliationStatus = "unavailable";

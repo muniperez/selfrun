@@ -4,12 +4,12 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 /// <summary>
 /// Typed application-log query filters. All values are validated and length-bounded;
@@ -40,7 +40,7 @@ public sealed record TelemetryQueryUnavailable(string Code, string Message, Time
 /// can emit one consistent non-disclosing response.
 /// </summary>
 public sealed class TelemetryQueryService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ControlPlaneAuthorization authorization,
     IHttpClientFactory httpClients,
     IOptions<TelemetryIngestionOptions> options,
@@ -359,7 +359,7 @@ public sealed class TelemetryQueryService(
     /// </summary>
     public static string BuildLogQuery(string? service, string? text)
     {
-        var builder = new StringBuilder("{minicloud_source=\"otlp\"");
+        var builder = new StringBuilder("{selfrun_source=\"otlp\"");
         if (service is not null)
         {
             builder.Append(", service_name=\"").Append(EscapeLogQlLiteral(service)).Append('"');

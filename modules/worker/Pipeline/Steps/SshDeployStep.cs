@@ -1,20 +1,20 @@
-using Minicloud.Common.Registry;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Registry;
+using Selfrun.Common.Validation;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Pipeline;
-using Minicloud.Worker.Ssh;
-using Minicloud.Worker.Storage;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Worker.Ssh;
+using Selfrun.Worker.Storage;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Step 3: SFTP the deployment payload, remote-deploy.sh and service zips to
@@ -24,7 +24,7 @@ namespace Minicloud.Worker.Pipeline.Steps;
 /// </summary>
 public sealed partial class SshDeployStep : IPipelineStep
 {
-    internal const string RollbackMarker = "__MINICLOUD_DEPLOY_ROLLBACK__=";
+    internal const string RollbackMarker = "__SELFRUN_DEPLOY_ROLLBACK__=";
     public const string FailureCode = "docker_build_failed";
 
     public string Name => "ssh-deploy";
@@ -188,11 +188,11 @@ public sealed partial class SshDeployStep : IPipelineStep
             throw new PipelineStepException(failureCode, BuildFailureMessage(result, failureCode));
         }
 
-        var observed = result.OutputLines.LastOrDefault(x => x.StartsWith("__MINICLOUD_BUILD_PLATFORM__=", StringComparison.Ordinal))?.Split('=', 2).Last();
+        var observed = result.OutputLines.LastOrDefault(x => x.StartsWith("__SELFRUN_BUILD_PLATFORM__=", StringComparison.Ordinal))?.Split('=', 2).Last();
         if (ImagePublicationValidation.IsPlatform(observed))
         {
             await using var observationScope = _scopeFactory.CreateAsyncScope();
-            var observationDb = observationScope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var observationDb = observationScope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             if (await observationDb.Deployments.AnyAsync(x => x.Id == context.DeploymentId && x.OwnershipToken == context.OwnershipToken, cancellationToken))
             {
                 await observationDb.ServerInstances.Where(x => x.Id == context.ServerInstanceId && x.AppId == context.AppId && x.OrganizationId == context.OrganizationId)
@@ -230,7 +230,7 @@ public sealed partial class SshDeployStep : IPipelineStep
 
     internal static string ResolveFailureCode(IReadOnlyList<string> outputLines)
     {
-        const string marker = "__MINICLOUD_DEPLOY_FAILURE__=";
+        const string marker = "__SELFRUN_DEPLOY_FAILURE__=";
         var value = outputLines.LastOrDefault(line => line.StartsWith(marker, StringComparison.Ordinal));
         if (value is null)
         {
@@ -279,7 +279,7 @@ public sealed partial class SshDeployStep : IPipelineStep
             var hasDetail = !string.IsNullOrWhiteSpace(detail) &&
                 !detail.StartsWith("Health check failed for ", StringComparison.Ordinal) &&
                 !detail.StartsWith("===== ", StringComparison.Ordinal) &&
-                !detail.StartsWith("__MINICLOUD_", StringComparison.Ordinal) &&
+                !detail.StartsWith("__SELFRUN_", StringComparison.Ordinal) &&
                 !detail.StartsWith("ERROR: ", StringComparison.Ordinal) &&
                 !detail.StartsWith("TIMING ", StringComparison.Ordinal) &&
                 !detail.StartsWith("Remote deploy failed", StringComparison.Ordinal) &&
@@ -359,7 +359,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         var username = string.IsNullOrWhiteSpace(context.SshUsername) ? _sshOptions.Username : context.SshUsername;
         var checks = retainedImageOwners
             .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => $"docker image inspect {EscapeShell($"minicloud/{context.AppSlug}-{item.Key}:{item.Value}")} >/dev/null 2>&1")
+            .Select(item => $"docker image inspect {EscapeShell($"selfrun/{context.AppSlug}-{item.Key}:{item.Value}")} >/dev/null 2>&1")
             .ToArray();
         var exitCode = await _sshClient.ExecuteCommandAsync(
             new SshTarget(context.ServerInstanceId ?? string.Empty, context.ServerIp!), username, privateKey, string.Join(" && ", checks), (_, _) => Task.CompletedTask, cancellationToken);
@@ -408,7 +408,7 @@ public sealed partial class SshDeployStep : IPipelineStep
     private async Task EnsureOwnershipAsync(PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         if (!await db.Deployments.AsNoTracking().AnyAsync(
                 deployment => deployment.Id == context.DeploymentId &&
                     deployment.OwnershipToken == context.OwnershipToken && deployment.CancellationRequestedAt == null,
@@ -422,7 +422,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var deployment = await db.Deployments
             .AsNoTracking()
             .Include(d => d.Services)
@@ -458,7 +458,7 @@ public sealed partial class SshDeployStep : IPipelineStep
             return await File.ReadAllTextAsync(_sshOptions.PrivateKeyPath, cancellationToken);
         }
 
-        var fallbackPath = Path.Combine(_environment.ContentRootPath, "minicloud-deploy-key");
+        var fallbackPath = Path.Combine(_environment.ContentRootPath, "selfrun-deploy-key");
         if (File.Exists(fallbackPath))
         {
             return await File.ReadAllTextAsync(fallbackPath, cancellationToken);
@@ -476,8 +476,8 @@ public sealed partial class SshDeployStep : IPipelineStep
             candidates.Add(_options.RemoteDeployScriptPath);
         }
 
-        candidates.Add(Path.Combine(_environment.ContentRootPath, "scripts", "github-actions", "minicloud-deploy", "remote-deploy.sh"));
-        candidates.Add(Path.Combine(AppContext.BaseDirectory, "scripts", "github-actions", "minicloud-deploy", "remote-deploy.sh"));
+        candidates.Add(Path.Combine(_environment.ContentRootPath, "scripts", "github-actions", "selfrun-deploy", "remote-deploy.sh"));
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "scripts", "github-actions", "selfrun-deploy", "remote-deploy.sh"));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "remote-deploy.sh"));
 
         foreach (var candidate in candidates)
@@ -503,7 +503,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         string? postgresPassword = null;
         if (deployment.Database == DatabaseMode.Postgres)
         {
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var secret = await db.AppSecrets.AsNoTracking().SingleOrDefaultAsync(
                 s => s.OrganizationId == context.OrganizationId && s.AppId == context.AppId && s.Name == AppSecretService.PostgresPasswordSecretName,
                 cancellationToken);
@@ -535,10 +535,10 @@ public sealed partial class SshDeployStep : IPipelineStep
         }
         catch (SecretStoreUnavailableException ex)
         {
-            throw new PipelineStepException("secret_store_unavailable", "Minicloud could not read deployment secrets. Retry when the secret store is available.", ex);
+            throw new PipelineStepException("secret_store_unavailable", "Selfrun could not read deployment secrets. Retry when the secret store is available.", ex);
         }
 
-        var databaseContext = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var databaseContext = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var databaseBindings = await ResolveDatabaseBindingsAsync(databaseContext, scope.ServiceProvider.GetService<SecretEncryptionService>(), context.OrganizationId, context.AppId, deployment.Services.Select(x => x.Name).ToHashSet(StringComparer.Ordinal), cancellationToken);
         var managedDatabaseServer = deployment.Database == DatabaseMode.Postgres &&
             await databaseContext.ManagedDatabaseServers.AsNoTracking().AnyAsync(x => x.OrganizationId == context.OrganizationId && x.RuntimeAppId == context.AppId && x.Status != "deleted", cancellationToken);
@@ -551,7 +551,7 @@ public sealed partial class SshDeployStep : IPipelineStep
                 name = s.Name,
                 managed = s.ImagePublicationId is not null,
                 image = !string.IsNullOrWhiteSpace(s.ArtifactId) || string.IsNullOrWhiteSpace(s.Image)
-                    ? $"minicloud/{context.AppSlug}-{s.Name}:{retainedImageOwners.GetValueOrDefault(s.Name, context.DeploymentId)}"
+                    ? $"selfrun/{context.AppSlug}-{s.Name}:{retainedImageOwners.GetValueOrDefault(s.Name, context.DeploymentId)}"
                     : s.Image,
                 port = s.Port,
                 @public = s.Public,
@@ -572,7 +572,7 @@ public sealed partial class SshDeployStep : IPipelineStep
             {
                 service_name = s.Name,
                 artifact_archive = $"{context.RemoteDirectory}/{s.Name}.zip",
-                image_tag = $"minicloud/{context.AppSlug}-{s.Name}:{context.DeploymentId}",
+                image_tag = $"selfrun/{context.AppSlug}-{s.Name}:{context.DeploymentId}",
             })
             .ToArray();
 
@@ -642,7 +642,7 @@ public sealed partial class SshDeployStep : IPipelineStep
     }
 
     public static string RemoteDirectoryFor(string deploymentId) =>
-        $"/tmp/minicloud-deploy-{SanitizeId(deploymentId)}";
+        $"/tmp/selfrun-deploy-{SanitizeId(deploymentId)}";
 
     private static string EscapeShell(string value) =>
         "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
@@ -685,7 +685,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var successfulUnordered = await db.Deployments
             .AsNoTracking()
             .Include(item => item.Services)
@@ -700,7 +700,7 @@ public sealed partial class SshDeployStep : IPipelineStep
         {
             foreach (var service in prior.Services)
             {
-                var prefix = $"minicloud/{deployment.App.Slug}-{service.Name}:";
+                var prefix = $"selfrun/{deployment.App.Slug}-{service.Name}:";
                 var owner = service.Image?.StartsWith(prefix, StringComparison.Ordinal) == true ? service.Image[prefix.Length..] : prior.Id;
                 active[service.Name] = (service.ArtifactId, owner);
             }

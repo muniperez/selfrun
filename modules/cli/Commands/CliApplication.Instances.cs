@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -21,7 +21,7 @@ public sealed partial class CliApplication
         var url = _console.ReadLine();
         if (string.IsNullOrWhiteSpace(url))
             throw new CliCommandException(CliExitCodes.ValidationError,
-                "An instance URL is required. Run 'selfrun instance add <name> <url>' or set SELFRUN_API_URL (or MINICLOUD_API_URL) for CI.");
+                "An instance URL is required. Run 'selfrun instance add <name> <url>' or set SELFRUN_API_URL for CI.");
         var normalized = InstanceStore.NormalizeUrl(url);
         await AddInstanceAsync(new Uri(normalized).Authority, normalized, ct);
     }
@@ -68,7 +68,7 @@ public sealed partial class CliApplication
                 saved.Active = selected.Name;
                 _environment.Instances.Save(saved);
                 _console.WriteLine($"Active instance: {selected.Name} ({selected.Url})");
-                if (_environment.HasApiOverride) _console.WriteLine("Unset SELFRUN_API_URL / MINICLOUD_API_URL to use the saved active instance in subsequent commands.");
+                if (_environment.HasApiOverride) _console.WriteLine("Unset SELFRUN_API_URL to use the saved active instance in subsequent commands.");
                 else _environment.SelectInstance(selected);
                 return CliExitCodes.Success;
             default:

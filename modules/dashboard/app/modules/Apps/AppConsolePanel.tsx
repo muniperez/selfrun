@@ -141,7 +141,7 @@ export function AppConsolePanel({ app }: Props) {
           <p className="text-sm text-muted-foreground">Runtime output, not a command terminal. Server order.</p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <CollectionToolbar label="console logs" query={query} onChange={setQuery} onRefresh={() => load()} loading={loading} count={logs.length} countLabel="returned" searchSupported={false} sorts={[]} filters={[{ id: "source", label: "Source", options: options([...new Set(["caddy","docker-compose","minicloud-agent",...sources.map(item => item.source)])]) }, { id: "service", label: "Service", options: options(services) }, { id: "since", label: "Since", type: "text" }, { id: "tail", label: "Tail (1–1000)", type: "number" }]} />
+          <CollectionToolbar label="console logs" query={query} onChange={setQuery} onRefresh={() => load()} loading={loading} count={logs.length} countLabel="returned" searchSupported={false} sorts={[]} filters={[{ id: "source", label: "Source", options: options([...new Set(["caddy","docker-compose","selfrun-agent",...sources.map(item => item.source)])]) }, { id: "service", label: "Service", options: options(services) }, { id: "since", label: "Since", type: "text" }, { id: "tail", label: "Tail (1–1000)", type: "number" }]} />
           <p className="text-xs text-muted-foreground">Server-filtered tail: up to {tail} records since {since}, in server order. Full-text search and alternate ordering are unavailable for this API.</p>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           {loading ? <p className="text-sm text-muted-foreground">Loading runtime console...</p> : null}

@@ -2,10 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed record CreatedBrowserSession(string Cookie, string CsrfToken, BrowserSession Session);
 
@@ -43,7 +43,7 @@ public enum BrowserSessionWriteOutcome
 public sealed record BrowserSessionWrite(BrowserSessionWriteOutcome Outcome, BrowserSession? Session);
 
 public sealed class BrowserSessionService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IIdGenerator ids,
     TimeProvider timeProvider,
     IOptions<PortalSessionOptions>? options = null)
@@ -71,7 +71,7 @@ public sealed class BrowserSessionService(
         var user = await db.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
         if (user is null || user.KratosIdentityId != kratosIdentityId)
         {
-            throw new InvalidOperationException("The identity is not bound to this Minicloud user.");
+            throw new InvalidOperationException("The identity is not bound to this Selfrun user.");
         }
 
         var created = NewSession(userId, kratosIdentityId, kratosSessionId, remembered);
@@ -479,7 +479,7 @@ public sealed class BrowserSessionService(
 
         if (existing.UserId != userId || existing.KratosIdentityId != kratosIdentityId ||
             !await db.Users.AnyAsync(x => x.Id == userId && x.KratosIdentityId == kratosIdentityId, cancellationToken))
-            throw new InvalidOperationException("The identity is not bound to this Minicloud user.");
+            throw new InvalidOperationException("The identity is not bound to this Selfrun user.");
 
         // Kratos settings can retain its session ID; rotate the local secret, not the unique upstream binding.
         var now = timeProvider.GetUtcNow();

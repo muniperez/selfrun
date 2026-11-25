@@ -1,0 +1,282 @@
+using System.Net;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.DigitalOcean;
+using Selfrun.Common.Providers.Models;
+using Xunit;
+
+namespace Selfrun.Worker.Tests.Providers;
+
+public class DigitalOceanClientTests
+{
+    private readonly TestHttpMessageHandler _handler = new();
+    private readonly DigitalOceanOptions _options = new()
+    {
+        ApiToken = "dop_v1_secret_token_abcdef123456",
+        ProjectId = "project-uuid-9876",
+        BaseUrl = "https://api.digitalocean.com/v2/"
+    };
+
+    private DigitalOceanClient CreateClient()
+    {
+        var httpClient = new HttpClient(_handler)
+        {
+            BaseAddress = new Uri(_options.BaseUrl)
+        };
+        return new DigitalOceanClient(httpClient, _options);
+    }
+
+    [Fact]
+    public async Task FindServerAsync_WhenDropletFound_ReturnsServerInfo()
+    {
+        // Arrange
+        const string json = """
+        {
+            "droplets": [
+                {
+                    "id": 5001,
+                    "name": "selfrun-do-web",
+                    "status": "active",
+                    "networks": {
+                        "v4": [
+                            { "ip_address": "10.0.0.1", "type": "private" },
+                            { "ip_address": "159.203.1.2", "type": "public" }
+                        ],
+                        "v6": [
+                            { "ip_address": "2604:a880:800:10::4b:6001", "type": "public" }
+                        ]
+                    },
+                    "tags": ["selfrun", "env-prod"]
+                }
+            ]
+        }
+        """;
+        _handler.QueueJsonResponse(json);
+        var client = CreateClient();
+
+        // Act
+        var result = await client.FindServerAsync("selfrun-do-web");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("5001", result.Id);
+        Assert.Equal("selfrun-do-web", result.Name);
+        Assert.Equal("159.203.1.2", result.Ipv4Address);
+        Assert.Equal("active", result.Status);
+        Assert.Equal("2604:a880:800:10::4b:6001", result.Ipv6Address);
+
+        var req = Assert.Single(_handler.RecordedRequests);
+        Assert.Equal(HttpMethod.Get, req.Method);
+        Assert.Contains("droplets?name=selfrun-do-web", req.Uri);
+        Assert.Equal("Bearer dop_v1_secret_token_abcdef123456", req.AuthorizationHeader);
+    }
+
+    [Fact]
+    public async Task FindServerAsync_WhenDropletNotFound_ReturnsNull()
+    {
+        // Arrange
+        _handler.QueueJsonResponse("""{"droplets": []}""");
+        var client = CreateClient();
+
+        // Act
+        var result = await client.FindServerAsync("missing-droplet");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task CreateServerAsync_CreatesDroplet_AndAssignsToProject()
+    {
+        // Arrange
+        const string createDropletResponse = """
+        {
+            "droplet": {
+                "id": 6002,
+                "name": "selfrun-do-app",
+                "status": "new",
+                "networks": {
+                    "v4": [ { "ip_address": "159.203.8.9", "type": "public" } ]
+                }
+            }
+        }
+        """;
+        const string assignResponse = """
+        {
+            "resources": [
+                { "urn": "do:droplet:6002", "assigned_at": "2026-09-09T10:00:00Z" }
+            ]
+        }
+        """;
+
+        _handler.QueueJsonResponse(createDropletResponse, HttpStatusCode.Created);
+        _handler.QueueJsonResponse(assignResponse, HttpStatusCode.OK);
+
+        var client = CreateClient();
+        var request = new CreateServerRequest(
+            Name: "selfrun-do-app",
+            Plan: "s-1vcpu-1gb",
+            Region: "nyc1",
+            SshKeyReferences: ["123", "456"],
+            UserDataCloudInit: "#cloud-config",
+            Tags: ["selfrun-app-test"]);
+
+        // Act
+        var result = await client.CreateServerAsync(request);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("6002", result.Id);
+        Assert.Equal("selfrun-do-app", result.Name);
+        Assert.Equal("159.203.8.9", result.Ipv4Address);
+
+        Assert.Equal(2, _handler.RecordedRequests.Count);
+
+        // First request: create droplet
+        var createReq = _handler.RecordedRequests[0];
+        Assert.Equal(HttpMethod.Post, createReq.Method);
+        Assert.Contains("droplets", createReq.Uri);
+        Assert.Contains("\"name\":\"selfrun-do-app\"", createReq.Body);
+        Assert.Contains("\"size\":\"s-1vcpu-1gb\"", createReq.Body);
+        Assert.Contains("\"region\":\"nyc1\"", createReq.Body);
+        Assert.Contains("\"ssh_keys\":[123,456]", createReq.Body);
+
+        // Second request: assign project
+        var assignReq = _handler.RecordedRequests[1];
+        Assert.Equal(HttpMethod.Post, assignReq.Method);
+        Assert.Contains("projects/project-uuid-9876/resources", assignReq.Uri);
+        Assert.Contains("\"do:droplet:6002\"", assignReq.Body);
+    }
+
+    [Fact]
+    public async Task SshKeyInventoryAndRegistrationUseDigitalOceanApiShapes()
+    {
+        _handler.QueueJsonResponse("""{"ssh_keys":[{"id":12,"name":"work","public_key":"ssh-ed25519 fixture","fingerprint":"SHA256:fixture"}],"meta":{"total":1}}""");
+        _handler.QueueJsonResponse("""{"ssh_key":{"id":13,"name":"new","public_key":"ssh-ed25519 fixture","fingerprint":"SHA256:fixture"}}""", HttpStatusCode.Created);
+        var client = CreateClient();
+
+        var listed = await client.ListSshKeysAsync();
+        var registered = await client.RegisterSshKeyAsync("new", "ssh-ed25519 AAAA");
+
+        Assert.Equal(new ProviderSshKeyInfo("12", "work", "ssh-ed25519 fixture"), Assert.Single(listed));
+        Assert.Equal(new ProviderSshKeyInfo("13", "new", "ssh-ed25519 fixture"), registered);
+        Assert.Contains("/v2/account/keys?per_page=200&page=1", _handler.RecordedRequests[0].Uri);
+        Assert.Contains("\"public_key\":\"ssh-ed25519 AAAA\"", _handler.RecordedRequests[1].Body);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task CreateServerAsync_ProjectAssignmentRejectionIsNotAnAllocationRejection(HttpStatusCode status)
+    {
+        _handler.QueueJsonResponse("""{"droplet":{"id":6002,"name":"selfrun-do-app","status":"new"}}""", HttpStatusCode.Created);
+        _handler.QueueJsonResponse("""{"message":"Invalid token dop_v1_secret_token_abcdef123456"}""", status);
+
+        var error = await Assert.ThrowsAsync<ProviderApiException>(() => CreateClient().CreateServerAsync(
+            new CreateServerRequest("selfrun-do-app", "s-1vcpu-1gb", "nyc1", [], "#cloud-config")));
+
+        Assert.Null(error.StatusCode);
+        Assert.Equal(Selfrun.Common.Providers.CloudProvider.DigitalOcean, error.Provider);
+        Assert.Contains("droplet 6002 was created", error.Message);
+        var assignmentError = Assert.IsType<ProviderApiException>(error.InnerException);
+        Assert.Equal(status, assignmentError.StatusCode);
+        Assert.DoesNotContain(_options.ApiToken, error.ToString());
+        Assert.DoesNotContain(_options.ApiToken, assignmentError.ResponseBody!);
+        Assert.Equal(2, _handler.RecordedRequests.Count);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task CreateServerAsync_InitialAllocationRejectionPreservesStatus(HttpStatusCode status)
+    {
+        _handler.QueueJsonResponse("""{"message":"Droplet creation rejected"}""", status);
+
+        var error = await Assert.ThrowsAsync<ProviderApiException>(() => CreateClient().CreateServerAsync(
+            new CreateServerRequest("selfrun-do-app", "s-1vcpu-1gb", "nyc1", [], "#cloud-config")));
+
+        Assert.Equal(status, error.StatusCode);
+        Assert.Null(error.InnerException);
+        var request = Assert.Single(_handler.RecordedRequests);
+        Assert.EndsWith("/droplets", request.Uri);
+    }
+
+    [Fact]
+    public async Task GetServerStatusAsync_WhenActive_ReturnsRunningStatus()
+    {
+        // Arrange
+        const string statusResponse = """
+        {
+            "droplet": {
+                "id": 7003,
+                "name": "selfrun-active-droplet",
+                "status": "active",
+                "networks": {
+                    "v4": [ { "ip_address": "159.203.11.12", "type": "public" } ]
+                }
+            }
+        }
+        """;
+        _handler.QueueJsonResponse(statusResponse);
+        var client = CreateClient();
+
+        // Act
+        var status = await client.GetServerStatusAsync("7003");
+
+        // Assert
+        Assert.Equal("7003", status.Id);
+        Assert.Equal("active", status.Status);
+        Assert.Equal("159.203.11.12", status.Ipv4Address);
+        Assert.True(status.IsRunning);
+    }
+
+    [Fact]
+    public async Task GetServerStatusAsync_When404_ReturnsNotFoundCleanly()
+    {
+        // Arrange
+        _handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        var client = CreateClient();
+
+        // Act
+        var status = await client.GetServerStatusAsync("99999");
+
+        // Assert
+        Assert.Equal("99999", status.Id);
+        Assert.Equal("not_found", status.Status);
+        Assert.False(status.IsRunning);
+    }
+
+    [Fact]
+    public async Task DeleteServerAsync_When404_CompletesWithoutError()
+    {
+        // Arrange
+        _handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        var client = CreateClient();
+
+        // Act & Assert (should not throw)
+        await client.DeleteServerAsync("missing-droplet");
+    }
+
+    [Fact]
+    public async Task ApiError_ThrowsProviderApiException_WithRedactedToken()
+    {
+        // Arrange
+        _handler.QueueJsonResponse("""{"id": "forbidden", "message": "Invalid token dop_v1_secret_token_abcdef123456"}""", HttpStatusCode.Forbidden);
+        var client = CreateClient();
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ProviderApiException>(() => client.FindServerAsync("test"));
+        Assert.Equal(HttpStatusCode.Forbidden, ex.StatusCode);
+        Assert.DoesNotContain("dop_v1_secret_token_abcdef123456", ex.Message);
+        Assert.Equal("DigitalOcean API request failed with HTTP 403.", ex.Message);
+        Assert.DoesNotContain("Invalid token", ex.Message);
+        Assert.NotNull(ex.ResponseBody);
+        Assert.DoesNotContain("dop_v1_secret_token_abcdef123456", ex.ResponseBody);
+        Assert.Contains("[REDACTED]", ex.ResponseBody);
+    }
+}

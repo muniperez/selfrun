@@ -30,13 +30,13 @@ version and source revision from the built artifact, not that default or the han
 
 | Source | Relevant behavior |
 | --- | --- |
-| [MinicloudApiClient.cs:31](../../../modules/cli/Api/MinicloudApiClient.cs#L31) | Discovery and canonical application/environment routes. |
-| [Minicloud.Cli.csproj:8](../../../modules/cli/Minicloud.Cli.csproj#L8) | Default assembly/package version. |
-| [cli-release.yml:26](https://github.com/muniventures/minicloud/blob/83f80fa91ea18c40832aa4084bb080f19e28370e/.github/workflows/cli-release.yml#L26) | Historical tagged version and main ancestry; build matrix at line 43. |
-| [cli-release.yml:94](https://github.com/muniventures/minicloud/blob/83f80fa91ea18c40832aa4084bb080f19e28370e/.github/workflows/cli-release.yml#L94) | Historical versioned publish; tag-only release at line 180 and required asset checks at line 201. |
+| [SelfrunApiClient.cs:31](../../../modules/cli/Api/SelfrunApiClient.cs#L31) | Discovery and canonical application/environment routes. |
+| [Selfrun.Cli.csproj:8](../../../modules/cli/Selfrun.Cli.csproj#L8) | Default assembly/package version. |
+| [cli-release.yml:26](https://github.com/muniperez/selfrun/blob/83f80fa91ea18c40832aa4084bb080f19e28370e/.github/workflows/cli-release.yml#L26) | Historical tagged version and main ancestry; build matrix at line 43. |
+| [cli-release.yml:94](https://github.com/muniperez/selfrun/blob/83f80fa91ea18c40832aa4084bb080f19e28370e/.github/workflows/cli-release.yml#L94) | Historical versioned publish; tag-only release at line 180 and required asset checks at line 201. |
 | [install.sh:30](../../../install.sh#L30), [install.ps1:14](../../../install.ps1#L14) | Existing archive names, latest/pinned selection and checksum verification. |
 | [verify-cli-release.py:113](../../../scripts/verify-cli-release.py#L113) | Packaged version/help and authenticated canonical API smoke check. |
-| [CliApplicationApiClientTests.cs:13](../../../modules/tests/Minicloud.Cli.Tests/CliApplicationApiClientTests.cs#L13) | Distinct application and environment endpoint contract. |
+| [CliApplicationApiClientTests.cs:13](../../../modules/tests/Selfrun.Cli.Tests/CliApplicationApiClientTests.cs#L13) | Distinct application and environment endpoint contract. |
 | [Upgrade guide:53](../../application-environment-upgrade.md#L53) | Canonical IDs and matching-client release requirement. |
 
 ## Minimal implementation

@@ -8,11 +8,11 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers.Linode;
+namespace Selfrun.Common.Providers.Linode;
 
 /// <summary>
 /// SDK-independent Akamai Connected Cloud (Linode API v4) provider adapter supporting
@@ -172,7 +172,7 @@ public sealed class LinodeClient :
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Region);
 
-        var tags = new List<string> { "minicloud" };
+        var tags = new List<string> { "selfrun" };
         if (request.Tags is not null) tags.AddRange(request.Tags);
         if (request.Labels is not null)
         {
@@ -303,7 +303,7 @@ public sealed class LinodeClient :
 
     public async Task<ProviderStorageVolume> CreateVolumeAsync(string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
     {
-        var tags = labels.Select(pair => $"{pair.Key}:{pair.Value}").Prepend("minicloud").Distinct(StringComparer.Ordinal).ToArray();
+        var tags = labels.Select(pair => $"{pair.Key}:{pair.Value}").Prepend("selfrun").Distinct(StringComparer.Ordinal).ToArray();
         using var request = CreateRequest(HttpMethod.Post, "volumes");
         request.Content = JsonContent.Create(new { label = name, size = sizeGb, region, tags });
         using var response = await _httpClient.SendAsync(request, ct);

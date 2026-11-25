@@ -10,7 +10,7 @@ Owner of implementation: Muse sandbox. Owner of final validation: Codex.
 
 Make Apps, Overview, Services, Domains and Console use one information hierarchy,
 one collection pattern and the same status vocabulary. Preserve the restrained
-Minicloud shell, monochrome actions, theme tokens, compact Card/table treatment,
+Selfrun shell, monochrome actions, theme tokens, compact Card/table treatment,
 shared toolbar, disclosures, overflow menus and centered dialogs established by
 [DESIGN.md](../../DESIGN.md) and [Plan management UX](plan-management-ux.md).
 
@@ -444,7 +444,7 @@ capabilities; frontend presentation never substitutes for server authorization.
    synthetic contracts for design review; do not fake grouping from legacy names.
    Backend/migration work is a separate implementation lane and is not performed
    by this specification-writing task.
-3. Implement the dashboard in public `minicloud/modules/dashboard` source after
+3. Implement the dashboard in public `selfrun/modules/dashboard` source after
    that prerequisite. Reuse API helpers, runtime freshness helpers and current
    organization permission/mutation guards. Apply scoped routes, selector,
    settings and creation/deletion behavior as well as the five operational views.

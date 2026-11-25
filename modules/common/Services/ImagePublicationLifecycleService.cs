@@ -1,13 +1,13 @@
 using System.Text;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class ImagePublicationLifecycleService(IIdGenerator ids, TimeProvider timeProvider)
 {
-    public ImagePublication Create(MinicloudApp app, CreateImagePublicationRequest request, ImageBuildTarget currentTarget)
+    public ImagePublication Create(SelfrunApp app, CreateImagePublicationRequest request, ImageBuildTarget currentTarget)
     {
         if (!ImagePublicationValidation.Validate(request).IsValid)
         {
@@ -71,7 +71,7 @@ public sealed class ImagePublicationLifecycleService(IIdGenerator ids, TimeProvi
         return image;
     }
 
-    public ValidationResult ValidateBinding(ImagePublication publication, MinicloudApp app, string serviceName, ImageBuildTarget target, bool previouslyBound = false)
+    public ValidationResult ValidateBinding(ImagePublication publication, SelfrunApp app, string serviceName, ImageBuildTarget target, bool previouslyBound = false)
     {
         var result = new ValidationResult();
         if (publication.OrganizationId != app.OrganizationId || publication.AppId != app.Id || publication.ServiceName != serviceName)

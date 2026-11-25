@@ -1,17 +1,17 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Registry;
+namespace Selfrun.Common.Registry;
 
 public sealed class ImagePublicationService(
-    MinicloudDbContext db, IOptions<RegistryOptions> options, ImageBuildTargetService targets,
+    SelfrunDbContext db, IOptions<RegistryOptions> options, ImageBuildTargetService targets,
     ImagePublicationLifecycleService lifecycle, RegistryClient registry, ControlPlaneAuthorization authorization,
     IIdGenerator ids, TimeProvider clock, AuditEventService audit)
 {
@@ -25,7 +25,7 @@ public sealed class ImagePublicationService(
         if (!_options.Enabled || !Uri.TryCreate(_options.PublicUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "https" && !(_options.AllowInsecureLoopback && uri.Scheme == "http" && uri.IsLoopback)))
         {
-            throw Error(ImagePublicationErrors.Unavailable, "Local image publication is not enabled. Retry with minicloud deploy --build-mode source, or set buildMode: source on each sourcePath service in minicloud.yml.");
+            throw Error(ImagePublicationErrors.Unavailable, "Local image publication is not enabled. Retry with selfrun deploy --build-mode source, or set buildMode: source on each sourcePath service in selfrun.yml.");
         }
     }
 
@@ -55,7 +55,7 @@ public sealed class ImagePublicationService(
         }
     }
 
-    public async Task<ImagePublication> CreateAsync(MinicloudApp app, CreateImagePublicationRequest request, ActorIdentity actor, CancellationToken ct)
+    public async Task<ImagePublication> CreateAsync(SelfrunApp app, CreateImagePublicationRequest request, ActorIdentity actor, CancellationToken ct)
     {
         RequireEnabled();
         if (!ImagePublicationValidation.Validate(request).IsValid) { throw Error(ImagePublicationErrors.Unsupported, "Invalid image publication request."); }
@@ -219,7 +219,7 @@ public sealed class ImagePublicationService(
         { throw Error(ImagePublicationErrors.Incomplete, "Application is unavailable or being deleted."); }
     }
 
-    public async Task FinalizeDeploymentAsync(MinicloudApp app, Deployment deployment, CancellationToken ct, MinicloudDbContext? bindingDb = null)
+    public async Task FinalizeDeploymentAsync(SelfrunApp app, Deployment deployment, CancellationToken ct, SelfrunDbContext? bindingDb = null)
     {
         RequireEnabled();
         await CheckMaintenanceAsync(ct);

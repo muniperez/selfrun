@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class User
 {
@@ -62,8 +62,8 @@ public sealed class Organization
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public List<OrganizationMember> Members { get; set; } = [];
-    public List<MinicloudApplication> Applications { get; set; } = [];
-    public List<MinicloudApp> Apps { get; set; } = [];
+    public List<SelfrunApplication> Applications { get; set; } = [];
+    public List<SelfrunApp> Apps { get; set; } = [];
     public List<ApiKey> ApiKeys { get; set; } = [];
 }
 
@@ -87,7 +87,7 @@ public static class EnvironmentKinds
     public const string Internal = "internal";
 }
 
-public sealed class MinicloudApplication
+public sealed class SelfrunApplication
 {
     [Key]
     public string Id { get; set; } = default!;
@@ -102,21 +102,21 @@ public sealed class MinicloudApplication
     public string? DeletionError { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
-    public List<MinicloudApp> Environments { get; set; } = [];
+    public List<SelfrunApp> Environments { get; set; } = [];
 }
 
-public sealed class MinicloudApp
+public sealed class SelfrunApp
 {
     [Key]
     public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string? ApplicationId { get; set; }
-    public MinicloudApplication? Application { get; set; }
+    public SelfrunApplication? Application { get; set; }
     public string Name { get; set; } = default!;
     public string Slug { get; set; } = default!;
     public string? ParentAppId { get; set; }
-    public MinicloudApp? ParentApp { get; set; }
+    public SelfrunApp? ParentApp { get; set; }
     public string? BranchName { get; set; }
     public string? EnvironmentName { get; set; }
     public string? NormalizedEnvironmentName { get; set; }
@@ -151,7 +151,7 @@ public sealed class MinicloudApp
     public List<AppServiceSecretServiceDefinition> ServiceSecretServices { get; set; } = [];
     public List<AppServiceSecret> ServiceSecrets { get; set; } = [];
     public List<DeploymentArtifact> DeploymentArtifacts { get; set; } = [];
-    public List<MinicloudApp> Branches { get; set; } = [];
+    public List<SelfrunApp> Branches { get; set; } = [];
 }
 
 public sealed class AppSecret
@@ -161,7 +161,7 @@ public sealed class AppSecret
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string Name { get; set; } = default!;
     public string EncryptedValue { get; set; } = default!;
     public DateTimeOffset CreatedAt { get; set; }
@@ -175,7 +175,7 @@ public sealed class AppServiceSecret
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string ServiceName { get; set; } = default!;
     public string Name { get; set; } = default!;
     public string StoreProvider { get; set; } = default!;
@@ -194,7 +194,7 @@ public sealed class AppServiceSecretServiceDefinition
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string ServiceName { get; set; } = default!;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
@@ -273,7 +273,7 @@ public sealed class Deployment
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public DatabaseMode Database { get; set; }
     public DeploymentStatus Status { get; set; }
     public string? Domain { get; set; }
@@ -358,7 +358,7 @@ public sealed class DeploymentArtifact
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string ServiceName { get; set; } = default!;
     public string FileName { get; set; } = default!;
     public string ContentType { get; set; } = default!;
@@ -391,7 +391,7 @@ public sealed class ServerInstance
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string Provider { get; set; } = default!;
     public string? ProviderServerId { get; set; }
     public string? IpAddress { get; set; }
@@ -415,7 +415,7 @@ public sealed class Domain
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string ServiceName { get; set; } = default!;
     public string Hostname { get; set; } = default!;
     public string Kind { get; set; } = default!;

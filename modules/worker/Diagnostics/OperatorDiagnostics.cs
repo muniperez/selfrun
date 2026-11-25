@@ -1,22 +1,22 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
-namespace Minicloud.Worker.Diagnostics;
+namespace Selfrun.Worker.Diagnostics;
 
 public sealed class OperatorDiagnostics
 {
-    internal const string MeterName = "Minicloud.OperatorDiagnostics";
-    internal const string ActivitySourceName = "Minicloud.OperatorDiagnostics";
-    internal const string ServiceName = "minicloud-worker";
+    internal const string MeterName = "Selfrun.OperatorDiagnostics";
+    internal const string ActivitySourceName = "Selfrun.OperatorDiagnostics";
+    internal const string ServiceName = "selfrun-worker";
     internal const string OperationName = "deployment.pipeline";
 
     private static readonly Meter Meter = new(MeterName);
     private static readonly Counter<long> OperationCount =
-        Meter.CreateCounter<long>("minicloud_worker_deployment_pipeline_count", "{operation}");
+        Meter.CreateCounter<long>("selfrun_worker_deployment_pipeline_count", "{operation}");
     private static readonly Counter<long> OperationBytes =
-        Meter.CreateCounter<long>("minicloud_worker_deployment_pipeline_bytes", "By");
+        Meter.CreateCounter<long>("selfrun_worker_deployment_pipeline_bytes", "By");
     private static readonly Histogram<double> OperationDuration =
-        Meter.CreateHistogram<double>("minicloud_worker_deployment_pipeline_duration", "s");
+        Meter.CreateHistogram<double>("selfrun_worker_deployment_pipeline_duration", "s");
     private static readonly ActivitySource ActivitySource = new(ActivitySourceName);
 
     private readonly object _gate = new();

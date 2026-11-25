@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -13,10 +13,10 @@ public sealed partial class CliApplication
         var organizationId = GetOption(args, "--organization");
         if (organizationId is null)
         {
-            var path = GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath();
+            var path = GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName;
             if (File.Exists(path))
             {
-                var result = MinicloudConfigLoader.Load(path);
+                var result = SelfrunConfigLoader.Load(path);
                 if (!result.IsValid || result.Config is null) { PrintDiagnostics(result.Diagnostics); return CliExitCodes.ValidationError; }
                 organizationId = (await GetApplicationContextAsync(result.Config.AppId!, ct)).OrganizationId;
             }

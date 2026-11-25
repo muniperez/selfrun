@@ -3,15 +3,15 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -21,7 +21,7 @@ public sealed class ArtifactsController : ControllerBase
     [HttpGet]
     public async Task<IResult> ListArtifacts(
         [FromQuery] string appId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         CancellationToken cancellationToken,
@@ -75,7 +75,7 @@ public sealed class ArtifactsController : ControllerBase
     [HttpPost]
     public async Task<IResult> CreateArtifact(
         [FromBody] CreateDeploymentArtifactRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] IIdGenerator ids,
         [FromServices] TimeProvider timeProvider,
@@ -133,7 +133,7 @@ public sealed class ArtifactsController : ControllerBase
     [HttpPut("{artifactId}/file")]
     public async Task<IResult> UploadContent(
         [FromRoute] string artifactId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentArtifactStorageService storage,
         [FromServices] TimeProvider timeProvider,
@@ -162,8 +162,8 @@ public sealed class ArtifactsController : ControllerBase
             return EndpointResults.Conflict("artifact_not_mutable", "Deployment artifact content cannot be changed.");
         }
 
-        var declaredSha = Request.Headers["X-Minicloud-Artifact-Sha256"].ToString();
-        var declaredSizeHeader = Request.Headers["X-Minicloud-Artifact-Size"].ToString();
+        var declaredSha = Request.Headers["X-Selfrun-Artifact-Sha256"].ToString();
+        var declaredSizeHeader = Request.Headers["X-Selfrun-Artifact-Size"].ToString();
         if (string.IsNullOrWhiteSpace(declaredSha) || !long.TryParse(declaredSizeHeader, NumberStyles.Integer, CultureInfo.InvariantCulture, out var declaredSize))
         {
             return EndpointResults.Problem("artifact_headers_missing", "Artifact checksum and size headers are required.", StatusCodes.Status400BadRequest);
@@ -198,7 +198,7 @@ public sealed class ArtifactsController : ControllerBase
     [HttpGet("{artifactId}/file")]
     public async Task<IResult> DownloadContent(
         [FromRoute] string artifactId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentArtifactStorageService storage,
         [FromServices] TimeProvider timeProvider,
@@ -238,7 +238,7 @@ public sealed class ArtifactsController : ControllerBase
     [HttpGet("{artifactId}")]
     public async Task<IResult> GetArtifact(
         [FromRoute] string artifactId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -266,7 +266,7 @@ public sealed class ArtifactsController : ControllerBase
     [HttpDelete("{artifactId}")]
     public async Task<IResult> DeleteArtifact(
         [FromRoute] string artifactId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentArtifactStorageService storage,
         [FromServices] TimeProvider timeProvider,

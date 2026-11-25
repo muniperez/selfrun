@@ -5,15 +5,15 @@ umask 077
 BAO_ADDR=${BAO_ADDR:-https://openbao:8200}
 BAO_CACERT=${BAO_CACERT:-/run/secrets/openbao-ca.crt}
 ROOT_TOKEN_FILE=${OPENBAO_ROOT_TOKEN_FILE:-/run/secrets/openbao-root-token}
-ROLE_ID_FILE=${OPENBAO_ROLE_ID_FILE:-/run/openbao-bootstrap/minicloud-approle-role-id}
-SECRET_ID_FILE=${OPENBAO_SECRET_ID_FILE:-/run/openbao-bootstrap/minicloud-approle-secret-id}
+ROLE_ID_FILE=${OPENBAO_ROLE_ID_FILE:-/run/openbao-bootstrap/selfrun-approle-role-id}
+SECRET_ID_FILE=${OPENBAO_SECRET_ID_FILE:-/run/openbao-bootstrap/selfrun-approle-secret-id}
 POLICY_FILE=${OPENBAO_POLICY_FILE:-}
-MOUNT_PATH=minicloud-apps
+MOUNT_PATH=selfrun-apps
 APPROLE_PATH=approle
-ROLE_NAME=minicloud
+ROLE_NAME=selfrun
 
 if [ -z "$POLICY_FILE" ] || [ ! -r "$POLICY_FILE" ]; then
-  echo "OPENBAO_POLICY_FILE must name the readable Minicloud policy file." >&2
+  echo "OPENBAO_POLICY_FILE must name the readable Selfrun policy file." >&2
   exit 1
 fi
 if [ ! -f "$ROOT_TOKEN_FILE" ] || [ ! -r "$ROOT_TOKEN_FILE" ]; then
@@ -37,7 +37,7 @@ if printf '%s' "$mounts" | grep -Fq "\"$MOUNT_PATH/\""; then
   mount_info=$(bao read -format=json "sys/mounts/$MOUNT_PATH")
   printf '%s' "$mount_info" | grep -Eq '"type"[[:space:]]*:[[:space:]]*"kv"' &&
     printf '%s' "$mount_info" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"2"' || {
-      echo "The existing Minicloud secrets mount is not KV v2." >&2
+      echo "The existing Selfrun secrets mount is not KV v2." >&2
       exit 1
     }
 else
@@ -55,9 +55,9 @@ else
   bao auth enable "$APPROLE_PATH" >/dev/null
 fi
 
-bao policy write minicloud "$POLICY_FILE" >/dev/null
+bao policy write selfrun "$POLICY_FILE" >/dev/null
 bao write "auth/$APPROLE_PATH/role/$ROLE_NAME" \
-  token_policies=minicloud token_type=service token_period=24h \
+  token_policies=selfrun token_type=service token_period=24h \
   secret_id_ttl=0 secret_id_num_uses=0 >/dev/null
 
 write_protected_file() {
@@ -98,4 +98,4 @@ if [ ! -s "$SECRET_ID_FILE" ]; then
 fi
 
 unset BAO_TOKEN role_id secret_id existing_role_id
-printf '%s\n' "OpenBao Minicloud policy, KV v2 mount, and AppRole are ready."
+printf '%s\n' "OpenBao Selfrun policy, KV v2 mount, and AppRole are ready."

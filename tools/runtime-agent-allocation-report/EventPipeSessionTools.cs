@@ -6,7 +6,7 @@ using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 
-namespace Minicloud.Profiling.EventPipe;
+namespace Selfrun.Profiling.EventPipe;
 
 public static class EventPipeArtifactGuard
 {
@@ -74,7 +74,7 @@ public sealed record EventPipeActivityClosureReport(
     EventPipeDurationSummary? MatchedDurationMs,
     IReadOnlyDictionary<string, int> MatchedByOperation)
 {
-    public const string SchemaVersion = "minicloud.eventpipe.aggregate.v1";
+    public const string SchemaVersion = "selfrun.eventpipe.aggregate.v1";
 
     private static readonly HashSet<string> AllowedFields = new(StringComparer.Ordinal)
     {
@@ -143,7 +143,7 @@ public sealed record EventPipeActivityClosureReport(
 public static class EventPipeSessionCoordinator
 {
     public static IReadOnlyList<EventPipeProvider> CreateRuntimeAgentProviders(
-        string activitySourceName = "Minicloud.RuntimeAgent",
+        string activitySourceName = "Selfrun.RuntimeAgent",
         bool includeActivities = true,
         bool includeGcAllocations = true,
         bool includeMeters = true)

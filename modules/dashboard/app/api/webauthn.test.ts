@@ -35,7 +35,7 @@ describe("webauthn passkey helpers", () => {
     const serialized = await createPasskeyCredential({
       publicKey: {
         challenge: "Y2hhbGxlbmdl",
-        rp: { name: "Minicloud", id: "console.example.test" },
+        rp: { name: "Selfrun", id: "console.example.test" },
         user: { id: "dXNlci0x", name: "operator@example.test", displayName: "operator@example.test" },
         pubKeyCredParams: [{ type: "public-key", alg: -7 }],
         excludeCredentials: [{ type: "public-key", id: "b2xkLWNyZWQ", transports: ["internal"] }]

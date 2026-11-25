@@ -1,10 +1,10 @@
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public static class BootstrapRegistration
 {
-    public static IServiceCollection AddMinicloudBootstrap(this IServiceCollection services)
+    public static IServiceCollection AddSelfrunBootstrap(this IServiceCollection services)
     {
         services.AddScoped<BootstrapService>();
         services.AddHttpClient<IBootstrapIdentityStore, BootstrapKratosIdentityStore>(client =>

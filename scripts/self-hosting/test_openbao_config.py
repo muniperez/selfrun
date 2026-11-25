@@ -15,8 +15,8 @@ BUNDLE = ROOT / "packaging" / "server" / "bundle"
 
 class OpenBaoConfigurationTests(unittest.TestCase):
     @unittest.skipUnless(
-        os.environ.get("MINICLOUD_TEST_COMPOSE_BINARY"),
-        "Set MINICLOUD_TEST_COMPOSE_BINARY to an installed Compose executable.",
+        os.environ.get("SELFRUN_TEST_COMPOSE_BINARY"),
+        "Set SELFRUN_TEST_COMPOSE_BINARY to an installed Compose executable.",
     )
     def test_compose_entry_points_keep_administration_private_and_gate_startup(self):
         artifacts = ROOT / ".local/artifacts"
@@ -30,15 +30,15 @@ class OpenBaoConfigurationTests(unittest.TestCase):
                 "API_HOSTNAME": "api.alpha.example",
                 "CONSOLE_HOSTNAME": "console.alpha.example",
                 "APP_DOMAIN": "apps.alpha.example",
-                "MINICLOUD_INSTALLATION_ID": "synthetic-persistent-installation",
-                "MINICLOUD_SECRETS_DIR": str(fixture),
+                "SELFRUN_INSTALLATION_ID": "synthetic-persistent-installation",
+                "SELFRUN_SECRETS_DIR": str(fixture),
             }
             for component in ("API", "DASHBOARD", "WORKER", "POSTGRES", "OPENBAO", "KRATOS", "CADDY"):
-                env[f"MINICLOUD_{component}_IMAGE"] = f"example.test/{component.lower()}@sha256:{'a' * 64}"
+                env[f"SELFRUN_{component}_IMAGE"] = f"example.test/{component.lower()}@sha256:{'a' * 64}"
             models = []
             for compose in (ROOT / "compose.self-host.yml", BUNDLE / "compose.yml"):
                 result = subprocess.run(
-                    [env["MINICLOUD_TEST_COMPOSE_BINARY"], "--profile", "maintenance",
+                    [env["SELFRUN_TEST_COMPOSE_BINARY"], "--profile", "maintenance",
                      "-f", str(compose), "config", "--format", "json"],
                     env=env, text=True, capture_output=True, check=False,
                 )
@@ -48,7 +48,7 @@ class OpenBaoConfigurationTests(unittest.TestCase):
                 self.assertEqual({"caddy"}, {name for name, service in services.items() if service.get("ports")})
                 self.assertEqual({80, 443}, {port["target"] for port in services["caddy"]["ports"]})
                 self.assertEqual(
-                    {"MINICLOUD_API_URL", "MINICLOUD_APP_DOMAIN", "MINICLOUD_SOURCE_URL"},
+                    {"SELFRUN_API_URL", "SELFRUN_APP_DOMAIN", "SELFRUN_SOURCE_URL"},
                     services["dashboard"]["environment"].keys(),
                 )
                 self.assertEqual("service_healthy", services["worker"]["depends_on"]["api"]["condition"])
@@ -57,12 +57,12 @@ class OpenBaoConfigurationTests(unittest.TestCase):
                 self.assertEqual("service_healthy", services["api"]["depends_on"]["openbao-agent"]["condition"])
                 for migrator in ("api-migrate", "kratos-migrate"):
                     self.assertEqual("service_completed_successfully", services[migrator]["depends_on"]["database-initialize"]["condition"])
-                self.assertIn("/opt/minicloud/openbao-ready.sh", services["openbao-agent"]["healthcheck"]["test"])
+                self.assertIn("/opt/selfrun/openbao-ready.sh", services["openbao-agent"]["healthcheck"]["test"])
                 bootstrap = services["api-bootstrap"]
                 self.assertEqual(["maintenance"], bootstrap["profiles"])
                 self.assertEqual(services["api"]["image"], bootstrap["image"])
                 self.assertEqual(
-                    ["bootstrap", "status", "--input-file", "/run/minicloud-bootstrap/input/request.json"],
+                    ["bootstrap", "status", "--input-file", "/run/selfrun-bootstrap/input/request.json"],
                     bootstrap["command"],
                 )
                 self.assertIsNone(bootstrap.get("entrypoint"))
@@ -80,19 +80,19 @@ class OpenBaoConfigurationTests(unittest.TestCase):
                 self.assertFalse(inputs["bind"].get("create_host_path", False))
                 self.assertFalse(outputs["bind"].get("create_host_path", False))
                 normal = subprocess.run(
-                    [env["MINICLOUD_TEST_COMPOSE_BINARY"], "-f", str(compose), "config", "--format", "json"],
+                    [env["SELFRUN_TEST_COMPOSE_BINARY"], "-f", str(compose), "config", "--format", "json"],
                     env=env, text=True, capture_output=True, check=True,
                 )
                 self.assertNotIn("api-bootstrap", json.loads(normal.stdout)["services"])
                 missing_identity = subprocess.run(
-                    [env["MINICLOUD_TEST_COMPOSE_BINARY"], "-f", str(compose), "config", "--format", "json"],
-                    env=env | {"MINICLOUD_INSTALLATION_ID": ""},
+                    [env["SELFRUN_TEST_COMPOSE_BINARY"], "-f", str(compose), "config", "--format", "json"],
+                    env=env | {"SELFRUN_INSTALLATION_ID": ""},
                     text=True, capture_output=True, check=False,
                 )
                 self.assertNotEqual(0, missing_identity.returncode)
-                self.assertIn("MINICLOUD_INSTALLATION_ID", missing_identity.stderr)
+                self.assertIn("SELFRUN_INSTALLATION_ID", missing_identity.stderr)
                 for consumer in ("api", "worker"):
-                    token_volume = next(mount for mount in services[consumer]["volumes"] if mount["target"] == "/run/minicloud-openbao")
+                    token_volume = next(mount for mount in services[consumer]["volumes"] if mount["target"] == "/run/selfrun-openbao")
                     self.assertTrue(token_volume["read_only"])
                     self.assertNotIn("BAO_TOKEN", services[consumer]["environment"])
                     self.assertNotIn("OPENBAO_ROOT_TOKEN_FILE", services[consumer]["environment"])
@@ -115,7 +115,7 @@ class OpenBaoConfigurationTests(unittest.TestCase):
         self.assertIn('method "approle"', config)
         self.assertIn("secret_id_file_path", config)
         self.assertIn("remove_secret_id_file_after_reading = false", config)
-        self.assertIn('path = "/run/minicloud-openbao/token"', config)
+        self.assertIn('path = "/run/selfrun-openbao/token"', config)
         self.assertIn("mode = 0640", config)
         self.assertIn("tls_skip_verify = false", config)
 
@@ -128,9 +128,9 @@ class OpenBaoConfigurationTests(unittest.TestCase):
         self.assertIn("bao write -field=secret_id", script)
         self.assertIn("secret_id=$(bao write", script)
         self.assertIn("token_period=24h", script)
-        self.assertIn("minicloud-apps/data/env/+/orgs/+/apps/+/services/+/+", policy)
-        self.assertIn("minicloud-apps/data/env/+/orgs/+/providers/+/credentials/+", policy)
-        self.assertNotIn('path "minicloud-apps/"', policy)
+        self.assertIn("selfrun-apps/data/env/+/orgs/+/apps/+/services/+/+", policy)
+        self.assertIn("selfrun-apps/data/env/+/orgs/+/providers/+/credentials/+", policy)
+        self.assertNotIn('path "selfrun-apps/"', policy)
 
     def test_initializer_is_idempotent_with_synthetic_openbao_cli(self):
         artifact_dir = ROOT / ".local" / "artifacts"
@@ -150,7 +150,7 @@ with open(os.environ["FIXTURE_LOG"], "a") as log:
 if args == ["status"]:
     raise SystemExit(0)
 if args[:3] == ["secrets", "list", "-format=json"]:
-    print(json.dumps({"minicloud-apps/": {}} if (state / "kv").exists() else {}))
+    print(json.dumps({"selfrun-apps/": {}} if (state / "kv").exists() else {}))
 elif args[:2] == ["secrets", "enable"]:
     (state / "kv").touch()
 elif args[:2] == ["auth", "list"]:
@@ -165,7 +165,7 @@ elif args[:2] == ["read", "-field=role_id"]:
     print("synthetic-role-id")
 elif args[:2] == ["write", "-field=secret_id"]:
     print("synthetic-secret-id")
-elif args[:2] == ["write", "auth/approle/role/minicloud"]:
+elif args[:2] == ["write", "auth/approle/role/selfrun"]:
     pass
 elif args[:2] == ["policy", "write"]:
     pass
@@ -266,14 +266,14 @@ else:
 
 
 @unittest.skipUnless(
-    os.environ.get("MINICLOUD_TEST_CACHED_OPENBAO") == "1",
-    "Set MINICLOUD_TEST_CACHED_OPENBAO=1 for the isolated cached-image TLS lifecycle check.",
+    os.environ.get("SELFRUN_TEST_CACHED_OPENBAO") == "1",
+    "Set SELFRUN_TEST_CACHED_OPENBAO=1 for the isolated cached-image TLS lifecycle check.",
 )
 class OpenBaoLifecycleTests(unittest.TestCase):
     def test_scoped_agent_readiness_seal_unseal_and_persistent_restart(self):
         image = "openbao/openbao:2.2.1"
         subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True)
-        name = f"minicloud-t41-bao-{uuid.uuid4().hex[:12]}"
+        name = f"selfrun-t41-bao-{uuid.uuid4().hex[:12]}"
         volume = f"{name}-data"
         artifacts = ROOT / ".local/artifacts"
         artifacts.mkdir(parents=True, exist_ok=True)
@@ -321,7 +321,7 @@ class OpenBaoLifecycleTests(unittest.TestCase):
             def service(*args, check=True):
                 return execute(
                     "/bin/sh", "-ec",
-                    'BAO_TOKEN=$(cat /run/minicloud-openbao/token); export BAO_TOKEN; exec bao "$@"',
+                    'BAO_TOKEN=$(cat /run/selfrun-openbao/token); export BAO_TOKEN; exec bao "$@"',
                     "bao", *args, check=check,
                 )
 
@@ -353,7 +353,7 @@ class OpenBaoLifecycleTests(unittest.TestCase):
                     "--mount", f"type=bind,source={fixture},target=/fixture",
                     "--mount", f"type=bind,source={fixture},target=/run/secrets,readonly",
                     "--mount", f"type=bind,source={BUNDLE},target=/bundle,readonly",
-                    "--tmpfs", "/run/minicloud-openbao:rw,nosuid,size=1m,mode=0750",
+                    "--tmpfs", "/run/selfrun-openbao:rw,nosuid,size=1m,mode=0750",
                     image, "server", "-config=/bundle/openbao.hcl",
                 )
                 for _ in range(60):
@@ -387,21 +387,21 @@ class OpenBaoLifecycleTests(unittest.TestCase):
                 data = json.loads(lookup.stdout)["data"]
                 self.assertTrue(data["renewable"])
                 self.assertEqual(86400, data["period"])
-                self.assertIn("minicloud", data["policies"])
+                self.assertIn("selfrun", data["policies"])
                 self.assertNotIn("root", data["policies"])
                 denied = service("read", "sys/auth", check=False)
                 self.assertNotEqual(0, denied.returncode)
-                service("kv", "put", "minicloud-apps/env/production/orgs/test/apps/test/services/test/key", "value=retained")
+                service("kv", "put", "selfrun-apps/env/production/orgs/test/apps/test/services/test/key", "value=retained")
                 root("operator", "seal")
                 self.assertEqual(0, execute(
-                    "/bin/sh", "-ec", "test -s /run/minicloud-openbao/token",
+                    "/bin/sh", "-ec", "test -s /run/selfrun-openbao/token",
                 ).returncode)
                 sealed = ready()
                 self.assertNotEqual(0, sealed.returncode)
                 self.assertEqual("", sealed.stdout + sealed.stderr)
                 unseal()
                 await_agent()
-                root("write", "auth/token/revoke", "token=@/run/minicloud-openbao/token")
+                root("write", "auth/token/revoke", "token=@/run/selfrun-openbao/token")
                 self.assertNotEqual(0, ready().returncode)
                 docker("restart", name)
                 for _ in range(60):
@@ -415,7 +415,7 @@ class OpenBaoLifecycleTests(unittest.TestCase):
                 start_agent()
                 self.assertEqual("retained", service(
                     "kv", "get", "-field=value",
-                    "minicloud-apps/env/production/orgs/test/apps/test/services/test/key",
+                    "selfrun-apps/env/production/orgs/test/apps/test/services/test/key",
                 ).stdout.strip())
             finally:
                 docker("rm", "--force", name, check=False)

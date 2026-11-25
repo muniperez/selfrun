@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.Hetzner;
+namespace Selfrun.Common.Providers.Hetzner;
 
 public class HetznerOptions
 {

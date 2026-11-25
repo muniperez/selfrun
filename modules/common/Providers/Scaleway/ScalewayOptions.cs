@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Providers.Scaleway;
+namespace Selfrun.Common.Providers.Scaleway;
 
 public sealed class ScalewayOptions
 {

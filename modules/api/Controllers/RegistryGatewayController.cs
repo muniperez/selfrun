@@ -6,19 +6,19 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Registry;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Registry;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [AllowAnonymous]
 public sealed class RegistryGatewayController(
-    MinicloudDbContext db, ImagePublicationService publications, RegistryTokens tokens, RegistryClient registry,
+    SelfrunDbContext db, ImagePublicationService publications, RegistryTokens tokens, RegistryClient registry,
     IOptions<RegistryOptions> options, IHttpClientFactory clients, IServiceScopeFactory scopes, TimeProvider clock) : ControllerBase
 {
     private static readonly SemaphoreSlim Transfers = new(32, 32);

@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 // Account creation/credential import is separate. This manifest assigns existing
 // resource ownership explicitly and never contains provider credentials.

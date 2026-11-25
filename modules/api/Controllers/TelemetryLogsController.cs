@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Minicloud.Api.Services;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]

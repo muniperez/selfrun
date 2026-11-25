@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>selfrun</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>3.1.0</Version>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Seed/prepare-host.sh" LogicalName="Selfrun.Cli.Seed.prepare-host.sh" />
+    <EmbeddedResource Include="Seed/inspect-host.py" LogicalName="Selfrun.Cli.Seed.inspect-host.py" />
+    <EmbeddedResource Include="Seed/provider-layout.py" LogicalName="Selfrun.Cli.Seed.provider-layout.py" />
+    <ProjectReference Include="..\contracts\Selfrun.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Selfrun.Tests" />
+    <InternalsVisibleTo Include="Selfrun.Cli.Tests" />
+  </ItemGroup>
+
+  <Target Name="EmbedSeedSource" BeforeTargets="AssignTargetPaths"
+          DependsOnTargets="GetAssemblyVersion;InitializeSourceControlInformation;AddSourceRevisionToInformationalVersion"
+          Condition="'$(EmbedSeedSource)' == 'true'">
+    <Exec Command="git rev-parse HEAD" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_SeedHead" />
+    </Exec>
+    <Exec Command="git status --porcelain --untracked-files=all" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_SeedDirty" />
+    </Exec>
+    <Error Condition="'$(_SeedDirty)' != '' Or '$(_SeedHead)' != '$(SourceRevisionId)'"
+           Text="Embedded seed source requires a clean checkout and SourceRevisionId matching HEAD. Commit reviewed changes before publishing." />
+    <Error Condition="'$(GenerateAssemblyInfo)' != 'true' Or '$(GenerateAssemblyInformationalVersionAttribute)' != 'true'
+                     Or !$([System.Text.RegularExpressions.Regex]::IsMatch('$(InformationalVersion)', '(?:sha[.]|\+)$(_SeedHead)$'))"
+           Text="Embedded seed source requires assembly informational metadata ending in the exact HEAD revision (+REVISION or +sha.REVISION)." />
+    <PropertyGroup>
+      <_SeedArchive>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'seed-source.tar'))</_SeedArchive>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)/../..&quot; archive --format=tar --output=&quot;$(_SeedArchive)&quot; $(_SeedHead)" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(IntermediateOutputPath)seed-source.tar" LogicalName="Selfrun.Cli.Seed.source.tar" />
+      <FileWrites Include="$(IntermediateOutputPath)seed-source.tar" />
+    </ItemGroup>
+  </Target>
+
+</Project>

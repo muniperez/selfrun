@@ -11,15 +11,15 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: minicloud
-      POSTGRES_PASSWORD: minicloud
-      POSTGRES_DB: minicloud_dev
+      POSTGRES_USER: selfrun
+      POSTGRES_PASSWORD: selfrun
+      POSTGRES_DB: selfrun_dev
     ports:
       - "127.0.0.1:55433:5432"
     volumes:
-      - minicloud-postgres-dev:/var/lib/postgresql/data
+      - selfrun-postgres-dev:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U minicloud -d minicloud_dev"]
+      test: ["CMD-SHELL", "pg_isready -U selfrun -d selfrun_dev"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -49,7 +49,7 @@ services:
     environment:
       BAO_ADDR: http://openbao:8200
       BAO_TOKEN: dev-only-openbao-token
-    command: sh -c "bao secrets enable -path=minicloud-apps kv-v2 || true"
+    command: sh -c "bao secrets enable -path=selfrun-apps kv-v2 || true"
 
   worker:
     build:
@@ -62,13 +62,13 @@ services:
       openbao:
         condition: service_healthy
     environment:
-      - ConnectionStrings__Minicloud=Host=postgres;Port=5432;Database=minicloud_dev;Username=minicloud;Password=minicloud
-      - DeploymentArtifacts__RootPath=/var/lib/minicloud/artifacts
+      - ConnectionStrings__Selfrun=Host=postgres;Port=5432;Database=selfrun_dev;Username=selfrun;Password=selfrun
+      - DeploymentArtifacts__RootPath=/var/lib/selfrun/artifacts
       - OpenBao__Address=http://openbao:8200
       - OpenBao__Token=dev-only-openbao-token
     volumes:
-      - minicloud-artifacts-dev:/var/lib/minicloud/artifacts:rw
+      - selfrun-artifacts-dev:/var/lib/selfrun/artifacts:rw
 
 volumes:
-  minicloud-postgres-dev:
-  minicloud-artifacts-dev:
+  selfrun-postgres-dev:
+  selfrun-artifacts-dev:

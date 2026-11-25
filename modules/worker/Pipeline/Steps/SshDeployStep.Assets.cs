@@ -1,14 +1,14 @@
-using Minicloud.Common.Validation;
+using Selfrun.Common.Validation;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Ssh;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Ssh;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 public sealed partial class SshDeployStep
 {
@@ -16,7 +16,7 @@ public sealed partial class SshDeployStep
 
     private SshDeploymentArtifactUpload RuntimeHelperUpload(string name, string failureCode = "runtime_helper_missing")
     {
-        var relative = Path.Combine("scripts", "github-actions", "minicloud-deploy", name);
+        var relative = Path.Combine("scripts", "github-actions", "selfrun-deploy", name);
         var path = new[] { Path.Combine(AppContext.BaseDirectory, relative), Path.Combine(_environment.ContentRootPath, relative) }.FirstOrDefault(File.Exists)
             ?? throw new PipelineStepException(failureCode, "Runtime maintenance or asset helper is missing.");
         return new(Path.GetFileNameWithoutExtension(name), name, _ => Task.FromResult<Stream>(File.OpenRead(path)), new FileInfo(path).Length);
@@ -27,7 +27,7 @@ public sealed partial class SshDeployStep
     private async Task<Dictionary<string, RuntimeAssetMount[]>> ResolveAssetMountsAsync(PipelineStepContext context, IEnumerable<DeploymentService> services, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var result = new Dictionary<string, RuntimeAssetMount[]>(StringComparer.Ordinal);
         foreach (var service in services)
         {
@@ -53,9 +53,9 @@ public sealed partial class SshDeployStep
             release.Artifact.OrganizationId != context.OrganizationId || release.Artifact.Status != DeploymentArtifactStatus.Ready)
         { throw new PipelineStepException("asset_release_invalid", "Asset release ownership or source is invalid."); }
         context.RemoteDirectory = RemoteDirectoryFor(context.DeploymentId);
-        var image = $"minicloud/{context.AppSlug}-asset-{release.Name}:{context.DeploymentId}";
+        var image = $"selfrun/{context.AppSlug}-asset-{release.Name}:{context.DeploymentId}";
         await using var retentionScope = _scopeFactory.CreateAsyncScope();
-        var retentionDb = retentionScope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var retentionDb = retentionScope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var bindings = await retentionDb.DeploymentServices.AsNoTracking().Where(s => s.Deployment.AppId == context.AppId && s.AssetMountsJson != null).ToListAsync(ct);
         // Persisted releases remain recoverable and may be pinned by a request admitted during this build.
         // Retain them conservatively; only unrecorded orphan outputs are eligible for local collection.
@@ -96,7 +96,7 @@ public sealed partial class SshDeployStep
         }
         if (result.ExitCode != 0 || !result.CompletionMarkerFound)
         { throw new PipelineStepException("asset_release_invalid", "Customer asset build/publication failed; consumer binding unchanged."); }
-        const string marker = "__MINICLOUD_ASSET_MANIFEST__=";
+        const string marker = "__SELFRUN_ASSET_MANIFEST__=";
         var output = result.OutputLines.LastOrDefault(x => x.StartsWith(marker, StringComparison.Ordinal));
         if (output is null || output.Length > 100000) { throw new PipelineStepException("asset_release_invalid", "Asset publication metadata missing or oversized."); }
         using var published = JsonDocument.Parse(Convert.FromBase64String(output[marker.Length..]));

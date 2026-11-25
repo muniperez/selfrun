@@ -2,16 +2,16 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -23,7 +23,7 @@ public sealed class ApplicationsController : ControllerBase
     [HttpGet]
     public async Task<IResult> ListApplications(
         [FromQuery] string organizationId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -39,7 +39,7 @@ public sealed class ApplicationsController : ControllerBase
             .Where(x => x.OrganizationId == organizationId)
             .OrderBy(x => x.Name)
             .ThenBy(x => x.Id)
-            .Select(x => new MinicloudApplication
+            .Select(x => new SelfrunApplication
             {
                 Id = x.Id,
                 OrganizationId = x.OrganizationId,
@@ -77,7 +77,7 @@ public sealed class ApplicationsController : ControllerBase
     [HttpPost]
     public async Task<IResult> CreateApplication(
         [FromBody] CreateApplicationRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] IIdGenerator ids,
         [FromServices] TimeProvider timeProvider,
@@ -152,7 +152,7 @@ public sealed class ApplicationsController : ControllerBase
         }
 
         var envId = ids.NewId("app");
-        var application = new MinicloudApplication
+        var application = new SelfrunApplication
         {
             Id = ids.NewId("appl"),
             OrganizationId = request.OrganizationId,
@@ -165,7 +165,7 @@ public sealed class ApplicationsController : ControllerBase
             CreatedAt = now,
             UpdatedAt = now
         };
-        var environment = new MinicloudApp
+        var environment = new SelfrunApp
         {
             Id = envId,
             OrganizationId = request.OrganizationId,
@@ -241,7 +241,7 @@ public sealed class ApplicationsController : ControllerBase
     [HttpGet("{applicationId}")]
     public async Task<IResult> GetApplication(
         [FromRoute] string applicationId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -271,7 +271,7 @@ public sealed class ApplicationsController : ControllerBase
     public async Task<IResult> UpdateApplication(
         [FromRoute] string applicationId,
         [FromBody] UpdateApplicationRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         [FromServices] AuditEventService audit,
@@ -390,7 +390,7 @@ public sealed class ApplicationsController : ControllerBase
     [HttpGet("{applicationId}/environments")]
     public async Task<IResult> ListEnvironments(
         [FromRoute] string applicationId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -420,7 +420,7 @@ public sealed class ApplicationsController : ControllerBase
     public async Task<IResult> CreateEnvironment(
         [FromRoute] string applicationId,
         [FromBody] CreateEnvironmentRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppEnvironmentService environments,
         [FromServices] TimeProvider timeProvider,
@@ -501,7 +501,7 @@ public sealed class ApplicationsController : ControllerBase
     public async Task<IResult> GetEnvironment(
         [FromRoute] string applicationId,
         [FromRoute] string environmentId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -543,7 +543,7 @@ public sealed class ApplicationsController : ControllerBase
         [FromRoute] string applicationId,
         [FromRoute] string environmentId,
         [FromBody] UpdateEnvironmentRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppEnvironmentService environments,
         [FromServices] ProviderCatalogService catalog,
@@ -708,7 +708,7 @@ public sealed class ApplicationsController : ControllerBase
             : Results.Json(new ErrorResponse(new ErrorBody(error.Value.Code, error.Value.Message, [])), statusCode: error.Value.Status);
     }
 
-    private static IQueryable<MinicloudApplication> LoadApplicationsQuery(MinicloudDbContext db)
+    private static IQueryable<SelfrunApplication> LoadApplicationsQuery(SelfrunDbContext db)
     {
         var query = db.Applications
             .AsSplitQuery()
@@ -724,7 +724,7 @@ public sealed class ApplicationsController : ControllerBase
             : query.Include(x => x.Environments).ThenInclude(x => x.Deployments);
     }
 
-    private static async Task<bool> HasSshAllocationLockAsync(MinicloudDbContext db, string environmentId, CancellationToken ct)
+    private static async Task<bool> HasSshAllocationLockAsync(SelfrunDbContext db, string environmentId, CancellationToken ct)
     {
         if (await db.ServerInstances.AnyAsync(x => x.AppId == environmentId, ct) ||
             await db.RuntimeServers.AnyAsync(x => x.AppId == environmentId, ct))
@@ -740,8 +740,8 @@ public sealed class ApplicationsController : ControllerBase
     }
 
     internal static async Task<IReadOnlyList<ApplicationResponse>> BuildApplicationResponsesAsync(
-        MinicloudDbContext db,
-        IReadOnlyList<MinicloudApplication> applications,
+        SelfrunDbContext db,
+        IReadOnlyList<SelfrunApplication> applications,
         DateTimeOffset now,
         CancellationToken ct)
     {
@@ -766,7 +766,7 @@ public sealed class ApplicationsController : ControllerBase
     }
 
     internal static async Task<Dictionary<string, EnvironmentRuntimeObservationResponse>> BuildObservationsByEnvIdAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         IReadOnlyCollection<string> envIds,
         DateTimeOffset now,
         CancellationToken ct)
@@ -858,7 +858,7 @@ public sealed class ApplicationsController : ControllerBase
     }
 
     internal static async Task<(HashSet<string> Placement, HashSet<string> SshSelection)> GetEnvironmentLockIdsAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         IReadOnlyCollection<string> envIds,
         CancellationToken ct)
     {

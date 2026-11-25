@@ -1,10 +1,10 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 /// <summary>
 /// Protected host command: <c>maintenance &lt;status|fence|drain-status|release|transfer&gt; (--stdin | --input-file PATH)</c>.
@@ -42,15 +42,15 @@ public static class MaintenanceCommand
             builder.Logging.ClearProviders();
             var options = DatabaseMigrationCommand.ResolveOptions(builder.Configuration, builder.Environment.EnvironmentName);
             if (string.Equals(options.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
-                options.FallbackConnectionString = "Data Source=minicloud-dev.db";
-            var connectionString = MinicloudDatabase.ResolveConnectionString(options);
+                options.FallbackConnectionString = "Data Source=selfrun-dev.db";
+            var connectionString = SelfrunDatabase.ResolveConnectionString(options);
             var hostId = MaintenanceAuthorityOptions.ResolveHostId(builder.Configuration);
-            builder.Services.AddDbContext<MinicloudDbContext>(db =>
-                MinicloudDatabase.ConfigureDbContext(db, options.Provider, connectionString));
+            builder.Services.AddDbContext<SelfrunDbContext>(db =>
+                SelfrunDatabase.ConfigureDbContext(db, options.Provider, connectionString));
             await using var provider = builder.Services.BuildServiceProvider();
             await using var scope = provider.CreateAsyncScope();
             var service = new MaintenanceAuthorityService(
-                scope.ServiceProvider.GetRequiredService<MinicloudDbContext>(), TimeProvider.System, hostId);
+                scope.ServiceProvider.GetRequiredService<SelfrunDbContext>(), TimeProvider.System, hostId);
             return await ExecuteAsync(operation, input, service, Console.Out, CancellationToken.None);
         }
         catch (MaintenanceException ex) when (!ex.Refused)
@@ -93,7 +93,7 @@ public static class MaintenanceCommand
                 case "drain-status":
                     var status = await service.DrainStatusAsync(input.InstallationId, ct);
                     // Drained only counts as success when this host holds a fence; otherwise new work may still arrive.
-                    var ready = status.Drained && status.Authority.State == Minicloud.Common.Models.MaintenanceAuthorityStates.Fenced &&
+                    var ready = status.Drained && status.Authority.State == Selfrun.Common.Models.MaintenanceAuthorityStates.Fenced &&
                         status.Authority.LocalHostAuthorized &&
                         (input.OperationId is null || input.OperationId == status.Authority.HolderOperationId);
                     await WriteAsync(output, new { result = ready ? "drained" : "not_drained", operation, status });

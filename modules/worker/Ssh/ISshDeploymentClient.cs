@@ -1,4 +1,4 @@
-namespace Minicloud.Worker.Ssh;
+namespace Selfrun.Worker.Ssh;
 
 public sealed class RemoteQuiescenceException : Exception
 {
@@ -14,9 +14,9 @@ public sealed class SshDeploymentOptions
     public const string SectionName = "Worker:Ssh";
 
     /// <summary>
-    /// Remote username for deployment operations (default: minicloud).
+    /// Remote username for deployment operations (default: selfrun).
     /// </summary>
-    public string Username { get; set; } = "minicloud";
+    public string Username { get; set; } = "selfrun";
 
     public int Port { get; set; } = 22;
 
@@ -24,7 +24,7 @@ public sealed class SshDeploymentOptions
     public string HostKeyPinsFile { get; set; } = string.Empty;
 
     /// <summary>
-    /// Absolute path to the Minicloud deployment private key on the worker host.
+    /// Absolute path to the Selfrun deployment private key on the worker host.
     /// </summary>
     public string PrivateKeyPath { get; set; } = string.Empty;
 

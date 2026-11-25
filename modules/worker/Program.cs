@@ -4,27 +4,27 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Extensions;
-using Minicloud.Common.Services;
-using Minicloud.Worker;
-using Minicloud.Worker.Pipeline;
-using Minicloud.Worker.Pipeline.Steps;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.DigitalOcean;
-using Minicloud.Common.Providers.Dns;
-using Minicloud.Common.Providers.Hetzner;
-using Minicloud.Common.Providers.Vultr;
-using Minicloud.Worker.Queue;
-using Minicloud.Worker.Ssh;
-using Minicloud.Worker.Storage;
-using Minicloud.Common.Registry;
-using Minicloud.Common.Diagnostics;
-using Minicloud.Worker.Diagnostics;
-using WorkerDiagnostics = Minicloud.Worker.Diagnostics.OperatorDiagnostics;
+using Selfrun.Common.Data;
+using Selfrun.Common.Extensions;
+using Selfrun.Common.Services;
+using Selfrun.Worker;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Worker.Pipeline.Steps;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.DigitalOcean;
+using Selfrun.Common.Providers.Dns;
+using Selfrun.Common.Providers.Hetzner;
+using Selfrun.Common.Providers.Vultr;
+using Selfrun.Worker.Queue;
+using Selfrun.Worker.Ssh;
+using Selfrun.Worker.Storage;
+using Selfrun.Common.Registry;
+using Selfrun.Common.Diagnostics;
+using Selfrun.Worker.Diagnostics;
+using WorkerDiagnostics = Selfrun.Worker.Diagnostics.OperatorDiagnostics;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-worker");
+builder.Services.AddOperatorDiagnostics(builder.Configuration, "selfrun-worker");
 
 // Configure Worker Options
 builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection(WorkerOptions.SectionName));
@@ -69,7 +69,7 @@ builder.Services.PostConfigure<DeploymentPipelineOptions>(options =>
 
     if (string.IsNullOrWhiteSpace(options.SshPublicKey))
     {
-        options.SshPublicKey = builder.Configuration["MINICLOUD_SSH_PUBLIC_KEY"]
+        options.SshPublicKey = builder.Configuration["SELFRUN_SSH_PUBLIC_KEY"]
             ?? builder.Configuration["SSH_PUBLIC_KEY"]
             ?? string.Empty;
     }
@@ -87,7 +87,7 @@ builder.Services.PostConfigure<SshDeploymentOptions>(options =>
     if (string.IsNullOrWhiteSpace(options.PrivateKeyContent))
     {
         options.PrivateKeyContent = builder.Configuration["SSH_PRIVATE_KEY"]
-            ?? builder.Configuration["MINICLOUD_SSH_PRIVATE_KEY"]
+            ?? builder.Configuration["SELFRUN_SSH_PRIVATE_KEY"]
             ?? string.Empty;
     }
 });
@@ -143,23 +143,23 @@ builder.Services.PostConfigure<CloudflareOptions>(options =>
 builder.Services.AddSingleton(TimeProvider.System);
 
 // Database configuration. Worker defaults preserve the pre-Common behavior:
-// Postgres provider, Minicloud/DefaultConnection/Database keys, DATABASE_URL,
+// Postgres provider, Selfrun/DefaultConnection/Database keys, DATABASE_URL,
 // localhost fallback. URL normalization (postgres port default, sqlite://)
 // is the canonical Common implementation.
-builder.Services.AddMinicloudDbContext(new MinicloudDatabaseOptions
+builder.Services.AddSelfrunDbContext(new SelfrunDatabaseOptions
 {
     Provider = builder.Configuration.GetValue<string>("Database:Provider") ?? "Postgres",
-    MinicloudConnectionString = builder.Configuration.GetConnectionString("Minicloud"),
+    SelfrunConnectionString = builder.Configuration.GetConnectionString("Selfrun"),
     DefaultConnectionString = builder.Configuration.GetConnectionString("DefaultConnection"),
     DatabaseConnectionString = builder.Configuration.GetConnectionString("Database"),
     DatabaseUrl = builder.Configuration["DATABASE_URL"],
     PasswordFile = builder.Configuration["Database:PasswordFile"]
 });
-builder.Services.AddMinicloudCommon();
-builder.Services.AddMinicloudRegistry(x => builder.Configuration.GetSection("Registry").Bind(x), x => builder.Configuration.GetSection("Worker:Pipeline").Bind(x));
+builder.Services.AddSelfrunCommon();
+builder.Services.AddSelfrunRegistry(x => builder.Configuration.GetSection("Registry").Bind(x), x => builder.Configuration.GetSection("Worker:Pipeline").Bind(x));
 builder.Services.AddScoped<AuditEventService>();
 builder.Services.AddScoped<ControlPlaneAuthorization>();
-builder.Services.AddMinicloudSecrets(
+builder.Services.AddSelfrunSecrets(
     configureEncryption: options => builder.Configuration.GetSection(SecretEncryptionOptions.SectionName).Bind(options),
     configureStore: options => builder.Configuration.GetSection(OpenBaoSecretStoreOptions.SectionName).Bind(options));
 builder.Services.AddHttpClient<ISecretStore, OpenBaoSecretStore>()
@@ -185,7 +185,7 @@ builder.Services.AddSingleton<LocalFileSystemArtifactRetriever>();
 builder.Services.AddSingleton<IArtifactRetriever>(sp => sp.GetRequiredService<LocalFileSystemArtifactRetriever>());
 
 // Pipeline Executor (T40 full pipeline)
-builder.Services.AddMinicloudProviders(builder.Configuration);
+builder.Services.AddSelfrunProviders(builder.Configuration);
 builder.Services.AddScoped<ProviderSshKeyService>();
 if (!builder.Configuration.GetValue<bool>("Providers:AllowLegacyConfiguration"))
 {
@@ -200,7 +200,7 @@ builder.Services.AddScoped<ResolveProvisionServerStep>();
 builder.Services.Configure<ManagedDomainOptions>(builder.Configuration.GetSection(ManagedDomainOptions.SectionName));
 builder.Services.AddScoped<DnsSetupStep>();
 builder.Services.AddScoped<DomainDnsReconciler>();
-builder.Services.AddHostedService<Minicloud.Worker.Maintenance.RuntimeLogRetentionWorker>();
+builder.Services.AddHostedService<Selfrun.Worker.Maintenance.RuntimeLogRetentionWorker>();
 builder.Services.AddHostedService<DomainDnsWorker>();
 builder.Services.AddHostedService<CustomDomainDnsWorker>();
 builder.Services.Configure<RuntimeAgentOptions>(builder.Configuration.GetSection(RuntimeAgentOptions.SectionName));
@@ -233,19 +233,19 @@ builder.Services.AddSingleton<ISshHostKeyPinSource, ServerHostKeyPinSource>();
 builder.Services.AddScoped<ISshDeploymentClient, SshDeploymentClient>();
 builder.Services.AddScoped<IDeploymentPipelineExecutor, DeploymentPipelineExecutor>();
 
-builder.Services.AddScoped<Minicloud.Worker.Deletion.AppDeletionProcessor>();
-builder.Services.AddHostedService<Minicloud.Worker.Deletion.AppDeletionWorker>();
-builder.Services.AddScoped<Minicloud.Worker.Databases.DatabaseOperationProcessor>();
+builder.Services.AddScoped<Selfrun.Worker.Deletion.AppDeletionProcessor>();
+builder.Services.AddHostedService<Selfrun.Worker.Deletion.AppDeletionWorker>();
+builder.Services.AddScoped<Selfrun.Worker.Databases.DatabaseOperationProcessor>();
 builder.Services.AddScoped<DeploymentLifecycleService>();
 builder.Services.AddScoped<IAppSecretService, AppSecretService>();
 builder.Services.AddScoped<DatabaseManagementService>();
 builder.Services.AddScoped<DatabaseNetworkService>();
-builder.Services.Configure<Minicloud.Worker.Databases.DatabasePlatformOptions>(builder.Configuration.GetSection(Minicloud.Worker.Databases.DatabasePlatformOptions.SectionName));
-builder.Services.AddHostedService<Minicloud.Worker.Databases.DatabaseOperationWorker>();
+builder.Services.Configure<Selfrun.Worker.Databases.DatabasePlatformOptions>(builder.Configuration.GetSection(Selfrun.Worker.Databases.DatabasePlatformOptions.SectionName));
+builder.Services.AddHostedService<Selfrun.Worker.Databases.DatabaseOperationWorker>();
 
 // Maintenance authority: every claim loop validates this process's epoch/host before claiming work.
-builder.Services.AddMinicloudMaintenanceParticipant(builder.Configuration, "worker");
-builder.Services.AddHostedService<Minicloud.Worker.Maintenance.MaintenanceParticipantRegistrationService>();
+builder.Services.AddSelfrunMaintenanceParticipant(builder.Configuration, "worker");
+builder.Services.AddHostedService<Selfrun.Worker.Maintenance.MaintenanceParticipantRegistrationService>();
 
 // Queue Consumer Background Service
 builder.Services.AddSingleton<PostgresDeploymentQueueConsumer>();

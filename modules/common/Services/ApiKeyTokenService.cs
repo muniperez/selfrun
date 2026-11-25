@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public interface IApiKeyTokenService
 {

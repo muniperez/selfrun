@@ -1,14 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
-using Minicloud.Common.Contracts;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
+using Selfrun.Common.Contracts;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -17,7 +17,7 @@ public sealed class AppStorageController : ControllerBase
 {
     // Registration is not a live provider/mount health check. Include retained volumes.
     [HttpGet]
-    public async Task<IResult> List(string appId, [FromServices] MinicloudDbContext db,
+    public async Task<IResult> List(string appId, [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization, CancellationToken ct,
         [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {

@@ -5,13 +5,13 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal sealed partial class SeedHost(string? userKey = null, bool useAgent = false,
     Func<string, IEnumerable<string>, byte[]?, CancellationToken, bool, Task<SeedProcessResult>>? process = null,
     bool localSource = false) : ISeedHost
 {
-    private static string Remote(SeedState state) => "/var/lib/minicloud-seed/" + state.Id;
+    private static string Remote(SeedState state) => "/var/lib/selfrun-seed/" + state.Id;
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''") + "'";
     private static string NullFile => OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
     private IEnumerable<string> SshOptions(SeedState state, string directory) => StrictOptions(directory)
@@ -40,7 +40,7 @@ import fcntl, os, pathlib, stat
 for parent in (pathlib.Path("/"), pathlib.Path("/opt")):
  info=parent.lstat()
  assert stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022
-lock_fd=os.open("/opt/minicloud.installation.lock",os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
+lock_fd=os.open("/opt/selfrun.installation.lock",os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
 info=os.fstat(lock_fd)
 assert stat.S_ISREG(info.st_mode) and info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o600
 fcntl.flock(lock_fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -99,7 +99,7 @@ if observation["state"] == "installed":
         if (!File.Exists(key))
         {
             SeedGuard.Require(!File.Exists(key + ".pub"), "Partial generated SSH identity; preserve and reconcile it.");
-            await SeedProcess.RequireAsync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "minicloud-seed", "-f", key], null, ct);
+            await SeedProcess.RequireAsync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "selfrun-seed", "-f", key], null, ct);
         }
         SeedFiles.Check(key);
         SeedFiles.NoLinks(key + ".pub");
@@ -154,7 +154,7 @@ if observation["state"] == "installed":
     {
         get
         {
-            using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.provider-layout.py")!;
+            using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Selfrun.Cli.Seed.provider-layout.py")!;
             using var reader = new StreamReader(resource);
             return reader.ReadToEnd();
         }
@@ -164,7 +164,7 @@ if observation["state"] == "installed":
     {
         get
         {
-            using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.prepare-host.sh")!;
+            using var resource = typeof(SeedHost).Assembly.GetManifestResourceStream("Selfrun.Cli.Seed.prepare-host.sh")!;
             using var reader = new StreamReader(resource);
             return reader.ReadToEnd().Replace("__SEED_PROVIDER_LAYOUT__",
                 Quote(ProviderLayoutScript + "\nvalidate_provider_layout(sys.argv[1])\n"));
@@ -215,7 +215,7 @@ for key in keys:
         existing.add(tuple(fields))
 if additions:
     data = original + (b"\n" if original and not original.endswith(b"\n") else b"") + b"".join(additions)
-    temporary = folder / (".minicloud-keys-" + uuid.uuid4().hex)
+    temporary = folder / (".selfrun-keys-" + uuid.uuid4().hex)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(data)
@@ -280,7 +280,7 @@ else:
 
     private static string InstallerCommand(SeedState state, string command) =>
         $"sh {Quote(Remote(state) + "/assets/install-server.sh")} --tag {Quote(state.Plan.Selection.ServerVersion)} --assets-dir {Quote(Remote(state) + "/assets")} "
-        + command + $" --root /opt/minicloud --config {Quote(Remote(state) + "/configuration.json")} --recovery-dir {Quote(Remote(state) + "/recovery")} --public-address {Quote(state.Server!.Address!)}";
+        + command + $" --root /opt/selfrun --config {Quote(Remote(state) + "/configuration.json")} --recovery-dir {Quote(Remote(state) + "/recovery")} --public-address {Quote(state.Server!.Address!)}";
 
     public async Task<string> InstallAsync(SeedState state, string directory, bool statusOnly, CancellationToken ct)
     {
@@ -289,7 +289,7 @@ else:
         var s = state.Plan.Selection;
         var config = JsonSerializer.SerializeToUtf8Bytes(new { consoleUrl = "https://" + s.Domain, apiUrl = "https://api." + s.Domain,
             consoleHostname = s.Domain, apiHostname = "api." + s.Domain, appDomain = s.AppDomain, manageDnsRecords = false,
-            googleOidc = new { enabled = false }, sourceUrl = "https://github.com/muniventures/minicloud/tree/" + state.Plan.ReleaseSource,
+            googleOidc = new { enabled = false }, sourceUrl = "https://github.com/muniperez/selfrun/tree/" + state.Plan.ReleaseSource,
             recovery = new { openBaoUnsealMaterialPath = basePath + "/recovery", backupDestination = "explicit protected workstation export required" } });
         if (!localSource || existingMetadata is null)
             await PutAsync(state, directory, basePath + "/configuration.json", config, ct);
@@ -333,7 +333,7 @@ else:
         }
         // Independent verification on the host precedes any downloaded installer/verifier execution.
         var verification = $"cd {Quote(basePath + "/assets")} && cosign verify-blob --new-bundle-format --bundle checksums.txt.sigstore.json --certificate-identity "
-            + Quote($"https://github.com/muniventures/minicloud/.github/workflows/server-release.yml@refs/tags/{s.ServerVersion}")
+            + Quote($"https://github.com/muniperez/selfrun/.github/workflows/server-release.yml@refs/tags/{s.ServerVersion}")
             + " --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt >/dev/null 2>&1 && sha256sum --check --strict checksums.txt >/dev/null";
         var verified = await SshAsync(state, directory, "bash -c " + Quote(verification), null, ct);
         SeedGuard.Require(verified.ExitCode == 0, "Host independent release signature/checksum verification failed; installer was not executed.");
@@ -354,14 +354,14 @@ else:
     {
         const string script = """
 import json, pathlib, stat, sys
-binding=pathlib.Path("/opt/minicloud.seed-operation")
+binding=pathlib.Path("/opt/selfrun.seed-operation")
 for parent in binding.parents:
  s=parent.lstat()
  assert stat.S_ISDIR(s.st_mode) and s.st_uid == 0 and not s.st_mode & 0o022
 s=binding.lstat()
 assert stat.S_ISREG(s.st_mode) and s.st_uid == 0 and stat.S_IMODE(s.st_mode) == 0o600
 assert binding.read_text().strip() == sys.argv[1]
-p=pathlib.Path("/opt/minicloud/installation.json")
+p=pathlib.Path("/opt/selfrun/installation.json")
 if p.exists():
  for parent in p.parents:
   s=parent.lstat()
@@ -380,7 +380,7 @@ else:
         var value = json.RootElement;
         var id = value.GetProperty("installationId").GetString()!;
         var operation = value.GetProperty("operationId").GetString()!;
-        SeedGuard.Require(value.GetProperty("schemaVersion").GetInt32() == 1 && value.GetProperty("product").GetString() == "minicloud"
+        SeedGuard.Require(value.GetProperty("schemaVersion").GetInt32() == 1 && value.GetProperty("product").GetString() == "selfrun"
             && Guid.TryParse(id, out _) && Guid.TryParse(operation, out _)
             && (state.InstallationId is null || state.InstallationId == id)
             && (state.InstallerOperationId is null || state.InstallerOperationId == operation)
@@ -389,7 +389,7 @@ else:
                 || state.Plan.PreviousLocalSourceRevision is { } previousSource
                     && value.GetProperty("sourceRevision").GetString() == previousSource
                     && value.GetProperty("phase").GetString() == "prepared")
-            && value.GetProperty("root").GetString() == "/opt/minicloud"
+            && value.GetProperty("root").GetString() == "/opt/selfrun"
             && value.GetProperty("recoveryDir").GetString() == Remote(state) + "/recovery"
             && value.GetProperty("publicAddresses").EnumerateArray().Select(x => x.GetString()).SequenceEqual([state.Server!.Address])
             && value.GetProperty("configuration").GetProperty("consoleUrl").GetString() == "https://" + state.Plan.Selection.Domain
@@ -415,14 +415,14 @@ else:
             ["openbao-recovery.json"] = Remote(state) + "/recovery/" + state.InstallationId + "/openbao-recovery.json",
             ["openbao-root-token"] = Remote(state) + "/recovery/" + state.InstallationId + "/openbao-root-token",
             ["openbao-ca.key"] = Remote(state) + "/recovery/" + state.InstallationId + "/openbao-ca.key",
-            ["openbao-ca.crt"] = "/opt/minicloud/secrets/openbao-ca.crt",
-            ["installation.json"] = "/opt/minicloud/installation.json"
+            ["openbao-ca.crt"] = "/opt/selfrun/secrets/openbao-ca.crt",
+            ["installation.json"] = "/opt/selfrun/installation.json"
         };
         if (setupToken)
         {
             var name = metadata!.Value.GetProperty("setupTokenFile").GetString()!;
             SeedGuard.Require(Regex.IsMatch(name, @"^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$"), "Invalid host token output name.");
-            paths[name] = "/opt/minicloud/secrets/bootstrap/output/" + name;
+            paths[name] = "/opt/selfrun/secrets/bootstrap/output/" + name;
             state.SetupTokenExportPath = Path.Combine(destination, name);
         }
         foreach (var (name, remote) in paths)
@@ -482,7 +482,7 @@ print(base64.b64encode(p.read_bytes()).decode())
         SeedGuard.Require(response.StatusCode == HttpStatusCode.OK, "Exact-origin trusted HTTPS discovery failed.");
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var value = json.RootElement;
-        SeedGuard.Require(value.GetProperty("product").GetString() is "minicloud" or "selfrun" && value.GetProperty("protocolVersion").GetInt32() == 1
+        SeedGuard.Require(value.GetProperty("product").GetString() == "selfrun" && value.GetProperty("protocolVersion").GetInt32() == 1
             && value.GetProperty("serverVersion").GetString() == s.ServerVersion[8..]
             && value.GetProperty("sourceRevision").GetString() == state.Plan.ReleaseSource
             && value.GetProperty("appDomain").GetString() == s.AppDomain, "HTTPS instance product/release/origin contract mismatch.");

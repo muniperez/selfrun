@@ -12,7 +12,7 @@ import {
 const validConfig: RuntimeConfig = {
   apiBaseUrl: "https://api.example.test",
   appDomain: "apps.example.test",
-  sourceUrl: "https://github.com/muniventures/minicloud",
+  sourceUrl: "https://github.com/muniperez/selfrun",
   auth: {
     origin: "https://api.example.test",
     capabilitiesUrl: "https://api.example.test/api/account/capabilities"
@@ -75,11 +75,11 @@ describe("parseRuntimeConfig", () => {
             encoding: "utf8",
             env: {
               ...process.env,
-              MINICLOUD_API_URL: "https://api.example.test",
-              MINICLOUD_APP_DOMAIN: "apps.example.test",
-              MINICLOUD_SOURCE_URL: "https://github.com/muniventures/minicloud",
+              SELFRUN_API_URL: "https://api.example.test",
+              SELFRUN_APP_DOMAIN: "apps.example.test",
+              SELFRUN_SOURCE_URL: "https://github.com/muniperez/selfrun",
               ...environment,
-              MINICLOUD_DASHBOARD_HTML_ROOT: fixture,
+              SELFRUN_DASHBOARD_HTML_ROOT: fixture,
               NGINX_ARGV_FILE: argvFile,
               PATH: `${bin}:${process.env.PATH}`
             },
@@ -103,19 +103,19 @@ describe("parseRuntimeConfig", () => {
         ["https://control.beta.test:8443", "workloads.beta.test"]
       ]) {
         const result = runStartup({
-          MINICLOUD_API_URL: apiBaseUrl,
-          MINICLOUD_APP_DOMAIN: appDomain,
+          SELFRUN_API_URL: apiBaseUrl,
+          SELFRUN_APP_DOMAIN: appDomain,
           OpenBao__Address: "https://openbao:8200",
           OpenBao__Token: "synthetic-private-token",
           Kratos__AdminBaseUrl: "http://kratos:4434/",
-          MINICLOUD_SETUP_TOKEN: "synthetic-setup-token"
+          SELFRUN_SETUP_TOKEN: "synthetic-setup-token"
         });
         expect(result.status, result.output).toBe(0);
         expect(result.serverStarted).toBe(true);
         expect(parseRuntimeConfig(result.config)).toEqual({
           apiBaseUrl,
           appDomain,
-          sourceUrl: "https://github.com/muniventures/minicloud",
+          sourceUrl: "https://github.com/muniperez/selfrun",
           auth: { origin: apiBaseUrl, capabilitiesUrl: `${apiBaseUrl}/api/account/capabilities` }
         });
         expect(JSON.stringify(result.config)).not.toMatch(/openbao|kratos|synthetic/);
@@ -123,11 +123,11 @@ describe("parseRuntimeConfig", () => {
     });
 
     it.each([
-      { MINICLOUD_API_URL: "http://api.example.test" },
-      { MINICLOUD_API_URL: "https://api.example.test/admin" },
-      { MINICLOUD_API_URL: "https://user:synthetic-secret@api.example.test" },
-      { MINICLOUD_APP_DOMAIN: "apps.example.test/path" },
-      { MINICLOUD_SOURCE_URL: "https://user:synthetic-secret@example.test/source" }
+      { SELFRUN_API_URL: "http://api.example.test" },
+      { SELFRUN_API_URL: "https://api.example.test/admin" },
+      { SELFRUN_API_URL: "https://user:synthetic-secret@api.example.test" },
+      { SELFRUN_APP_DOMAIN: "apps.example.test/path" },
+      { SELFRUN_SOURCE_URL: "https://user:synthetic-secret@example.test/source" }
     ])("rejects invalid public values before writing configuration or starting the server: %j", (environment) => {
       const result = runStartup(environment);
       expect(result.status).toBe(1);

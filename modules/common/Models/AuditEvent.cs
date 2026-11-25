@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 /// <summary>
 /// Minimal shared audit foundation (T11). Append-only; never stores tokens, log bodies, or secrets.
@@ -12,7 +12,7 @@ public sealed class AuditEvent
     public string OrganizationId { get; set; } = default!;
     public Organization? Organization { get; set; }
     public string? AppId { get; set; }
-    public MinicloudApp? App { get; set; }
+    public SelfrunApp? App { get; set; }
     public string Actor { get; set; } = default!;
     public string Action { get; set; } = default!;
     public string? Details { get; set; }

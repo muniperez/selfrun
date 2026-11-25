@@ -1,6 +1,6 @@
 # Deploy and validate with a coding agent
 
-Give the agent a target, a change to make, and a way to tell whether it worked. The same workflow works from an agent-enabled development environment or a local checkout with the Selfrun CLI (`selfrun`; legacy `minicloud` alias remains supported — see [Selfrun Rename Migration Guide](selfrun-rename-migration.md)).
+Give the agent a target, a change to make, and a way to tell whether it worked. The same workflow works from an agent-enabled development environment or a local checkout with the Selfrun CLI.
 
 ## Prepare the project once
 
@@ -11,7 +11,7 @@ selfrun instance add personal cloud.example.com
 selfrun login
 ```
 
-For a new project, run `selfrun init` to select or create an application and write `selfrun.yml` (existing `minicloud.yml` files continue to work). For unattended use, supply a scoped organization API key through the process environment as `SELFRUN_TOKEN` (or legacy `MINICLOUD_TOKEN`). Keep the key in your secret store. [CLI installation](cli-distribution.md) · [Authentication and scopes](cli.md#authenticate)
+For a new project, run `selfrun init` to select or create an application and write `selfrun.yml`. For unattended use, supply a scoped organization API key through the process environment as `SELFRUN_TOKEN`. Keep the key in your secret store. [CLI installation](cli-distribution.md) · [Authentication and scopes](cli.md#authenticate)
 
 ## Give the agent a task
 

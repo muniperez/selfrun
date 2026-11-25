@@ -44,7 +44,7 @@ def main():
         shutil.copyfile(pack / filename, licenses / f"dotnet-{filename}")
 
     (output / "SOURCE.txt").write_text(
-        "Selfrun CLI (formerly MiniCloud CLI) and its client contracts are available under MPL-2.0.\n"
+        "Selfrun CLI and its client contracts are available under MPL-2.0.\n"
         f"Corresponding source: https://github.com/{args.repository}/tree/{args.tag}\n",
         encoding="utf-8",
     )

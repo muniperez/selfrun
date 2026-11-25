@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Minicloud.Telemetry.Services;
+using Selfrun.Telemetry.Services;
 
-namespace Minicloud.Telemetry.Controllers;
+namespace Selfrun.Telemetry.Controllers;
 
 [ApiController]
 public sealed class HealthController(
@@ -13,7 +13,7 @@ public sealed class HealthController(
     {
         var checkpoint = await authority.GetCheckpointAsync(cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var isFresh = checkpoint is not null && (now - checkpoint.ConfirmedAt) <= Minicloud.Common.Services.TelemetryLimits.MaxIngestionOutageAllowance;
+        var isFresh = checkpoint is not null && (now - checkpoint.ConfirmedAt) <= Selfrun.Common.Services.TelemetryLimits.MaxIngestionOutageAllowance;
 
         return Results.Ok(new
         {

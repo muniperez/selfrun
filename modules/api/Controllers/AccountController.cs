@@ -3,13 +3,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Route("api/account")]
@@ -184,7 +184,7 @@ public sealed class AccountController(
     {
         NoStore();
         var principal = RequirePrincipal(HttpContext);
-        var cookie = Request.Cookies["__Host-minicloud-session"];
+        var cookie = Request.Cookies["__Host-selfrun-session"];
         if (!principal.IsDashboardUser || principal.UserId is null ||
             string.IsNullOrWhiteSpace(cookie) || principal.BrowserSessionId is null)
         {
@@ -211,7 +211,7 @@ public sealed class AccountController(
         return Results.NoContent();
     }
 
-    private async Task<(Minicloud.Common.Models.BrowserSession? Session, string? Cookie, string? CsrfToken)> LoadCurrentSessionAsync(
+    private async Task<(Selfrun.Common.Models.BrowserSession? Session, string? Cookie, string? CsrfToken)> LoadCurrentSessionAsync(
         CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
@@ -297,7 +297,7 @@ public sealed class AccountController(
     {
         var names = Request.Cookies.Keys
             .Where(name => name.StartsWith("csrf_token_", StringComparison.Ordinal))
-            .Append("__Host-minicloud-session")
+            .Append("__Host-selfrun-session")
             .Append("ory_kratos_session")
             .Distinct(StringComparer.Ordinal);
         foreach (var name in names)

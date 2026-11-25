@@ -8,6 +8,6 @@
     <TelemetrySourceRoot Condition="'$(TelemetrySourceRoot)' == ''">$(MSBuildThisFileDirectory)../..</TelemetrySourceRoot>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(TelemetrySourceRoot)/modules/telemetry/Minicloud.Telemetry.csproj" />
+    <ProjectReference Include="$(TelemetrySourceRoot)/modules/telemetry/Selfrun.Telemetry.csproj" />
   </ItemGroup>
 </Project>

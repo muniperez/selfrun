@@ -2,16 +2,16 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Extensibility;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Extensibility;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManagementService databases, ProviderCatalogService catalog, ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock, IVpsProviderRegistry? registry = null)
+public sealed class DatabaseNetworkService(SelfrunDbContext db, DatabaseManagementService databases, ProviderCatalogService catalog, ProviderAccountClientFactory clients, IIdGenerator ids, TimeProvider clock, IVpsProviderRegistry? registry = null)
 {
     private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();
     private readonly IVpsProviderRegistry _registry = registry ?? DefaultRegistry;
@@ -42,7 +42,7 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
         var zone = await provider.GetRegionNetworkZoneAsync(network.Region, ct);
         if (network.NetworkZone is not null && network.NetworkZone != zone) { throw new InvalidOperationException("The provider region network zone changed."); }
         network.NetworkZone = zone;
-        var providerName = "minicloud-" + network.Id.Replace('_', '-');
+        var providerName = "selfrun-" + network.Id.Replace('_', '-');
         var remote = network.ProviderNetworkId is not null
             ? await provider.GetPrivateNetworkAsync(network.ProviderNetworkId, ct)
             : await provider.FindPrivateNetworkAsync(providerName, ct);
@@ -56,7 +56,7 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
             // is reconciled by this exact provider/name identity next time.
             await db.SaveChangesAsync(ct);
             remote = await provider.CreatePrivateNetworkAsync(providerName, network.IpRange, network.SubnetRange, zone,
-                new Dictionary<string, string> { ["minicloud-org"] = organizationId, ["minicloud-network"] = network.Id, ["minicloud-resource"] = "database-network" }, ct);
+                new Dictionary<string, string> { ["selfrun-org"] = organizationId, ["selfrun-network"] = network.Id, ["selfrun-resource"] = "database-network" }, ct);
         }
         ValidateRemote(network, remote);
         network.ProviderNetworkId = remote.Id;
@@ -98,7 +98,7 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
         var provider = await ProviderAsync(network, ct, allowDisabled: true);
         var remote = network.ProviderNetworkId is not null
             ? await provider.GetPrivateNetworkAsync(network.ProviderNetworkId, ct)
-            : await provider.FindPrivateNetworkAsync("minicloud-" + network.Id.Replace('_', '-'), ct);
+            : await provider.FindPrivateNetworkAsync("selfrun-" + network.Id.Replace('_', '-'), ct);
         if (remote is null && network.ProviderNetworkId is null && network.CreationAttempted)
         { throw new InvalidOperationException("Prior network creation is unresolved; reconcile provider state before deleting its registration."); }
         if (remote is not null)
@@ -180,9 +180,9 @@ public sealed class DatabaseNetworkService(MinicloudDbContext db, DatabaseManage
 
     private static void ValidateRemote(ManagedDatabaseNetwork local, ProviderPrivateNetwork remote)
     {
-        if (local.ProviderNetworkId is not null && remote.Id != local.ProviderNetworkId || remote.Name != "minicloud-" + local.Id.Replace('_', '-') || remote.IpRange != local.IpRange || remote.NetworkZone != local.NetworkZone ||
-            !remote.Labels.TryGetValue("minicloud-org", out var org) || org != local.OrganizationId ||
-            !remote.Labels.TryGetValue("minicloud-network", out var id) || id != local.Id)
+        if (local.ProviderNetworkId is not null && remote.Id != local.ProviderNetworkId || remote.Name != "selfrun-" + local.Id.Replace('_', '-') || remote.IpRange != local.IpRange || remote.NetworkZone != local.NetworkZone ||
+            !remote.Labels.TryGetValue("selfrun-org", out var org) || org != local.OrganizationId ||
+            !remote.Labels.TryGetValue("selfrun-network", out var id) || id != local.Id)
         { throw new InvalidOperationException("Provider network ownership or configuration differs from its registration."); }
     }
 

@@ -1,4 +1,4 @@
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public static class AgentOperations
 {
@@ -13,12 +13,12 @@ public static class AgentOperations
         catch (OperationCanceledException ex)
         {
             measurement.Complete("cancelled");
-            Console.Error.WriteLine($"minicloud-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
+            Console.Error.WriteLine($"selfrun-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
         }
         catch (Exception ex)
         {
             measurement.Complete("failure");
-            Console.Error.WriteLine($"minicloud-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
+            Console.Error.WriteLine($"selfrun-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
         }
     }
 
@@ -32,12 +32,12 @@ public static class AgentOperations
         catch (OperationCanceledException ex)
         {
             measurement.Complete("cancelled");
-            Console.Error.WriteLine($"minicloud-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
+            Console.Error.WriteLine($"selfrun-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
         }
         catch (Exception ex)
         {
             measurement.Complete("failure");
-            Console.Error.WriteLine($"minicloud-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
+            Console.Error.WriteLine($"selfrun-agent {operation} failed: {RuntimeLogRedactor.Redact(ex.Message)}");
         }
     }
 }

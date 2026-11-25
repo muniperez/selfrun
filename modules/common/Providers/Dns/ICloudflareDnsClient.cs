@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.Dns;
+namespace Selfrun.Common.Providers.Dns;
 
 public interface ICloudflareDnsClient
 {

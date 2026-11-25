@@ -1,6 +1,6 @@
-using Minicloud.Common.Redaction;
+using Selfrun.Common.Redaction;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public static class RuntimeLogRedactor
 {

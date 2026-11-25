@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public static class DatabaseMigrationCommand
 {
-    public static MinicloudDatabaseOptions ResolveOptions(IConfiguration configuration, string environmentName)
+    public static SelfrunDatabaseOptions ResolveOptions(IConfiguration configuration, string environmentName)
     {
-        var options = new MinicloudDatabaseOptions
+        var options = new SelfrunDatabaseOptions
         {
             Provider = configuration["Database:Provider"] ?? (environmentName == "Development" ? "Sqlite" : "Postgres"),
-            MinicloudConnectionString = configuration.GetConnectionString("Minicloud"),
+            SelfrunConnectionString = configuration.GetConnectionString("Selfrun"),
             DefaultConnectionString = configuration.GetConnectionString("DefaultConnection"),
             DatabaseConnectionString = configuration.GetConnectionString("Database"),
             DatabaseUrl = configuration["DATABASE_URL"],
             PasswordFile = configuration["Database:PasswordFile"]
         };
         if (options.Provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
-            options.FallbackConnectionString = "Data Source=minicloud-dev.db";
+            options.FallbackConnectionString = "Data Source=selfrun-dev.db";
         return options;
     }
 
@@ -29,10 +29,10 @@ public static class DatabaseMigrationCommand
         CancellationToken cancellationToken = default)
     {
         var options = ResolveOptions(configuration, environmentName);
-        var connectionString = MinicloudDatabase.ResolveConnectionString(options);
-        var dbOptions = new DbContextOptionsBuilder<MinicloudDbContext>();
-        MinicloudDatabase.ConfigureDbContext(dbOptions, options.Provider, connectionString);
-        await using var db = new MinicloudDbContext(dbOptions.Options);
+        var connectionString = SelfrunDatabase.ResolveConnectionString(options);
+        var dbOptions = new DbContextOptionsBuilder<SelfrunDbContext>();
+        SelfrunDatabase.ConfigureDbContext(dbOptions, options.Provider, connectionString);
+        await using var db = new SelfrunDbContext(dbOptions.Options);
         if (db.Database.IsSqlite())
         {
             await SqliteDatabaseConfigurator.ConfigureDatabaseAsync(db);
@@ -49,7 +49,7 @@ public static class DatabaseMigrationCommand
         await MigratePostgresAsync(db, cancellationToken);
     }
 
-    internal static async Task MigratePostgresAsync(MinicloudDbContext db, CancellationToken cancellationToken = default)
+    internal static async Task MigratePostgresAsync(SelfrunDbContext db, CancellationToken cancellationToken = default)
     {
         // EF's history-table lock does not cover first-run schema creation, so concurrent
         // one-shot migrators serialize on a session advisory lock held on this connection.
@@ -75,7 +75,7 @@ public static class DatabaseMigrationCommand
 
     // Refuse to adopt a populated database that this release did not create, or one
     // already migrated by a newer release.
-    public static async Task RejectUnrecognizedStateAsync(MinicloudDbContext db, CancellationToken cancellationToken)
+    public static async Task RejectUnrecognizedStateAsync(SelfrunDbContext db, CancellationToken cancellationToken)
     {
         if (!db.Database.IsNpgsql() || !await db.Database.CanConnectAsync(cancellationToken))
         {
@@ -102,7 +102,7 @@ public static class DatabaseMigrationCommand
             if (!hasHistory && hasObjects)
             {
                 throw new InvalidOperationException(
-                    "The Minicloud database contains objects without migration history; refusing to adopt unknown populated state.");
+                    "The Selfrun database contains objects without migration history; refusing to adopt unknown populated state.");
             }
         }
         finally

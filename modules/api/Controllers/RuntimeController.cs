@@ -3,17 +3,17 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Providers;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Providers;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -22,7 +22,7 @@ public sealed class RuntimeController : ControllerBase
 {
     [HttpPost("heartbeat")]
     [AllowAnonymous]
-    public async Task<IResult> Heartbeat([FromBody] RuntimeHeartbeatRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> Heartbeat([FromBody] RuntimeHeartbeatRequest request, [FromServices] SelfrunDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
         if (auth is null)
@@ -40,7 +40,7 @@ public sealed class RuntimeController : ControllerBase
 
     [HttpPost("ingest/logs")]
     [AllowAnonymous]
-    public async Task<IResult> IngestLogs([FromBody] RuntimeLogIngestRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> IngestLogs([FromBody] RuntimeLogIngestRequest request, [FromServices] SelfrunDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         using var measurement = RuntimeIngestionDiagnostics.Start("ingest.logs", Request.ContentLength ?? -1, request.Records.Count, cancellationToken);
         try
@@ -110,7 +110,7 @@ public sealed class RuntimeController : ControllerBase
 
     [HttpPost("ingest/status")]
     [AllowAnonymous]
-    public async Task<IResult> IngestStatus([FromBody] RuntimeStatusIngestRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> IngestStatus([FromBody] RuntimeStatusIngestRequest request, [FromServices] SelfrunDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         using var measurement = RuntimeIngestionDiagnostics.Start("ingest.status", Request.ContentLength ?? -1, request.Services.Count, cancellationToken);
         try
@@ -160,7 +160,7 @@ public sealed class RuntimeController : ControllerBase
 
     [HttpGet("routing")]
     [AllowAnonymous]
-    public async Task<IResult> GetDesiredRouting([FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] DeploymentServiceSetService serviceSets, CancellationToken cancellationToken)
+    public async Task<IResult> GetDesiredRouting([FromServices] SelfrunDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] DeploymentServiceSetService serviceSets, CancellationToken cancellationToken)
     {
         var auth = await runtimeTokens.AuthenticateAsync(Request.Headers.Authorization, cancellationToken);
         if (auth is null)
@@ -181,7 +181,7 @@ public sealed class RuntimeController : ControllerBase
         var bindings = await db.Domains.AsNoTracking()
             .Where(x =>
                 x.AppId == auth.Server.AppId &&
-                (x.Kind == DomainBindingService.KindMinicloudSubdomain ||
+                (x.Kind == DomainBindingService.KindSelfrunSubdomain ||
                     (x.Kind == DomainBindingService.KindCustomDomain && x.DnsStatus == DomainBindingService.DnsVerified &&
                         db.ServerInstances.Any(s => s.AppId == auth.Server.AppId && s.OrganizationId == auth.Server.OrganizationId &&
                             s.ProviderAccountId == auth.Server.ProviderAccountId && s.Provider.ToLower() == auth.Server.Provider.ToLower() && s.ProviderServerId == auth.Server.ProviderServerId && s.IpAddress == x.TargetIp))) &&
@@ -201,12 +201,12 @@ public sealed class RuntimeController : ControllerBase
             ? DateTimeOffset.UnixEpoch.ToString("O")
             : bindings.Max(x => x.UpdatedAt).ToString("O");
 
-        return Results.Ok(new RuntimeDesiredRoutingResponse(version, auth.Server.AppId, $"minicloud-{auth.Server.App.Slug}", routes));
+        return Results.Ok(new RuntimeDesiredRoutingResponse(version, auth.Server.AppId, $"selfrun-{auth.Server.App.Slug}", routes));
     }
 
     [HttpPost("routing/apply-results")]
     [AllowAnonymous]
-    public async Task<IResult> IngestRoutingApplyResults([FromBody] RuntimeRoutingApplyResultsRequest request, [FromServices] MinicloudDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> IngestRoutingApplyResults([FromBody] RuntimeRoutingApplyResultsRequest request, [FromServices] SelfrunDbContext db, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         using var measurement = RuntimeIngestionDiagnostics.Start("routing.results", Request.ContentLength ?? -1, request.Results.Count, cancellationToken);
         try
@@ -265,7 +265,7 @@ public sealed class RuntimeController : ControllerBase
     }
 
     [HttpPost("servers")]
-    public async Task<IResult> CreateRuntimeServer([FromQuery] string appId, [FromBody] CreateRuntimeServerRequest request, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> CreateRuntimeServer([FromQuery] string appId, [FromBody] CreateRuntimeServerRequest request, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, appId, applicationId, environmentId, cancellationToken);
         if (ownershipError is not null) { return ownershipError; }
@@ -371,7 +371,7 @@ public sealed class RuntimeController : ControllerBase
     }
 
     [HttpPost("servers/{serverId}/rotate-token")]
-    public async Task<IResult> RotateRuntimeServerToken([FromQuery] string appId, [FromRoute] string serverId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> RotateRuntimeServerToken([FromQuery] string appId, [FromRoute] string serverId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IRuntimeTokenService runtimeTokens, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, appId, applicationId, environmentId, cancellationToken);
         if (ownershipError is not null) { return ownershipError; }
@@ -404,7 +404,7 @@ public sealed class RuntimeController : ControllerBase
     }
 
     [HttpGet("logs")]
-    public async Task<IResult> GetLogs([FromQuery] string appId, [FromQuery] string? source, [FromQuery] string? service, [FromQuery] int? tail, [FromQuery] string? since, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> GetLogs([FromQuery] string appId, [FromQuery] string? source, [FromQuery] string? service, [FromQuery] int? tail, [FromQuery] string? since, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, appId, applicationId, environmentId, cancellationToken);
         if (ownershipError is not null) { return ownershipError; }
@@ -451,7 +451,7 @@ public sealed class RuntimeController : ControllerBase
     }
 
     [HttpGet("status")]
-    public async Task<IResult> GetRuntimeStatus([FromQuery] string appId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> GetRuntimeStatus([FromQuery] string appId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, appId, applicationId, environmentId, cancellationToken);
         if (ownershipError is not null) { return ownershipError; }
@@ -475,7 +475,7 @@ public sealed class RuntimeController : ControllerBase
     }
 
     [HttpGet("log-sources")]
-    public async Task<IResult> GetLogSources([FromQuery] string appId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> GetLogSources([FromQuery] string appId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, appId, applicationId, environmentId, cancellationToken);
         if (ownershipError is not null) { return ownershipError; }
@@ -511,7 +511,7 @@ public sealed class RuntimeController : ControllerBase
     }
 
     [HttpGet("diagnostics")]
-    public async Task<IResult> GetRuntimeDiagnostics([FromQuery] string appId, [FromQuery] string? since, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> GetRuntimeDiagnostics([FromQuery] string appId, [FromQuery] string? since, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, appId, applicationId, environmentId, cancellationToken);
         if (ownershipError is not null) { return ownershipError; }
@@ -555,9 +555,9 @@ public sealed class RuntimeController : ControllerBase
             deploymentUrl));
     }
 
-    static Minicloud.Common.Validation.ValidationResult ValidateRuntimeLogRequest(RuntimeLogIngestRequest request, DateTimeOffset now)
+    static Selfrun.Common.Validation.ValidationResult ValidateRuntimeLogRequest(RuntimeLogIngestRequest request, DateTimeOffset now)
     {
-        var validation = new Minicloud.Common.Validation.ValidationResult();
+        var validation = new Selfrun.Common.Validation.ValidationResult();
         if (request.Records.Count > RuntimeIngestionLimits.MaxBatchRecords)
         {
             validation.Add("records", $"At most {RuntimeIngestionLimits.MaxBatchRecords} log records can be ingested per batch.");
@@ -584,7 +584,7 @@ public sealed class RuntimeController : ControllerBase
             }
             if (!RuntimeSourceHasValidShape(record.Source, record.Service))
             {
-                validation.Add($"records[{i}].source", "Source must be caddy, docker-compose, minicloud-agent, or service:<name>.");
+                validation.Add($"records[{i}].source", "Source must be caddy, docker-compose, selfrun-agent, or service:<name>.");
             }
         }
 
@@ -593,7 +593,7 @@ public sealed class RuntimeController : ControllerBase
 
     static bool RuntimeSourceHasValidShape(string source, string? service)
     {
-        if (source is "caddy" or "docker-compose" or "minicloud-agent")
+        if (source is "caddy" or "docker-compose" or "selfrun-agent")
         {
             return string.IsNullOrWhiteSpace(service);
         }
@@ -630,7 +630,7 @@ public sealed class RuntimeController : ControllerBase
             ? DomainBindingService.SslReady
             : DomainBindingService.SslPending;
 
-    static async Task<ISet<string>> LatestDeploymentServicesAsync(MinicloudDbContext db, string appId, CancellationToken cancellationToken)
+    static async Task<ISet<string>> LatestDeploymentServicesAsync(SelfrunDbContext db, string appId, CancellationToken cancellationToken)
     {
         var deployments = await db.Deployments
             .AsNoTracking()
@@ -678,7 +678,7 @@ public sealed class RuntimeController : ControllerBase
             : null;
     }
 
-    static async Task PruneRuntimeLogsAsync(MinicloudDbContext db, string appId, DateTimeOffset now, CancellationToken cancellationToken)
+    static async Task PruneRuntimeLogsAsync(SelfrunDbContext db, string appId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var cutoff = now.Subtract(RuntimeIngestionLimits.LogRetention);
         if (db.Database.IsSqlite())
@@ -712,7 +712,7 @@ public sealed class RuntimeController : ControllerBase
     static RuntimeLogResponse ToRuntimeLogResponse(RuntimeLogRecord record) =>
         new(record.Id, record.RuntimeServerId, record.Source, record.Service, record.Stream, record.Content, record.ObservedAt, record.ReceivedAt);
 
-    static async Task<RuntimeStatusResponse?> LatestRuntimeStatusAsync(MinicloudDbContext db, string appId, DateTimeOffset now, CancellationToken cancellationToken)
+    static async Task<RuntimeStatusResponse?> LatestRuntimeStatusAsync(SelfrunDbContext db, string appId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var servers = await db.RuntimeServers
             .AsNoTracking()

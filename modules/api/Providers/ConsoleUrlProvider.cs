@@ -1,4 +1,4 @@
-namespace Minicloud.Api.Providers;
+namespace Selfrun.Api.Providers;
 
 public sealed class ConsoleUrlProvider(IConfiguration configuration, IWebHostEnvironment environment) : IConsoleUrlProvider
 {

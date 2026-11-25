@@ -5,9 +5,9 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class GitHubAppException(string code, string message, int statusCode = 400) : Exception(message)
 {
@@ -103,7 +103,7 @@ public sealed class GitHubAppClient(HttpClient client, TimeProvider clock)
     private async Task<JsonDocument> SendAsync(HttpMethod method, string path, string? token, object? body, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(method, new Uri("https://api.github.com/" + path));
-        request.Headers.UserAgent.ParseAdd("Minicloud-GitHub-App/1.0");
+        request.Headers.UserAgent.ParseAdd("Selfrun-GitHub-App/1.0");
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

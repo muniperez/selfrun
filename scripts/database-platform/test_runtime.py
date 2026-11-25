@@ -20,7 +20,7 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'runtime-locks' / 'db-backups'
             root.parent.mkdir(mode=0o755)
-            expected = '/opt/minicloud/locks/db-backups'
+            expected = '/opt/selfrun/locks/db-backups'
             def fixture_path(value):
                 self.assertEqual(value, expected)
                 return root
@@ -117,9 +117,9 @@ class RuntimeTests(unittest.TestCase):
         request = dict(action='create', databaseName='fixture', username='fixture_user', container='db-1', password="safe-secret-'"*4)
         operation.execute(request, run)
         args, values = next(item for item in calls if 'psql' in item[0])
-        self.assertIn('minicloud', args)
+        self.assertIn('selfrun', args)
         self.assertNotIn(request['password'], ' '.join(args))
-        self.assertIn(b'minicloud.database:fixture', values['input'])
+        self.assertIn(b'selfrun.database:fixture', values['input'])
         self.assertIn(b'WHERE NOT EXISTS', values['input'])
         self.assertIn(b'REVOKE ALL', values['input'])
         request['databaseName'] = 'x; DROP DATABASE postgres'

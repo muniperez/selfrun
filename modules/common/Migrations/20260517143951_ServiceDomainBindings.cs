@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <inheritdoc />
     public partial class ServiceDomainBindings : Migration
@@ -48,7 +48,7 @@ namespace Minicloud.Common.Migrations
                 table: "domains",
                 type: "text",
                 nullable: false,
-                defaultValue: "minicloud_subdomain");
+                defaultValue: "selfrun_subdomain");
 
             migrationBuilder.AddColumn<DateTimeOffset>(
                 name: "last_applied_at",

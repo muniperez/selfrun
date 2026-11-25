@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Minicloud.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Extensibility;
 
-namespace Minicloud.Common.Providers.Hetzner;
+namespace Selfrun.Common.Providers.Hetzner;
 
 public sealed partial class HetznerClient : IStorageVolumeProvider
 {

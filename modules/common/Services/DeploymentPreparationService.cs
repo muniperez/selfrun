@@ -1,11 +1,11 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class DeploymentPreparationService(MinicloudDbContext db, DeploymentLifecycleService lifecycle, TimeProvider timeProvider)
+public sealed class DeploymentPreparationService(SelfrunDbContext db, DeploymentLifecycleService lifecycle, TimeProvider timeProvider)
 {
     public static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromMinutes(5);
 
@@ -34,7 +34,7 @@ public sealed class DeploymentPreparationService(MinicloudDbContext db, Deployme
 
     public bool IsExpired(Deployment deployment) => deployment.UpdatedAt < timeProvider.GetUtcNow() - HeartbeatTimeout;
 
-    public Deployment Start(MinicloudApp app, string id, IReadOnlyList<string> serviceNames)
+    public Deployment Start(SelfrunApp app, string id, IReadOnlyList<string> serviceNames)
     {
         var now = timeProvider.GetUtcNow();
         return new Deployment

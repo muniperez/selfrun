@@ -1,16 +1,16 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 // Each environment owns a runtime app record so all runtime resources remain isolated.
 public sealed class AppEnvironmentService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IIdGenerator ids,
     TimeProvider clock,
     ProviderCatalogService? catalog = null,
@@ -20,18 +20,18 @@ public sealed class AppEnvironmentService(
         && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')
         && char.IsAsciiLetterOrDigit(name[0]);
 
-    public Task<MinicloudApp> CreateForApplicationAsync(MinicloudApplication application, CreateEnvironmentRequest request, CancellationToken ct) =>
+    public Task<SelfrunApp> CreateForApplicationAsync(SelfrunApplication application, CreateEnvironmentRequest request, CancellationToken ct) =>
         CreateForApplicationAsync(application, request, null, ct);
 
-    public Task<MinicloudApp> CreateForApplicationAsync(
-        MinicloudApplication application,
+    public Task<SelfrunApp> CreateForApplicationAsync(
+        SelfrunApplication application,
         CreateEnvironmentRequest request,
         ActorIdentity? actor,
         CancellationToken ct) =>
         WithApplicationLockAsync(application.Id, () => CreateForApplicationCoreAsync(application, request, actor, ct), ct);
 
-    private async Task<MinicloudApp> CreateForApplicationCoreAsync(
-        MinicloudApplication application,
+    private async Task<SelfrunApp> CreateForApplicationCoreAsync(
+        SelfrunApplication application,
         CreateEnvironmentRequest request,
         ActorIdentity? actor,
         CancellationToken ct)
@@ -78,7 +78,7 @@ public sealed class AppEnvironmentService(
         var now = clock.GetUtcNow();
         var keyPrefix = rootEnv?.Id ?? application.LegacyRootAppId ?? application.Id;
 
-        var environment = new MinicloudApp
+        var environment = new SelfrunApp
         {
             Id = ids.NewId("app"),
             OrganizationId = application.OrganizationId,
@@ -134,7 +134,7 @@ public sealed class AppEnvironmentService(
         return environment;
     }
 
-    public async Task RenameAsync(MinicloudApp environment, string name, CancellationToken ct, bool allowPreview = false)
+    public async Task RenameAsync(SelfrunApp environment, string name, CancellationToken ct, bool allowPreview = false)
     {
         if ((!allowPreview && environment.BranchName is not null) || environment.DeletionStatus is not null || !IsValidName(name))
             throw new AppEnvironmentException("environment_name_invalid", "Choose a valid name for an active environment.");
@@ -166,7 +166,7 @@ public sealed class AppEnvironmentService(
 
     // Serialize environment admission with application deletion. Runtime IDs remain the
     // lock scope for deployments, while the logical application protects its membership.
-    private async Task<MinicloudApp> WithApplicationLockAsync(string? applicationId, Func<Task<MinicloudApp>> action, CancellationToken ct)
+    private async Task<SelfrunApp> WithApplicationLockAsync(string? applicationId, Func<Task<SelfrunApp>> action, CancellationToken ct)
     {
         if (applicationId is null) return await action();
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>

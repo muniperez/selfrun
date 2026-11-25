@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli.Api;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Api;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal sealed class LocalBuildDeploymentSession : IAsyncDisposable
 {
-    private readonly MinicloudApiClient _api;
+    private readonly SelfrunApiClient _api;
     private readonly string _appId;
     private readonly CancellationToken _callerToken;
     private readonly CancellationTokenSource _stop = new();
@@ -20,7 +20,7 @@ internal sealed class LocalBuildDeploymentSession : IAsyncDisposable
     public string Id { get; }
     public CancellationToken Token => _work.Token;
 
-    public LocalBuildDeploymentSession(MinicloudApiClient api, string appId, string id, CancellationToken ct, TimeSpan? heartbeatInterval = null)
+    public LocalBuildDeploymentSession(SelfrunApiClient api, string appId, string id, CancellationToken ct, TimeSpan? heartbeatInterval = null)
     {
         _api = api;
         _appId = appId;

@@ -1,11 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Common.Registry;
+namespace Selfrun.Common.Registry;
 
 public static class RegistryServiceCollectionExtensions
 {
-    public static IServiceCollection AddMinicloudRegistry(this IServiceCollection services, Action<RegistryOptions> configure, Action<ProviderPlanOptions> configurePlans)
+    public static IServiceCollection AddSelfrunRegistry(this IServiceCollection services, Action<RegistryOptions> configure, Action<ProviderPlanOptions> configurePlans)
     {
         services.Configure(configure);
         services.Configure(configurePlans);

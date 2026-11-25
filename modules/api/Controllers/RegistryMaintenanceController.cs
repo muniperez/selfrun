@@ -3,9 +3,9 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Registry;
+using Selfrun.Common.Registry;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [AllowAnonymous]
@@ -17,7 +17,7 @@ public sealed class RegistryMaintenanceController(IOptions<RegistryOptions> opti
     [HttpPost]
     public async Task<IResult> Execute(MaintenanceRequest request, CancellationToken ct)
     {
-        var header = Request.Headers["X-Minicloud-Registry-Operator"].ToString();
+        var header = Request.Headers["X-Selfrun-Registry-Operator"].ToString();
         if (!options.Value.Enabled || header.Length != 64 || !System.IO.File.Exists(options.Value.KeyPath)) { return Results.Unauthorized(); }
         var expected = RegistryTokens.Hash(await System.IO.File.ReadAllTextAsync(options.Value.KeyPath, ct));
         if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(header), Encoding.ASCII.GetBytes(expected))) { return Results.Unauthorized(); }

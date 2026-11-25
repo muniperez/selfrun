@@ -1,14 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class AppDeletionService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ControlPlaneAuthorization authorization,
     AppServiceSecretService secrets,
     TelemetryService telemetry,
@@ -186,7 +186,7 @@ public sealed class AppDeletionService(
         await db.Entry(application).ReloadAsync(ct);
     }
 
-    private async Task<(int Status, string Code, string Message)?> PrepareTargetsForDeletionAsync(IReadOnlyList<MinicloudApp> apps, CancellationToken ct)
+    private async Task<(int Status, string Code, string Message)?> PrepareTargetsForDeletionAsync(IReadOnlyList<SelfrunApp> apps, CancellationToken ct)
     {
         var ids = apps.Select(x => x.Id).ToArray();
         foreach (var target in apps)

@@ -29,7 +29,7 @@ class LocalSourceTests(unittest.TestCase):
                       "serverVersion": "0.0.1-local.1", "cliCompatibility": {}}
         with tarfile.open(path, "w:gz") as archive:
             data = json.dumps(descriptor).encode()
-            member = tarfile.TarInfo("minicloud-local-source.json")
+            member = tarfile.TarInfo("selfrun-local-source.json")
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
             if extra:
@@ -43,7 +43,7 @@ class LocalSourceTests(unittest.TestCase):
         result = local.extract_source(path, expected, output)
         self.assertEqual(local.TRUST, result["kind"])
         self.assertEqual(result, local.extract_source(path, expected, output))
-        descriptor = output / "minicloud-local-source.json"
+        descriptor = output / "selfrun-local-source.json"
         descriptor.write_text("changed")
         with self.assertRaisesRegex(ValueError, "never overwrite"):
             local.extract_source(path, expected, output)
@@ -59,7 +59,7 @@ class LocalSourceTests(unittest.TestCase):
     def test_traversal_links_duplicates_and_oversized_members_are_rejected(self):
         for name, kind, size in (("../outside", tarfile.REGTYPE, 1),
                                  ("linked", tarfile.SYMTYPE, 0),
-                                 ("minicloud-local-source.json", tarfile.REGTYPE, 1),
+                                 ("selfrun-local-source.json", tarfile.REGTYPE, 1),
                                  ("large", tarfile.REGTYPE, 65 * 1024**2)):
             with self.subTest(name=name):
                 member = tarfile.TarInfo(name)
@@ -111,7 +111,7 @@ class LocalSourceTests(unittest.TestCase):
         self.assertEqual(images, manifest["images"])
         with tarfile.open(output / manifest["bundle"]["name"]) as archive:
             compose = archive.extractfile("compose.yml").read().decode()
-            self.assertNotIn("ghcr.io/muniventures/minicloud-", compose)
+            self.assertNotIn("ghcr.io/muniperez/selfrun-", compose)
             self.assertIn(images["api"], compose)
         self.assertEqual(manifest, local.package_native(ROOT, output, metadata, images, "d" * 64, "linux/amd64", release))
         with self.assertRaisesRegex(ValueError, "Existing local assets differ"):

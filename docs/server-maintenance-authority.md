@@ -1,6 +1,6 @@
 # Server maintenance authority
 
-Minicloud keeps one maintenance authority per installation in the application
+Selfrun keeps one maintenance authority per installation in the application
 PostgreSQL database. The packaged [maintenance operations](server-maintenance.md)
 (backup, upgrade, restore and host transfer) use it
 to stop new management work, wait for accepted work to drain, and revoke an old
@@ -40,7 +40,7 @@ The command reuses the API image and the protected-input rules from the
 [bootstrap host interface](self-hosting.md#protected-host-bootstrap-interface):
 
 ```sh
-dotnet Minicloud.Api.dll maintenance <status|fence|drain-status|release|transfer> \
+dotnet Selfrun.Api.dll maintenance <status|fence|drain-status|release|transfer> \
   (--input-file <protected path> | --stdin)
 ```
 

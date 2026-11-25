@@ -2,9 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Worker.Storage;
+namespace Selfrun.Worker.Storage;
 
 public sealed class LocalFileSystemArtifactRetriever : IArtifactRetriever
 {
@@ -47,7 +47,7 @@ public sealed class LocalFileSystemArtifactRetriever : IArtifactRetriever
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+                var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
                 var artifact = await db.DeploymentArtifacts
                     .AsNoTracking()
                     .FirstOrDefaultAsync(a => a.Id == artifactId, cancellationToken);

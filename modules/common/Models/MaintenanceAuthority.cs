@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 /// <summary>
 /// Installation-wide maintenance authority. Exactly one row (id 1) exists; its epoch is the

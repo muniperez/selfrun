@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 /// <summary>
 /// Fail-fast concurrency gate for application-log reads. Concurrency is bounded

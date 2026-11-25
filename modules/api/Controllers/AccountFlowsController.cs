@@ -7,13 +7,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [AllowAnonymous]
@@ -22,14 +22,14 @@ public sealed class AccountFlowsController(
     KratosBrowserFlowClient flows,
     AccountOriginValidator origins,
     IOptions<KratosOptions> options,
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     BrowserSessionService sessions,
     GrafanaSessionService grafanaSessions,
     IKratosSessionValidator kratosSessions,
     IDataProtectionProvider protection) : ControllerBase
 {
-    private const string ReauthenticationCookie = "__Host-minicloud-reauthentication";
-    private const string ProviderPendingCookie = "__Host-minicloud-oidc";
+    private const string ReauthenticationCookie = "__Host-selfrun-reauthentication";
+    private const string ProviderPendingCookie = "__Host-selfrun-oidc";
     private const string ProviderContinuePath = "/sign-in/continue";
 
     [HttpGet("browser")]
@@ -213,13 +213,13 @@ public sealed class AccountFlowsController(
         }
     }
 
-    private ITimeLimitedDataProtector ReauthenticationProtector(Minicloud.Common.Models.BrowserSession session) =>
+    private ITimeLimitedDataProtector ReauthenticationProtector(Selfrun.Common.Models.BrowserSession session) =>
         protection.CreateProtector("account-settings-reauthentication", session.Id, session.UserId, session.TokenHash)
             .ToTimeLimitedDataProtector();
 
     private async Task<(AccountSessionResponse? Session, IResult? Problem)> AdmitAsync(string kind, ControlPlanePrincipal? principal,
         string identityId, string sessionId, IReadOnlyDictionary<string, string> cookies, bool? keepSignedIn,
-        CancellationToken cancellationToken, Minicloud.Common.Models.BrowserSession? initiatingSession = null)
+        CancellationToken cancellationToken, Selfrun.Common.Models.BrowserSession? initiatingSession = null)
     {
         var user = await db.Users.SingleOrDefaultAsync(x => x.KratosIdentityId == identityId, cancellationToken);
         if (user is null || (kind is "settings" or "reauthentication" || kind == "login" && principal?.IsDashboardUser == true) &&
@@ -264,7 +264,7 @@ public sealed class AccountFlowsController(
                 foreach (var upstreamId in previous.Where(x => x != sessionId))
                     await kratosSessions.RevokeSessionAsync(upstreamId, cancellationToken);
             }
-            else if (Request.Cookies.TryGetValue("__Host-minicloud-session", out var oldCookie))
+            else if (Request.Cookies.TryGetValue("__Host-selfrun-session", out var oldCookie))
             {
                 await sessions.RevokeAsync(oldCookie, cancellationToken);
             }

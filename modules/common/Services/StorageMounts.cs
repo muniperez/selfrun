@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public static class StorageMounts
 {

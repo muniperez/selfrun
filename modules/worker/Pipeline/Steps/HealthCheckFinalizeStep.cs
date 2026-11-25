@@ -4,12 +4,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Text.Json;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Pipeline;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Pipeline;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Step 4: verify the public HTTPS health endpoints, then finalize the
@@ -96,7 +96,7 @@ public sealed class HealthCheckFinalizeStep : IPipelineStep
         PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var rawServices = await db.DeploymentServices
             .AsNoTracking()
             .Where(s => s.DeploymentId == context.DeploymentId && s.Public)

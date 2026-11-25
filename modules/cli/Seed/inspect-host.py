@@ -49,17 +49,17 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
         assert isinstance(value, dict)
         return value
 
-    lock = path("/opt/minicloud.installation.lock")
+    lock = path("/opt/selfrun.installation.lock")
     descriptor = None
     try:
         if acquire_lock and exists(lock):
             protected(lock)
             descriptor = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW)
             fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        root = path("/opt/minicloud")
-        binding = path("/opt/minicloud.seed-operation")
+        root = path("/opt/selfrun")
+        binding = path("/opt/selfrun.seed-operation")
         assert not exists(binding.with_name(binding.name + ".pending"))
-        preparation = path("/var/lib/minicloud-seed") / seed
+        preparation = path("/var/lib/selfrun-seed") / seed
         if exists(preparation.parent):
             protected(preparation.parent, True)
             assert not any(item.name != seed for item in preparation.parent.iterdir())
@@ -93,9 +93,9 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
             assert not any(exists(root / name) for name in ("installation.json.pending", "maintenance.json.pending", "local-source-refresh.pending"))
             state = document(root / "installation.json")
             assert bound and exists(preparation)
-            assert type(state.get("schemaVersion")) is int and state["schemaVersion"] == 1 and state.get("product") == "minicloud"
-            assert state.get("root") == "/opt/minicloud"
-            assert state.get("recoveryDir") == "/var/lib/minicloud-seed/" + seed + "/recovery"
+            assert type(state.get("schemaVersion")) is int and state["schemaVersion"] == 1 and state.get("product") == "selfrun"
+            assert state.get("root") == "/opt/selfrun"
+            assert state.get("recoveryDir") == "/var/lib/selfrun-seed/" + seed + "/recovery"
             for key in ("installationId", "operationId"):
                 assert str(uuid.UUID(state[key])) == state[key]
             assert re.fullmatch(r"server-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", state["releaseTag"])
@@ -126,7 +126,7 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
                 for directory in (containerd / "bin", containerd / "lib"):
                     protected(directory, True)
                     assert not any(directory.iterdir())
-            assert not any(p.name not in ("minicloud.seed-operation", "minicloud.installation.lock", "containerd", "digitalocean",
+            assert not any(p.name not in ("selfrun.seed-operation", "selfrun.installation.lock", "containerd", "digitalocean",
                                          "vultr")
                            for p in path("/opt").iterdir())
 
@@ -146,9 +146,9 @@ def inspect_host(seed, base=pathlib.Path("/"), owner=0, run=subprocess.run, acqu
                 assert containers.returncode == 0
                 for container in json.loads(containers.stdout):
                     labels = container.get("Config", {}).get("Labels") or {}
-                    if labels.get("com.docker.compose.project") != "minicloud":
+                    if labels.get("com.docker.compose.project") != "selfrun":
                         continue
-                    assert labels.get("com.docker.compose.project.working_dir") == "/opt/minicloud/bundle"
+                    assert labels.get("com.docker.compose.project.working_dir") == "/opt/selfrun/bundle"
                     name = labels.get("com.docker.compose.service")
                     status = container.get("State", {})
                     assert name not in services

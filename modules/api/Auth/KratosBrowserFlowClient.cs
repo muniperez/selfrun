@@ -6,9 +6,9 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed class AccountFlowException(string code, int statusCode, string message) : Exception(message)
 {
@@ -869,7 +869,7 @@ public sealed class KratosBrowserFlowClient(HttpClient client, IOptions<KratosOp
                 return null;
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
-                // The redirect and continuity cookie belong to Kratos. Require a fresh Minicloud sign-in and form instead.
+                // The redirect and continuity cookie belong to Kratos. Require a fresh Selfrun sign-in and form instead.
                 if (payload.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object &&
                     error.TryGetProperty("id", out var errorId) && errorId.ValueKind == JsonValueKind.String &&
                     errorId.ValueEquals("session_refresh_required"))

@@ -5,7 +5,7 @@ Date: 2026-11-09.
 
 ## Outcome
 
-Minicloud presents one application for a product, with independently operated environments and services inside each environment:
+Selfrun presents one application for a product, with independently operated environments and services inside each environment:
 
 ```text
 Organization
@@ -32,8 +32,8 @@ Verified against the product working tree:
 
 | Evidence | Consequence |
 | --- | --- |
-| `modules/common/Models/ControlPlaneModels.cs`: `MinicloudApp` contains `ParentAppId`, `BranchName`, `EnvironmentName`, plan, domains, secrets, and deployments. | One entity represents an application, an environment runtime, and a branch runtime. |
-| `modules/api/Services/AppEnvironmentService.cs`: a named environment is another `MinicloudApp`, named `{parent.Name} ({environment})`. | Environment identity leaks into application names. The root also serves as the initial environment. |
+| `modules/common/Models/ControlPlaneModels.cs`: `SelfrunApp` contains `ParentAppId`, `BranchName`, `EnvironmentName`, plan, domains, secrets, and deployments. | One entity represents an application, an environment runtime, and a branch runtime. |
+| `modules/api/Services/AppEnvironmentService.cs`: a named environment is another `SelfrunApp`, named `{parent.Name} ({environment})`. | Environment identity leaks into application names. The root also serves as the initial environment. |
 | `modules/dashboard/app/modules/Apps/AppsModule.tsx`: calls `listApps(..., true)` and classifies records using `parentAppId`. | Environment records appear alongside apps and can be classified as branches. |
 | `modules/dashboard/app/modules/Apps/AppEnvironmentsPanel.tsx`: resolves sibling environments through a root app and links to `/apps/{environment-runtime-id}`. | Environment navigation looks like navigation between different apps. |
 | `modules/cli/Commands/CliApplication.Deploy.cs`: resolves the root, selects a named environment, then substitutes its runtime app ID. | The CLI already supports the intended selection semantics, but transport identities mix both concepts. |
@@ -156,14 +156,14 @@ Application creation nests initial environment configuration. Runtime operations
 
 ## CLI and configuration
 
-Keep `app` and `appId` in `minicloud.yml`. New configs identify the logical application. Configurations identify a canonical application ID. Fetch that application directly; reject missing or invalid IDs without attempting legacy aliases. Select deployment environments explicitly when multiple active persistent environments exist.
+Keep `app` and `appId` in `selfrun.yml`. New configs identify the logical application. Configurations identify a canonical application ID. Fetch that application directly; reject missing or invalid IDs without attempting legacy aliases. Select deployment environments explicitly when multiple active persistent environments exist.
 
 ```sh
-minicloud deploy --environment production
-minicloud deploy --environment staging
-minicloud environments list
-minicloud environments create staging --plan "Staging small"
-minicloud environments rename staging qa
+selfrun deploy --environment production
+selfrun deploy --environment staging
+selfrun environments list
+selfrun environments create staging --plan "Staging small"
+selfrun environments rename staging qa
 ```
 
 These commands retain their current syntax. The application config is the shared target; do not require a separate app config per environment. Environment names resolve case-insensitively. With exactly one active environment, omission selects it. With multiple active environments, require `--environment <name>` and list choices; never select the dashboard default automatically. With none, return an actionable create-environment error. Deleting environments cannot be selected; a deletion-failed target remains blocked until lifecycle recovery.
@@ -185,7 +185,7 @@ Do not normalize legacy branch names into persistent environment names blindly. 
 3. **Preserve identity:** retain all existing runtime IDs, external server/volume IDs, generated hostnames, custom domains, deployment history, secret-store paths/versions, and resource ownership. New application IDs are distinct from runtime environment IDs. Renaming app/environment metadata does not regenerate routing identities or move infrastructure. Do not copy secret values merely to rename a scope.
 4. **Lifecycle cutover:** use an explicit API/worker maintenance boundary: stop admission of new mutations, drain active jobs or verify a tested resume adapter, stop incompatible workers, run migration/backfill and reconciliation, then start compatible API/workers. Reads may be temporarily unavailable. Avoid unsupported mixed-version writers. Re-running backfill is idempotent. Reconcile counts and every ownership mapping before reopening writes.
 5. **Canonical API:** expose only `/api` application/environment contracts. Remove old route and browser identity aliases. Unknown or environment IDs supplied as application IDs fail explicitly.
-6. **Client rollout:** publish matching backend, worker, CLI and dashboard builds together. Mixed old/new clients are unsupported. Hosted workflow changes belong in `minicloud-services`; product implementation belongs here.
+6. **Client rollout:** publish matching backend, worker, CLI and dashboard builds together. Mixed old/new clients are unsupported. Hosted workflow changes belong in the private hosted operations repository; product implementation belongs here.
 
 Independent legacy apps are not merged based on similar names. In particular, grouping MuniPages control/delivery/backups requires a separately reviewed explicit mapping and compatible placement behavior. This migration groups existing parent/child environments only. A future consolidation feature may be designed separately.
 

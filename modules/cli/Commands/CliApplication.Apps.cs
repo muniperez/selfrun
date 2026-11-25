@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli.Config;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Config;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -209,7 +209,7 @@ public sealed partial class CliApplication
         ("none", "None/Manual - no database or manual set up - pick this if you want to use Firebase for example")
     ];
 
-    internal static string ResolveDeploymentDatabase(string? databaseOverride, MinicloudConfig config) =>
+    internal static string ResolveDeploymentDatabase(string? databaseOverride, SelfrunConfig config) =>
         databaseOverride ?? config.Database ?? "none";
 
     private async Task<EnvironmentDetailResponse> ResolveAppOptionAsync(string[] args, CancellationToken ct)
@@ -221,9 +221,9 @@ public sealed partial class CliApplication
         var requested = GetOption(args, "--app");
         if (string.IsNullOrWhiteSpace(requested))
         {
-            var config = MinicloudConfigLoader.Load(GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath());
+            var config = SelfrunConfigLoader.Load(GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName);
             if (!config.IsValid || string.IsNullOrWhiteSpace(config.Config?.AppId))
-                throw new CliCommandException(CliExitCodes.ValidationError, "Missing --app <app> and no valid appId was found in selfrun.yml (or minicloud.yml).");
+                throw new CliCommandException(CliExitCodes.ValidationError, "Missing --app <app> and no valid appId was found in selfrun.yml.");
             application = await GetApplicationContextAsync(config.Config.AppId, ct);
         }
         else

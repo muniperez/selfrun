@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal sealed record SeedPortableConfig
 {
@@ -90,7 +90,7 @@ internal interface ISeedInspector
 internal sealed record SeedPortableReport
 {
     public int SchemaVersion { get; init; } = 1;
-    public string Kind { get; init; } = "minicloud-seed-report";
+    public string Kind { get; init; } = "selfrun-seed-report";
     public DateTimeOffset ObservedAt { get; init; } = DateTimeOffset.UtcNow;
     public required string SeedId { get; init; }
     public string Provider { get; init; } = "";

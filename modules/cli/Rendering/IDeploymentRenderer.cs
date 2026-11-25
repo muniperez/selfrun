@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-namespace Minicloud.Cli.Rendering;
+namespace Selfrun.Cli.Rendering;
 
 public interface IDeploymentRenderer : IDisposable, IAsyncDisposable
 {

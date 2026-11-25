@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class DatabaseBackupPurgeService(MinicloudDbContext db, DatabaseManagementService management)
+public sealed class DatabaseBackupPurgeService(SelfrunDbContext db, DatabaseManagementService management)
 {
     public async Task<DatabaseOperation> QueueAsync(string databaseId, DatabaseBackupPurgeRequest request, ActorIdentity actor, CancellationToken ct)
     {

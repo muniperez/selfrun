@@ -1,15 +1,15 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed partial class DatabaseOperationProcessor
 {
-    private async Task<bool> MigrateDatabaseAsync(DatabaseOperation operation, ManagedDatabase source, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task<bool> MigrateDatabaseAsync(DatabaseOperation operation, ManagedDatabase source, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         if (source.Engine != "postgres" || source.Placement != "application" || source.AppId != sourceApp.Id)
             throw new InvalidOperationException("Migration requires an application-hosted PostgreSQL source.");
@@ -17,7 +17,7 @@ public sealed partial class DatabaseOperationProcessor
         if (request.TargetServerId is null) throw new ArgumentException("Select an explicit standalone destination.");
         await RequireApplicationMutationAsync(operation, sourceApp.Id, ct);
         var credentials = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(source.EncryptedCredentialsJson ?? throw new InvalidOperationException()), Json)!;
-        var container = "minicloud-" + sourceApp.Slug + "-db-1";
+        var container = "selfrun-" + sourceApp.Slug + "-db-1";
         if (operation.ResultJson is not null)
         {
             using var state = JsonDocument.Parse(operation.ResultJson);
@@ -114,7 +114,7 @@ public sealed partial class DatabaseOperationProcessor
         }
     }
 
-    private async Task<Deployment> QueueDatabaseRolloutAsync(MinicloudApp app, IReadOnlySet<string> serviceNames, CancellationToken ct)
+    private async Task<Deployment> QueueDatabaseRolloutAsync(SelfrunApp app, IReadOnlySet<string> serviceNames, CancellationToken ct)
     {
         var services = await new DeploymentServiceSetService().BuildActiveServicesAsync(db, app.Id, ct);
         var selected = services.Where(x => serviceNames.Contains(x.Name)).ToArray();

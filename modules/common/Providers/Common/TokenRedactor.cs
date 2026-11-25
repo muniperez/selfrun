@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Common.Providers.Common;
+namespace Selfrun.Common.Providers.Common;
 
 public static partial class TokenRedactor
 {

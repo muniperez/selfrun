@@ -6,27 +6,27 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Minicloud.Cli.Commands;
+using Selfrun.Cli.Commands;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal sealed record SeedVerifiedRelease(string Digest, string Source);
 internal sealed class SeedRelease
 {
-    internal static string[] Names(string tag) => ["server-manifest.json", $"minicloud-server-{tag[8..]}.tar.gz",
+    internal static string[] Names(string tag) => ["server-manifest.json", $"selfrun-server-{tag[8..]}.tar.gz",
         "install-server.sh", "verify-server-release.py", "checksums.txt", "checksums.txt.sigstore.json"];
 
     public async Task<SeedVerifiedRelease> VerifyAsync(string tag, string directory, CancellationToken ct)
     {
         SeedFiles.Directory(directory);
         foreach (var name in Names(tag))
-            await DownloadAsync(new Uri($"https://github.com/muniventures/minicloud/releases/download/{tag}/{name}"),
+            await DownloadAsync(new Uri($"https://github.com/muniperez/selfrun/releases/download/{tag}/{name}"),
                 Path.Combine(directory, name), name.EndsWith(".tar.gz") ? 2L * 1024 * 1024 * 1024 : 8 * 1024 * 1024, ct);
         var cosign = await SeedProcess.RequireAsync("cosign", ["version", "--json"], null, ct);
         SeedGuard.Require(cosign.Contains("v2.6.5", StringComparison.Ordinal), "Seed requires independently installed Cosign 2.6.5.");
         await SeedProcess.RequireAsync("cosign", ["verify-blob", "--new-bundle-format", "--bundle",
             Path.Combine(directory, "checksums.txt.sigstore.json"), "--certificate-identity",
-            $"https://github.com/muniventures/minicloud/.github/workflows/server-release.yml@refs/tags/{tag}",
+            $"https://github.com/muniperez/selfrun/.github/workflows/server-release.yml@refs/tags/{tag}",
             "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", Path.Combine(directory, "checksums.txt")], null, ct);
         VerifyInventory(directory, Names(tag).Take(4).ToHashSet(StringComparer.Ordinal));
         using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "server-manifest.json")));

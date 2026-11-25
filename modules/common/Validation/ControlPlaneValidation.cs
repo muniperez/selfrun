@@ -1,9 +1,9 @@
 using System.Text.RegularExpressions;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Common.Validation;
+namespace Selfrun.Common.Validation;
 
 public static partial class ControlPlaneValidation
 {

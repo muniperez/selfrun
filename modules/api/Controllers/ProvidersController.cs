@@ -1,20 +1,20 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Services;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Services;
+using Selfrun.Api.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/providers")]
-public sealed class ProvidersController(MinicloudDbContext db, ControlPlaneAuthorization authorization,
+public sealed class ProvidersController(SelfrunDbContext db, ControlPlaneAuthorization authorization,
     ProviderAccountService accounts, AuditEventService audit, IVpsProviderRegistry? registry = null) : ControllerBase
 {
     private static readonly IVpsProviderRegistry DefaultRegistry = VpsProviderRegistry.CreateDefault();

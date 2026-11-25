@@ -4,14 +4,14 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
-public sealed class GitHubAppService(MinicloudDbContext db, ISecretStore secrets, GitHubAppClient github,
+public sealed class GitHubAppService(SelfrunDbContext db, ISecretStore secrets, GitHubAppClient github,
     TimeProvider clock, IConfiguration configuration, IOptions<OpenBaoSecretStoreOptions> secretOptions)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -59,9 +59,9 @@ public sealed class GitHubAppService(MinicloudDbContext db, ISecretStore secrets
         var hostLabel = new Uri(console).Host.Replace('.', '-');
         return new(connection.Id, post + "?state=" + state, new
         {
-            name = "Minicloud-" + hostLabel[..Math.Min(16, hostLabel.Length)] + "-" + connection.Id[..6],
+            name = "Selfrun-" + hostLabel[..Math.Min(16, hostLabel.Length)] + "-" + connection.Id[..6],
             url = console,
-            description = "Private GitHub connection for this Minicloud organization. The registering administrator owns this App.",
+            description = "Private GitHub connection for this Selfrun organization. The registering administrator owns this App.",
             @public = false,
             redirect_url = console + "/settings/github/callback?connectionId=" + connection.Id,
             setup_url = console + "/settings/github/installed?connectionId=" + connection.Id,

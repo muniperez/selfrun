@@ -2,12 +2,12 @@ using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Ssh;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Ssh;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 public sealed class RuntimeAgentOptions
 {
@@ -38,7 +38,7 @@ public sealed class RuntimeAgentDeployment(
     IServiceScopeFactory scopeFactory, IOptions<RuntimeAgentOptions> options, TimeProvider timeProvider) : IRuntimeAgentDeployment
 {
     private static readonly string[] BundleFiles =
-        ["minicloud-agent", "minicloud-agent.service", "apply-minicloud-routing.py", "install-minicloud-agent.sh"];
+        ["selfrun-agent", "selfrun-agent.service", "apply-selfrun-routing.py", "install-selfrun-agent.sh"];
 
     public Task<RuntimeAgentPackage> PrepareAsync(PipelineStepContext context, CancellationToken cancellationToken) =>
         PrepareCoreAsync(context, null, cancellationToken);
@@ -85,7 +85,7 @@ public sealed class RuntimeAgentDeployment(
             var binaryPath = await RuntimeAgentBundle.SelectBinaryAsync(options.Value.BundlePath, probe);
             var uploads = BundleFiles.Select(name =>
             {
-                var path = name == "minicloud-agent" ? binaryPath : Path.Combine(options.Value.BundlePath, name);
+                var path = name == "selfrun-agent" ? binaryPath : Path.Combine(options.Value.BundlePath, name);
                 if (!File.Exists(path))
                 {
                     throw new PipelineStepException("runtime_agent_install_failed", $"Runtime agent bundle is missing {name}.");
@@ -119,10 +119,10 @@ public sealed class RuntimeAgentDeployment(
                 organizationId = context.OrganizationId,
                 appId = context.AppId,
                 apiBaseUrl = apiUri.AbsoluteUri.TrimEnd('/'),
-                composeProject = $"minicloud-{context.AppSlug}",
-                composeFile = $"/opt/minicloud/apps/{context.AppSlug}/app.compose.json",
-                tokenPath = "/opt/minicloud/agent/runtime-token",
-                statePath = "/var/lib/minicloud-agent/state.json"
+                composeProject = $"selfrun-{context.AppSlug}",
+                composeFile = $"/opt/selfrun/apps/{context.AppSlug}/app.compose.json",
+                tokenPath = "/opt/selfrun/agent/runtime-token",
+                statePath = "/var/lib/selfrun-agent/state.json"
             };
             var candidates = await db.RuntimeTokens.Where(t => t.RuntimeServerId == runtime.Id && t.RevokedAt == null).ToListAsync(ct);
             var previous = candidates.OrderByDescending(t => t.LastUsedAt).FirstOrDefault();
@@ -182,7 +182,7 @@ public sealed class RuntimeAgentDeployment(
         while (true)
         {
             await using var scope = scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var now = timeProvider.GetUtcNow();
             if (!await db.Deployments.AnyAsync(d => d.Id == context.DeploymentId && d.AppId == context.AppId &&
                 d.OrganizationId == context.OrganizationId && d.OwnershipToken == context.OwnershipToken && d.Status == DeploymentStatus.Deploying, cancellationToken))

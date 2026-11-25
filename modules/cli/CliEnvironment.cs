@@ -2,22 +2,17 @@
 
 using System.Security.Cryptography;
 using System.Text;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli;
+namespace Selfrun.Cli;
 
 public sealed class CliEnvironment
 {
     public const string TokenEnvironmentVariable = "SELFRUN_TOKEN";
-    public const string LegacyTokenEnvironmentVariable = "MINICLOUD_TOKEN";
     public const string ApiUrlEnvironmentVariable = "SELFRUN_API_URL";
-    public const string LegacyApiUrlEnvironmentVariable = "MINICLOUD_API_URL";
     public const string LocalOrganizationSlugEnvironmentVariable = "SELFRUN_LOCAL_ORGANIZATION_SLUG";
-    public const string LegacyLocalOrganizationSlugEnvironmentVariable = "MINICLOUD_LOCAL_ORGANIZATION_SLUG";
     public const string AppDomainEnvironmentVariable = "SELFRUN_APP_DOMAIN";
-    public const string LegacyAppDomainEnvironmentVariable = "MINICLOUD_APP_DOMAIN";
     public const string TimingTraceOutputEnvironmentVariable = "SELFRUN_CLI_TIMING_TRACE_OUTPUT";
-    public const string LegacyTimingTraceOutputEnvironmentVariable = "MINICLOUD_CLI_TIMING_TRACE_OUTPUT";
 
     private CliEnvironment(string apiBaseUrl, string localOrganizationSlug, string configHome, string appDomain = "")
     {
@@ -57,33 +52,15 @@ public sealed class CliEnvironment
         if (active is not null) SelectInstance(active);
     }
 
-    public static string? GetEnvironmentVariable(string primaryName, string legacyName, Func<string, string?>? reader = null)
+    internal static string? ReadEnvironmentVariable(string name, Func<string, string?>? reader = null)
     {
         reader ??= Environment.GetEnvironmentVariable;
-        var primary = reader(primaryName);
-        if (!string.IsNullOrWhiteSpace(primary))
-        {
-            return primary;
-        }
-
-        var legacy = reader(legacyName);
-        return string.IsNullOrWhiteSpace(legacy) ? null : legacy;
+        var value = reader(name);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     public static string? GetTokenEnvironmentVariable(Func<string, string?>? reader = null) =>
-        GetEnvironmentVariable(TokenEnvironmentVariable, LegacyTokenEnvironmentVariable, reader);
-
-    public static string ResolveConfigDirectory(string xdgConfigHome)
-    {
-        var primary = Path.Combine(xdgConfigHome, "selfrun");
-        var legacy = Path.Combine(xdgConfigHome, "minicloud");
-        if (!Directory.Exists(primary) && Directory.Exists(legacy))
-        {
-            return legacy;
-        }
-
-        return primary;
-    }
+        ReadEnvironmentVariable(TokenEnvironmentVariable, reader);
 
     public static CliEnvironment FromEnvironment() =>
         FromEnvironment(Environment.GetEnvironmentVariable,
@@ -91,12 +68,9 @@ public sealed class CliEnvironment
 
     internal static CliEnvironment FromEnvironment(Func<string, string?> reader, Func<string> defaultXdgConfigHome)
     {
-        var apiBaseUrl = GetEnvironmentVariable(ApiUrlEnvironmentVariable, LegacyApiUrlEnvironmentVariable, reader) ?? "";
+        var apiBaseUrl = ReadEnvironmentVariable(ApiUrlEnvironmentVariable, reader) ?? "";
 
-        var localOrganizationSlug = GetEnvironmentVariable(
-            LocalOrganizationSlugEnvironmentVariable,
-            LegacyLocalOrganizationSlugEnvironmentVariable,
-            reader) ?? "local";
+        var localOrganizationSlug = ReadEnvironmentVariable(LocalOrganizationSlugEnvironmentVariable, reader) ?? "local";
 
         var configHome = reader("XDG_CONFIG_HOME");
         if (string.IsNullOrWhiteSpace(configHome))
@@ -104,8 +78,8 @@ public sealed class CliEnvironment
             configHome = defaultXdgConfigHome();
         }
 
-        var appDomain = GetEnvironmentVariable(AppDomainEnvironmentVariable, LegacyAppDomainEnvironmentVariable, reader) ?? "";
-        return new CliEnvironment(apiBaseUrl, localOrganizationSlug, ResolveConfigDirectory(configHome), appDomain)
+        var appDomain = ReadEnvironmentVariable(AppDomainEnvironmentVariable, reader) ?? "";
+        return new CliEnvironment(apiBaseUrl, localOrganizationSlug, Path.Combine(configHome, "selfrun"), appDomain)
         { HasApiOverride = !string.IsNullOrWhiteSpace(apiBaseUrl) };
     }
 

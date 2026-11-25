@@ -11,7 +11,7 @@ def execute(request, run=subprocess.run):
     container, database, operation = request['container'], request['databaseName'], request['operationId']
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', container) or not re.fullmatch(r'[a-z][a-z0-9_]{0,62}', database) or not re.fullmatch(r'dbop_[a-zA-Z0-9_-]{1,96}', operation):
         raise ValueError('Invalid migration binding')
-    command = ['docker', 'exec', container, 'psql', '-X', '-U', 'minicloud', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1']
+    command = ['docker', 'exec', container, 'psql', '-X', '-U', 'selfrun', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1']
     def sql(statement):
         return run(command + ['-Atc', statement], check=True, capture_output=True, timeout=30)
     path = sql('SHOW hba_file').stdout.decode().strip()
@@ -39,8 +39,8 @@ if __name__ == '__main__':
         with open(sys.argv[1]) as source:
             request = json.load(source)
         result = execute(request)
-        print('__MINICLOUD_DATABASE_RESULT__=' + json.dumps(result))
-        print('__MINICLOUD_DEPLOY_COMPLETE__=' + request['operationId'])
+        print('__SELFRUN_DATABASE_RESULT__=' + json.dumps(result))
+        print('__SELFRUN_DEPLOY_COMPLETE__=' + request['operationId'])
     except Exception as error:
-        print('__MINICLOUD_DATABASE_RESULT__=' + json.dumps({'status':'failed','errorType':type(error).__name__}))
+        print('__SELFRUN_DATABASE_RESULT__=' + json.dumps({'status':'failed','errorType':type(error).__name__}))
         raise SystemExit(1)

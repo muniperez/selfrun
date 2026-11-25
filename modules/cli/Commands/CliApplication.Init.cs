@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Config;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Config;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -17,7 +17,7 @@ public sealed partial class CliApplication
         ParseSshAccessOptions(args);
         if (File.Exists(outputPath) && !args.Contains("--force", StringComparer.Ordinal))
         {
-            var existingResult = MinicloudConfigLoader.Load(outputPath);
+            var existingResult = SelfrunConfigLoader.Load(outputPath);
             if (!existingResult.IsValid)
             {
                 _console.WriteError($"Config file '{outputPath}' already exists but is not valid.");
@@ -97,7 +97,7 @@ public sealed partial class CliApplication
         }
 
         var app = await PromptAppSelectionAsync(organization, GetOption(args, "--app") ?? FirstPositionalArg(args), cancellationToken);
-        var updated = MinicloudConfigWriter.UpdateAppIdentity(File.ReadAllText(outputPath), app.Slug, app.Id);
+        var updated = SelfrunConfigWriter.UpdateAppIdentity(File.ReadAllText(outputPath), app.Slug, app.Id);
         File.WriteAllText(outputPath, updated);
         _console.WriteLine($"Updated app identity in {outputPath}; existing service settings preserved.");
         _console.WriteLine($"Next: selfrun deploy --config {outputPath}");
@@ -153,12 +153,12 @@ public sealed partial class CliApplication
 
         var services = serviceDrafts.ToDictionary(x => x.Name, x => x.Config, StringComparer.Ordinal);
 
-        var config = new MinicloudConfig(app.Slug, database, null, services)
+        var config = new SelfrunConfig(app.Slug, database, null, services)
         {
             AppId = app.Id,
             Plan = null
         };
-        var diagnostics = MinicloudConfigValidator.Validate(config);
+        var diagnostics = SelfrunConfigValidator.Validate(config);
         if (diagnostics.Count > 0)
         {
             PrintDiagnostics(diagnostics);
@@ -175,7 +175,7 @@ public sealed partial class CliApplication
             }
         }
 
-        File.WriteAllText(outputPath, MinicloudConfigWriter.Write(config));
+        File.WriteAllText(outputPath, SelfrunConfigWriter.Write(config));
         _console.WriteLine();
         _console.WriteLine($"{createdVerb} {outputPath}");
         _console.WriteLine($"App: {app.Name} ({app.Slug}, {app.Id})");
@@ -394,7 +394,7 @@ public sealed partial class CliApplication
         return ServiceDetection.WithDockerfilePorts(service, EffectiveDockerfilePath(service.ToConfig()));
     }
 
-    private MinicloudServiceConfig PromptAdvancedServiceOptions(string serviceName, MinicloudServiceConfig config)
+    private SelfrunServiceConfig PromptAdvancedServiceOptions(string serviceName, SelfrunServiceConfig config)
     {
         var defaults = DefaultServiceOptions(serviceName);
         var image = PromptOptional($"{ToTitle(serviceName)} pre-built image (optional)", config.Image ?? "none");
@@ -444,7 +444,7 @@ public sealed partial class CliApplication
         while (true)
         {
             var value = PromptRequired(label, defaultValue).Trim().ToLowerInvariant();
-            if (MinicloudConfigLoader.SlugRegex().IsMatch(value))
+            if (SelfrunConfigLoader.SlugRegex().IsMatch(value))
             {
                 return value;
             }
@@ -458,7 +458,7 @@ public sealed partial class CliApplication
         while (true)
         {
             var value = PromptRequired("App name").Trim();
-            if (MinicloudConfigLoader.AppNameRegex().IsMatch(value))
+            if (SelfrunConfigLoader.AppNameRegex().IsMatch(value))
             {
                 return value.ToLowerInvariant();
             }
@@ -597,7 +597,7 @@ public sealed partial class CliApplication
         return Path.GetRelativePath(Environment.CurrentDirectory, fullPath).Replace(Path.DirectorySeparatorChar, '/');
     }
 
-    private void WriteMissingDockerfileWarning(string serviceName, MinicloudServiceConfig service)
+    private void WriteMissingDockerfileWarning(string serviceName, SelfrunServiceConfig service)
     {
         if (HasDockerfileForService(service))
         {
@@ -613,12 +613,12 @@ public sealed partial class CliApplication
     internal static bool HasDefaultDockerfile(string sourcePath) =>
         File.Exists(Path.Combine(sourcePath, "Dockerfile"));
 
-    private static bool HasDockerfileForService(MinicloudServiceConfig service)
+    private static bool HasDockerfileForService(SelfrunServiceConfig service)
     {
         return !string.IsNullOrWhiteSpace(service.SourcePath) && File.Exists(EffectiveDockerfilePath(service));
     }
 
-    internal static string SuggestedInitConfigPath() => MinicloudConfigLoader.DefaultFileName;
+    internal static string SuggestedInitConfigPath() => SelfrunConfigLoader.DefaultFileName;
 
     private (int Port, string Path, string HealthPath) DefaultServiceOptions(string serviceName) =>
         serviceName switch
@@ -629,7 +629,7 @@ public sealed partial class CliApplication
             _ => (8080, "/", "/")
         };
 
-    private sealed record ServiceConfigDraft(string Name, MinicloudServiceConfig Config);
+    private sealed record ServiceConfigDraft(string Name, SelfrunServiceConfig Config);
 
     private static string ToTitle(string value) =>
         string.IsNullOrEmpty(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];

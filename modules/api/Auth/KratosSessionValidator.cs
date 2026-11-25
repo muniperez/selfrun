@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed class KratosSessionValidator(HttpClient client, IOptions<KratosOptions> options) : IKratosSessionValidator
 {

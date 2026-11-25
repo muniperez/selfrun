@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Telemetry.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Telemetry.Services;
 
-namespace Minicloud.Telemetry.Controllers;
+namespace Selfrun.Telemetry.Controllers;
 
 [ApiController]
 [Route("internal/api/telemetry")]

@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class CustomDomainRegistration
 {
@@ -6,7 +6,7 @@ public sealed class CustomDomainRegistration
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string? AppId { get; set; }
-    public MinicloudApp? App { get; set; }
+    public SelfrunApp? App { get; set; }
     public string Hostname { get; set; } = default!;
     public string VerificationToken { get; set; } = default!;
     public string Status { get; set; } = "pending";

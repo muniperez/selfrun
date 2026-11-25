@@ -6,7 +6,7 @@ afterEach(cleanup);
 it.each([
   ["example.com", "example.com", "@"],
   ["staging.api.example.co.uk", "example.co.uk", "staging.api"],
-  ["_minicloud-verification.example.com", "example.com", "_minicloud-verification"]
+  ["_selfrun-verification.example.com", "example.com", "_selfrun-verification"]
 ])("formats the record name for %s in its explicit DNS zone", (name, zone, expected) => {
   render(<DomainDnsRecord type="TXT" name={name} value="value" />);
   expect(screen.getByText(name)).toBeInTheDocument();

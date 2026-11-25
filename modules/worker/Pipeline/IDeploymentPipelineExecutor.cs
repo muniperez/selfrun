@@ -1,6 +1,6 @@
-using Minicloud.Common.Models;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Worker.Pipeline;
+namespace Selfrun.Worker.Pipeline;
 
 /// <summary>
 /// Executes the steps of the deployment pipeline once claimed from the queue.

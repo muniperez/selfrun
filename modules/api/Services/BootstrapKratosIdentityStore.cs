@@ -2,10 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class BootstrapKratosIdentityStore(HttpClient client, IOptions<KratosOptions> options)
     : IBootstrapIdentityStore
@@ -36,7 +36,7 @@ public sealed class BootstrapKratosIdentityStore(HttpClient client, IOptions<Kra
                 throw BootstrapException.Unavailable();
             if (!item.TryGetProperty("metadata_admin", out var metadata) ||
                 metadata.ValueKind != JsonValueKind.Object ||
-                !metadata.TryGetProperty("minicloud_bootstrap", out var bootstrap) ||
+                !metadata.TryGetProperty("selfrun_bootstrap", out var bootstrap) ||
                 bootstrap.ValueKind != JsonValueKind.Object ||
                 ReadString(bootstrap, "installationId") != installationId ||
                 ReadString(bootstrap, "operationId") != operationId)
@@ -95,7 +95,7 @@ public sealed class BootstrapKratosIdentityStore(HttpClient client, IOptions<Kra
                 schema_id = "user",
                 traits = new { email, name = new { first = displayName } },
                 credentials = new { password = new { config = new { password } } },
-                metadata_admin = new { minicloud_bootstrap = new { installationId, operationId } }
+                metadata_admin = new { selfrun_bootstrap = new { installationId, operationId } }
             })
         };
         using var response = await SendAsync(request, cancellationToken);
@@ -104,7 +104,7 @@ public sealed class BootstrapKratosIdentityStore(HttpClient client, IOptions<Kra
         var result = ParseIdentity(root);
         if (!root.TryGetProperty("metadata_admin", out var metadata) ||
             metadata.ValueKind != JsonValueKind.Object ||
-            !metadata.TryGetProperty("minicloud_bootstrap", out var marker) ||
+            !metadata.TryGetProperty("selfrun_bootstrap", out var marker) ||
             ReadString(marker, "installationId") != installationId || ReadString(marker, "operationId") != operationId)
             throw BootstrapException.Unavailable();
         return result;

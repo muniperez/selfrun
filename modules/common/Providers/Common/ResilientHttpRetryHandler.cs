@@ -1,8 +1,8 @@
 using System.Net;
 using Microsoft.Extensions.Logging;
-using Minicloud.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Extensibility;
 
-namespace Minicloud.Common.Providers.Common;
+namespace Selfrun.Common.Providers.Common;
 
 public class ResilientHttpRetryHandler : DelegatingHandler
 {

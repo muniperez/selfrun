@@ -160,7 +160,7 @@ export function CustomDomainSetupDialog({ appId, serviceName, registration: init
           {step === 1 && registration ? (
             <>
               <div><h3 className="font-semibold">Verify you own {registration.hostname}</h3><p className="mt-1 text-sm text-muted-foreground">Open your DNS provider, find this domain’s DNS settings, and add the TXT record below. Save it, then select Verify DNS.</p></div>
-              <DomainDnsRecord type="TXT" name={`_minicloud-verification.${registration.hostname}`} value={registration.verificationToken} />
+              <DomainDnsRecord type="TXT" name={`_selfrun-verification.${registration.hostname}`} value={registration.verificationToken} />
               <p className="text-sm text-muted-foreground">Keep the TXT record. DNS propagation can take up to 48 hours.</p>
               {registration.failureMessage ? <p role="status" className="rounded-md border bg-muted/30 p-3 text-sm">{registration.failureMessage}</p> : null}
             </>

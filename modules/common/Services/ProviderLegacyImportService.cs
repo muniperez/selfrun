@@ -1,17 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 // Explicit operator assignment of legacy resources. The selected account must
 // already have an OpenBao credential; import only performs provider reads.
 public sealed class ProviderLegacyImportService(
-    MinicloudDbContext db, ProviderCatalogService catalog, ProviderAccountClientFactory clients,
+    SelfrunDbContext db, ProviderCatalogService catalog, ProviderAccountClientFactory clients,
     IOptions<ProviderPlanOptions> options, TimeProvider clock)
 {
     public async Task<ProviderLegacyImportResult> ImportAsync(ProviderLegacyImportRequest request, CancellationToken ct)
@@ -33,10 +33,10 @@ public sealed class ProviderLegacyImportService(
             {
                 // Match admission's app -> account -> plan lock order. Sorting
                 // prevents two multi-app imports from locking apps in reverse.
-                var importApps = new Dictionary<string, MinicloudApp>(StringComparer.Ordinal);
+                var importApps = new Dictionary<string, SelfrunApp>(StringComparer.Ordinal);
                 foreach (var binding in request.AppBindings.OrderBy(x => x.AppId, StringComparer.Ordinal))
                 {
-                    IQueryable<MinicloudApp> appQuery = db.Apps;
+                    IQueryable<SelfrunApp> appQuery = db.Apps;
                     if (db.Database.IsNpgsql()) appQuery = db.Apps.FromSqlInterpolated($"SELECT * FROM apps WHERE id = {binding.AppId} FOR UPDATE");
                     var app = await appQuery.Include(x => x.Organization).SingleOrDefaultAsync(
                         x => x.Id == binding.AppId && x.OrganizationId == request.OrganizationId, ct)
@@ -96,11 +96,11 @@ public sealed class ProviderLegacyImportService(
                     if (resources.Count > 0)
                     {
                         var resourceId = resources[0].ProviderServerId!;
-                        var name = $"minicloud-{app.Organization.Slug}-production-{app.Slug}".ToLowerInvariant();
+                        var name = $"selfrun-{app.Organization.Slug}-production-{app.Slug}".ToLowerInvariant();
                         var found = await client.FindServerAsync(name, ct);
                         if (found is null || found.Id != resourceId || found.Name != name ||
                             (account.ProviderType == CloudProvider.Hetzner && !HasLabels(found.Labels,
-                                ("managed-by", "minicloud"), ("customer", app.Organization.Slug), ("app", app.Slug), ("env", "production"))))
+                                ("managed-by", "selfrun"), ("customer", app.Organization.Slug), ("app", app.Slug), ("env", "production"))))
                             throw Error("legacy_import_resource_unverified", "The original server could not be verified in the selected account. No ownership was changed.");
                         var providerName = account.ProviderType.ToString().ToLowerInvariant();
                         if (await db.ServerInstances.AnyAsync(x => x.AppId != app.Id &&
@@ -187,7 +187,7 @@ public sealed class ProviderLegacyImportService(
                         ? await storage.FindVolumeAsync(volume.Id, ct) : await storage.GetVolumeAsync(volume.ProviderVolumeId, ct);
                     if (remote is null || remote.Name != volume.Id || remote.Region != volume.Region ||
                         (volume.ProviderVolumeId is not null && remote.Id != volume.ProviderVolumeId) ||
-                        !HasLabels(remote.Labels, ("managed-by", "minicloud"), ("app-id", volume.AppId), ("storage-name", volume.Name), ("purpose", "customer-storage")))
+                        !HasLabels(remote.Labels, ("managed-by", "selfrun"), ("app-id", volume.AppId), ("storage-name", volume.Name), ("purpose", "customer-storage")))
                         throw Error("legacy_import_resource_unverified", "A retained volume could not be verified in the selected account. No ownership was changed.");
                     if (remote.ServerId is not null && !await db.ServerInstances.AnyAsync(x => x.AppId == volume.AppId &&
                         x.OrganizationId == request.OrganizationId && x.ProviderAccountId == account.Id && x.ProviderServerId == remote.ServerId, ct))

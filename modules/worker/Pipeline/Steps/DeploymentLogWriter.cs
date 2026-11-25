@@ -1,9 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Batches streamed SSH output lines into <c>DeploymentLogs</c> rows.
@@ -84,7 +84,7 @@ public sealed class DeploymentLogWriter
 
         var batch = _buffer.ToList();
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         db.DeploymentLogs.AddRange(batch);
         await db.SaveChangesAsync(cancellationToken);
         _buffer.Clear();
@@ -94,6 +94,6 @@ public sealed class DeploymentLogWriter
         content.StartsWith("===== phase: ", StringComparison.Ordinal) ||
         content.StartsWith("TIMING phase=", StringComparison.Ordinal) ||
         content.StartsWith("ERROR: ", StringComparison.Ordinal) ||
-        content.StartsWith("__MINICLOUD_DEPLOY_FAILURE__=", StringComparison.Ordinal) ||
+        content.StartsWith("__SELFRUN_DEPLOY_FAILURE__=", StringComparison.Ordinal) ||
         content.StartsWith(SshDeployStep.RollbackMarker, StringComparison.Ordinal);
 }

@@ -1,6 +1,6 @@
-using Minicloud.Common.Providers;
+using Selfrun.Common.Providers;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class ProviderAccount
 {

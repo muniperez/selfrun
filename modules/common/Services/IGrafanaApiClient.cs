@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class GrafanaProvisioningUnavailableException(string message, Exception? inner = null)
     : Exception(message, inner);

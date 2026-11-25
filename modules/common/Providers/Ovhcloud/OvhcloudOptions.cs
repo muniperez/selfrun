@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Providers.Ovhcloud;
+namespace Selfrun.Common.Providers.Ovhcloud;
 
 public sealed class OvhcloudOptions
 {

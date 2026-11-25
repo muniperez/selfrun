@@ -5,7 +5,7 @@ services:
     environment:
       OperatorProfiling__Enabled: "true"
       OperatorProfiling__Endpoint: http://otel-collector:4318
-      OperatorProfiling__BearerToken: ${MINICLOUD_OPERATOR_OTLP_TOKEN:?Set MINICLOUD_OPERATOR_OTLP_TOKEN}
+      OperatorProfiling__BearerToken: ${SELFRUN_OPERATOR_OTLP_TOKEN:?Set SELFRUN_OPERATOR_OTLP_TOKEN}
     networks:
       - default
       - profiling
@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     environment:
-      MINICLOUD_OPERATOR_OTLP_TOKEN: ${MINICLOUD_OPERATOR_OTLP_TOKEN:?Set MINICLOUD_OPERATOR_OTLP_TOKEN}
+      SELFRUN_OPERATOR_OTLP_TOKEN: ${SELFRUN_OPERATOR_OTLP_TOKEN:?Set SELFRUN_OPERATOR_OTLP_TOKEN}
     volumes:
       - ./observability/profiling/collector.yml:/etc/otelcol-contrib/config.yaml:ro
     networks:
@@ -74,7 +74,7 @@ services:
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: operator
-      GF_SECURITY_ADMIN_PASSWORD: ${MINICLOUD_OPERATOR_GRAFANA_PASSWORD:?Set MINICLOUD_OPERATOR_GRAFANA_PASSWORD}
+      GF_SECURITY_ADMIN_PASSWORD: ${SELFRUN_OPERATOR_GRAFANA_PASSWORD:?Set SELFRUN_OPERATOR_GRAFANA_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_METRICS_ENABLED: "false"
@@ -101,13 +101,13 @@ services:
 
 networks:
   profiling:
-    name: minicloud-operator-profiling
+    name: selfrun-operator-profiling
     driver: bridge
 
 volumes:
   profiling-prometheus-data:
-    name: minicloud-operator-prometheus-dev
+    name: selfrun-operator-prometheus-dev
   profiling-tempo-data:
-    name: minicloud-operator-tempo-dev
+    name: selfrun-operator-tempo-dev
   profiling-grafana-data:
-    name: minicloud-operator-grafana-dev
+    name: selfrun-operator-grafana-dev

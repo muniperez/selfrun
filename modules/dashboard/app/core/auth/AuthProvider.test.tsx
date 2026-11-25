@@ -65,7 +65,7 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(screen.queryByText(accountProfile.email)).not.toBeInTheDocument();
     const logoutOptions = vi.mocked(fetch).mock.calls.at(-1)?.[1];
-    expect(logoutOptions).toMatchObject({ method: "POST", headers: { "X-Minicloud-CSRF": "synthetic-csrf" } });
+    expect(logoutOptions).toMatchObject({ method: "POST", headers: { "X-Selfrun-CSRF": "synthetic-csrf" } });
   });
 
   it("preserves a valid profile on an outage, retries, and clears only on confirmed expiry", async () => {

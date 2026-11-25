@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Text.Json;
-using Minicloud.Cli.Commands;
+using Selfrun.Cli.Commands;
 
-namespace Minicloud.Cli.Config;
+namespace Selfrun.Cli.Config;
 
 public sealed record InstanceProfile(string Name, string Url, string AppDomain);
 public sealed class InstanceStore(string configHome)
@@ -80,7 +80,7 @@ public sealed class InstanceStore(string configHome)
             (uri.Scheme == "http" && !uri.IsLoopback && !uri.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)) ||
             uri.AbsolutePath != "/" || uri.Query.Length > 0 || uri.Fragment.Length > 0 || uri.UserInfo.Length > 0)
             throw new CliCommandException(CliExitCodes.ValidationError,
-                "Enter the main Minicloud hostname, e.g. cloud.example.com (HTTPS; no paths or credentials). HTTP is allowed only for localhost.");
+                "Enter the main Selfrun hostname, e.g. cloud.example.com (HTTPS; no paths or credentials). HTTP is allowed only for localhost.");
         return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
     }
 

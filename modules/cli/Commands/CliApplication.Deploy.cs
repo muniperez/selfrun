@@ -4,11 +4,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Collections.Concurrent;
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Config;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Config;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -43,7 +43,7 @@ public sealed partial class CliApplication
             args = args.Skip(1).ToArray();
         }
 
-        var configPath = GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath();
+        var configPath = GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName;
         var databaseOverride = GetOption(args, "--database");
         var planOverride = GetOption(args, "--plan");
         if (args.Any(x => x == "--plan" || x.StartsWith("--plan=", StringComparison.Ordinal)) && string.IsNullOrWhiteSpace(planOverride))
@@ -62,9 +62,9 @@ public sealed partial class CliApplication
         if (hasBuildJobs &&
             (noPublish || buildMode == ServiceBuildModes.Source ||
              !int.TryParse(GetOption(args, "--build-jobs"), out buildJobs) ||
-             buildJobs is < 1 or > MinicloudConfigValidator.MaxDeploymentServices))
+             buildJobs is < 1 or > SelfrunConfigValidator.MaxDeploymentServices))
         {
-            _console.WriteError($"Usage error: --build-jobs requires an integer from 1 to {MinicloudConfigValidator.MaxDeploymentServices} and applies only to local builds.");
+            _console.WriteError($"Usage error: --build-jobs requires an integer from 1 to {SelfrunConfigValidator.MaxDeploymentServices} and applies only to local builds.");
             return CliExitCodes.ValidationError;
         }
         var deployAll = branchDeploy ||
@@ -83,7 +83,7 @@ public sealed partial class CliApplication
             return CliExitCodes.ValidationError;
         }
 
-        var configResult = MinicloudConfigLoader.Load(configPath);
+        var configResult = SelfrunConfigLoader.Load(configPath);
         if (!configResult.IsValid || configResult.Config is null)
         {
             PrintDiagnostics(configResult.Diagnostics);
@@ -168,7 +168,7 @@ public sealed partial class CliApplication
             catch (ApiException ex) when (ex.StatusCode == 404 || ex.Code == ImagePublicationErrors.Unavailable)
             {
                 throw new CliCommandException(CliExitCodes.ValidationError,
-                    "local_build_unavailable: this API does not support or enable local image publication. Nothing has been uploaded. Retry with selfrun deploy --build-mode source, or set buildMode: source on each sourcePath service in selfrun.yml (or minicloud.yml).");
+                    "local_build_unavailable: this API does not support or enable local image publication. Nothing has been uploaded. Retry with selfrun deploy --build-mode source, or set buildMode: source on each sourcePath service in selfrun.yml.");
             }
             localBuilderName = await LocalImageBuilder.PreflightAsync(buildTarget.Platform, cancellationToken);
             config = config with { Services = config.Services.ToDictionary(x => x.Key, x => x.Value.BuildMode == ServiceBuildModes.Local && !string.IsNullOrWhiteSpace(x.Value.SourcePath) ? x.Value with { BuildPlatform = buildTarget.Platform } : x.Value) };
@@ -250,7 +250,7 @@ public sealed partial class CliApplication
                     _console.WriteLine($"Deployment {pending.Id}: waiting for local build.");
                     using var builds = new Rendering.LocalImageBuildRenderer(_console, app.Name, localServices.Select(x => x.Key).ToArray());
                     var builder = new LocalImageBuilder(_apiClient, builds, localBuilderName!);
-                    var localImages = localServices.ToDictionary(x => x.Key, _ => $"minicloud-build:{Guid.NewGuid():N}", StringComparer.Ordinal);
+                    var localImages = localServices.ToDictionary(x => x.Key, _ => $"selfrun-build:{Guid.NewGuid():N}", StringComparer.Ordinal);
                     try
                     {
                         await Parallel.ForEachAsync(
@@ -407,8 +407,8 @@ public sealed partial class CliApplication
             return CliExitCodes.ValidationError;
         }
 
-        var configPath = GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath();
-        var configResult = MinicloudConfigLoader.Load(configPath);
+        var configPath = GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName;
+        var configResult = SelfrunConfigLoader.Load(configPath);
         if (!configResult.IsValid || string.IsNullOrWhiteSpace(configResult.Config?.AppId))
         {
             PrintDiagnostics(configResult.Diagnostics);
@@ -541,7 +541,7 @@ public sealed partial class CliApplication
     }
 
     private async Task<IReadOnlyList<string>> ResolveDeployServiceNamesAsync(
-        MinicloudConfig config,
+        SelfrunConfig config,
         string appId,
         IReadOnlyList<string> requestedServiceNames,
         bool deployAll,
@@ -628,7 +628,7 @@ public sealed partial class CliApplication
 
     private async Task<IReadOnlyList<ConfigDiagnostic>> ValidateActiveServiceSetAsync(
         string appId,
-        MinicloudConfig selectedConfig,
+        SelfrunConfig selectedConfig,
         CancellationToken cancellationToken)
     {
         if (selectedConfig.Services.Values.Any(x => x.Public == true))
@@ -654,10 +654,10 @@ public sealed partial class CliApplication
         ];
     }
 
-    internal static MinicloudConfig FilterConfigServices(MinicloudConfig config, IReadOnlyList<string> selectedServiceNames)
+    internal static SelfrunConfig FilterConfigServices(SelfrunConfig config, IReadOnlyList<string> selectedServiceNames)
     {
         var selected = selectedServiceNames.ToHashSet(StringComparer.Ordinal);
-        return new MinicloudConfig(
+        return new SelfrunConfig(
             config.App,
             config.Database,
             config.CommitSha,
@@ -669,7 +669,7 @@ public sealed partial class CliApplication
         };
     }
 
-    private async Task ValidateDeploymentSecretsAsync(string appId, MinicloudConfig config, CancellationToken cancellationToken)
+    private async Task ValidateDeploymentSecretsAsync(string appId, SelfrunConfig config, CancellationToken cancellationToken)
     {
         var references = new List<DeploymentSecretServiceRequest>();
         foreach (var (serviceName, service) in config.Services)
@@ -692,7 +692,7 @@ public sealed partial class CliApplication
         }
     }
 
-    private static int CountLocalSecrets(MinicloudConfig config)
+    private static int CountLocalSecrets(SelfrunConfig config)
     {
         var total = 0;
         foreach (var (_, service) in config.Services)
@@ -704,7 +704,7 @@ public sealed partial class CliApplication
         return total;
     }
 
-    private async Task SyncLocalSecretsAsync(EnvironmentDetailResponse app, MinicloudConfig config, Rendering.IDeploymentRenderer renderer, CancellationToken cancellationToken)
+    private async Task SyncLocalSecretsAsync(EnvironmentDetailResponse app, SelfrunConfig config, Rendering.IDeploymentRenderer renderer, CancellationToken cancellationToken)
     {
         foreach (var (serviceName, service) in config.Services)
         {
@@ -730,7 +730,7 @@ public sealed partial class CliApplication
     }
 
     private async Task<IReadOnlyDictionary<string, string>> BundleAndUploadDeploymentArtifactsAsync(
-        MinicloudConfig config,
+        SelfrunConfig config,
         string organizationSlug,
         string appSlug,
         Rendering.IDeploymentRenderer renderer,
@@ -781,7 +781,7 @@ public sealed partial class CliApplication
         var artifactStartedAt = DateTimeOffset.UtcNow;
         var artifactTimer = Stopwatch.StartNew();
         _timingSink.RecordTiming($"Timing: phase=artifact_prepare started_at={artifactStartedAt:O} items={sourceServices.Length} effective_concurrency={effectiveConcurrency}");
-        var outputDirectory = Path.Combine(Path.GetTempPath(), "minicloud-artifacts", Guid.NewGuid().ToString("N"));
+        var outputDirectory = Path.Combine(Path.GetTempPath(), "selfrun-artifacts", Guid.NewGuid().ToString("N"));
         try
         {
             await Parallel.ForEachAsync(
@@ -859,7 +859,7 @@ public sealed partial class CliApplication
         }
     }
 
-    private IReadOnlyList<ConfigDiagnostic> ValidateDeploymentSources(MinicloudConfig config)
+    private IReadOnlyList<ConfigDiagnostic> ValidateDeploymentSources(SelfrunConfig config)
     {
         var diagnostics = new List<ConfigDiagnostic>();
         foreach (var (serviceName, service) in config.Services)
@@ -887,7 +887,7 @@ public sealed partial class CliApplication
         }
     }
 
-    internal static IReadOnlyList<ConfigDiagnostic> ValidateDockerfileForService(string serviceName, MinicloudServiceConfig service)
+    internal static IReadOnlyList<ConfigDiagnostic> ValidateDockerfileForService(string serviceName, SelfrunServiceConfig service)
     {
         var diagnostics = new List<ConfigDiagnostic>();
         var dockerfilePath = EffectiveDockerfilePath(service);
@@ -920,7 +920,7 @@ public sealed partial class CliApplication
         return diagnostics;
     }
 
-    internal static string EffectiveDockerfilePath(MinicloudServiceConfig service) =>
+    internal static string EffectiveDockerfilePath(SelfrunServiceConfig service) =>
         string.IsNullOrWhiteSpace(service.Dockerfile)
             ? Path.Combine(service.SourcePath!, "Dockerfile")
             : service.Dockerfile;
@@ -957,7 +957,7 @@ public sealed partial class CliApplication
             .Select(argument => argument.Trim());
     }
 
-    private IReadOnlyList<ConfigDiagnostic> ValidateExplicitImagesForNoPublish(MinicloudConfig config)
+    private IReadOnlyList<ConfigDiagnostic> ValidateExplicitImagesForNoPublish(SelfrunConfig config)
     {
         var diagnostics = new List<ConfigDiagnostic>();
         foreach (var (serviceName, service) in config.Services)

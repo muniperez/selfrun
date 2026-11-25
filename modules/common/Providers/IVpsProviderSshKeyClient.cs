@@ -1,6 +1,6 @@
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers;
+namespace Selfrun.Common.Providers;
 
 public interface IVpsProviderSshKeyClient
 {

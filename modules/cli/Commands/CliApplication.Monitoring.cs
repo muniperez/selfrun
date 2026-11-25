@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli.Config;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Config;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -119,10 +119,10 @@ public sealed partial class CliApplication
             return me.Organizations[0];
         }
 
-        var path = GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath();
+        var path = GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName;
         if (File.Exists(path))
         {
-            var config = MinicloudConfigLoader.Load(path);
+            var config = SelfrunConfigLoader.Load(path);
             if (config.IsValid && !string.IsNullOrWhiteSpace(config.Config?.AppId))
             {
                 var application = await GetApplicationContextAsync(config.Config.AppId, cancellationToken);
@@ -133,7 +133,7 @@ public sealed partial class CliApplication
 
         throw new CliCommandException(
             CliExitCodes.ValidationError,
-            "Deployment numbers are scoped to an organization. Select one with --organization <id> or run the command next to an application's selfrun.yml (or minicloud.yml).");
+            "Deployment numbers are scoped to an organization. Select one with --organization <id> or run the command next to an application's selfrun.yml.");
     }
 
     private async Task<string> GetLatestDeploymentNumberAsync(OrganizationSummaryDto organization, CancellationToken cancellationToken)
@@ -354,8 +354,8 @@ public sealed partial class CliApplication
                             }
                         }
 
-                        if (content.StartsWith("Creating minicloud-", StringComparison.Ordinal) ||
-                            content.StartsWith("Starting minicloud-", StringComparison.Ordinal))
+                        if (content.StartsWith("Creating selfrun-", StringComparison.Ordinal) ||
+                            content.StartsWith("Starting selfrun-", StringComparison.Ordinal))
                         {
                             latestServiceLine = content;
                         }

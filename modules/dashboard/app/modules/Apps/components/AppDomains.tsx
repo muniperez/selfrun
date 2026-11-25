@@ -247,7 +247,7 @@ function HostnameTable({
   );
   const platform = services.flatMap((service) =>
     service.domains
-      .filter((binding) => binding.kind === "minicloud_subdomain")
+      .filter((binding) => binding.kind === "selfrun_subdomain")
       .map((binding) => ({ service, binding })),
   );
   const platformNeedsAttention = platform.some(

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public sealed record AgentConfig(
     string ServerId,
@@ -26,7 +26,7 @@ public sealed record AgentConfig(
             string.IsNullOrWhiteSpace(config.StatePath) ||
             string.IsNullOrWhiteSpace(config.AppId) ||
             string.IsNullOrWhiteSpace(config.ComposeProject) ||
-            !Regex.IsMatch(config.ComposeProject, @"\Aminicloud-[a-z0-9][a-z0-9-]{0,62}\z"))
+            !Regex.IsMatch(config.ComposeProject, @"\Aselfrun-[a-z0-9][a-z0-9-]{0,62}\z"))
         {
             throw new InvalidOperationException("Agent config is missing required fields.");
         }

@@ -1,10 +1,5 @@
 # Self-hosting Selfrun
 
-> **Rename note:** MiniCloud is transitioning to **Selfrun** (`selfrun.dev`).
-> Server bundle paths, `MINICLOUD_SECRETS_DIR`, `/opt/minicloud`, and `server-v*`
-> package conventions are intentionally preserved during Stages 1–2; see
-> [Selfrun Rename Migration Guide](selfrun-rename-migration.md).
-
 The packaged self-hosting stack is under active development. T40's server
 release foundation is merged, but no server images or release bundle have been
 published or qualified yet. Do not create a `server-v*` release or expose a
@@ -40,7 +35,7 @@ readiness. It is not a claim that a server release exists.
 entry point and includes the versioned Compose definition in
 `packaging/server/bundle/compose.yml`. It requires an exact release's digest
 `images.env`, runtime `server-release.json`, validated host configuration and
-root-protected secret files under `MINICLOUD_SECRETS_DIR`. The installer will
+root-protected secret files under `SELFRUN_SECRETS_DIR`. The installer will
 create and validate this state before starting services. See the [packaged
 installation contract](specs/v1.0-self-hosted-installation.md) and [server
 release trust/interface](../packaging/server/README.md) for implementation
@@ -62,12 +57,12 @@ OpenBao, Kratos and Caddy configuration is separate.
 
 SQLite is supported for disposable local API development and tests, not the
 hosted control plane. Set `Database:Provider` to `Sqlite` and
-`ConnectionStrings:Minicloud` to a disposable SQLite connection string. API
+`ConnectionStrings:Selfrun` to a disposable SQLite connection string. API
 startup initializes it when `Database:RunMigrationsOnStartup` is enabled
 (enabled by default in Development); the standalone
-`dotnet modules/api/bin/Release/net10.0/Minicloud.Api.dll migrate` command
+`dotnet modules/api/bin/Release/net10.0/Selfrun.Api.dll migrate` command
 initializes it regardless of that startup switch. Without a configured
-connection string, both SQLite paths use `Data Source=minicloud-dev.db`.
+connection string, both SQLite paths use `Data Source=selfrun-dev.db`.
 
 Both paths create the current schema and seed rows atomically in an empty
 database. Repeating initialization, or opening a database created by
@@ -77,9 +72,9 @@ not rerun seeds.
 The supported populated upgrade prerequisite is the **complete SQLite
 `EnsureCreated` schema from source revision
 `feb807325b371d813ffb2613135a16da2426f220`**, before T30 identity/session changes.
-That revision's `modules/tests/Minicloud.Tests/SqliteTestHarness.cs` uses the
+That revision's `modules/tests/Selfrun.Tests/SqliteTestHarness.cs` uses the
 actual SQLite runtime model with EF Core 10.0.5. The regression fixture
-`modules/tests/Minicloud.Tests/Fixtures/Sqlite-feb8073.sql` freezes its full
+`modules/tests/Selfrun.Tests/Fixtures/Sqlite-feb8073.sql` freezes its full
 provider-generated schema. This is a verified source prerequisite, not a
 published SQLite server release or a hand-created subset of tables.
 
@@ -123,7 +118,7 @@ manual staged primitives. It is not yet a qualified installation procedure.
 ### Operator inputs
 
 The bundle reads these values from the release environment. The image
-references (`MINICLOUD_*_IMAGE`) come from the generated, digest-pinned
+references (`SELFRUN_*_IMAGE`) come from the generated, digest-pinned
 `images.env`.
 
 | Variable | Purpose |
@@ -133,28 +128,28 @@ references (`MINICLOUD_*_IMAGE`) come from the generated, digest-pinned
 | `API_HOSTNAME`, `CONSOLE_HOSTNAME` | The Caddy site hostnames for the API and dashboard. These are also reserved from app routing. |
 | `APP_DOMAIN` | The managed application domain suffix. |
 | `MANAGE_DNS_RECORDS` | Optional. Defaults to `false`. |
-| `MINICLOUD_SOURCE_URL` | Optional. The public source link shown in the dashboard. |
-| `MINICLOUD_GOOGLE_OIDC_ENABLED` | Defaults to `false`; the installer derives it only from explicit `googleOidc.enabled`. Shared API/Kratos switch, not a qualification assertion. |
-| `MINICLOUD_EMAIL_RECOVERY_ENABLED` | Unset by default; set to `true` only when the verified installer selects `compose.email-recovery.yml` for an explicit first-install `emailRecovery.enabled` opt-in. Basic password installs need no SMTP configuration. |
-| `MINICLOUD_PASSKEY_ENABLED` | Defaults to `true`. Shared API/Kratos switch for WebAuthn passkey sign-in and account-settings management. |
-| `MINICLOUD_PASSKEY_RP_DISPLAY_NAME` | Optional WebAuthn relying-party display name shown by browsers during passkey prompts. Defaults to `Minicloud`. |
-| `MINICLOUD_PASSKEY_RP_ID` | Optional WebAuthn relying-party ID. Defaults to `CONSOLE_HOSTNAME`; when overridden, must equal `CONSOLE_HOSTNAME` or be a dot-separated parent domain suffix. |
-| `MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED` | Defaults to `true`. Offers the per-user **Keep me signed in** option; when `false`, existing remembered sessions follow the standard limits. |
-| `MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES`, `MINICLOUD_PORTAL_STANDARD_MAX_MINUTES` | Dashboard inactivity timeout and absolute lifetime for standard sessions. Default `120` (2 hours) and `720` (12 hours). |
-| `MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES`, `MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES` | Same limits for **Keep me signed in** sessions. Default `10080` (7 days) and `43200` (30 days). |
-| `MINICLOUD_KRATOS_SESSION_LIFESPAN` | Upstream Kratos session lifespan, default `10080m`. Keep it at least the longest enabled idle timeout; the installer derives it. |
-| `MINICLOUD_SECRETS_DIR` | Root-owned directory (`0700`) holding the files below. |
-| `MINICLOUD_INSTALLATION_ID` | Persistent non-secret installation identity from host metadata, shared by API and bootstrap inputs. Never regenerate it on restart. |
-| `MINICLOUD_HOST_ID` | Optional non-secret host-local maintenance identity from `<root>/host-id`, written by the packaged maintenance tooling and never backed up. Leave empty for manual Compose; `transfer` binds the maintenance authority to it. |
+| `SELFRUN_SOURCE_URL` | Optional. The public source link shown in the dashboard. |
+| `SELFRUN_GOOGLE_OIDC_ENABLED` | Defaults to `false`; the installer derives it only from explicit `googleOidc.enabled`. Shared API/Kratos switch, not a qualification assertion. |
+| `SELFRUN_EMAIL_RECOVERY_ENABLED` | Unset by default; set to `true` only when the verified installer selects `compose.email-recovery.yml` for an explicit first-install `emailRecovery.enabled` opt-in. Basic password installs need no SMTP configuration. |
+| `SELFRUN_PASSKEY_ENABLED` | Defaults to `true`. Shared API/Kratos switch for WebAuthn passkey sign-in and account-settings management. |
+| `SELFRUN_PASSKEY_RP_DISPLAY_NAME` | Optional WebAuthn relying-party display name shown by browsers during passkey prompts. Defaults to `Selfrun`. |
+| `SELFRUN_PASSKEY_RP_ID` | Optional WebAuthn relying-party ID. Defaults to `CONSOLE_HOSTNAME`; when overridden, must equal `CONSOLE_HOSTNAME` or be a dot-separated parent domain suffix. |
+| `SELFRUN_PORTAL_KEEP_SIGNED_IN_ENABLED` | Defaults to `true`. Offers the per-user **Keep me signed in** option; when `false`, existing remembered sessions follow the standard limits. |
+| `SELFRUN_PORTAL_STANDARD_IDLE_MINUTES`, `SELFRUN_PORTAL_STANDARD_MAX_MINUTES` | Dashboard inactivity timeout and absolute lifetime for standard sessions. Default `120` (2 hours) and `720` (12 hours). |
+| `SELFRUN_PORTAL_REMEMBERED_IDLE_MINUTES`, `SELFRUN_PORTAL_REMEMBERED_MAX_MINUTES` | Same limits for **Keep me signed in** sessions. Default `10080` (7 days) and `43200` (30 days). |
+| `SELFRUN_KRATOS_SESSION_LIFESPAN` | Upstream Kratos session lifespan, default `10080m`. Keep it at least the longest enabled idle timeout; the installer derives it. |
+| `SELFRUN_SECRETS_DIR` | Root-owned directory (`0700`) holding the files below. |
+| `SELFRUN_INSTALLATION_ID` | Persistent non-secret installation identity from host metadata, shared by API and bootstrap inputs. Never regenerate it on restart. |
+| `SELFRUN_HOST_ID` | Optional non-secret host-local maintenance identity from `<root>/host-id`, written by the packaged maintenance tooling and never backed up. Leave empty for manual Compose; `transfer` binds the maintenance authority to it. |
 | `OPENBAO_ROOT_TOKEN_FILE` | Used only by the `openbao-configure` maintenance service. Unset during normal operation. |
 
-The dashboard container receives only `MINICLOUD_API_URL`,
-`MINICLOUD_APP_DOMAIN` and `MINICLOUD_SOURCE_URL`. At startup it validates them
+The dashboard container receives only `SELFRUN_API_URL`,
+`SELFRUN_APP_DOMAIN` and `SELFRUN_SOURCE_URL`. At startup it validates them
 and writes `runtime-config.json`, so one image serves any installation.
 
 ### Protected files
 
-Create each file under `MINICLOUD_SECRETS_DIR` with mode `0600`, using
+Create each file under `SELFRUN_SECRETS_DIR` with mode `0600`, using
 independent random values:
 
 - `postgres-admin-password`, `app-db-password`, `kratos-db-password`
@@ -270,14 +265,14 @@ disabled.
   Kratos's default of deriving the scheme from its private `http://kratos:4433/`
   base URL. Passkeys will not work over plain HTTP or untrusted certificates.
 - **Relying-party ID (`rpId`) and display name.** By default, Compose and the
-  installer set `MINICLOUD_PASSKEY_RP_ID` to `CONSOLE_HOSTNAME` and
-  `MINICLOUD_PASSKEY_RP_DISPLAY_NAME` to `Minicloud`. Configure or disable
+  installer set `SELFRUN_PASSKEY_RP_ID` to `CONSOLE_HOSTNAME` and
+  `SELFRUN_PASSKEY_RP_DISPLAY_NAME` to `Selfrun`. Configure or disable
   passkeys with the optional installer object (all fields optional):
 
 ```json
 "passkeys": {
   "enabled": true,
-  "rpDisplayName": "Minicloud",
+  "rpDisplayName": "Selfrun",
   "rpId": "console.example.com"
 }
 ```
@@ -320,7 +315,7 @@ add this non-secret object to the protected configuration:
 ```json
 "googleOidc": {
   "enabled": true,
-  "credentialsFile": "/etc/minicloud-operator/google-oidc.json"
+  "credentialsFile": "/etc/selfrun-operator/google-oidc.json"
 }
 ```
 
@@ -357,7 +352,7 @@ The fixed, read-only `google-oidc.mapper.jsonnet` maps a verified Google email
 to `traits.email`; arbitrary providers/mappers/redirect overrides are not
 accepted. Keep password login enabled, public registration disabled and
 Kratos private. Sign in with a password first and link Google in account
-settings; Google login only admits identities already bound to Minicloud.
+settings; Google login only admits identities already bound to Selfrun.
 The reverse proxy must preserve the public API Host for callback validation.
 
 Keep the original configuration **and** credential input available unchanged
@@ -376,7 +371,7 @@ Enabling this operator option does **not** claim live qualification. The current
 API contract has `GoogleEnabled`, not a separate `GoogleQualified` setting.
 Live Google sign-in/link/422 behavior, separate-origin HTTPS/CORS/CSRF, proxy
 Host handling, SMTP recovery and browser/Grafana recovery revocation remain
-deferred in [#44](https://github.com/muniventures/minicloud/issues/44).
+deferred in [#44](https://github.com/muniperez/selfrun/issues/44).
 The prior disposable Kratos v1.3.1 checks are not a live Google qualification.
 
 ### Optional packaged email/code recovery
@@ -426,22 +421,22 @@ The exported metric contract is:
 | `dotnet.gc.heap.total_allocated` | `By` | none |
 | `dotnet.gc.pause.time` | `s` | none |
 | `dotnet.thread_pool.queue.length` | `{work_item}` | none |
-| `minicloud.worker.claims` | `{claim}` | `outcome` (`claimed`, `empty`, `refused`) |
-| `minicloud.worker.queue.wait` | `s` | none |
-| `minicloud.worker.step.duration` | `s` | `operation` (`resolve-provision`, `dns-setup`, `ssh-deploy`, `health-finalize`, `rollback`), `outcome` |
-| `minicloud.db.commands` | `{command}` | `operation`, `outcome` |
-| `minicloud.db.command.duration` | `s` | `operation`, `outcome` |
-| `minicloud.gateway.connections.active` | `{connection}` | `operation` (`http`, `websocket`) |
-| `minicloud.gateway.admission.wait` | `s` | `outcome` (`admitted`, `rejected`, `timeout`, `cancelled`) |
-| `minicloud.gateway.relay.bytes` | `By` | `operation` (`http`, `websocket`), `direction` (`upstream`, `downstream`) |
-| `minicloud.gateway.websocket.closes` | `{connection}` | `outcome` (`client_closed`, `upstream_closed`, `message_limit`, `activity_rejected`, `revoked`, `lifetime`, `aborted`) |
+| `selfrun.worker.claims` | `{claim}` | `outcome` (`claimed`, `empty`, `refused`) |
+| `selfrun.worker.queue.wait` | `s` | none |
+| `selfrun.worker.step.duration` | `s` | `operation` (`resolve-provision`, `dns-setup`, `ssh-deploy`, `health-finalize`, `rollback`), `outcome` |
+| `selfrun.db.commands` | `{command}` | `operation`, `outcome` |
+| `selfrun.db.command.duration` | `s` | `operation`, `outcome` |
+| `selfrun.gateway.connections.active` | `{connection}` | `operation` (`http`, `websocket`) |
+| `selfrun.gateway.admission.wait` | `s` | `outcome` (`admitted`, `rejected`, `timeout`, `cancelled`) |
+| `selfrun.gateway.relay.bytes` | `By` | `operation` (`http`, `websocket`), `direction` (`upstream`, `downstream`) |
+| `selfrun.gateway.websocket.closes` | `{connection}` | `outcome` (`client_closed`, `upstream_closed`, `message_limit`, `activity_rejected`, `revoked`, `lifetime`, `aborted`) |
 
 CPU, allocation and pause counters are cumulative; derive rates from their
 changes over time. HTTP metrics are the built-in .NET instruments, collected
 once. Database operations are fixed names (`ef.command`,
 `deployment.number.allocate`, `worker.lease.acquire`, and
 `worker.lease.heartbeat`); outcomes are `success`, `error` or `cancelled`.
-The shared `Minicloud.Operator` meter and activity source are reserved for
+The shared `Selfrun.Operator` meter and activity source are reserved for
 bounded operator signals. New operations must use fixed names, never user data.
 The telemetry service emits OTLP ingestion stage spans named `otlp.auth`,
 `otlp.read`, `otlp.gzip`, `otlp.decode`, `otlp.normalize`, `otlp.quota`,
@@ -465,12 +460,12 @@ disabled as described in the gateway README.
 
 ### Startup order
 
-1. `database-initialize` creates or verifies the `minicloud` and `kratos` roles
+1. `database-initialize` creates or verifies the `selfrun` and `kratos` roles
    and databases under a session advisory lock. It refuses unexpected database
    owners and elevated/inherited service-role privileges before creating state.
 2. `kratos-migrate` and `api-migrate` run once, then exit. `api-migrate` holds a
    PostgreSQL advisory lock, so concurrent runs serialize. It refuses a
-   populated database that has no Minicloud migration history or has unknown
+   populated database that has no Selfrun migration history or has unknown
    migrations. The only exception is the complete, recognized history of
    [permanently retired workspaces](../packaging/server/bundle/upgrade-prerequisites.md#retire-workspaces-before-upgrading-in-place).
 3. `kratos`, `api`, `worker`, `dashboard` and `caddy` start after their
@@ -491,12 +486,12 @@ The opt-in `api-bootstrap` maintenance service uses the same API image and
 application database as the running API. It publishes no port and does not
 start the API, worker or OpenBao administration. The installer/manual caller
 must preserve one `installationId` and original stable `operationId` in host
-metadata. Set `MINICLOUD_INSTALLATION_ID` to that same installation identity;
+metadata. Set `SELFRUN_INSTALLATION_ID` to that same installation identity;
 all mutating request files use both IDs. The API reads the operation identity
 from the shared durable bootstrap record, not another environment value.
 
 Before invoking it, prepare root-owned `0700` directories
-`$MINICLOUD_SECRETS_DIR/bootstrap/input` and `bootstrap/output`. Input
+`$SELFRUN_SECRETS_DIR/bootstrap/input` and `bootstrap/output`. Input
 `request.json` must be a regular, non-symlink root-owned `0600`/`0400` file;
 the input directory is mounted read-only. Output is mounted separately
 read-write; the producer creates each new token file exclusively as `0600`.
@@ -511,12 +506,12 @@ docker compose --profile maintenance run --rm -T api-bootstrap
 
 # Override only the API arguments; preserve its dotnet entry point.
 docker compose --profile maintenance run --rm -T api-bootstrap \
-  bootstrap prepare --input-file /run/minicloud-bootstrap/input/request.json \
-  --output-file /run/minicloud-bootstrap/output/setup-token-1
+  bootstrap prepare --input-file /run/selfrun-bootstrap/input/request.json \
+  --output-file /run/selfrun-bootstrap/output/setup-token-1
 
 # Equivalent protected redirected stdin; never echo a token to construct it.
 docker compose --profile maintenance run --rm -T api-bootstrap \
-  bootstrap status --stdin < "$MINICLOUD_SECRETS_DIR/bootstrap/input/request.json"
+  bootstrap status --stdin < "$SELFRUN_SECRETS_DIR/bootstrap/input/request.json"
 ```
 
 `rotate-token` also requires a new `--output-file`. `complete` consumes protected
@@ -554,7 +549,7 @@ temporary protected copy of the root token:
 docker compose --profile maintenance run --rm openbao-configure
 ```
 
-This service is idempotent. It creates the KV v2 mount, the scoped `minicloud`
+This service is idempotent. It creates the KV v2 mount, the scoped `selfrun`
 policy and the AppRole (with a 24-hour periodic token), and writes the AppRole
 credentials. Delete the temporary root-token copy afterwards.
 

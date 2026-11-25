@@ -1,15 +1,15 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using SharedDiagnostics = Minicloud.Common.Diagnostics.OperatorDiagnostics;
+using SharedDiagnostics = Selfrun.Common.Diagnostics.OperatorDiagnostics;
 
-namespace Minicloud.Worker.Diagnostics;
+namespace Selfrun.Worker.Diagnostics;
 
 // Opt-in (OperatorDiagnostics:Enabled) claim, queue and step signals; tags are fixed and never carry IDs.
 internal static class WorkerQueueDiagnostics
 {
-    public const string ClaimsName = "minicloud.worker.claims";
-    public const string QueueWaitName = "minicloud.worker.queue.wait";
-    public const string StepDurationName = "minicloud.worker.step.duration";
+    public const string ClaimsName = "selfrun.worker.claims";
+    public const string QueueWaitName = "selfrun.worker.queue.wait";
+    public const string StepDurationName = "selfrun.worker.step.duration";
 
     private static readonly Counter<long> Claims = SharedDiagnostics.Meter.CreateCounter<long>(ClaimsName, "{claim}");
     private static readonly Histogram<double> QueueWait = SharedDiagnostics.Meter.CreateHistogram<double>(QueueWaitName, "s");

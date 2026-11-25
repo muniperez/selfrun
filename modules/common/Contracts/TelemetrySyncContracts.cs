@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed class TelemetrySyncBatchRequest
 {
@@ -107,7 +107,7 @@ public sealed class TelemetryCleanupStatusItem
 
 public sealed class TelemetryLaunchCodeIssueRequest
 {
-    public string MinicloudUserId { get; set; } = default!;
+    public string SelfrunUserId { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
     public string Destination { get; set; } = default!;

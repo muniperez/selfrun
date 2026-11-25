@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Minicloud.Common.Providers.Extensibility;
+namespace Selfrun.Common.Providers.Extensibility;
 
 public enum ProviderImageFormat
 {

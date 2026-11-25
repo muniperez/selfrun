@@ -13,7 +13,7 @@ class FenceTests(unittest.TestCase):
             calls.append((args, kwargs))
             output = b'/var/lib/postgresql/data/pg_hba.conf\n' if args[-1] == 'SHOW hba_file' else b'0\n'
             return subprocess.CompletedProcess(args, 0, output, b'')
-        result = fence.execute({'container':'minicloud-source-db-1','databaseName':'orders','operationId':'dbop_test','action':'fence'}, run)
+        result = fence.execute({'container':'selfrun-source-db-1','databaseName':'orders','operationId':'dbop_test','action':'fence'}, run)
         self.assertEqual('fenced', result['status'])
         writes = [kwargs['input'] for args, kwargs in calls if 'input' in kwargs]
         self.assertEqual([b'host orders all 0.0.0.0/0 reject\nhost orders all ::/0 reject\n'], writes)

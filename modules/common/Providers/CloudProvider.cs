@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers;
+namespace Selfrun.Common.Providers;
 
 public enum CloudProvider
 {

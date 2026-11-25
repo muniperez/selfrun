@@ -1,22 +1,22 @@
-using PlanMapping = Minicloud.Common.Services.ProviderPlanMapping;
+using PlanMapping = Selfrun.Common.Services.ProviderPlanMapping;
 using System.Net.Sockets;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Worker.Pipeline;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Providers.Common;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Providers.Common;
 using System.Net;
-using Minicloud.Worker.Ssh;
-using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
+using Selfrun.Worker.Ssh;
+using static Selfrun.Common.Providers.ProviderServiceCollectionExtensions;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Step 1: resolve the existing <c>ServerInstance</c> for the app or provision
@@ -206,18 +206,18 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
                     serverName,
                     mapping.Sku,
                     mapping.Region,
-                    // The public key is installed for minicloud by cloud-init, not a provider key ID.
+                    // The public key is installed for selfrun by cloud-init, not a provider key ID.
                     sshKeyReferences,
                     BuildCloudInit(orgSlug, appSlug, _options.SshPublicKey,
                         ServerHostKeyEnrollment.CloudInitScript(hostEnrollmentId, hostEnrollmentSecret)),
                     new Dictionary<string, string>
                     {
-                        ["managed-by"] = "minicloud",
+                        ["managed-by"] = "selfrun",
                         ["customer"] = orgSlug,
                         ["app"] = appSlug,
                         ["env"] = "production",
                     },
-                    [$"minicloud-customer-{orgSlug}", $"minicloud-app-{appSlug}", "minicloud-env-production"],
+                    [$"selfrun-customer-{orgSlug}", $"selfrun-app-{appSlug}", "selfrun-env-production"],
                     Image: context.ProviderImage),
                         cancellationToken);
                 }
@@ -282,7 +282,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         byte[] secret;
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var record = await db.ServerInstances.AsNoTracking().SingleAsync(s => s.Id == serverInstanceId, cancellationToken);
             if (record.HostKeyFingerprint is not null || record.HostKeyEnrollmentSecret is null)
             {
@@ -355,7 +355,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var app = await db.Apps
             .AsNoTracking()
             .Include(a => a.Organization)
@@ -404,7 +404,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         ProviderQualificationGate.EnsureQualified(context.Provider);
         if (context.ProviderAccountId is null) { return; }
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         if (!await db.ProviderAccounts.AnyAsync(x => x.Id == context.ProviderAccountId && x.OrganizationId == context.OrganizationId && x.Enabled, ct) ||
             !await db.ProviderPlans.AnyAsync(x => x.Id == context.PlanId && x.OrganizationId == context.OrganizationId && x.ProviderAccountId == context.ProviderAccountId && x.Enabled, ct))
         { throw new PipelineStepException(FailureCode, "The selected provider account or plan is disabled for allocation."); }
@@ -452,7 +452,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
         PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var servers = await db.ServerInstances
             .AsNoTracking()
             .Where(s => s.OrganizationId == context.OrganizationId && s.AppId == context.AppId)
@@ -500,7 +500,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
     private async Task EnsureNewAppAsync(PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         if (await db.Deployments.AnyAsync(d => d.AppId == context.AppId &&
                 d.Status == DeploymentStatus.Succeeded, cancellationToken) ||
             await db.ServerInstances.AnyAsync(s => s.AppId == context.AppId, cancellationToken) ||
@@ -709,7 +709,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             $"hostname: {ManagedServerName.ForHostname(orgSlug, appSlug)}",
             "users:",
             "  - default",
-            "  - name: minicloud",
+            "  - name: selfrun",
             "    groups: sudo",
             "    shell: /bin/bash",
             "    sudo: ALL=(ALL) NOPASSWD:ALL",
@@ -751,7 +751,7 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             "      swapon /swapfile",
             "      echo '/swapfile none swap sw 0 0' >> /etc/fstab",
             "      sysctl vm.swappiness=10",
-            "      echo 'vm.swappiness=10' >> /etc/sysctl.d/99-minicloud-swap.conf",
+            "      echo 'vm.swappiness=10' >> /etc/sysctl.d/99-selfrun-swap.conf",
             "    fi",
             "  - apt-get update",
             "  - |",
@@ -768,10 +768,10 @@ public sealed class ResolveProvisionServerStep : IPipelineStep
             "    else",
             "      apt-get install -y python3 ca-certificates curl gnupg jq ufw caddy docker.io docker-compose-v2 docker-buildx e2fsprogs util-linux",
             "    fi",
-            "  - usermod -aG docker minicloud",
-            "  - mkdir -p /opt/minicloud/bin /opt/minicloud/caddy/apps /opt/minicloud/apps /opt/minicloud/logs",
-            "  - printf 'import /opt/minicloud/caddy/apps/*.caddy\\n' > /etc/caddy/Caddyfile",
-            "  - chown -R minicloud:minicloud /opt/minicloud/apps /opt/minicloud/logs",
+            "  - usermod -aG docker selfrun",
+            "  - mkdir -p /opt/selfrun/bin /opt/selfrun/caddy/apps /opt/selfrun/apps /opt/selfrun/logs",
+            "  - printf 'import /opt/selfrun/caddy/apps/*.caddy\\n' > /etc/caddy/Caddyfile",
+            "  - chown -R selfrun:selfrun /opt/selfrun/apps /opt/selfrun/logs",
             "  - ufw allow OpenSSH",
             "  - ufw allow 80/tcp",
             "  - ufw allow 443/tcp",

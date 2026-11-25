@@ -1,9 +1,13 @@
 {
   "installed": {
     "tag": "server-v0.0.1-rc.4",
-    "sourceRevision": "7502b06e5f8d378d61245075edbb7d9bc6944e52"
+    "sourceRevision": "7502b06e5f8d378d61245075edbb7d9bc6944e52",
+    "apiProject": "modules/api/Minicloud.Api.csproj",
+    "connectionStringKey": "ConnectionStrings__Minicloud"
   },
   "target": {
+    "apiProject": "modules/api/Selfrun.Api.csproj",
+    "connectionStringKey": "ConnectionStrings__Selfrun",
     "releaseDescriptor": "packaging/server/release.json",
     "migrationService": "api-migrate",
     "migrationCommand": "migrate"

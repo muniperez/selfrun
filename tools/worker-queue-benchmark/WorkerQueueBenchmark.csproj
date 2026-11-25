@@ -7,6 +7,6 @@
     <WorkerSourceRoot Condition="'$(WorkerSourceRoot)' == ''">$(MSBuildThisFileDirectory)../..</WorkerSourceRoot>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(WorkerSourceRoot)/modules/worker/Minicloud.Worker.csproj" />
+    <ProjectReference Include="$(WorkerSourceRoot)/modules/worker/Selfrun.Worker.csproj" />
   </ItemGroup>
 </Project>

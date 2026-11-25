@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Diagnostics;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal static class SeedOperatorKeys
 {
@@ -83,8 +83,8 @@ internal static class SeedOperatorKeys
     };
 
     internal static string[] GenerationArguments(string path, bool protect) =>
-        protect ? ["-t", "ed25519", "-C", "minicloud-operator", "-f", path]
-                : ["-t", "ed25519", "-C", "minicloud-operator", "-f", path, "-N", ""];
+        protect ? ["-t", "ed25519", "-C", "selfrun-operator", "-f", path]
+                : ["-t", "ed25519", "-C", "selfrun-operator", "-f", path, "-N", ""];
 
     internal static async Task<string> ManagedIdentityAsync(string path, CancellationToken ct)
     {

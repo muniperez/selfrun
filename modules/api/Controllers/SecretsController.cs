@@ -1,14 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -18,7 +18,7 @@ public sealed class SecretsController : ControllerBase
     [HttpGet("services")]
     public async Task<IResult> ListSecretServices(
         [FromQuery] string appId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         CancellationToken cancellationToken,
@@ -44,7 +44,7 @@ public sealed class SecretsController : ControllerBase
     public async Task<IResult> CreateSecretService(
         [FromQuery] string appId,
         [FromBody] CreateAppServiceSecretServiceRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         [FromServices] ILogger<SecretsController> logger,
@@ -84,7 +84,7 @@ public sealed class SecretsController : ControllerBase
         [FromQuery] string appId,
         [FromRoute] string serviceId,
         [FromBody] UpdateAppServiceSecretServiceRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         CancellationToken cancellationToken,
@@ -122,7 +122,7 @@ public sealed class SecretsController : ControllerBase
     public async Task<IResult> DeleteSecretService(
         [FromQuery] string appId,
         [FromRoute] string serviceId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         CancellationToken cancellationToken,
@@ -155,7 +155,7 @@ public sealed class SecretsController : ControllerBase
     public async Task<IResult> ListSecrets(
         [FromQuery] string appId,
         [FromQuery] string? service,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         CancellationToken cancellationToken,
@@ -181,7 +181,7 @@ public sealed class SecretsController : ControllerBase
     public async Task<IResult> SetSecret(
         [FromQuery] string appId,
         [FromBody] SetAppServiceSecretRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         [FromServices] ILogger<SecretsController> logger,
@@ -220,7 +220,7 @@ public sealed class SecretsController : ControllerBase
         catch (SecretStoreUnavailableException ex)
         {
             logger.LogWarning(ex, "Secret store unavailable while setting secret {SecretName} for app {AppId} service {ServiceName}.", request.Name, targetAppId, request.ServiceName);
-            return EndpointResults.Problem("secret_store_unavailable", $"Minicloud could not save this secret right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
+            return EndpointResults.Problem("secret_store_unavailable", $"Selfrun could not save this secret right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -229,7 +229,7 @@ public sealed class SecretsController : ControllerBase
         [FromQuery] string appId,
         [FromRoute] string secretId,
         [FromBody] UpdateAppServiceSecretRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         [FromServices] ILogger<SecretsController> logger,
@@ -268,7 +268,7 @@ public sealed class SecretsController : ControllerBase
         catch (SecretStoreUnavailableException ex)
         {
             logger.LogWarning(ex, "Secret store unavailable while updating secret {SecretId} for app {AppId}.", secretId, targetAppId);
-            return EndpointResults.Problem("secret_store_unavailable", $"Minicloud could not save this secret right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
+            return EndpointResults.Problem("secret_store_unavailable", $"Selfrun could not save this secret right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -276,7 +276,7 @@ public sealed class SecretsController : ControllerBase
     public async Task<IResult> DeleteSecret(
         [FromQuery] string appId,
         [FromRoute] string secretId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         [FromServices] ILogger<SecretsController> logger,
@@ -310,7 +310,7 @@ public sealed class SecretsController : ControllerBase
         catch (SecretStoreUnavailableException ex)
         {
             logger.LogWarning(ex, "Secret store unavailable while deleting secret {SecretId} for app {AppId}.", secretId, targetAppId);
-            return EndpointResults.Problem("secret_store_unavailable", $"Minicloud could not remove this secret right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
+            return EndpointResults.Problem("secret_store_unavailable", $"Selfrun could not remove this secret right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
         }
     }
 }

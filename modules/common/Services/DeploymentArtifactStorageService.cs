@@ -1,14 +1,14 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Models;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class DeploymentArtifactStorageOptions
 {
     public const string SectionName = "DeploymentArtifacts";
-    public string RootPath { get; set; } = Path.Combine(Path.GetTempPath(), "minicloud-artifacts");
+    public string RootPath { get; set; } = Path.Combine(Path.GetTempPath(), "selfrun-artifacts");
     public long MaxArtifactBytes { get; set; } = 250L * 1024L * 1024L;
     public long MaxDeploymentBytes { get; set; } = 750L * 1024L * 1024L;
     public TimeSpan Retention { get; set; } = TimeSpan.FromDays(1);

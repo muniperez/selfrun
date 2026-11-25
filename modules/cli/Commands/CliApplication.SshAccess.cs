@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Numerics;
 using System.Security.Cryptography;
-using Minicloud.Cli.Api;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Api;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -24,7 +24,7 @@ public sealed partial class CliApplication
 
     /// <summary>
     /// Builds the environment SSH selection from CLI flags. Returns null when no SSH flag is supplied so creation
-    /// keeps Minicloud-only access and updates preserve the saved selection.
+    /// keeps Selfrun-only access and updates preserve the saved selection.
     /// </summary>
     internal static SshAccessRequest? ParseSshAccessOptions(IReadOnlyList<string> args)
     {

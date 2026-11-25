@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Minicloud.RuntimeAgent;
+using Selfrun.RuntimeAgent;
 
 var parsed = BenchmarkArgs.Parse(args);
 if (parsed is null)
@@ -116,7 +116,7 @@ async Task<object> RunAsync(string directory, BenchmarkArgs options, bool isWarm
         : new AgentProfilingConfig(Enabled: false);
 
     var config = new AgentConfig(
-        "srv", "org", "app", "http://synthetic.invalid", "minicloud-bench", "/unused", "/unused",
+        "srv", "org", "app", "http://synthetic.invalid", "selfrun-bench", "/unused", "/unused",
         Path.Combine(directory, "state.json"),
         profilingConfig);
     var commands = new SyntheticCommands(options.Workload, options.Runner == "children", options.Seed);
@@ -378,7 +378,7 @@ async Task VerifyAsync(string directory)
 {
     foreach (var workload in new[] { "overlap", "burst", "churn" })
     {
-        var config = new AgentConfig("srv", "org", "app", "http://synthetic.invalid", "minicloud-bench", "/unused", "/unused", Path.Combine(directory, workload, "state.json"));
+        var config = new AgentConfig("srv", "org", "app", "http://synthetic.invalid", "selfrun-bench", "/unused", "/unused", Path.Combine(directory, workload, "state.json"));
         var commands = new SyntheticCommands(workload, false, seed: 1);
         using var handler = new SyntheticApi(config, new VirtualClock(), protocolMode: false);
         using var http = new HttpClient(handler);

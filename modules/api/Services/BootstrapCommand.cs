@@ -2,12 +2,12 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public static class BootstrapCommand
 {
@@ -27,14 +27,14 @@ public static class BootstrapCommand
             builder.Logging.ClearProviders();
             var options = DatabaseMigrationCommand.ResolveOptions(builder.Configuration, builder.Environment.EnvironmentName);
             if (string.Equals(options.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
-                options.FallbackConnectionString = "Data Source=minicloud-dev.db";
-            var connectionString = MinicloudDatabase.ResolveConnectionString(options);
-            builder.Services.AddDbContext<MinicloudDbContext>(db =>
-                MinicloudDatabase.ConfigureDbContext(db, options.Provider, connectionString));
+                options.FallbackConnectionString = "Data Source=selfrun-dev.db";
+            var connectionString = SelfrunDatabase.ResolveConnectionString(options);
+            builder.Services.AddDbContext<SelfrunDbContext>(db =>
+                SelfrunDatabase.ConfigureDbContext(db, options.Provider, connectionString));
             builder.Services.Configure<KratosOptions>(builder.Configuration.GetSection(KratosOptions.SectionName));
             builder.Services.AddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<IIdGenerator, IdGenerator>();
-            builder.Services.AddMinicloudBootstrap();
+            builder.Services.AddSelfrunBootstrap();
             await using var provider = builder.Services.BuildServiceProvider();
             await using var scope = provider.CreateAsyncScope();
             var service = scope.ServiceProvider.GetRequiredService<BootstrapService>();

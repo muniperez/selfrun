@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public interface IAppServiceSecretResolver
 {
@@ -15,7 +15,7 @@ public interface IAppServiceSecretResolver
 }
 
 public sealed partial class AppServiceSecretService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ISecretStore secretStore,
     IIdGenerator ids,
     TimeProvider timeProvider) : IAppServiceSecretResolver
@@ -25,7 +25,7 @@ public sealed partial class AppServiceSecretService(
     public const string StatusDeleted = "deleted";
     public const string ReservedTelemetryHeadersName = TelemetryLimits.ReservedHeadersSecretName;
 
-    public async Task CloneAsync(MinicloudApp sourceApp, MinicloudApp targetApp, CancellationToken cancellationToken)
+    public async Task CloneAsync(SelfrunApp sourceApp, SelfrunApp targetApp, CancellationToken cancellationToken)
     {
         var sourceDefinitions = await db.AppServiceSecretServices.AsNoTracking()
             .Where(x => x.AppId == sourceApp.Id && x.DeletedAt == null)
@@ -104,7 +104,7 @@ public sealed partial class AppServiceSecretService(
         return definitions.Select(definition => ToResponse(definition, secretCounts.GetValueOrDefault(definition.ServiceName))).ToArray();
     }
 
-    public async Task<CreateServiceResult> CreateServiceAsync(MinicloudApp app, CreateAppServiceSecretServiceRequest request, CancellationToken cancellationToken)
+    public async Task<CreateServiceResult> CreateServiceAsync(SelfrunApp app, CreateAppServiceSecretServiceRequest request, CancellationToken cancellationToken)
     {
         var validation = ValidateServiceName(request.ServiceName);
         if (!validation.IsValid)
@@ -197,7 +197,7 @@ public sealed partial class AppServiceSecretService(
         return rows.Select(ToResponse).ToArray();
     }
 
-    public async Task<SetSecretResult> SetAsync(MinicloudApp app, SetAppServiceSecretRequest request, CancellationToken cancellationToken)
+    public async Task<SetSecretResult> SetAsync(SelfrunApp app, SetAppServiceSecretRequest request, CancellationToken cancellationToken)
     {
         var validation = ValidateSetRequest(request);
         if (!validation.IsValid)
@@ -408,7 +408,7 @@ public sealed partial class AppServiceSecretService(
     private static bool IsAppScopeServiceName(string serviceName) =>
         string.Equals(serviceName, AppScopeServiceName, StringComparison.Ordinal);
 
-    private async Task<AppServiceSecretServiceDefinition> EnsureServiceDefinitionAsync(MinicloudApp app, string serviceName, CancellationToken cancellationToken)
+    private async Task<AppServiceSecretServiceDefinition> EnsureServiceDefinitionAsync(SelfrunApp app, string serviceName, CancellationToken cancellationToken)
     {
         var existing = await db.AppServiceSecretServices.SingleOrDefaultAsync(
             x => x.AppId == app.Id && x.ServiceName == serviceName,
@@ -444,7 +444,7 @@ public sealed partial class AppServiceSecretService(
     private static ValidationResult ValidateServiceName(string serviceName)
     {
         var validation = new ValidationResult();
-        if (string.IsNullOrWhiteSpace(serviceName) || !MinicloudConfigNameRegex().IsMatch(serviceName))
+        if (string.IsNullOrWhiteSpace(serviceName) || !SelfrunConfigNameRegex().IsMatch(serviceName))
         {
             validation.Add("serviceName", "Service name is invalid.");
         }
@@ -453,7 +453,7 @@ public sealed partial class AppServiceSecretService(
     }
 
     [System.Text.RegularExpressions.GeneratedRegex("^[a-z0-9][a-z0-9_-]*$")]
-    private static partial System.Text.RegularExpressions.Regex MinicloudConfigNameRegex();
+    private static partial System.Text.RegularExpressions.Regex SelfrunConfigNameRegex();
 }
 
 public sealed record SetSecretResult(bool Succeeded, AppServiceSecretResponse? Secret, ValidationResult? Validation)

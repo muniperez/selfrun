@@ -2,13 +2,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Pipeline;
-using Minicloud.Common.Providers.Dns;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Common.Providers.Dns;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Step 2: compute public hostnames and upsert Cloudflare DNS records
@@ -166,7 +166,7 @@ public sealed class DnsSetupStep : IPipelineStep
         PipelineStepContext context, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
 
         var deployment = await db.Deployments
             .AsNoTracking()
@@ -211,7 +211,7 @@ public sealed class DnsSetupStep : IPipelineStep
                 string.Equals(binding.ServiceName, service.Name, StringComparison.Ordinal)).ToArray();
             var enabledHosts = serviceBindings
                 .Where(binding => binding.Status != DomainBindingService.StatusDisabled &&
-                    (binding.Kind == DomainBindingService.KindMinicloudSubdomain ||
+                    (binding.Kind == DomainBindingService.KindSelfrunSubdomain ||
                      (binding.Kind == DomainBindingService.KindCustomDomain && binding.DnsStatus == DomainBindingService.DnsVerified && binding.TargetIp == context.ServerIp)) &&
                     !string.IsNullOrWhiteSpace(binding.Hostname))
                 .Select(binding => binding.Hostname)
@@ -247,7 +247,7 @@ public sealed class DnsSetupStep : IPipelineStep
             }
 
             var domains = await db.Domains
-                .Where(x => x.AppId == context.AppId && x.Kind == DomainBindingService.KindMinicloudSubdomain && hostnames.Contains(x.Hostname))
+                .Where(x => x.AppId == context.AppId && x.Kind == DomainBindingService.KindSelfrunSubdomain && hostnames.Contains(x.Hostname))
                 .ToListAsync(ct);
             foreach (var domain in domains)
             {

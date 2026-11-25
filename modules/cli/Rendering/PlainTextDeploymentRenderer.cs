@@ -2,7 +2,7 @@
 
 using System.Diagnostics;
 
-namespace Minicloud.Cli.Rendering;
+namespace Selfrun.Cli.Rendering;
 
 public sealed class PlainTextDeploymentRenderer : IDeploymentRenderer
 {
@@ -244,11 +244,11 @@ public sealed class PlainTextDeploymentRenderer : IDeploymentRenderer
 
             if (!string.IsNullOrWhiteSpace(result.DeploymentNumber))
             {
-                lines.Add($"Logs: minicloud logs {result.DeploymentNumber}");
+                lines.Add($"Logs: selfrun logs {result.DeploymentNumber}");
             }
             else
             {
-                lines.Add("Logs: minicloud logs");
+                lines.Add("Logs: selfrun logs");
             }
 
             if (!string.IsNullOrWhiteSpace(result.ConsoleUrl))

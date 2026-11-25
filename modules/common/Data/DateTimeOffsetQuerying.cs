@@ -1,7 +1,7 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 
-namespace Minicloud.Common.Data;
+namespace Selfrun.Common.Data;
 
 public static class DateTimeOffsetQuerying
 {

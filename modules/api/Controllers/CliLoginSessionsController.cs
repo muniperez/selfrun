@@ -2,17 +2,17 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Providers;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Providers;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -20,7 +20,7 @@ public sealed class CliLoginSessionsController : ControllerBase
 {
     [HttpPost]
     [AllowAnonymous]
-    public async Task<IResult> CreateCliLoginSession([FromServices] MinicloudDbContext db, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken)
+    public async Task<IResult> CreateCliLoginSession([FromServices] SelfrunDbContext db, [FromServices] IIdGenerator ids, [FromServices] TimeProvider timeProvider, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var session = new CliLoginSession
@@ -41,7 +41,7 @@ public sealed class CliLoginSessionsController : ControllerBase
 
     [HttpGet("{sessionId}")]
     [AllowAnonymous]
-    public async Task<IResult> GetCliLoginSession([FromRoute] string sessionId, [FromServices] MinicloudDbContext db, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> GetCliLoginSession([FromRoute] string sessionId, [FromServices] SelfrunDbContext db, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var session = await db.CliLoginSessions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
         return session is null
@@ -51,7 +51,7 @@ public sealed class CliLoginSessionsController : ControllerBase
 
     [HttpPost("{sessionId}/exchange")]
     [AllowAnonymous]
-    public async Task<IResult> ExchangeCliLoginSession([FromRoute] string sessionId, [FromServices] MinicloudDbContext db, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> ExchangeCliLoginSession([FromRoute] string sessionId, [FromServices] SelfrunDbContext db, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var session = await db.CliLoginSessions
             .Include(x => x.Organization)
@@ -97,7 +97,7 @@ public sealed class CliLoginSessionsController : ControllerBase
 
     [HttpPost("{sessionId}/approve")]
     [Authorize]
-    public async Task<IResult> ApproveCliLoginSession([FromRoute] string sessionId, [FromBody] ApproveCliLoginSessionRequest request, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IIdGenerator ids, [FromServices] IApiKeyTokenService tokenService, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> ApproveCliLoginSession([FromRoute] string sessionId, [FromBody] ApproveCliLoginSessionRequest request, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IIdGenerator ids, [FromServices] IApiKeyTokenService tokenService, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         if (!principal.IsDashboardUser || principal.UserId is null)

@@ -1,18 +1,18 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
-namespace Minicloud.Api;
+namespace Selfrun.Api;
 
 internal static class RuntimeIngestionDiagnostics
 {
-    private const string MeterName = "Minicloud.RuntimeIngestion";
+    private const string MeterName = "Selfrun.RuntimeIngestion";
     private static readonly Meter Meter = new(MeterName);
     private static readonly ActivitySource ActivitySource = new(MeterName);
-    private static readonly Counter<long> Calls = Meter.CreateCounter<long>("minicloud.runtime.ingestion.calls");
-    private static readonly Histogram<double> Duration = Meter.CreateHistogram<double>("minicloud.runtime.ingestion.duration", "s");
-    private static readonly Counter<long> Bytes = Meter.CreateCounter<long>("minicloud.runtime.ingestion.bytes", "By");
-    private static readonly Counter<long> Records = Meter.CreateCounter<long>("minicloud.runtime.ingestion.records", "{record}");
-    private static readonly Histogram<double> LogPruneDuration = Meter.CreateHistogram<double>("minicloud.runtime.ingestion.logs.prune.duration", "s");
+    private static readonly Counter<long> Calls = Meter.CreateCounter<long>("selfrun.runtime.ingestion.calls");
+    private static readonly Histogram<double> Duration = Meter.CreateHistogram<double>("selfrun.runtime.ingestion.duration", "s");
+    private static readonly Counter<long> Bytes = Meter.CreateCounter<long>("selfrun.runtime.ingestion.bytes", "By");
+    private static readonly Counter<long> Records = Meter.CreateCounter<long>("selfrun.runtime.ingestion.records", "{record}");
+    private static readonly Histogram<double> LogPruneDuration = Meter.CreateHistogram<double>("selfrun.runtime.ingestion.logs.prune.duration", "s");
 
     public static Measurement Start(string operation, long bytes, long records, CancellationToken cancellationToken) =>
         new(operation, bytes, records, cancellationToken, Stopwatch.GetTimestamp(), ActivitySource.StartActivity(operation, ActivityKind.Server));

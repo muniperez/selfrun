@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
-using Minicloud.RuntimeAgent;
+using Selfrun.RuntimeAgent;
 
-const string defaultConfigPath = "/opt/minicloud/agent/config.json";
+const string defaultConfigPath = "/opt/selfrun/agent/config.json";
 var configPath = args.Length > 0 ? args[0] : defaultConfigPath;
 var config = AgentConfig.Load(configPath);
 var token = (await File.ReadAllTextAsync(config.TokenPath)).Trim();

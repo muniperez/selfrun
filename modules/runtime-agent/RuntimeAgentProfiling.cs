@@ -8,7 +8,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 /// <summary>
 /// Bounded, opt-in profiling contract for a single operator-controlled runtime host.
@@ -125,8 +125,8 @@ public sealed record RuntimeAgentDiagnosticSummary(
     int QueueLag,
     string? TraceId)
 {
-    public const string SchemaVersion = "minicloud.runtime-agent.summary.v1";
-    public const string ServiceName = "minicloud-runtime-agent";
+    public const string SchemaVersion = "selfrun.runtime-agent.summary.v1";
+    public const string ServiceName = "selfrun-runtime-agent";
 
     private static readonly HashSet<string> AllowedTopLevelFields = new(StringComparer.Ordinal)
     {
@@ -633,19 +633,19 @@ public sealed class RuntimeAgentProfiler : IAsyncDisposable
             {
                 switch (instrument.Name)
                 {
-                    case "minicloud.runtime.agent.operation.calls" when operation is not null && outcome is not null:
+                    case "selfrun.runtime.agent.operation.calls" when operation is not null && outcome is not null:
                         GetOrAddAccumulator(operation, outcome).Count += measurement;
                         break;
-                    case "minicloud.runtime.agent.child.launches":
+                    case "selfrun.runtime.agent.child.launches":
                         _childLaunches += measurement;
                         break;
-                    case "minicloud.runtime.agent.bytes":
+                    case "selfrun.runtime.agent.bytes":
                         _inputBytes += measurement;
                         break;
-                    case "minicloud.runtime.agent.records":
+                    case "selfrun.runtime.agent.records":
                         _records += measurement;
                         break;
-                    case "minicloud.runtime.agent.cursor.writes":
+                    case "selfrun.runtime.agent.cursor.writes":
                         if (outcome == "written") { _cursorWrites += measurement; }
                         else if (outcome == "skipped") { _cursorWritesSkipped += measurement; }
                         break;
@@ -655,7 +655,7 @@ public sealed class RuntimeAgentProfiler : IAsyncDisposable
 
         listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
         {
-            if (instrument.Name != "minicloud.runtime.agent.operation.duration")
+            if (instrument.Name != "selfrun.runtime.agent.operation.duration")
             {
                 return;
             }

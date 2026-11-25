@@ -1,11 +1,11 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Models;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Common.Models;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed partial class DatabaseOperationProcessor
 {
@@ -17,7 +17,7 @@ public sealed partial class DatabaseOperationProcessor
         JsonSerializer.Deserialize<BackupMaterial>(encryption.Decrypt(policy.EncryptedKeyMaterialJson
             ?? throw new InvalidOperationException("Backup custody is unavailable.")), Json)!;
 
-    private async Task<(MinicloudApp App, ServerInstance Host)> BackupSourceAsync(ManagedDatabase database, CancellationToken ct)
+    private async Task<(SelfrunApp App, ServerInstance Host)> BackupSourceAsync(ManagedDatabase database, CancellationToken ct)
     {
         var appId = database.AppId ?? database.RecoverySourceAppId;
         if (appId is null)
@@ -31,7 +31,7 @@ public sealed partial class DatabaseOperationProcessor
         return (app, host);
     }
 
-    private async Task<(MinicloudApp App, ServerInstance Host, string Url)> BackupRepositoryAsync(DatabaseBackupPolicy policy, CancellationToken ct)
+    private async Task<(SelfrunApp App, ServerInstance Host, string Url)> BackupRepositoryAsync(DatabaseBackupPolicy policy, CancellationToken ct)
     {
         var app = await db.Apps.SingleAsync(x => x.Id == policy.RepositoryAppId && x.OrganizationId == policy.OrganizationId && x.Database == DatabaseMode.None && x.Slug.StartsWith("dbrepo-") && x.DeletionStatus == null, ct);
         var host = await db.ServerInstances.SingleAsync(x => x.AppId == app.Id && x.OrganizationId == app.OrganizationId, ct);
@@ -41,7 +41,7 @@ public sealed partial class DatabaseOperationProcessor
         return (app, host, "https://" + domain.Hostname);
     }
 
-    private async Task ConfigureBackupAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task ConfigureBackupAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         var policy = await db.DatabaseBackupPolicies.SingleAsync(x => x.DatabaseId == database.Id && x.OrganizationId == database.OrganizationId, ct);
         if (policy.RepositoryAppId is null)
@@ -68,7 +68,7 @@ public sealed partial class DatabaseOperationProcessor
         policy.UpdatedAt = clock.GetUtcNow();
     }
 
-    private async Task CaptureBackupAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task CaptureBackupAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         var policy = await db.DatabaseBackupPolicies.SingleAsync(x => x.DatabaseId == database.Id && x.OrganizationId == database.OrganizationId, ct);
         ValidateScheduledPolicy(operation, policy);
@@ -96,11 +96,11 @@ public sealed partial class DatabaseOperationProcessor
                 // Docker exec uses the source database's own identity; no global
                 // roles or neighboring database contents enter the dump.
                 environment["DATABASE_URL"] = "postgresql://" + Uri.EscapeDataString(credentials.Username) + ":" + Uri.EscapeDataString(credentials.Password) + "@127.0.0.1:5432/" + Uri.EscapeDataString(credentials.DatabaseName);
-                environment["POSTGRES_CONTAINER"] = "minicloud-" + sourceApp.Slug + "-db-1";
+                environment["POSTGRES_CONTAINER"] = "selfrun-" + sourceApp.Slug + "-db-1";
             }
             else if (database.Engine == "sqlite")
             {
-                environment["SQLITE_PATH"] = "/opt/minicloud/apps/" + sourceApp.Slug + "/data/sqlite/app.db";
+                environment["SQLITE_PATH"] = "/opt/selfrun/apps/" + sourceApp.Slug + "/data/sqlite/app.db";
             }
             else { throw new InvalidOperationException("Unsupported backup engine."); }
             var result = await ExecuteRemoteAsync(operation, sourceHost, "dispatch.py", new { action = "backup", environment, operationId = operation.Id }, ct);
@@ -160,7 +160,7 @@ public sealed partial class DatabaseOperationProcessor
                 .OrderBy(x => x.UpdatedAt).Take(100).ToListAsync(ct);
             var result = await ExecuteRemoteAsync(operation, repository.Host, "repository-control.py", new
             {
-                container = "minicloud-" + repository.App.Slug + "-repository-1",
+                container = "selfrun-" + repository.App.Slug + "-repository-1",
                 binding = new { environment = BackupNamespace(database.OrganizationId), databaseId = database.Id, token = material.RepositoryToken,
                     retentionDays = policy.RetentionDays, minimumComplete = policy.MinimumCopies, enabled = active, keepLastCopies = policy.KeepLastCopies, policyRevision = policy.Revision },
                 backupIds = artifacts.Select(x => x.BackupId).ToArray(), operationId = operation.Id
@@ -236,7 +236,7 @@ public sealed partial class DatabaseOperationProcessor
         {
             var source = await BackupSourceAsync(database, ct);
             var fileName = operation.Id + ".db";
-            var target = "/opt/minicloud/apps/" + source.App.Slug + "/data/sqlite/recovery-" + fileName;
+            var target = "/opt/selfrun/apps/" + source.App.Slug + "/data/sqlite/recovery-" + fileName;
             var result = await ExecuteRemoteAsync(operation, source.Host, "dispatch.py", new
             {
                 action = "restore", repositoryUrl = repository.Url, @namespace = BackupNamespace(database.OrganizationId),
@@ -248,7 +248,7 @@ public sealed partial class DatabaseOperationProcessor
         }
         if (database.Engine != "postgres" || string.IsNullOrWhiteSpace(request.TargetName)) { throw new InvalidOperationException("Unsupported restore destination."); }
         ManagedDatabaseServer? targetServer = null;
-        MinicloudApp targetApp;
+        SelfrunApp targetApp;
         ServerInstance targetHost;
         if (request.TargetServerId is not null)
         {
@@ -296,14 +296,14 @@ public sealed partial class DatabaseOperationProcessor
             await SaveOwnedDatabaseChangesAsync(operation, ct);
         }
         var targetCredentials = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(targetDatabase.EncryptedCredentialsJson!), Json)!;
-        await ExecuteRemoteAsync(operation, targetHost, "operation.py", new { action = "create", container = "minicloud-" + targetApp.Slug + "-db-1", databaseName = targetCredentials.DatabaseName,
-            username = targetCredentials.Username, password = targetCredentials.Password, adminUser = "minicloud", operationId = operation.Id }, ct);
+        await ExecuteRemoteAsync(operation, targetHost, "operation.py", new { action = "create", container = "selfrun-" + targetApp.Slug + "-db-1", databaseName = targetCredentials.DatabaseName,
+            username = targetCredentials.Username, password = targetCredentials.Password, adminUser = "selfrun", operationId = operation.Id }, ct);
         await ExecuteRemoteAsync(operation, targetHost, "dispatch.py", new
         {
             action = "restore", repositoryUrl = repository.Url, @namespace = BackupNamespace(database.OrganizationId), sourceDatabaseId = database.Id,
             backupId = artifact.BackupId, repositoryToken = material.RepositoryToken, encryptionKey = material.EncryptionKey,
-            target = targetCredentials.DatabaseName, username = targetCredentials.Username, adminUser = "minicloud",
-            container = "minicloud-" + targetApp.Slug + "-db-1", operationId = operation.Id
+            target = targetCredentials.DatabaseName, username = targetCredentials.Username, adminUser = "selfrun",
+            container = "selfrun-" + targetApp.Slug + "-db-1", operationId = operation.Id
         }, ct);
         targetDatabase.Status = "ready";
         await ReconcileDatabaseAccessAsync(operation, targetDatabase, targetApp, targetHost, "internal", [], ct);

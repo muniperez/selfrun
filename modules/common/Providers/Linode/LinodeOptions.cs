@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.Linode;
+namespace Selfrun.Common.Providers.Linode;
 
 public sealed class LinodeOptions
 {

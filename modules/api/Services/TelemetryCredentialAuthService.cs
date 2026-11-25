@@ -2,11 +2,11 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed record TelemetryAuthSnapshot(
     string CredentialId,
@@ -28,7 +28,7 @@ public sealed class TelemetryAuthUnavailableException(string message, Exception?
 /// Runtime tokens (mrt_*) are never accepted here.
 /// </summary>
 public sealed class TelemetryCredentialAuthService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ITelemetryTokenService tokens,
     TimeProvider timeProvider)
 {

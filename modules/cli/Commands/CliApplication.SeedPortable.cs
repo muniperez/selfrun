@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Text.Json;
-using Minicloud.Cli.Seed;
+using Selfrun.Cli.Seed;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -343,7 +343,7 @@ public sealed partial class CliApplication
         SeedFiles.Check(path);
         SeedGuard.Require(new FileInfo(path).Length < 1048576, "Existing report is too large; choose a fresh report path.");
         using var previous = SeedPortable.ReadDocument(File.ReadAllText(path));
-        SeedGuard.Require(previous.RootElement.GetProperty("kind").GetString() == "minicloud-seed-report"
+        SeedGuard.Require(previous.RootElement.GetProperty("kind").GetString() == "selfrun-seed-report"
             && previous.RootElement.GetProperty("schemaVersion").GetInt32() == 1
             && previous.RootElement.GetProperty("seedId").GetString() == seedId,
             "Never overwrite keys, journals, private exports, another seed's report or unrelated files.");

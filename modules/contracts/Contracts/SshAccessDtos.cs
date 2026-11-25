@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SshAccessRequest(

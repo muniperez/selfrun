@@ -1,15 +1,15 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/databases/{id}/operations/{operationId}/cancel")]
-public sealed class DatabaseOperationCancellationController(MinicloudDbContext db, DatabaseManagementService service, AuditEventService audit, TimeProvider clock) : ControllerBase
+public sealed class DatabaseOperationCancellationController(SelfrunDbContext db, DatabaseManagementService service, AuditEventService audit, TimeProvider clock) : ControllerBase
 {
     [HttpPost]
     public Task<IResult> Cancel(string id, string operationId, CancellationToken ct) => DatabasesController.Handle(async () =>

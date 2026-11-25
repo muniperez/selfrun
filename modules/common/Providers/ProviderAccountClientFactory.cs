@@ -1,20 +1,20 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers.DigitalOcean;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Hetzner;
-using Minicloud.Common.Providers.Vultr;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers.DigitalOcean;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Hetzner;
+using Selfrun.Common.Providers.Vultr;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Common.Providers;
+namespace Selfrun.Common.Providers;
 
 // A new adapter instance captures one credential generation. Authorization is added
 // per request by the adapters, never to shared transport default headers.
 public class ProviderAccountClientFactory(
-    MinicloudDbContext db, ISecretStore secrets, IHttpClientFactory http,
+    SelfrunDbContext db, ISecretStore secrets, IHttpClientFactory http,
     IOptions<HetznerOptions> hetzner, IOptions<DigitalOceanOptions> digitalOcean,
     IOptions<VultrOptions> vultr, ILoggerFactory logs,
     IVpsProviderRegistry? registry = null)

@@ -3,7 +3,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace Minicloud.Cli.Rendering;
+namespace Selfrun.Cli.Rendering;
 
 internal sealed class DockerBuildProgress(Action<string> activity, Action<string> log, Func<string, string> redact)
 {

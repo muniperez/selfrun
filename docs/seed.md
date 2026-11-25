@@ -1,6 +1,6 @@
 # Provision the first control plane
 
-`minicloud seed` has a source implementation, **not live-provider or
+`selfrun seed` has a source implementation, **not live-provider or
 clean-machine qualification**. No new CLI/server release has been published
 by this feature. The current `server-v0.0.1-rc.1` candidate is unpublished,
 unqualified; its [exact-source TEST prerelease input](../packaging/server/README.md#selected-test-prerelease-pairing)
@@ -10,7 +10,7 @@ Missing assets, signatures or compatibility fail before provider creation;
 do not substitute artifacts to work around that. Only the authorized publisher
 may publish the reviewed TEST prerelease.
 
-Seed works without a configured instance, `MINICLOUD_TOKEN`, or login.
+Seed works without a configured instance, `SELFRUN_TOKEN`, or login.
 It creates a **dedicated** Ubuntu 24.04 control-plane VPS, not an app VPS.
 It uses the [existing signed installer](server-installer.md) and shared
 [operator bootstrap](bootstrap.md), never a second Compose/SQL/bootstrap engine.
@@ -18,7 +18,7 @@ It uses the [existing signed installer](server-installer.md) and shared
 
 ## Before starting
 
-For a first install, use [`minicloud seed` in a terminal](stateless-seed.md#guided-installation)
+For a first install, use [`selfrun seed` in a terminal](stateless-seed.md#guided-installation)
 with a downloaded candidate or your own published CLI. The current wizard
 manages and verifies SSH for new installations and guides the approval and
 setup handoffs. See the [older-session procedure](stateless-seed.md#automatic-ssh-and-older-sessions)
@@ -46,8 +46,8 @@ still apply to both interfaces.
   Allow public TCP 80/443, optional UDP 443 for HTTP/3, and outbound HTTPS for
   Ubuntu archives, GitHub, GHCR/dependency registries, Sigstore and ACME.
   Seed does not create firewalls or change ingress/DNS policies.
-- Keep `$XDG_CONFIG_HOME/minicloud/seed/` (normally
-  `~/.config/minicloud/seed/`) private and persistent. Preserve the journal,
+- Keep `$XDG_CONFIG_HOME/selfrun/seed/` (normally
+  `~/.config/selfrun/seed/`) private and persistent. Preserve the journal,
   generated private key, pinned host key and persistent lock. Never copy an
   operation directory to another host to claim ownership there.
 
@@ -78,11 +78,11 @@ On Windows, disable inherited ACL grants and allow only the current user
 (SYSTEM/Administrators are accepted trusted principals). Do not use shared
 or temporary folders. Supply only the credential, with an optional final newline.
 Without a file, an interactive terminal gets a hidden prompt; redirected input
-never waits for that prompt. Environment provider keys and `MINICLOUD_TOKEN`
+never waits for that prompt. Environment provider keys and `SELFRUN_TOKEN`
 are not silently reused. Plaintext credential arguments are rejected.
 
 ```sh
-minicloud seed --provider hetzner \
+selfrun seed --provider hetzner \
   --region <location-id> --size <server-type-id> \
   --domain <dashboard-hostname> --app-domain <separate-app-suffix> \
   --server-version server-v<exact-published-compatible-version> \
@@ -101,9 +101,9 @@ also checks free disk. Neither floor is measured/qualified stack sizing.
 No provider mutation occurs during planning. Copy the operation ID and digest:
 
 ```sh
-minicloud seed resume <operation> --approve <reviewed-plan-digest> \
+selfrun seed resume <operation> --approve <reviewed-plan-digest> \
   --credential-file <protected-local-file>
-minicloud seed status <operation>
+selfrun seed status <operation>
 ```
 
 Approval authorizes one generated dedicated SSH key and one tagged/labeled VPS,
@@ -130,7 +130,7 @@ Use `--generate-ssh-key <new-private-file>` to generate an ed25519 pair with
 local `ssh-keygen`. Its parent directory must already be owner-only (`0700`
 or a protected Windows ACL); existing files are never replaced. The CLI asks
 whether to protect the key with a passphrase, default **yes**. `ssh-keygen`
-itself reads and confirms the hidden passphrase, so it never enters Minicloud's
+itself reads and confirms the hidden passphrase, so it never enters Selfrun's
 arguments, journal, logs or VPS. Empty passphrases are rejected when protection
 was selected; partial/generated files are retained for operator reconciliation.
 
@@ -143,9 +143,9 @@ deleted during cleanup.
 
 ```sh
 # Add an existing public key (repeat the option for additional keys):
-minicloud seed <other-required-options> --ssh-public-key /home/operator/.ssh/id_ed25519.pub
+selfrun seed <other-required-options> --ssh-public-key /home/operator/.ssh/id_ed25519.pub
 # Or generate a new operator key and answer the passphrase question:
-minicloud seed <other-required-options> --generate-ssh-key /home/operator/.ssh/minicloud_operator
+selfrun seed <other-required-options> --generate-ssh-key /home/operator/.ssh/selfrun_operator
 ```
 
 Noninteractive planning with no SSH-key options preserves the previous behavior:
@@ -189,7 +189,7 @@ Independently verify the console belongs to the exact recorded server ID.
 Pass that fingerprint as an explicit assertion:
 
 ```sh
-minicloud seed resume <operation> --credential-file <protected-local-file> \
+selfrun seed resume <operation> --credential-file <protected-local-file> \
   --confirm-console-fingerprint SHA256:<console-fingerprint>
 ```
 
@@ -217,8 +217,8 @@ workloads and conflicting bindings remain refused; other providers are unchanged
 See [the layout and qualification limits](stateless-seed.md#stock-digitalocean-agent-layout).
 
 Host orchestration inputs/assets/recovery are under
-`/var/lib/minicloud-seed/<operation>/`, with a durable operation binding at
-`/opt/minicloud.seed-operation`; the install root remains `/opt/minicloud`.
+`/var/lib/selfrun-seed/<operation>/`, with a durable operation binding at
+`/opt/selfrun.seed-operation`; the install root remains `/opt/selfrun`.
 The signed installer still owns its **own original installation/operation IDs**,
 config validation, locks, Compose ordering, migrations and OpenBao initialization.
 
@@ -236,7 +236,7 @@ After trusted HTTPS readiness, seed reports `https://<dashboard>/setup` without
 any secret in the URL. Export recovery independently to the workstation:
 
 ```sh
-minicloud seed export <operation> --recovery-dir <new-local-owner-only-directory> \
+selfrun seed export <operation> --recovery-dir <new-local-owner-only-directory> \
   --setup-token
 ```
 
@@ -255,15 +255,15 @@ producer** with a durable new output name. Uncertain rotation is reconciled
 under that same name, never silently replaced or used to reset a ready operator.
 
 ```sh
-minicloud seed export <operation> --ack-recovery <installation-id>
-minicloud seed resume <operation> --credential-file <protected-local-file> \
+selfrun seed export <operation> --ack-recovery <installation-id>
+selfrun seed resume <operation> --credential-file <protected-local-file> \
   --instance-name <new-name>
 ```
 
 `complete` requires trusted exact-origin HTTPS/API product/protocol/release
 identity, the installer's ready browser-bootstrap state, successful independent
 export and explicit acknowledgement. Saving the validated instance never changes
-another active selection/token; select it using `minicloud instance use <name>`.
+another active selection/token; select it using `selfrun instance use <name>`.
 Infrastructure completion does not mean login or app deployment passed.
 
 ## Optional provider registration
@@ -272,7 +272,7 @@ Default is **no import**. After normal browser onboarding/recovery, explicitly
 opt in; a different appropriately scoped credential can be supplied:
 
 ```sh
-minicloud seed register-provider <operation> --register-provider \
+selfrun seed register-provider <operation> --register-provider \
   --organization <organization-id> --provider-name <name> \
   --credential-file <protected-local-file>
 ```
@@ -283,7 +283,7 @@ Default browser-login scopes intentionally **do not** include provider
 management, so use the existing dashboard flow, or explicitly select an
 instance-scoped operator API key with `providers:read` and `providers:write`
 and repeat with `--use-existing-auth`. Do not broaden default login scopes.
-Unset `MINICLOUD_TOKEN`; the feature never picks an unrelated environment token.
+Unset `SELFRUN_TOKEN`; the feature never picks an unrelated environment token.
 Existing token directories/files must also satisfy the private-file contract.
 
 Before any key is sent to the verified HTTPS API, the CLI displays the grant of
@@ -301,7 +301,7 @@ Cancellation and DNS/SSH/TLS waits retain resources and **continue billing**.
 There is no automatic rollback.
 
 ```sh
-minicloud seed cleanup <operation> --credential-file <protected-local-file>
+selfrun seed cleanup <operation> --credential-file <protected-local-file>
 # Review exact operation-owned server/IP/generated-key IDs, then repeat with:
 # --confirm-cleanup <separate-cleanup-digest>
 ```
@@ -325,7 +325,7 @@ qualify live-provider behavior. From the checkout root, with the .NET 10 SDK:
 
 ```sh
 umask 077
-dotnet test modules/tests/Minicloud.Cli.Tests/Minicloud.Cli.Tests.csproj \
+dotnet test modules/tests/Selfrun.Cli.Tests/Selfrun.Cli.Tests.csproj \
   --configuration Release \
   --artifacts-path .local/artifacts/seed-tests \
   --results-directory .local/artifacts/seed-tests \
@@ -344,8 +344,8 @@ example path below with that location; run from the source checkout:
 
 ```sh
 umask 077
-git worktree add --detach /operator-private/location/minicloud-seed-tests HEAD
-cd /operator-private/location/minicloud-seed-tests
+git worktree add --detach /operator-private/location/selfrun-seed-tests HEAD
+cd /operator-private/location/selfrun-seed-tests
 ```
 
 Run the test command from this private worktree. Keep build outputs, results and
@@ -356,11 +356,11 @@ On Linux, build a standalone candidate from the committed revision and rehearse
 the guided flow against synthetic providers:
 
 ```sh
-dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
+dotnet publish modules/cli/Selfrun.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
 python3 -B scripts/self-hosting/test_guided_seed_cli.py \
-  .local/artifacts/seed-cli/Minicloud.Cli .local/artifacts
+  .local/artifacts/seed-cli/selfrun .local/artifacts
 python3 -B scripts/self-hosting/test_guided_seed_cli.py \
-  .local/artifacts/seed-cli/Minicloud.Cli .local/artifacts --lost-create --real-ssh
+  .local/artifacts/seed-cli/selfrun .local/artifacts --lost-create --real-ssh
 ```
 
 `--real-ssh` requires Linux user/mount namespaces, cloud-init's system Python

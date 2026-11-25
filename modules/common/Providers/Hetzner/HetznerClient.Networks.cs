@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 
-namespace Minicloud.Common.Providers.Hetzner;
+namespace Selfrun.Common.Providers.Hetzner;
 
 public sealed partial class HetznerClient : IPrivateNetworkProvider
 {

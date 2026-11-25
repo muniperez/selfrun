@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.Models;
+namespace Selfrun.Common.Providers.Models;
 
 public record CreateServerRequest(
     string Name,

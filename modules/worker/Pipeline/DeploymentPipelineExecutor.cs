@@ -2,16 +2,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Pipeline.Steps;
-using Minicloud.Common.Providers;
-using Minicloud.Worker.Ssh;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Pipeline.Steps;
+using Selfrun.Common.Providers;
+using Selfrun.Worker.Ssh;
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace Minicloud.Worker.Pipeline;
+namespace Selfrun.Worker.Pipeline;
 
 /// <summary>
 /// Tunable timeouts and defaults for the worker deployment pipeline.
@@ -245,7 +245,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
 
     internal Task RefreshDesiredServicesAsync(PipelineStepContext context, CancellationToken ct) => Steps.PipelineDb.ExecuteInTransactionAsync(_scopeFactory, async (db, token) =>
     {
-        if (db.Database.IsNpgsql()) { await db.Database.ExecuteSqlRawAsync($"SELECT pg_advisory_xact_lock({Minicloud.Common.Registry.ImagePublicationService.LockKey})", token); }
+        if (db.Database.IsNpgsql()) { await db.Database.ExecuteSqlRawAsync($"SELECT pg_advisory_xact_lock({Selfrun.Common.Registry.ImagePublicationService.LockKey})", token); }
         var stored = await db.Deployments.Include(x => x.Services).Include(x => x.App)
             .SingleAsync(x => x.Id == context.DeploymentId && x.OwnershipToken == context.OwnershipToken, token);
         if (stored.RequestedServiceNamesJson is null) { return; }
@@ -255,7 +255,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         var managedInfrastructureOnly = desired.Count == 0 && stored.Database == DatabaseMode.Postgres &&
             await db.ManagedDatabaseServers.AnyAsync(server => server.OrganizationId == stored.OrganizationId &&
                 server.RuntimeAppId == stored.AppId && server.RuntimeDeploymentId == stored.Id && server.Status != "deleted", token);
-        var validation = Minicloud.Common.Validation.ControlPlaneValidation.ValidateMergedDeploymentServices(desired, stored.Database == DatabaseMode.Sqlite);
+        var validation = Selfrun.Common.Validation.ControlPlaneValidation.ValidateMergedDeploymentServices(desired, stored.Database == DatabaseMode.Sqlite);
         if (!managedInfrastructureOnly && !validation.IsValid) { throw new PipelineStepException("invalid_service_set", "Active service set changed incompatibly while deployment was queued."); }
         var retained = stored.Services.Where(x => !names.Contains(x.Name)).ToArray();
         db.DeploymentServices.RemoveRange(retained);
@@ -265,7 +265,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             // Validate against current metadata before provisioning; runtime verifies the actual host platform again.
-            var images = scope.ServiceProvider.GetRequiredService<Minicloud.Common.Registry.ImagePublicationService>();
+            var images = scope.ServiceProvider.GetRequiredService<Selfrun.Common.Registry.ImagePublicationService>();
             await images.FinalizeDeploymentAsync(stored.App, stored, token, db);
         }
         await db.SaveChangesAsync(token);
@@ -288,7 +288,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         string deploymentId, string ownershipToken, CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var deployment = await db.Deployments
             .AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == deploymentId && d.OwnershipToken == ownershipToken, cancellationToken);
@@ -521,7 +521,7 @@ public sealed class DeploymentPipelineExecutor : IDeploymentPipelineExecutor
         // then re-list containers. Never fails the pipeline.
         var appSlug = string.IsNullOrWhiteSpace(context.AppSlug) ? "*" : context.AppSlug;
         var rollbackCommand = string.Join(" && ",
-            $"test -f /opt/minicloud/apps/{appSlug}/shared/*.caddy.previous && install -m 0644 /opt/minicloud/apps/{appSlug}/shared/*.caddy.previous /opt/minicloud/caddy/apps/{appSlug}.caddy || true",
+            $"test -f /opt/selfrun/apps/{appSlug}/shared/*.caddy.previous && install -m 0644 /opt/selfrun/apps/{appSlug}/shared/*.caddy.previous /opt/selfrun/caddy/apps/{appSlug}.caddy || true",
             "sudo -u caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 && sudo systemctl reload caddy || true",
             "echo rollback-attempted");
 

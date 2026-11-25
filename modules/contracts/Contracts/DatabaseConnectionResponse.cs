@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record DatabaseConnectionResponse(string DatabaseId, string Engine, string AccessMode, string DatabaseName, string Username, string Password, string? Host, int Port, string? SslMode, bool EndpointAvailable, string? CaCertificatePem = null)
 {

@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record GrafanaLaunchRequest(
     [RegularExpression(@"^/(explore|d/[A-Za-z0-9_\-]{1,64})$")] string? Destination);

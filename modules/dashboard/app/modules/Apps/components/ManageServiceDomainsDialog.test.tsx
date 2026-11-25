@@ -29,7 +29,7 @@ it("verifies ownership before allowing service assignment, then guides address s
   expect(registerCustomDomain).toHaveBeenCalledWith("app", "example.com");
   expect(createAppCustomDomain).not.toHaveBeenCalled();
   expect(screen.queryByText("Connect to web")).not.toBeInTheDocument();
-  expect(screen.getByText("_minicloud-verification.example.com")).toBeInTheDocument();
+  expect(screen.getByText("_selfrun-verification.example.com")).toBeInTheDocument();
   expect(screen.queryByText("192.0.2.10")).not.toBeInTheDocument();
   vi.mocked(verifyCustomDomainOwnership).mockResolvedValue({ ...registration, status: "verified" });
   fireEvent.click(screen.getByRole("button", { name: "Verify DNS" }));

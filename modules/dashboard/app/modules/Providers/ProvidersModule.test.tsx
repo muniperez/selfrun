@@ -772,9 +772,9 @@ it("renders experimental provider types with scope fields when advertised by the
   ]);
 
   mount("/plans/accounts");
-  await screen.findByRole("heading", { name: "Provider accounts" });
-
-  fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+  const addAccount = await screen.findByRole("button", { name: "Add account" });
+  await waitFor(() => expect(addAccount).toBeEnabled());
+  fireEvent.click(addAccount);
   const dialog = await screen.findByRole("dialog");
 
   const providerSelect = within(dialog).getByLabelText("Provider");

@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed record RegistryBlobDescriptor(string MediaType, string Digest, long Size);
 public sealed record VerifiedRegistryImage(

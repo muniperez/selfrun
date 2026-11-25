@@ -8,7 +8,7 @@ artifacts, or substitute an unqualified release just to make seed proceed.
 
 ## Guided installation
 
-Choose a CLI build and run `selfrun seed` (legacy alias `minicloud seed`). No JSON, Python, or helper
+Choose a CLI build and run `selfrun seed`. No JSON, Python, or helper
 script is needed on the workstation. Use a terminal with OpenSSH client tools
 installed; the wizard handles keys and host verification for new installations.
 Linux/macOS also use standard `stat`, `id`, and `sync` utilities.
@@ -16,11 +16,10 @@ See [provider permissions and host requirements](seed.md#before-starting).
 
 ### Download a candidate
 
-The [CLI download page](https://muniventures.github.io/minicloud/downloads.html) has direct
+The [CLI download page](https://muniperez.github.io/selfrun/downloads.html) has direct
 downloads for Windows x64, Apple silicon macOS, and glibc Linux on x64 or ARM64.
 Choose the build for the computer where you will run the CLI. Extract the
-archive and put `minicloud` (Windows: `minicloud.exe`; installers also add the
-`selfrun` command alias) on your PATH.
+archive and put `selfrun` (`selfrun.exe` on Windows) on your PATH.
 
 ```sh
 selfrun seed
@@ -29,8 +28,8 @@ selfrun seed
 These are unsigned test builds. Each archive includes a `SOURCE.txt` file
 identifying the commit it was built from. Older builds may still prompt for
 SSH inputs; build from current source for automatic enrollment. You can also run the executable
-directly in the extracted directory with `./minicloud seed` on macOS or Linux,
-or `.\minicloud.exe seed` in Windows PowerShell.
+directly in the extracted directory with `./selfrun seed` on macOS or Linux,
+or `.\selfrun.exe seed` in Windows PowerShell.
 
 `help seed` reports `Embedded TEST source:` with the exact revision when
 `local` is available. The review candidate and future CLI archives built
@@ -44,14 +43,14 @@ does not select a signed **server** release.
 Install Git and the .NET 10 SDK. The CLI embeds the server source from the current commit. Commit any local changes you want to include before publishing.
 
 ```sh
-git clone https://github.com/muniventures/minicloud.git
-cd minicloud
-dotnet publish modules/cli/Minicloud.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
+git clone https://github.com/muniperez/selfrun.git
+cd selfrun
+dotnet publish modules/cli/Selfrun.Cli.csproj -p:PublishProfile=Seed -o .local/artifacts/seed-cli
 cd .local/artifacts/seed-cli
-./Minicloud.Cli seed
+./selfrun seed
 ```
 
-In Windows PowerShell, use `.\Minicloud.Cli.exe seed` for the last command. To use the shorter `minicloud` command throughout the CLI guides, rename the published executable to `minicloud` (Windows: `minicloud.exe`) and place it on your PATH.
+In Windows PowerShell, use `.\selfrun.exe seed` for the last command.
 
 The profile builds a standalone executable for your SDK's platform and picks
 up the checked-out Git revision automatically. It embeds only tracked files
@@ -86,14 +85,14 @@ natively using the existing installer (see the
    When HTTPS is verified, use the protected recovery export and enter the
    one-time token manually at the printed `/setup` URL. Keep an independent
    encrypted copy of the recovery material. Guided `seed` records a completed
-   recovery export so rerunning `minicloud seed` does not prompt to export the
+   recovery export so rerunning `selfrun seed` does not prompt to export the
    same recovery material again. Then sign in or run the printed
-   `minicloud instance add` and `minicloud login` commands.
+   `selfrun instance add` and `selfrun login` commands.
 
-Rerun `minicloud seed` in the same terminal environment to resume with the same
+Rerun `selfrun seed` in the same terminal environment to resume with the same
 state and executable. The default protected directory is
-`$XDG_CONFIG_HOME/minicloud/seed-guided` (normally `~/.config/minicloud/seed-guided`).
-`minicloud seed --state-dir PATH` selects a separate owner-only state directory
+`$XDG_CONFIG_HOME/selfrun/seed-guided` (normally `~/.config/selfrun/seed-guided`).
+`selfrun seed --state-dir PATH` selects a separate owner-only state directory
 for an independent installation; do **not** use it to bypass an unresolved
 create. Preserve the seed ID, source archive, key and state. No provider token
 is saved. If the server's public IPv4 was not ready yet, resume checks provider
@@ -164,7 +163,7 @@ Build the CLI from that same revision, letting the SDK append its full source
 SHA (do not also append it manually to `InformationalVersion`):
 
 ```sh
-dotnet publish modules/cli/Minicloud.Cli.csproj --configuration Release \
+dotnet publish modules/cli/Selfrun.Cli.csproj --configuration Release \
   --artifacts-path .local/artifacts/local-seed/cli-build \
   --output .local/artifacts/local-seed/cli \
   -p:SourceRevisionId="$(git rev-parse HEAD)"
@@ -219,7 +218,7 @@ an automatic retry with changed source, or a signed-release trust transition.
 
 ## Protected configuration and user-owned key
 
-Create a caller-owned `seedId` **once** with `minicloud seed new-id`
+Create a caller-owned `seedId` **once** with `selfrun seed new-id`
 (`generate-id` is an alias). Keep its 32 lowercase hex characters across retries,
 machines and CI runs. No command silently generates a replacement identity.
 Configuration is JSON schema version 1:
@@ -307,13 +306,13 @@ For an encrypted key, independently unlock it with your normal OpenSSH agent,
 then opt in with `--use-ssh-agent`. Only that option preserves `SSH_AUTH_SOCK`;
 the agent must contain the matching identity. Agent forwarding is always off,
 and SSH config, password/keyboard-interactive authentication and arbitrary
-forwardings are disabled. Minicloud never takes a passphrase in arguments/logs
+forwardings are disabled. Selfrun never takes a passphrase in arguments/logs
 or asks you to remove one.
 
 Optional explicit key generation during `plan`:
 
 ```sh
-minicloud seed plan --config seed-config.json --report reports/seed-report.json \
+selfrun seed plan --config seed-config.json --report reports/seed-report.json \
   --generate-ssh-key keys/my-seed-key
 ```
 
@@ -324,16 +323,16 @@ into your agent and rerun plan with `--ssh-key keys/my-seed-key --use-ssh-agent`
 generation itself grants no creation authority. Noninteractive generation needs
 an explicit `--no-ssh-key-passphrase` choice; protected generation needs a terminal.
 CI must supply an unencrypted protected key or explicitly arrange unattended
-agent unlocking outside Minicloud. The reusable workflow does not provide an agent.
+agent unlocking outside Selfrun. The reusable workflow does not provide an agent.
 
 ## Initial creation, and the pre-host uncertainty limit
 
 Create a protected `reports/` directory, then review a read-only plan:
 
 ```sh
-minicloud seed plan --config seed-config.json --report reports/seed-report.json \
+selfrun seed plan --config seed-config.json --report reports/seed-report.json \
   --ssh-key keys/my-seed-key --credential-file provider-token --new-seed
-minicloud seed apply --config seed-config.json --report reports/seed-report.json \
+selfrun seed apply --config seed-config.json --report reports/seed-report.json \
   --ssh-key keys/my-seed-key --credential-file provider-token --new-seed \
   --approve EXACT_REVIEWED_DIGEST
 ```
@@ -387,11 +386,11 @@ On a fresh machine/runner, bring only the explicit protected config and your
 separate user-held key (plus an explicitly unlocked agent if needed):
 
 ```sh
-minicloud seed check --config seed-config.json --report reports/seed-report.json \
+selfrun seed check --config seed-config.json --report reports/seed-report.json \
   --ssh-key keys/my-seed-key
-minicloud seed plan --config seed-config.json --report reports/seed-report.json \
+selfrun seed plan --config seed-config.json --report reports/seed-report.json \
   --ssh-key keys/my-seed-key
-minicloud seed apply --config seed-config.json --report reports/seed-report.json \
+selfrun seed apply --config seed-config.json --report reports/seed-report.json \
   --ssh-key keys/my-seed-key --approve EXACT_REVIEWED_DIGEST
 ```
 
@@ -469,7 +468,7 @@ signed installer's preflight checks its installation root, tools, resources,
 workloads and ports without requiring unrelated `/opt` siblings to be absent;
 it needs no corresponding vendor-layout relaxation.
 
-Host mutations use `/opt/minicloud.installation.lock`, the same persistent inode
+Host mutations use `/opt/selfrun.installation.lock`, the same persistent inode
 as the signed installer/maintenance. Preparation/checkpoints use protected,
 crash-safe host writes. Future schemas, occupied hosts without metadata,
 interrupted checkpoint writes, active locks and pending upgrade/restore/fence
@@ -493,7 +492,7 @@ Seed does not implement upgrades, domain migrations, rollback or destructive cle
 
 ## Portable report and private handoff
 
-`--report` writes schemaVersion 1, kind `minicloud-seed-report`: a regenerable
+`--report` writes schemaVersion 1, kind `selfrun-seed-report`: a regenerable
 non-secret snapshot with seed/resource IDs, target IPv4/root SSH user, independently
 verified fingerprint when actually checked, domains/DNS instructions, exact
 requested/observed release/source, approval/plan/costs, observed progress and
@@ -509,7 +508,7 @@ secrets belong in it. Exceptions and host/provider diagnostics are suppressed.
 Private files use a separate sibling directory, not the report artifact tree:
 
 ```sh
-minicloud seed export --config seed-config.json --report reports/seed-report.json \
+selfrun seed export --config seed-config.json --report reports/seed-report.json \
   --ssh-key keys/my-seed-key --recovery-dir private-recovery --setup-token
 ```
 

@@ -1,14 +1,14 @@
-using Minicloud.Common.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>
 /// Minimal shared audit append service (T11). No tokens, log bodies, or secrets are stored.
 /// </summary>
 public sealed class AuditEventService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IIdGenerator ids,
     TimeProvider timeProvider)
 {

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace Minicloud.Telemetry.Data;
+namespace Selfrun.Telemetry.Data;
 
 public class TelemetryDbContext(DbContextOptions<TelemetryDbContext> options) : DbContext(options)
 {

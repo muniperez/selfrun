@@ -2,7 +2,7 @@
 
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record AppServiceSecretResponse(
     string Id,

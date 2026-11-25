@@ -1,13 +1,13 @@
-# CLI seed: provision the first Minicloud control plane
+# CLI seed: provision the first Selfrun control plane
 
 Status: source implementation submitted; not published or qualified. See the
 [implemented interface](../seed.md) and [delivery contract](../cli-distribution.md).
 Scope decisions confirmed
 with the user on 2026-11-12. This is new work after the public pre-v1 code-only
 milestone, not evidence that the earlier milestone included host provisioning.
-Tracking issue: [#80](https://github.com/muniventures/minicloud/issues/80).
+Tracking issue: [#80](https://github.com/muniperez/selfrun/issues/80).
 
-**Current contract:** [#90](https://github.com/muniventures/minicloud/issues/90)
+**Current contract:** [#90](https://github.com/muniperez/selfrun/issues/90)
 supersedes the machine-bound journal and hidden automation identity in this
 historical design. The [stateless seed interface](../stateless-seed.md) specifies
 the implemented protected configuration, caller-held identity, observational
@@ -18,9 +18,9 @@ for the stateless interface and are never automatically imported or removed.
 ## Outcome
 
 A user downloads a prebuilt CLI, or builds the CLI from canonical source, then
-runs `minicloud seed` without an existing Minicloud instance or login. The CLI
+runs `selfrun seed` without an existing Selfrun instance or login. The CLI
 uses the user's Hetzner, DigitalOcean or Vultr account to create a dedicated VPS,
-install the exact signed Minicloud server release from container images, and
+install the exact signed Selfrun server release from container images, and
 hand off to the existing first-operator browser setup.
 
 The user no longer needs to create the control-plane VPS or manually pull images.
@@ -51,14 +51,14 @@ The following interface is implemented in source; release/provider qualification
 and actual signed server publication remain separate gates:
 
 ```sh
-minicloud seed --provider hetzner \
+selfrun seed --provider hetzner \
   --region <provider-region-id> --size <provider-size-id> \
   --domain cloud.example.com --app-domain apps.example.com \
   --server-version server-v<VERSION>
 
-minicloud seed status <operation-id>
-minicloud seed resume <operation-id>
-minicloud seed cleanup <operation-id>
+selfrun seed status <operation-id>
+selfrun seed resume <operation-id>
+selfrun seed cleanup <operation-id>
 ```
 
 `--provider` accepts `hetzner`, `digitalocean` or `vultr`. Interactive mode may
@@ -71,7 +71,7 @@ resource count, server release or account. Status/help perform no mutations.
 
 Prompt for provider API credentials without echo. Support a protected credential
 file for automation; reject plaintext `--api-key <value>` arguments. Do not
-silently reuse `MINICLOUD_TOKEN`, a selected instance, or application credentials.
+silently reuse `SELFRUN_TOKEN`, a selected instance, or application credentials.
 Document required provider scopes and account restrictions per provider.
 Authentication/quota/catalog/region/size failures occur before VPS creation.
 
@@ -191,7 +191,7 @@ normal maintenance/decommission boundary, not a convenient seed rollback.
 ### Optional provider-account registration
 
 An unselected opt-in is the default. Explain that registering the credential
-gives the new Minicloud control plane authority to provision billable app
+gives the new Selfrun control plane authority to provision billable app
 resources; let the user provide a different, appropriately scoped key instead.
 
 After operator setup, use ordinary CLI browser-consent login and existing
@@ -239,7 +239,7 @@ CLI as self-contained, untrimmed output for:
 | macOS Apple Silicon | `osx-arm64` |
 | Windows x64 | `win-x64` |
 
-Preserve `minicloud`/`minicloud.exe`, public installer paths, version/source
+Preserve `selfrun`/`selfrun.exe`, public installer paths, version/source
 metadata and existing configuration. Use versioned archives, a signed checksum
 inventory and documented canonical workflow/source provenance. Verify
 authenticity and archive path/type safety before extraction/execution; ordinary

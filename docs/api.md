@@ -1,6 +1,6 @@
 # Selfrun API
 
-Selfrun (formerly MiniCloud; see [Selfrun Rename Migration Guide](selfrun-rename-migration.md)) uses one unversioned first-party namespace: `/api`.
+Selfrun uses one unversioned first-party namespace: `/api`.
 The prelaunch application/environment cutover deliberately removes old product
 API routes and identity aliases. Clients and server must be updated together.
 
@@ -16,9 +16,7 @@ API routes and identity aliases. Clients and server must be updated together.
 - Other product resources use `/api`, including providers, plans, deployments,
   secrets, runtime ingestion, registry credentials and CLI authentication.
 
-Anonymous `GET /api/instance` returns `product`, `protocolVersion` and `appDomain`
-(during the rename transition, servers continue reporting `minicloud` while updated
-CLIs accept both `minicloud` and `selfrun`).
+Anonymous `GET /api/instance` returns `product`, `protocolVersion` and `appDomain`. The product value is `selfrun`.
 Packaged servers additionally report `serverVersion`, `sourceRevision` and
 `cliCompatibility` from verified release metadata. Compatibility includes the
 protocol, optional half-open version interval and explicit source revisions;
@@ -41,7 +39,7 @@ select only the latest non-asset deployment and active domains; no full history
 graph or response cache is needed.
 
 Docker Registry, OTLP, OpenBao, Loki and provider version identifiers belong to
-those external protocols and remain unchanged. They are not parallel Minicloud
+those external protocols and remain unchanged. They are not parallel Selfrun
 product APIs. Stored migration metadata preserves existing resources without
 publishing identity-resolution aliases.
 
@@ -77,7 +75,7 @@ membership response for both browser users and authorized machine credentials.
 | `GET /api/account/oidc/self-service/methods/oidc/callback/google` | Fixed provider callback. Completes the pending flow and answers `303` to the dashboard's `/sign-in/continue`. |
 
 Settings and other cookie-authenticated mutations require exact dashboard Origin
-and `X-Minicloud-CSRF`. Initial login/recovery submissions instead require exact
+and `X-Selfrun-CSRF`. Initial login/recovery submissions instead require exact
 Origin and the Kratos form's CSRF field/cookie. Browser credentials never replace
 machine authentication: explicit bearer credentials take precedence, including
 invalid bearers. CLI approval still requires explicit human consent and
@@ -148,7 +146,7 @@ credential-input file; see [packaged setup](self-hosting.md#optional-packaged-go
 Configuration enables the option, not a live qualification claim. The current
 API has no separate `GoogleQualified` setting. Live Google and separate-origin
 HTTPS qualification remain
-tracked in [the authentication follow-up](https://github.com/muniventures/minicloud/issues/44).
+tracked in [the authentication follow-up](https://github.com/muniperez/selfrun/issues/44).
 
 - **Discovery.** `ui.providers` is present only when Google is enabled and the
   Kratos flow offers it. Each entry is `{id:"google", action, method:"POST"}`;
@@ -157,7 +155,7 @@ tracked in [the authentication follow-up](https://github.com/muniventures/minicl
 - **Navigation.** The dashboard shows "Continue with Google" or "Link Google
   account" only when both the capability and the provider entry are present.
   A click posts the flow CSRF token to the provider action with the exact
-  dashboard Origin (`settings` also needs `X-Minicloud-CSRF`). The API submits
+  dashboard Origin (`settings` also needs `X-Selfrun-CSRF`). The API submits
   the Kratos `oidc` method and accepts only Kratos's 422
   `browser_location_change_required` response. Its target must be
   `https://accounts.google.com/o/oauth2/...` on the default port, with no user
@@ -165,8 +163,8 @@ tracked in [the authentication follow-up](https://github.com/muniventures/minicl
   `response_type=code`, and a `redirect_uri` equal to this API's fixed callback.
   Anything else returns 503 `auth_unavailable`. The browser, not the API, then
   opens the URL. The API never follows upstream redirects or contacts the
-  provider, and it forwards no Minicloud cookie or bearer.
-- **Callback.** The provider action sets a 10-minute `__Host-minicloud-oidc`
+  provider, and it forwards no Selfrun cookie or bearer.
+- **Callback.** The provider action sets a 10-minute `__Host-selfrun-oidc`
   cookie. It records the kind, flow ID, a SHA-256 hash of the provider state
   and the validated same-dashboard return path. The callback requires that
   cookie and a matching `state`, then deletes the cookie. It forwards only
@@ -179,7 +177,7 @@ tracked in [the authentication follow-up](https://github.com/muniventures/minicl
   dashboard then re-reads it, or after success returns to the safe path, such
   as explicit CLI consent.
 
-The installer derives `MINICLOUD_GOOGLE_OIDC_ENABLED` from the explicit
+The installer derives `SELFRUN_GOOGLE_OIDC_ENABLED` from the explicit
 configuration and Compose passes it to both `Kratos__GoogleEnabled` on the API
 and `SELFSERVICE_METHODS_OIDC_ENABLED` on Kratos (both default false).
 `SELFSERVICE_METHODS_OIDC_CONFIG_BASE_REDIRECT_URI` is always derived as
@@ -189,8 +187,8 @@ The installer imports only the fixed `google` provider into the protected
 `kratos.env` as `SELFSERVICE_METHODS_OIDC_CONFIG_PROVIDERS`, using the bundled
 read-only verified-email Jsonnet mapper. Unknown environment/configuration
 fields still fail validation; manually adding enable/callback overrides to
-`kratos.env` is not supported. Minicloud ships no default client or secret.
-Google login admits only identities already bound to a Minicloud user. An
+`kratos.env` is not supported. Selfrun ships no default client or secret.
+Google login admits only identities already bound to a Selfrun user. An
 operator first links Google from account settings; public registration stays
 disabled. Keep the public API Host intact through the reverse proxy.
 
@@ -198,7 +196,7 @@ disabled. Keep the public API Host intact through the reverse proxy.
 
 Passkey support is gated by `Kratos:PasskeyEnabled` (default `false` in raw API
 options; default `true` in the packaged self-hosting Compose bundle via
-`MINICLOUD_PASSKEY_ENABLED`) and exposed via `GET /api/account/capabilities` as
+`SELFRUN_PASSKEY_ENABLED`) and exposed via `GET /api/account/capabilities` as
 `passkey`.
 
 - **Discovery and sanitization.** When `Kratos:PasskeyEnabled` is `true`,
@@ -216,9 +214,9 @@ options; default `true` in the packaged self-hosting Compose bundle via
   `navigator.credentials.create` directly against the HTTPS dashboard origin and
   submits the serialized JSON response via `POST /api/account/flows/{kind}` with
   exact dashboard Origin, upstream flow CSRF token (`settings` also requires
-  `X-Minicloud-CSRF`), `method: "passkey"`, and exactly one of:
+  `X-Selfrun-CSRF`), `method: "passkey"`, and exactly one of:
   - `passkey_login` (`login` flow only) — verified against Kratos and admitted
-    only for an already-bound Minicloud user, respecting `keepSignedIn`.
+    only for an already-bound Selfrun user, respecting `keepSignedIn`.
   - `passkey_settings_register` (`settings` flow only) — enrolls an additional
     passkey and rotates the browser session on success.
   - `passkey_remove` (`settings` flow only) — removes a specific credential ID

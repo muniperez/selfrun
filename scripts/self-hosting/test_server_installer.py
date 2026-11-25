@@ -123,7 +123,7 @@ class InstallerTests(unittest.TestCase):
             "images.env": b"synthetic\n", "compose.yml": b"services: {}\n",
             "server_install.py": b"class InstallError(Exception): pass\ndef main(args): return 0\n",
         }
-        archive = self.assets / "minicloud-server-0.1.0.tar.gz"
+        archive = self.assets / "selfrun-server-0.1.0.tar.gz"
         with tarfile.open(archive, "w:gz") as target:
             for name, data in self.payload.items():
                 member = tarfile.TarInfo(name)
@@ -346,12 +346,12 @@ class InstallerTests(unittest.TestCase):
         subject.state = {"installationId": "inst_test"}
         subject.installed = {"images": {}, "dependencies": {}}
         env = subject.environment()
-        self.assertEqual("false", env["MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED"])
-        self.assertEqual("30", env["MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES"])
-        self.assertEqual("480", env["MINICLOUD_PORTAL_STANDARD_MAX_MINUTES"])
-        self.assertEqual("10080", env["MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES"])
+        self.assertEqual("false", env["SELFRUN_PORTAL_KEEP_SIGNED_IN_ENABLED"])
+        self.assertEqual("30", env["SELFRUN_PORTAL_STANDARD_IDLE_MINUTES"])
+        self.assertEqual("480", env["SELFRUN_PORTAL_STANDARD_MAX_MINUTES"])
+        self.assertEqual("10080", env["SELFRUN_PORTAL_REMEMBERED_IDLE_MINUTES"])
         # With remembered sessions disabled, the upstream lifespan only needs to cover the standard idle window.
-        self.assertEqual("30m", env["MINICLOUD_KRATOS_SESSION_LIFESPAN"])
+        self.assertEqual("30m", env["SELFRUN_KRATOS_SESSION_LIFESPAN"])
 
     def test_symlink_input_and_duplicate_configuration_fail_closed(self):
         link = self.base / "link.json"
@@ -376,9 +376,9 @@ class InstallerTests(unittest.TestCase):
     def test_existing_volume_requires_original_installation_label_not_only_compose_project(self):
         state = {"installationId": "original-installation", "bundlePath": str(self.base / "bundle")}
         outputs = [
-            b"minicloud_postgres\n", b"", b"",
-            json.dumps([{"Labels": {"com.docker.compose.project": "minicloud",
-                                    "com.minicloud.installation-id": "foreign-installation"}}]).encode(),
+            b"selfrun_postgres\n", b"", b"",
+            json.dumps([{"Labels": {"com.docker.compose.project": "selfrun",
+                                    "com.selfrun.installation-id": "foreign-installation"}}]).encode(),
         ]
         with mock.patch.object(installer, "run", side_effect=outputs):
             with self.assertRaisesRegex(installer.InstallError, "Unrecognized populated volume"):
@@ -565,7 +565,7 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(any(service in event for event in commands))
         bootstrap = [event for event in commands if "api-bootstrap" in event]
         self.assertEqual(["status", "prepare"], [event[event.index("bootstrap") + 1] for event in bootstrap])
-        self.assertTrue(all("/run/minicloud-bootstrap/input/request.json" in event for event in bootstrap))
+        self.assertTrue(all("/run/selfrun-bootstrap/input/request.json" in event for event in bootstrap))
         self.args.command = "activate"
         self.assertEqual("awaiting_operator", self.subject().execute()["state"])
 
@@ -593,8 +593,8 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual("unix:///var/run/docker.sock", env["DOCKER_HOST"])
             for key in ("COMPOSE_FILE", "DOCKER_AUTH_CONFIG", "BAO_TOKEN", "OPENBAO_ROOT_TOKEN_FILE"):
                 self.assertNotIn(key, env)
-            self.assertEqual(subject.state["installationId"], env["MINICLOUD_INSTALLATION_ID"])
-            self.assertEqual(str(self.args.root / "secrets"), env["MINICLOUD_SECRETS_DIR"])
+            self.assertEqual(subject.state["installationId"], env["SELFRUN_INSTALLATION_ID"])
+            self.assertEqual(str(self.args.root / "secrets"), env["SELFRUN_SECRETS_DIR"])
             command.reset_mock()
             (self.args.root / "bundle/compose.yml").write_bytes(b"modified after preflight")
             with self.assertRaisesRegex(installer.InstallError, "Installed bundle content"):
@@ -721,7 +721,7 @@ class InstallerTests(unittest.TestCase):
         for name in ("install-server.sh", "verify-server-release.py", "checksums.txt.sigstore.json"):
             self.write(self.assets / name, b"synthetic fixture only")
         names = ("install-server.sh", "verify-server-release.py", "server-manifest.json",
-                 "minicloud-server-0.1.0.tar.gz")
+                 "selfrun-server-0.1.0.tar.gz")
         inventory = "".join(hashlib.sha256((self.assets / name).read_bytes()).hexdigest() + "  " + name + "\n"
                             for name in names)
         self.write(self.assets / "checksums.txt", inventory.encode())
@@ -748,7 +748,7 @@ class InstallerTests(unittest.TestCase):
         with mock.patch("sys.argv", argv), mock.patch.object(subprocess, "run") as command:
             self.assertEqual(0, bootstrap["main"]())
             calls = [call.args[0] for call in command.call_args_list]
-            self.assertIn("https://github.com/muniventures/minicloud/.github/workflows/server-release.yml@refs/tags/server-v0.1.0",
+            self.assertIn("https://github.com/muniperez/selfrun/.github/workflows/server-release.yml@refs/tags/server-v0.1.0",
                           calls[0])
             self.assertEqual("cosign", calls[0][0])
             self.assertEqual(["docker", "info"], calls[1][:2])

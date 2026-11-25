@@ -6,11 +6,11 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers.Azure;
+namespace Selfrun.Common.Providers.Azure;
 
 /// <summary>
 /// SDK-independent Microsoft Azure Compute/Network/Storage adapter supporting service-principal OAuth2
@@ -194,7 +194,7 @@ public sealed class AzureClient :
 
         var tags = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["minicloud-managed"] = "true"
+            ["selfrun-managed"] = "true"
         };
         if (request.Labels is not null)
         {
@@ -256,7 +256,7 @@ public sealed class AzureClient :
             var (publisher, offer, sku, version) = ParseImageReference(string.IsNullOrWhiteSpace(request.Image) ? _options.DefaultImage : request.Image);
             var sshKeys = request.SshKeyReferences
                 .Where(k => !string.IsNullOrWhiteSpace(k))
-                .Select(k => new { path = "/home/minicloud/.ssh/authorized_keys", keyData = k })
+                .Select(k => new { path = "/home/selfrun/.ssh/authorized_keys", keyData = k })
                 .ToArray();
 
             using var vmReq = await CreateRequestAsync(HttpMethod.Put,
@@ -277,7 +277,7 @@ public sealed class AzureClient :
                     osProfile = new
                     {
                         computerName = request.Hostname ?? request.Name,
-                        adminUsername = "minicloud",
+                        adminUsername = "selfrun",
                         customData = string.IsNullOrWhiteSpace(request.UserDataCloudInit)
                             ? null
                             : Convert.ToBase64String(Encoding.UTF8.GetBytes(request.UserDataCloudInit)),
@@ -443,7 +443,7 @@ public sealed class AzureClient :
     public async Task<ProviderStorageVolume> CreateVolumeAsync(string name, int sizeGb, string region, IReadOnlyDictionary<string, string> labels, CancellationToken ct)
     {
         EnsureScopeConfigured();
-        var tags = new Dictionary<string, string>(labels, StringComparer.Ordinal) { ["minicloud-managed"] = "true" };
+        var tags = new Dictionary<string, string>(labels, StringComparer.Ordinal) { ["selfrun-managed"] = "true" };
         var path = $"{ResourceGroupPrefix}/providers/Microsoft.Compute/disks/{Uri.EscapeDataString(name)}?api-version=2024-03-02";
         using var request = await CreateRequestAsync(HttpMethod.Put, path, ct);
         request.Content = JsonContent.Create(new

@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 // One instance per agent cycle. Only successful discovery is shared.
 public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processRunner) : IDisposable
@@ -82,7 +82,7 @@ public sealed class RuntimeCollector(AgentConfig config, IProcessRunner processR
             }
             if (logs.ExitCode != 0)
             {
-                Add(SelfLog("minicloud-agent", $"Log collection failed for {service}.", now));
+                Add(SelfLog("selfrun-agent", $"Log collection failed for {service}.", now));
                 continue;
             }
             var cursorPrefix = $"service:{service}";

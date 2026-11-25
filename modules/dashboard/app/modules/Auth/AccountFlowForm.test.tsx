@@ -220,7 +220,7 @@ describe("account browser forms", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "synthetic-new-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Save password" }));
     expect(await screen.findByText("Password updated.")).toBeInTheDocument();
-    expect(fetcher.mock.calls[1][1].headers).toHaveProperty("X-Minicloud-CSRF", "synthetic-csrf");
+    expect(fetcher.mock.calls[1][1].headers).toHaveProperty("X-Selfrun-CSRF", "synthetic-csrf");
   });
 
   it("clears a rejected password, reloads the same form, and only submits again on explicit retry", async () => {
@@ -338,11 +338,11 @@ describe("keep me signed in", () => {
     await waitFor(() => expect(auth.refreshSession).toHaveBeenCalledOnce());
     expect(fetcher.mock.calls[1][0]).toMatch(/\/api\/account\/flows\/login\?flow=[0-9a-f-]+&keepSignedIn=true$/);
     expect(Object.keys(JSON.parse(fetcher.mock.calls[1][1].body))).toEqual(["csrf_token", "identifier", "password", "method"]);
-    expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
+    expect(window.localStorage.getItem("selfrun.keepSignedIn")).toBe("1");
   });
 
   it("defaults from this browser's last choice and is absent when the operator disables it", async () => {
-    window.localStorage.setItem("minicloud.keepSignedIn", "1");
+    window.localStorage.setItem("selfrun.keepSignedIn", "1");
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ flow: browserFlow(), session: null })));
     const auth = authFixture({ capabilities: { ...accountCapabilities, keepSignedIn: true } });
     const view = render(<AuthContext.Provider value={auth}><MemoryRouter><AccountFlowForm kind="login" /></MemoryRouter></AuthContext.Provider>);
@@ -367,8 +367,8 @@ describe("keep me signed in", () => {
     expect(url).toMatch(/\/api\/account\/session\/preference$/);
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body as string)).toEqual({ keepSignedIn: true });
-    expect((init.headers as Record<string, string>)["X-Minicloud-CSRF"]).toBe("synthetic-csrf");
-    expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
+    expect((init.headers as Record<string, string>)["X-Selfrun-CSRF"]).toBe("synthetic-csrf");
+    expect(window.localStorage.getItem("selfrun.keepSignedIn")).toBe("1");
   });
 });
 
@@ -473,12 +473,12 @@ describe("passkey sign-in and settings", () => {
     expect(get).toHaveBeenCalledOnce();
     const [url, init] = fetcher.mock.calls[1];
     expect(url).toMatch(/\/api\/account\/flows\/login\?flow=[0-9a-f-]+&keepSignedIn=true$/);
-    expect(init.headers).not.toHaveProperty("X-Minicloud-CSRF");
+    expect(init.headers).not.toHaveProperty("X-Selfrun-CSRF");
     const body = JSON.parse(init.body);
     expect(body.csrf_token).toBe("upstream-csrf");
     expect(body.method).toBe("passkey");
     expect(JSON.parse(body.passkey_login)).toMatchObject({ id: "AQIDBA", type: "public-key" });
-    expect(window.localStorage.getItem("minicloud.keepSignedIn")).toBe("1");
+    expect(window.localStorage.getItem("selfrun.keepSignedIn")).toBe("1");
   });
 
   it("handles cancelled passkey sign-in without posting and keeps password fallback usable", async () => {
@@ -553,7 +553,7 @@ describe("passkey sign-in and settings", () => {
     expect(screen.getByText(/Add a second passkey/)).toBeInTheDocument();
     expect(screen.getByText("Touch ID")).toBeInTheDocument();
     expect(create).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[1][1].headers).toHaveProperty("X-Minicloud-CSRF", "synthetic-csrf");
+    expect(fetcher.mock.calls[1][1].headers).toHaveProperty("X-Selfrun-CSRF", "synthetic-csrf");
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({ csrf_token: "upstream-csrf", method: "passkey" });
 
     // Enroll second passkey
@@ -633,7 +633,7 @@ describe("passkey sign-in and settings", () => {
     expect(await screen.findByText("Identity confirmed. You can now update account settings.")).toBeInTheDocument();
     expect(get).toHaveBeenCalledOnce();
     expect(fetcher.mock.calls[3][0]).toContain("/flows/reauthentication?");
-    expect(fetcher.mock.calls[3][1].headers).toHaveProperty("X-Minicloud-CSRF", "synthetic-csrf");
+    expect(fetcher.mock.calls[3][1].headers).toHaveProperty("X-Selfrun-CSRF", "synthetic-csrf");
     expect(auth.refreshSession).toHaveBeenCalledTimes(1);
 
     await waitFor(() => {

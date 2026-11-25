@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('routing', Path(__file__).with_name('apply-minicloud-routing.py'))
+spec = importlib.util.spec_from_file_location('routing', Path(__file__).with_name('apply-selfrun-routing.py'))
 routing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(routing)
 
@@ -18,12 +18,12 @@ class RoutingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for directory in ['locks', 'apps/demo', 'caddy/apps']:
-            (self.root / 'opt/minicloud' / directory).mkdir(parents=True)
-        self.compose = self.root / 'opt/minicloud/apps/demo/app.compose.json'
+            (self.root / 'opt/selfrun' / directory).mkdir(parents=True)
+        self.compose = self.root / 'opt/selfrun/apps/demo/app.compose.json'
         self.compose.write_text(json.dumps({'services': {'api': {'ports': ['127.0.0.1:18080:8080']}, 'worker': {}}}))
-        self.live = self.root / 'opt/minicloud/caddy/apps/demo.caddy'
+        self.live = self.root / 'opt/selfrun/caddy/apps/demo.caddy'
         self.live.write_text('previous routes')
-        self.config = {'appId': 'app_1', 'composeProject': 'minicloud-demo'}
+        self.config = {'appId': 'app_1', 'composeProject': 'selfrun-demo'}
         self.route = {'hostname': 'demo.app.muni.dev', 'pathPrefix': '/', 'serviceName': 'api', 'servicePort': 8080}
         self.request = dict(self.config, routes=[self.route])
         self.calls = []
@@ -85,7 +85,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual('', self.live.read_text())
 
     def test_deployment_lock_prevents_route_replacement(self):
-        with open(self.root / 'opt/minicloud/locks/demo.deploy.lock', 'a') as lock:
+        with open(self.root / 'opt/selfrun/locks/demo.deploy.lock', 'a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with patch.object(routing.time, 'monotonic', side_effect=[0, 21]):
                 with self.assertRaisesRegex(ValueError, 'Deployment in progress'):

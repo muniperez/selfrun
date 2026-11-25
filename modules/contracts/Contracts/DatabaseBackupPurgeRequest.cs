@@ -1,3 +1,3 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record DatabaseBackupPurgeRequest(string Confirmation);

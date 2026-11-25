@@ -1,7 +1,7 @@
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Mutable state shared across pipeline steps for a single claimed deployment.
@@ -36,7 +36,7 @@ public sealed class PipelineStepContext
 
     public string? ServerIpv6 { get; set; }
 
-    public string SshUsername { get; set; } = "minicloud";
+    public string SshUsername { get; set; } = "selfrun";
 
     public List<string> Hostnames { get; set; } = [];
 

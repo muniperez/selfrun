@@ -1,7 +1,7 @@
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers.Extensibility;
+namespace Selfrun.Common.Providers.Extensibility;
 
 public enum ProviderCredentialFormat
 {
@@ -104,7 +104,7 @@ public interface IVpsProviderScopeClient
 }
 
 /// <summary>
-/// Deterministic Minicloud resource ownership metadata attached during allocation and
+/// Deterministic Selfrun resource ownership metadata attached during allocation and
 /// checked during discovery, reconciliation, legacy import, and cleanup.
 /// </summary>
 public sealed record ProviderOwnershipEvidence(
@@ -115,11 +115,11 @@ public sealed record ProviderOwnershipEvidence(
     string? ProviderAccountId = null,
     string? AppId = null)
 {
-    public string ManagedServerName => Minicloud.Common.Services.ManagedServerName.ForApp(OrganizationSlug, AppSlug);
+    public string ManagedServerName => Selfrun.Common.Services.ManagedServerName.ForApp(OrganizationSlug, AppSlug);
 
     public IReadOnlyDictionary<string, string> ToLabels() => new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["managed-by"] = "minicloud",
+        ["managed-by"] = "selfrun",
         ["customer"] = OrganizationSlug,
         ["app"] = AppSlug,
         ["env"] = EnvironmentName
@@ -127,10 +127,10 @@ public sealed record ProviderOwnershipEvidence(
 
     public IReadOnlyList<string> ToTags() =>
     [
-        "minicloud",
-        $"minicloud-customer-{OrganizationSlug}",
-        $"minicloud-app-{AppSlug}",
-        $"minicloud-env-{EnvironmentName}"
+        "selfrun",
+        $"selfrun-customer-{OrganizationSlug}",
+        $"selfrun-app-{AppSlug}",
+        $"selfrun-env-{EnvironmentName}"
     ];
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record StorageMountRequest(int SizeGb, string MountPath, int Uid = 0, int Gid = 0);
 

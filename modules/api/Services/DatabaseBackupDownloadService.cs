@@ -3,14 +3,14 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
-public sealed class DatabaseBackupDownloadService(MinicloudDbContext db, ControlPlaneAuthorization authorization, SecretEncryptionService encryption, AuditEventService audit, IHttpClientFactory clients)
+public sealed class DatabaseBackupDownloadService(SelfrunDbContext db, ControlPlaneAuthorization authorization, SecretEncryptionService encryption, AuditEventService audit, IHttpClientFactory clients)
 {
     public const string ClientName = "database-backup-downloads";
     public async Task<DatabaseBackupDownload> PrepareAsync(string databaseId, string artifactId, string filename, ActorIdentity actor, CancellationToken ct)

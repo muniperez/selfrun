@@ -84,7 +84,7 @@ def package_source(root, output, version):
                 for member in source_members(source):
                     archive.addfile(member, source.extractfile(member) if member.isfile() else None)
             data = encoded(descriptor)
-            member = tarfile.TarInfo("minicloud-local-source.json")
+            member = tarfile.TarInfo("selfrun-local-source.json")
             member.size, member.mode = len(data), 0o600
             archive.addfile(member, io.BytesIO(data))
         target.flush()
@@ -131,7 +131,7 @@ def extract_source(archive, expected, destination):
     for path in destination.rglob("*"):
         if not path.is_relative_to(destination / ".local"):
             require(path in expected_paths and not path.is_symlink(), "Unlisted source file.")
-    metadata = read_json(destination / "minicloud-local-source.json")
+    metadata = read_json(destination / "selfrun-local-source.json")
     require(set(metadata) == {"schemaVersion", "kind", "sourceRevision", "serverVersion", "cliCompatibility"}
             and metadata["schemaVersion"] == 1 and metadata["kind"] == TRUST
             and re.fullmatch(r"[0-9a-f]{40}", metadata["sourceRevision"]),
@@ -165,7 +165,7 @@ def build_swap(operation_root, shared):
     name = shared.run(["systemd-escape", "--path", "--suffix=swap", str(path)]).decode().strip()
     require(re.fullmatch(r"[A-Za-z0-9._\\-]+\.swap", name), "Invalid swap unit name.")
     unit = Path("/etc/systemd/system") / name
-    data = ("[Unit]\nDescription=Minicloud local-source build swap\n[Swap]\nWhat=" + str(path)
+    data = ("[Unit]\nDescription=Selfrun local-source build swap\n[Swap]\nWhat=" + str(path)
             + "\n[Install]\nWantedBy=swap.target\n").encode()
     if unit.exists():
         require(not unit.is_symlink() and unit.read_bytes() == data, "Conflicting swap unit.")
@@ -194,7 +194,7 @@ def build_images(root, output, metadata, native, release):
                 subprocess.run([
                     "docker", "build", "--platform", native, "--file", str(root / f"modules/{component}/Dockerfile"),
                     "--label", f"org.opencontainers.image.revision={revision}",
-                    "--label", f"com.minicloud.artifact-trust={TRUST}",
+                    "--label", f"com.selfrun.artifact-trust={TRUST}",
                     "--iidfile", str(iid), str(root),
                 ], check=True, stdout=log, stderr=subprocess.STDOUT, timeout=3600)
                 reference = iid.read_text().strip()
@@ -221,7 +221,7 @@ def package_native(root, output, metadata, images, archive_digest, native, relea
     files["compose.yml"] = compose.encode()
     files["images.env"] = release.environment_bytes(value)
     files["server-release.json"] = encoded(value)
-    name = f"minicloud-server-{value['serverVersion']}.tar.gz"
+    name = f"selfrun-server-{value['serverVersion']}.tar.gz"
     memory = io.BytesIO()
     with gzip.GzipFile(fileobj=memory, mode="wb", mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w") as archive:
@@ -317,7 +317,7 @@ def install(args):
                 # No operator registry credentials or floating product images.
                 shared.run(["docker", "--config", str(output / "anonymous"), "pull", "--platform", native, reference])
 
-    args.root = Path("/opt/minicloud")
+    args.root = Path("/opt/selfrun")
     args.assets_dir = local_assets
     args.command, args.defer_dns = "install", True
     args.token_output_name = None

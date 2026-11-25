@@ -3,13 +3,13 @@ using System.Diagnostics;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Minicloud.Telemetry.Otlp;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Common.Diagnostics;
-using Minicloud.Telemetry.Services;
+using Selfrun.Telemetry.Otlp;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Common.Diagnostics;
+using Selfrun.Telemetry.Services;
 
-namespace Minicloud.Telemetry.Controllers;
+namespace Selfrun.Telemetry.Controllers;
 
 [Route("otlp/v1/logs")]
 public sealed class OtlpLogsController(

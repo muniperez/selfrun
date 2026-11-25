@@ -1,9 +1,9 @@
 using System.Text.Json;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class DeploymentLifecycleService(IIdGenerator ids, TimeProvider timeProvider)
 {
@@ -24,7 +24,7 @@ public sealed class DeploymentLifecycleService(IIdGenerator ids, TimeProvider ti
             [DeploymentStatus.Canceled] = new HashSet<DeploymentStatus>()
         };
 
-    public Deployment CreateQueued(MinicloudApp app, CreateDeploymentRequest request)
+    public Deployment CreateQueued(SelfrunApp app, CreateDeploymentRequest request)
     {
         ControlPlaneValidation.TryParseEnum<DatabaseMode>(request.Database, out var database);
 

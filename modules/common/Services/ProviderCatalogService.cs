@@ -1,20 +1,20 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Extensibility;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Extensibility;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class ProviderCatalogException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;
 }
 
-public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator ids, TimeProvider clock,
+public sealed class ProviderCatalogService(SelfrunDbContext db, IIdGenerator ids, TimeProvider clock,
     ISecretStore? secrets = null, IOptions<ProviderCatalogOptions>? policy = null,
     IVpsProviderRegistry? registry = null)
 {
@@ -42,7 +42,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         return plan;
     }
 
-    public async Task BindAsync(MinicloudApp app, string name, CancellationToken ct)
+    public async Task BindAsync(SelfrunApp app, string name, CancellationToken ct)
     {
         var plan = await ResolveAsync(app.OrganizationId, name, ct, requireEnabled: false);
         if (app.PlanId == plan.Id)
@@ -67,7 +67,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         app.UpdatedAt = clock.GetUtcNow();
     }
 
-    public async Task ReserveAsync(MinicloudApp app, Deployment deployment, CancellationToken ct)
+    public async Task ReserveAsync(SelfrunApp app, Deployment deployment, CancellationToken ct)
     {
         // Legacy rows are handled by the explicit import path; they cannot resolve custom names.
         if (app.PlanId is null)
@@ -110,7 +110,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         SnapshotSshAccess(app, deployment, plan);
     }
 
-    private void SnapshotSshAccess(MinicloudApp app, Deployment deployment, ProviderPlan plan)
+    private void SnapshotSshAccess(SelfrunApp app, Deployment deployment, ProviderPlan plan)
     {
         if (deployment.SshSnapshotTakenAt is null)
         {
@@ -204,7 +204,7 @@ public sealed class ProviderCatalogService(MinicloudDbContext db, IIdGenerator i
         return plan;
     }
 
-    public static async Task<ProviderAccount> LockAccountAsync(MinicloudDbContext db, string organizationId, string id, CancellationToken ct)
+    public static async Task<ProviderAccount> LockAccountAsync(SelfrunDbContext db, string organizationId, string id, CancellationToken ct)
     {
         IQueryable<ProviderAccount> query = db.ProviderAccounts;
         if (db.Database.IsNpgsql()) query = db.ProviderAccounts.FromSqlInterpolated(

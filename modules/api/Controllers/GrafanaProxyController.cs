@@ -1,13 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 /// <summary>
 /// T20 login/auth proxy in front of private Grafana. Every request must carry a
-/// valid Minicloud proxy session cookie; caller auth-proxy headers, Authorization,
+/// valid Selfrun proxy session cookie; caller auth-proxy headers, Authorization,
 /// Grafana cookies, and org overrides are stripped and only the trusted identity
 /// derived from the session is forwarded. Public login/basic-auth/admin routes,
 /// datasource mutation, and direct datasource-proxy access are denied. Grafana

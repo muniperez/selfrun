@@ -1,6 +1,6 @@
-Minicloud license scope
+Selfrun license scope
 
-The Minicloud control plane is licensed under AGPL-3.0-only. This includes
+The Selfrun control plane is licensed under AGPL-3.0-only. This includes
 the API, dashboard, worker, runtime agent, telemetry, server-side Common
 project, runtime templates, and server tests and deployment scripts.
 

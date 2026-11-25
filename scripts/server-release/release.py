@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-"""Build and verify the distinct Minicloud server release channel."""
+"""Build and verify the distinct Selfrun server release channel."""
 
 import argparse
 import base64
@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 
 
-REPOSITORY = "muniventures/minicloud"
+REPOSITORY = "muniperez/selfrun"
 SOURCE_URI = f"git+https://github.com/{REPOSITORY}"
 WORKFLOW = ".github/workflows/server-release.yml"
 ISSUER = "https://token.actions.githubusercontent.com"
@@ -133,16 +133,11 @@ def validate_core(value, tag, source=None):
     validate_compatibility(value.get("cliCompatibility"))
 
 
-def validate_images(images, *, allow_legacy=True):
+def validate_images(images):
     require(isinstance(images, dict) and set(images) == set(COMPONENTS), "Pin exactly api, dashboard and worker images.")
-    families = set()
     for component, reference in images.items():
-        current = matches(rf"ghcr\.io/{REPOSITORY}-release-{component}@{DIGEST}", reference)
-        legacy = allow_legacy and matches(rf"ghcr\.io/{REPOSITORY}-{component}@{DIGEST}", reference)
-        require(current or legacy,
+        require(matches(rf"ghcr\.io/{REPOSITORY}-release-{component}@{DIGEST}", reference),
                 f"Invalid canonical {component} image digest.")
-        families.add("release" if current else "legacy")
-    require(len(families) == 1, "Product images must use one canonical repository family.")
 
 
 def validate_manifest(value, tag):
@@ -153,7 +148,7 @@ def validate_manifest(value, tag):
     validate_images(value["images"])
     bundle = value["bundle"]
     require(isinstance(bundle, dict) and set(bundle) == {"name", "sha256"}
-            and bundle["name"] == f"minicloud-server-{value['serverVersion']}.tar.gz"
+            and bundle["name"] == f"selfrun-server-{value['serverVersion']}.tar.gz"
             and matches(r"[0-9a-f]{64}", bundle["sha256"]), "Invalid bundle binding.")
     files = value["files"]
     require(isinstance(files, dict) and REQUIRED_PAYLOAD | {"images.env", "server-release.json"} <= set(files),
@@ -174,6 +169,9 @@ def load_input(config, tag, source):
     value = read_json(config)
     require(isinstance(value, dict) and set(value) == INPUT_FIELDS, "Invalid release input field set.")
     value.update(releaseTag=tag, sourceRevision=source)
+    if value["cliCompatibility"] == {"protocolVersion": 1, "minimumVersion": None,
+                                     "maximumExclusiveVersion": None, "sourceRevisions": []}:
+        value["cliCompatibility"]["sourceRevisions"].append(source)
     validate_core(value, tag, source)
     return value
 
@@ -205,9 +203,9 @@ def preflight(root, config, payload, tag, source):
     require(migrations and migrations[-1] == value["applicationMigration"],
             "applicationMigration must be the latest migration in the release source.")
     worker = (root / "modules/worker/Dockerfile").read_text()
-    require(re.search(r"^ARG MINICLOUD_AGENT_RID(?:=linux-x64)?\s*$", worker, re.M)
-            and re.search(r"-r\s+[\"']?\$(?:MINICLOUD_AGENT_RID|\{MINICLOUD_AGENT_RID\})", worker)
-            and all(f"/agent/{rid}/Minicloud.RuntimeAgent /app/runtime-agent/{rid}/minicloud-agent" in worker
+    require(re.search(r"^ARG SELFRUN_AGENT_RID(?:=linux-x64)?\s*$", worker, re.M)
+            and re.search(r"-r\s+[\"']?\$(?:SELFRUN_AGENT_RID|\{SELFRUN_AGENT_RID\})", worker)
+            and all(f"/agent/{rid}/Selfrun.RuntimeAgent /app/runtime-agent/{rid}/selfrun-agent" in worker
                     for rid in ("linux-x64", "linux-arm64")),
             "T41 handoff missing: worker must publish and package both linux-x64 and linux-arm64 agents.")
     dashboard = (root / "modules/dashboard/Dockerfile").read_text()
@@ -218,7 +216,7 @@ def preflight(root, config, payload, tag, source):
 
 def image_environment(value):
     refs = {**value["images"], **value["dependencies"]}
-    return {f"MINICLOUD_{name.upper()}_IMAGE": ref for name, ref in refs.items()}
+    return {f"SELFRUN_{name.upper()}_IMAGE": ref for name, ref in refs.items()}
 
 
 def environment_bytes(value):
@@ -228,7 +226,7 @@ def environment_bytes(value):
 def package(root, config, payload, tag, source, images, output):
     value = preflight(root, config, payload, tag, source)
     value["images"] = read_json(images)
-    validate_images(value["images"], allow_legacy=False)
+    validate_images(value["images"])
     files = payload_files(payload)
     # Other installation settings stay uninterpolated; no operator secrets are needed to package.
     compose = json.loads(run(["docker", "compose", "--project-directory", str(payload),
@@ -259,7 +257,7 @@ def package(root, config, payload, tag, source, images, output):
             "Build outputs must be under the repository's ignored .local/artifacts/.")
     require(not output.exists() or not any(output.iterdir()), "Release output directory must be empty.")
     output.mkdir(parents=True, exist_ok=True)
-    name = f"minicloud-server-{value['serverVersion']}.tar.gz"
+    name = f"selfrun-server-{value['serverVersion']}.tar.gz"
     with (output / name).open("wb") as target:
         with gzip.GzipFile(filename="", mode="wb", fileobj=target, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as archive:
@@ -286,7 +284,7 @@ def verify_assets(directory, tag):
     run(["cosign", "verify-blob", "--new-bundle-format", "--bundle", str(directory / "checksums.txt.sigstore.json"),
          "--certificate-identity", identity(tag), "--certificate-oidc-issuer", ISSUER,
          str(directory / "checksums.txt")])
-    expected = {f"minicloud-server-{version}.tar.gz", "server-manifest.json",
+    expected = {f"selfrun-server-{version}.tar.gz", "server-manifest.json",
                 "install-server.sh", "verify-server-release.py"}
     checksums = {}
     for line in (directory / "checksums.txt").read_text().splitlines():
@@ -420,7 +418,7 @@ def verify_agent(reference, architecture, output):
     try:
         for rid, machine in (("linux-x64", 62), ("linux-arm64", 183)):
             binary = output.with_name(f"{output.name}-{rid}")
-            run(["docker", "cp", f"{container}:/app/runtime-agent/{rid}/minicloud-agent", str(binary)])
+            run(["docker", "cp", f"{container}:/app/runtime-agent/{rid}/selfrun-agent", str(binary)])
             data = binary.read_bytes()
             require(len(data) >= 20 and data[:6] == b"\x7fELF\x02\x01"
                     and int.from_bytes(data[18:20], "little") == machine,

@@ -4,7 +4,7 @@ No server release is published or qualified yet, and these flows have not been
 qualified on a real host. They are built on the durable
 [maintenance authority](server-maintenance-authority.md), which runs inside the
 API image as
-`dotnet Minicloud.Api.dll maintenance <status|fence|drain-status|release|transfer>`.
+`dotnet Selfrun.Api.dll maintenance <status|fence|drain-status|release|transfer>`.
 Maintenance **never stops, kills or cancels accepted work**. It fences new
 management writes, waits a bounded time for accepted work to drain, and gives up
 (reopening writes) if the work does not drain.
@@ -89,7 +89,7 @@ Append these operations and options to the common command above, in place of
 | `backup` | Capture args, optionally `--drain-timeout SECONDS` (default 1800) | Fence, drain, capture, verify and release. |
 | `verify-backup` | `--archive "$backups/<id>.backup" --identity-file "$identity"` | Authenticate and digest-check every component without writing plaintext. |
 | `remove-backup` | Verify args plus `--confirm-backup-id <id>` | Delete only that authenticated `.backup` directory. |
-| `schedule-backup` | Capture args plus `--output-dir "$units" --at HH:MM` | Write `minicloud-backup.service` and `.timer` for a daily UTC backup. Units are never installed, started or enabled. |
+| `schedule-backup` | Capture args plus `--output-dir "$units" --at HH:MM` | Write `selfrun-backup.service` and `.timer` for a daily UTC backup. Units are never installed, started or enabled. |
 | `upgrade` | Capture args plus `--previous-assets-dir "$old_assets"` | Run the coordinated upgrade to the selected `--tag`. |
 | `restore` | `--archive "$backups/<id>.backup" --identity-file "$identity"`, optionally `--confirm-replace-live <installationId>` | Restore the backup and leave writes **fenced**. |
 | `restore-confirm` | `--confirm-operation-id <restore operation>` | Check that services are ready, then reopen writes. |
@@ -110,7 +110,7 @@ A backup runs in this order:
    uncertain work explicitly, then retry.
 3. **Capture.** Each component is streamed through `age` into
    `<backupId>.partial/` as a separate `.age` file:
-   - `pg_dump --format custom` of the `minicloud` and `kratos` databases, taken
+   - `pg_dump --format custom` of the `selfrun` and `kratos` databases, taken
      with `docker compose exec`.
    - Read-only `tar` of the `openbao`, `artifacts` (including registry data),
      `caddy-data` and `caddy-config` volumes, using `--network none` helper
@@ -262,7 +262,7 @@ off-host copy.
 | `rehearse-recovery` | Same as verify, plus `--output-dir "$new_directory"` | Finish all checks before creating a new protected directory containing recovery files. Starts no container/worker/network and makes no live provider call. |
 | `retention-plan` | `--backup-dir "$backups" --identity-file "$identity" --keep 7` | Authenticate each recovery archive and full `.backup` manifest. List older candidates for each type and any leftover `.partial` captures. Deletes nothing. Unknown files make planning refuse. |
 | `remove-recovery` | Verify arguments, plus `--confirm-backup-id "$backupId"` | Delete only that authenticated, correctly named archive. No installation/volume/provider data is deleted. |
-| `schedule-recovery` | Capture arguments, plus `--output-dir "$units" --at 03:15` | Write new `minicloud-recovery.service`/`.timer` units for daily UTC capture. Never install/start/enable units. |
+| `schedule-recovery` | Capture arguments, plus `--output-dir "$units" --at 03:15` | Write new `selfrun-recovery.service`/`.timer` units for daily UTC capture. Never install/start/enable units. |
 
 Archive verification is intentionally restricted to the same original installed
 release and CA. It is not a lost-host full restore command or an upgrade

@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Registry;
+namespace Selfrun.Common.Registry;
 
-public sealed class RegistryMaintenanceService(MinicloudDbContext db, ImagePublicationService publications, RegistryClient registry, TimeProvider clock)
+public sealed class RegistryMaintenanceService(SelfrunDbContext db, ImagePublicationService publications, RegistryClient registry, TimeProvider clock)
 {
     public Task<string> BeginAsync(CancellationToken ct) => publications.LockedAsync(async () =>
     {

@@ -59,7 +59,7 @@ def apply(request, run=subprocess.run):
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', container):
         raise ValueError('Invalid container identity')
     hba, public = rules(request['databases'])
-    admin = request.get('adminUser', 'minicloud')
+    admin = request.get('adminUser', 'selfrun')
     if not re.fullmatch(r'[a-z][a-z0-9_]{0,62}', admin):
         raise ValueError('Invalid administrator')
     # Resolve PGDATA through the running container; never accept a source path
@@ -116,7 +116,7 @@ def ensure_tls_identity(directory, addresses, run=subprocess.run):
         with tempfile.TemporaryDirectory(prefix='.ca-',dir=directory) as temporary:
             root=Path(temporary)
             run(['openssl','req','-x509','-newkey','rsa:3072','-nodes','-keyout',str(root/'key'),'-out',str(root/'cert'),
-                 '-days','3650','-subj','/CN=Minicloud database root '+secrets.token_hex(8),
+                 '-days','3650','-subj','/CN=Selfrun database root '+secrets.token_hex(8),
                  '-addext','basicConstraints=critical,CA:TRUE,pathlen:0','-addext','keyUsage=critical,keyCertSign,cRLSign'],check=True,capture_output=True,timeout=60)
             for source,target in ((root/'key',ca_key),(root/'cert',ca_cert)):
                 source.chmod(0o600)
@@ -140,7 +140,7 @@ def ensure_tls_identity(directory, addresses, run=subprocess.run):
             root=Path(temporary)
             extension=root/'extensions'
             extension.write_text('basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName='+','.join('IP:'+value for value in addresses)+'\n')
-            run(['openssl','req','-new','-newkey','rsa:3072','-nodes','-keyout',str(root/'key'),'-out',str(root/'request'),'-subj','/CN=Minicloud database'],check=True,capture_output=True,timeout=60)
+            run(['openssl','req','-new','-newkey','rsa:3072','-nodes','-keyout',str(root/'key'),'-out',str(root/'request'),'-subj','/CN=Selfrun database'],check=True,capture_output=True,timeout=60)
             run(['openssl','x509','-req','-in',str(root/'request'),'-CA',str(ca_cert),'-CAkey',str(ca_key),'-set_serial',str(secrets.randbits(128) or 1),
                  '-out',str(root/'cert'),'-days','365','-extfile',str(extension)],check=True,capture_output=True,timeout=60)
             run(['openssl','verify','-CAfile',str(ca_cert),str(root/'cert')],check=True,capture_output=True,timeout=30)
@@ -160,7 +160,7 @@ def wait_for_postgres(container, run=subprocess.run, timeout=60, monotonic=time.
         if remaining <= 0:
             raise RuntimeError('Database readiness deadline exceeded') from None
         try:
-            run(['docker','exec',container,'pg_isready','-U','minicloud','-d','postgres'],
+            run(['docker','exec',container,'pg_isready','-U','selfrun','-d','postgres'],
                 check=True, capture_output=True, timeout=min(5, remaining))
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -174,10 +174,10 @@ def expose(request, run=subprocess.run):
     slug=request['appSlug']
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}',slug):
         raise ValueError('Invalid source app identity')
-    app=Path('/opt/minicloud/apps')/slug
+    app=Path('/opt/selfrun/apps')/slug
     if app.is_symlink() or not app.is_dir():
         raise ValueError('Source application unavailable')
-    container='minicloud-'+slug+'-db-1'
+    container='selfrun-'+slug+'-db-1'
     info=run(['docker','inspect',container],check=True,capture_output=True,timeout=30)
     networks=json.loads(info.stdout)[0]['NetworkSettings']['Networks']
     for item in request['databases']:
@@ -200,8 +200,8 @@ def expose(request, run=subprocess.run):
         if source.exists():
             _secure_file(source)
             previous_tls[name]=source.read_bytes()
-    compose=['docker','compose','-p','minicloud-'+slug,'-f',str(app/'infra.compose.json'),'-f',str(app/'app.compose.json'),'-f',str(override),'up','-d','db']
-    path=run(['docker','exec',container,'psql','-X','-U','minicloud','-d','postgres','-Atc','SHOW hba_file'],check=True,capture_output=True,timeout=30).stdout.decode().strip()
+    compose=['docker','compose','-p','selfrun-'+slug,'-f',str(app/'infra.compose.json'),'-f',str(app/'app.compose.json'),'-f',str(override),'up','-d','db']
+    path=run(['docker','exec',container,'psql','-X','-U','selfrun','-d','postgres','-Atc','SHOW hba_file'],check=True,capture_output=True,timeout=30).stdout.decode().strip()
     if not path.startswith('/var/lib/postgresql/') or '..' in path.split('/') or '\n' in path:
         raise ValueError('Unexpected PostgreSQL configuration path')
     auto=path.rsplit('/',1)[0]+'/postgresql.auto.conf'
@@ -217,7 +217,7 @@ def expose(request, run=subprocess.run):
             run(['docker','exec','-u','root',container,'chown','70:70','/var/lib/postgresql/data/server.key','/var/lib/postgresql/data/server.crt'],check=True,capture_output=True,timeout=30)
             run(['docker','exec','-u','root',container,'chmod','600','/var/lib/postgresql/data/server.key'],check=True,capture_output=True,timeout=30)
             sql="ALTER SYSTEM SET ssl = 'on';\nALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/data/server.crt';\nALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/data/server.key';\nSELECT pg_reload_conf();\n"
-            run(['docker','exec','-i',container,'psql','-X','-U','minicloud','-d','postgres','-v','ON_ERROR_STOP=1'],input=sql.encode(),check=True,capture_output=True,timeout=30)
+            run(['docker','exec','-i',container,'psql','-X','-U','selfrun','-d','postgres','-v','ON_ERROR_STOP=1'],input=sql.encode(),check=True,capture_output=True,timeout=30)
         stage = 'access-rules'
         result=apply(dict(container=container,databases=request['databases']),run)
         ports=['127.0.0.1:15432:5432']+[('['+address+']' if ':' in address else address)+':5432:5432' for address in addresses]
@@ -229,7 +229,7 @@ def expose(request, run=subprocess.run):
         wait_for_postgres(container, run)
         if identities:
             stage = 'access-tls-verification'
-            enabled=run(['docker','exec',container,'psql','-X','-U','minicloud','-d','postgres','-Atc','SHOW ssl'],check=True,capture_output=True,timeout=30)
+            enabled=run(['docker','exec',container,'psql','-X','-U','selfrun','-d','postgres','-Atc','SHOW ssl'],check=True,capture_output=True,timeout=30)
             if enabled.stdout.strip()!=b'on': raise ValueError('Database TLS was not activated')
         return dict(result,public=public,listenAddresses=addresses,caCertificatePem=ca_cert.read_text() if ca_cert else None)
     except Exception as cause:
@@ -252,7 +252,7 @@ def expose(request, run=subprocess.run):
             override.chmod(0o600)
             run(compose,check=True,capture_output=True,timeout=300)
             wait_for_postgres(container, run)
-            run(['docker','exec',container,'psql','-X','-U','minicloud','-d','postgres','-v','ON_ERROR_STOP=1','-c','SELECT pg_reload_conf()'],check=True,capture_output=True,timeout=30)
+            run(['docker','exec',container,'psql','-X','-U','selfrun','-d','postgres','-v','ON_ERROR_STOP=1','-c','SELECT pg_reload_conf()'],check=True,capture_output=True,timeout=30)
             if previous_override is None: override.unlink()
         except Exception:
             raise AccessRollbackUnverifiedError('Database access failed and rollback could not be verified', stage, cause) from None

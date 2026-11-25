@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Minicloud.Common.Providers.Ovhcloud;
+namespace Selfrun.Common.Providers.Ovhcloud;
 
 /// <summary>
 /// SDK-independent OVHcloud API v1 request signer ($1$ + SHA-1 hex signature).

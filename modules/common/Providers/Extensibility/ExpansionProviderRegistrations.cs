@@ -1,16 +1,16 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers.Aws;
-using Minicloud.Common.Providers.Azure;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.GoogleCloud;
-using Minicloud.Common.Providers.Linode;
-using Minicloud.Common.Providers.Ovhcloud;
-using Minicloud.Common.Providers.Scaleway;
-using Minicloud.Common.Services;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers.Aws;
+using Selfrun.Common.Providers.Azure;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.GoogleCloud;
+using Selfrun.Common.Providers.Linode;
+using Selfrun.Common.Providers.Ovhcloud;
+using Selfrun.Common.Providers.Scaleway;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Common.Providers.Extensibility;
+namespace Selfrun.Common.Providers.Extensibility;
 
 internal static class ExpansionProviderCredentialValidators
 {

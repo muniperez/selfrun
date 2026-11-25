@@ -23,7 +23,7 @@ check_dir() {
   test "$(( 8#$permissions & 8#022 ))" = 0
 }
 for parent in / /var /var/lib /opt; do check_dir "$parent"; done
-lock=/opt/minicloud.installation.lock
+lock=/opt/selfrun.installation.lock
 if test -e "$lock" || test -L "$lock"; then
   test -f "$lock" && test ! -L "$lock"
   test "$(stat -c %u:%a "$lock")" = 0:600
@@ -31,7 +31,7 @@ fi
 # Use the installer's persistent inode, including while preparing a partial host.
 exec 9<>"$lock"
 flock -xn 9
-test ! -e /opt/minicloud && test ! -L /opt/minicloud
+test ! -e /opt/selfrun && test ! -L /opt/selfrun
 if test -e /opt/containerd || test -L /opt/containerd; then
   check_dir /opt/containerd
   test -z "$(find /opt/containerd -mindepth 1 -maxdepth 1 ! -name bin ! -name lib -print -quit)"
@@ -43,17 +43,17 @@ fi
 if test -e /opt/digitalocean || test -L /opt/digitalocean || test -e /opt/vultr || test -L /opt/vultr; then
   python3 -B -c __SEED_PROVIDER_LAYOUT__ "${5:-}"
 fi
-test -z "$(find /opt -mindepth 1 -maxdepth 1 ! -name minicloud.installation.lock ! -name minicloud.seed-operation ! -name containerd ! -name digitalocean ! -name vultr -print -quit)"
-test ! -e /opt/minicloud.seed-operation.pending && test ! -L /opt/minicloud.seed-operation.pending
-base=/var/lib/minicloud-seed
+test -z "$(find /opt -mindepth 1 -maxdepth 1 ! -name selfrun.installation.lock ! -name selfrun.seed-operation ! -name containerd ! -name digitalocean ! -name vultr -print -quit)"
+test ! -e /opt/selfrun.seed-operation.pending && test ! -L /opt/selfrun.seed-operation.pending
+base=/var/lib/selfrun-seed
 if test ! -e "$base"; then mkdir -m 700 "$base"; fi
 check_dir "$base"
 test -z "$(find "$base" -mindepth 1 -maxdepth 1 ! -name "$operation" -print -quit)"
 root="$base/$operation"
 if test ! -e "$root"; then
   # Never prepare an existing installation on the strength of a name.
-  test ! -e /opt/minicloud && test ! -L /opt/minicloud
-  test ! -e /opt/minicloud.seed-operation
+  test ! -e /opt/selfrun && test ! -L /opt/selfrun
+  test ! -e /opt/selfrun.seed-operation
   if command -v docker >/dev/null; then
     test -z "$(docker ps -aq)"
     test -z "$(docker volume ls -q)"
@@ -70,18 +70,18 @@ test -f "$root/operation" && test ! -L "$root/operation"
 test "$(stat -c %u:%a "$root/operation")" = 0:600
 test "$(cat "$root/operation")" = "$operation"
 test -z "$(find "$root" -name '*.pending' -o -name '*.partial')"
-if test -e /opt/minicloud || test -e /opt/minicloud.seed-operation; then
-  test -f /opt/minicloud.seed-operation && test ! -L /opt/minicloud.seed-operation
-  test "$(cat /opt/minicloud.seed-operation)" = "$operation"
+if test -e /opt/selfrun || test -e /opt/selfrun.seed-operation; then
+  test -f /opt/selfrun.seed-operation && test ! -L /opt/selfrun.seed-operation
+  test "$(cat /opt/selfrun.seed-operation)" = "$operation"
 else
   # Durable host/operation binding before any installer input can be transmitted.
-  test ! -L /opt/minicloud.seed-operation
-  (set -C; printf '%s\n' "$operation" > /opt/minicloud.seed-operation.pending)
-  sync -f /opt/minicloud.seed-operation.pending
-  mv -T /opt/minicloud.seed-operation.pending /opt/minicloud.seed-operation
+  test ! -L /opt/selfrun.seed-operation
+  (set -C; printf '%s\n' "$operation" > /opt/selfrun.seed-operation.pending)
+  sync -f /opt/selfrun.seed-operation.pending
+  mv -T /opt/selfrun.seed-operation.pending /opt/selfrun.seed-operation
   sync -f /opt
 fi
-test "$(stat -c %u:%a /opt/minicloud.seed-operation)" = 0:600
+test "$(stat -c %u:%a /opt/selfrun.seed-operation)" = 0:600
 # Use only Ubuntu's authenticated archive, never image-supplied third-party sources.
 sources="$root/ubuntu.sources"
 if test -e "$sources" || test -L "$sources"; then
@@ -98,7 +98,7 @@ apt-get "${apt_options[@]}" install -y --no-install-recommends \
 check_dir /etc
 check_dir /etc/ssh
 check_dir /etc/ssh/sshd_config.d
-ssh_policy=/etc/ssh/sshd_config.d/00-minicloud-seed.conf
+ssh_policy=/etc/ssh/sshd_config.d/00-selfrun-seed.conf
 policy=$'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\nPubkeyAuthentication yes\nAllowAgentForwarding no\nAllowTcpForwarding no\nPermitTunnel no\nX11Forwarding no\n'
 if test -e "$ssh_policy" || test -L "$ssh_policy"; then
   test -f "$ssh_policy" && test ! -L "$ssh_policy"

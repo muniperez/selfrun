@@ -1,7 +1,7 @@
 using Google.Protobuf;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Telemetry.Otlp;
+namespace Selfrun.Telemetry.Otlp;
 
 /// <summary>
 /// T12 OTLP protobuf codec. Parses and emits ExportLogsServiceRequest/Response using the

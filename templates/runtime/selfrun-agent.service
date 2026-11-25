@@ -1,0 +1,18 @@
+[Unit]
+Description=Selfrun runtime agent
+After=network-online.target docker.service caddy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=selfrun-agent
+Group=selfrun-agent
+SupplementaryGroups=docker
+ExecStart=/opt/selfrun/agent/selfrun-agent /opt/selfrun/agent/config.json
+Restart=always
+RestartSec=5
+StateDirectory=selfrun-agent
+WorkingDirectory=/var/lib/selfrun-agent
+
+[Install]
+WantedBy=multi-user.target

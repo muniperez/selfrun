@@ -87,7 +87,7 @@ export async function setKeepSignedIn(keepSignedIn: boolean) {
   return session;
 }
 
-const keepSignedInHintKey = "minicloud.keepSignedIn";
+const keepSignedInHintKey = "selfrun.keepSignedIn";
 
 /** Non-secret, per-browser default for the sign-in checkbox. */
 export function keepSignedInHint() {

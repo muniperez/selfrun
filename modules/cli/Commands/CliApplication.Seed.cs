@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Text.Json;
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Auth;
-using Minicloud.Cli.Config;
-using Minicloud.Cli.Seed;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Auth;
+using Selfrun.Cli.Config;
+using Selfrun.Cli.Seed;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -196,14 +196,14 @@ public sealed partial class CliApplication
         SeedGuard.Require(state.Phase == "complete", "Complete verified browser setup and independent recovery handoff first.");
         SeedGuard.Require(options.ContainsKey("--register-provider"), "Provider registration is optional and defaults to no import. Explicitly supply --register-provider to opt in.");
         SeedGuard.Require(string.IsNullOrWhiteSpace(CliEnvironment.GetTokenEnvironmentVariable()),
-            "Unset SELFRUN_TOKEN / MINICLOUD_TOKEN. Seed never silently reuses an environment token; select normal instance-scoped authentication explicitly.");
+            "Unset SELFRUN_TOKEN. Seed never silently reuses an environment token; select normal instance-scoped authentication explicitly.");
         await new SeedHost().VerifyHttpsAsync(state, ct);
         var environment = CliEnvironment.ForInstance(new(state.InstanceName ?? state.Id, "https://" + state.Plan.Selection.Domain, state.Plan.Selection.AppDomain), _environment.ConfigHome);
         var store = new TokenStore(environment);
         SeedFiles.Directory(Path.GetDirectoryName(environment.TokenFilePath)!);
         if (File.Exists(environment.TokenFilePath)) SeedFiles.Check(environment.TokenFilePath);
         using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-        var client = new MinicloudApiClient(environment, store, http);
+        var client = new SelfrunApiClient(environment, store, http);
         if (!options.ContainsKey("--use-existing-auth"))
         {
             var app = new CliApplication(_console, environment, store, client);

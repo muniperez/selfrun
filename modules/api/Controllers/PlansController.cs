@@ -1,16 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/plans")]
-public sealed class PlansController(MinicloudDbContext db, ControlPlaneAuthorization authorization,
+public sealed class PlansController(SelfrunDbContext db, ControlPlaneAuthorization authorization,
     ProviderCatalogService catalog, AuditEventService audit) : ControllerBase
 {
     [HttpGet]

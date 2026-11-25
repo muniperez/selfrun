@@ -19,7 +19,7 @@
     <nav aria-label="Main">
       <a href="#deployments">Deployments</a>
       <a href="#setup">Setup</a>
-      <a href="https://github.com/muniventures/minicloud">GitHub</a>
+      <a href="https://github.com/muniperez/selfrun">GitHub</a>
     </nav>
   </header>
 
@@ -29,7 +29,7 @@
       <p>Use the Selfrun CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
       <div class="actions">
         <a class="primary" href="#setup">Set up Selfrun</a>
-        <a class="secondary" href="https://github.com/muniventures/minicloud">View source on GitHub</a>
+        <a class="secondary" href="https://github.com/muniperez/selfrun">View source on GitHub</a>
       </div>
     </section>
 
@@ -41,7 +41,7 @@
         <a href="#first-deploy">Deploy an app</a>
       </div>
       <figure>
-        <a href="./media/services.png"><img src="./media/services.png" width="1679" height="850" alt="Selfrun dashboard showing public and private services, their addresses, and whether they are running" loading="lazy"></a>
+        <a href="./media/services.png"><img src="./media/services.png" width="1440" height="850" alt="Selfrun dashboard showing public and private services, their addresses, and whether they are running" loading="lazy"></a>
       </figure>
     </section>
 
@@ -54,14 +54,14 @@
         <li id="self-host">
           <h3>Install Selfrun on a VPS</h3>
           <ol class="install-list">
-            <li><a href="./downloads.html">Download the CLI for your platform</a> or <a href="https://github.com/muniventures/minicloud/blob/main/docs/stateless-seed.md#publish-from-a-clone">build it from source</a>.</li>
+            <li><a href="./downloads.html">Download the CLI for your platform</a> or <a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md#publish-from-a-clone">build it from source</a>.</li>
             <li>Run the setup wizard.<pre tabindex="0"><code>selfrun seed</code></pre></li>
           </ol>
         </li>
 
         <li id="cli-login">
           <h3>Sign in from your terminal</h3>
-          <p>Use the CLI you set up above. If you’re joining an existing server, use the <a href="https://github.com/muniventures/minicloud/blob/main/docs/cli-distribution.md">CLI version your team provides</a>. Replace <code>cloud.example.com</code> with your dashboard hostname.</p>
+          <p>Use the CLI you set up above. If you’re joining an existing server, use the <a href="https://github.com/muniperez/selfrun/blob/main/docs/cli-distribution.md">CLI version your team provides</a>. Replace <code>cloud.example.com</code> with your dashboard hostname.</p>
           <pre tabindex="0"><code>selfrun instance add work cloud.example.com
 selfrun login</code></pre>
           <p><code>work</code> is a name for this server on your computer. Complete sign-in in the browser, then return to your terminal.</p>
@@ -70,7 +70,7 @@ selfrun login</code></pre>
         <li id="first-deploy">
           <h3>Deploy your first app</h3>
           <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
-          <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>selfrun init</code> to select or create an app, choose the folders and plan, and write <code>selfrun.yml</code> (existing <code>minicloud.yml</code> files remain supported). Your first deployment can create a billable VPS under that plan.</p>
+          <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>selfrun init</code> to select or create an app, choose the folders and plan, and write <code>selfrun.yml</code>. Your first deployment can create a billable VPS under that plan.</p>
           <pre tabindex="0"><code>selfrun init</code></pre>
           <p>Before deploying, review <code>selfrun.yml</code>. Keep the app ID that <code>init</code> wrote and check each service’s folder, Dockerfile, port, and public access. Here is an example <code>services</code> section for a public frontend and a private API:</p>
           <pre tabindex="0"><code>services:
@@ -87,7 +87,7 @@ selfrun login</code></pre>
           <p>Deploy the configured services:</p>
           <pre tabindex="0"><code>selfrun deploy</code></pre>
           <p>For a public service, use the hostname under your configured app domain. With Cloudflare DNS management enabled, Selfrun creates the record. Otherwise open the run in <strong>Deployments</strong> and follow its DNS message: create an A record for the printed hostname pointing to the app VPS IP. After DNS resolves and deployment completes, open the public URL.</p>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#create-a-deployment-config">Configure service folders, ports, and Dockerfiles</a></p>
+          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#create-a-deployment-config">Configure service folders, ports, and Dockerfiles</a></p>
         </li>
 
         <li id="manage">
@@ -100,7 +100,7 @@ selfrun login</code></pre>
             <li><strong>App settings</strong> has controls to delete an app or environment. Back up data before deleting it and confirm the VPS is gone in your provider console. Retained volumes can still incur charges.</li>
           </ul>
           <p>After changing code or configuration, run <code>selfrun deploy</code> again to update the changed services. Use <code>selfrun status --watch</code> to follow a deploy and <code>selfrun logs my-app</code> for runtime logs when log collection is enabled.</p>
-          <p><a href="https://github.com/muniventures/minicloud/blob/main/docs/cli.md#status-logs-and-apps">Deployment status and runtime logs</a></p>
+          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#status-logs-and-apps">Deployment status and runtime logs</a></p>
         </li>
 
       </ol>
@@ -122,7 +122,7 @@ selfrun login</code></pre>
 
   <footer class="frame footer">
     <span>Selfrun</span>
-    <a href="https://github.com/muniventures/minicloud">Source and documentation</a>
+    <a href="https://github.com/muniperez/selfrun">Source and documentation</a>
   </footer>
 </body>
 </html>

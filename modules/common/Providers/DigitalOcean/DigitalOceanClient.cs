@@ -6,11 +6,11 @@ using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Models;
 using System.Net.Http;
 
-namespace Minicloud.Common.Providers.DigitalOcean;
+namespace Selfrun.Common.Providers.DigitalOcean;
 
 public sealed class DigitalOceanClient : IVpsProviderClient, IVpsProviderSshKeyClient
 {
@@ -106,7 +106,7 @@ public sealed class DigitalOceanClient : IVpsProviderClient, IVpsProviderSshKeyC
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Region);
 
-        var tags = new List<string> { "minicloud" };
+        var tags = new List<string> { "selfrun" };
         if (request.Tags != null)
         {
             tags.AddRange(request.Tags);

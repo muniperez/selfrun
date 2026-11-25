@@ -2,9 +2,9 @@
 
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal sealed record DetectedService(
     string Name,
@@ -18,7 +18,7 @@ internal sealed record DetectedService(
 {
     public IReadOnlyList<int> ExposedPorts { get; init; } = [];
 
-    public MinicloudServiceConfig ToConfig() =>
+    public SelfrunServiceConfig ToConfig() =>
         new(SourcePath, Dockerfile, null, Port, Public, "/", HealthPath);
 }
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Text.RegularExpressions;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Common.Validation;
+namespace Selfrun.Common.Validation;
 
 public static partial class StorageValidation
 {

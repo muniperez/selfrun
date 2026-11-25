@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using Npgsql;
-using Minicloud.Common.Diagnostics;
+using Selfrun.Common.Diagnostics;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 // Session locks survive EF transactions and serialize database mutations on the same host.
 internal sealed class DatabaseOperationLease : IAsyncDisposable
@@ -17,7 +17,7 @@ internal sealed class DatabaseOperationLease : IAsyncDisposable
 
     internal static long LockKey(string resource)
     {
-        return System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes("minicloud-database-host:" + resource)));
+        return System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes("selfrun-database-host:" + resource)));
     }
 
     public static async Task<DatabaseOperationLease?> AcquireAsync(string connectionString, IEnumerable<string> resources, string id, string token, CancellationToken ct)

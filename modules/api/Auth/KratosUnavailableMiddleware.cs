@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed class KratosUnavailableMiddleware(RequestDelegate next)
 {

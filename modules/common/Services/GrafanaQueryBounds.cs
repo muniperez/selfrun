@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>
 /// T20 shared bounds for Grafana-driven Loki reads. Applied uniformly to Explore

@@ -1,7 +1,7 @@
 using System.Threading.RateLimiting;
-using Minicloud.Api.Controllers;
+using Selfrun.Api.Controllers;
 
-namespace Minicloud.Api.Extensions;
+namespace Selfrun.Api.Extensions;
 
 public static class SetupTransportExtensions
 {

@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public sealed class RoutingApplier(AgentConfig config, IProcessRunner processRunner, IHttpsProbe? httpsProbe = null, TimeProvider? timeProvider = null)
 {
@@ -83,7 +83,7 @@ public sealed class RoutingApplier(AgentConfig config, IProcessRunner processRun
             var temporary = requestPath + ".tmp";
             await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(desired, JsonDefaults.Options), cancellationToken);
             File.Move(temporary, requestPath, overwrite: true);
-            var apply = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "sudo", ["-n", "/opt/minicloud/agent/apply-minicloud-routing"], cancellationToken);
+            var apply = await RuntimeAgentDiagnostics.RunChildAsync(processRunner, "sudo", ["-n", "/opt/selfrun/agent/apply-selfrun-routing"], cancellationToken);
             if (apply.ExitCode != 0)
             {
                 var message = apply.Stdout.Trim();

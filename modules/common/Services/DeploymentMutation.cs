@@ -1,13 +1,13 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public static class DeploymentMutation
 {
     // Call inside a transaction. All lifecycle writers share this row lock.
-    public static async Task<Deployment?> LockAsync(MinicloudDbContext db, string id, CancellationToken ct)
+    public static async Task<Deployment?> LockAsync(SelfrunDbContext db, string id, CancellationToken ct)
     {
         var deployment = db.Database.IsNpgsql()
             ? await db.Deployments.FromSqlInterpolated($"SELECT * FROM deployments WHERE id = {id} FOR UPDATE").SingleOrDefaultAsync(ct)

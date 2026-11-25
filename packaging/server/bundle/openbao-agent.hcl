@@ -1,4 +1,4 @@
-pid_file = "/run/minicloud-openbao/agent.pid"
+pid_file = "/run/selfrun-openbao/agent.pid"
 
 vault {
   address   = "https://openbao:8200"
@@ -18,7 +18,7 @@ auto_auth {
 
   sink "file" {
     config = {
-      path = "/run/minicloud-openbao/token"
+      path = "/run/selfrun-openbao/token"
       mode = 0640
     }
   }

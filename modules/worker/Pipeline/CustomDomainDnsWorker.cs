@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Pipeline;
+namespace Selfrun.Worker.Pipeline;
 
 public sealed class CustomDomainDnsWorker(IServiceScopeFactory scopes, ILogger<CustomDomainDnsWorker> logger, MaintenanceParticipant? maintenance = null) : BackgroundService
 {
@@ -32,7 +32,7 @@ public sealed class CustomDomainDnsWorker(IServiceScopeFactory scopes, ILogger<C
         string[] registrationIds;
         await using (var scope = scopes.CreateAsyncScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
             registrationIds = await db.CustomDomainRegistrations
                 .Where(x => x.AppId != null && (x.LastCheckedAt == null || x.LastCheckedAt < cutoff))
@@ -42,7 +42,7 @@ public sealed class CustomDomainDnsWorker(IServiceScopeFactory scopes, ILogger<C
         await Parallel.ForEachAsync(registrationIds, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = stoppingToken }, async (id, ct) =>
         {
             await using var scope = scopes.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var row = await db.CustomDomainRegistrations.SingleOrDefaultAsync(x => x.Id == id, ct);
             if (row is not null)
             {
@@ -52,7 +52,7 @@ public sealed class CustomDomainDnsWorker(IServiceScopeFactory scopes, ILogger<C
         string[] ids;
         await using (var scope = scopes.CreateAsyncScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
             ids = await db.Domains.Where(x => x.Kind == DomainBindingService.KindCustomDomain &&
                 x.Status != DomainBindingService.StatusDisabled && x.App.DeletionStatus == null &&
@@ -63,7 +63,7 @@ public sealed class CustomDomainDnsWorker(IServiceScopeFactory scopes, ILogger<C
         await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = stoppingToken }, async (id, ct) =>
         {
             await using var scope = scopes.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var binding = await db.Domains.SingleOrDefaultAsync(x => x.Id == id, ct);
             if (binding is not null)
             {

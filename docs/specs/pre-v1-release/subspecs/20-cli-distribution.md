@@ -9,7 +9,7 @@ requirements intact.
 
 ## Assignment
 
-- **Repository:** public `muniventures/minicloud`.
+- **Repository:** public `muniperez/selfrun`.
 - **Depends on:** T00's source-version, release-channel and CLI/server compatibility contract.
 - **Can run in parallel with:** T10 DB repair investigation and T30 identity implementation. Coordinate with T40 on release naming and source metadata; their implementation files remain separate.
 - **Owner:** one CLI distribution agent. Own `.github/workflows/customer-deploy.yml`, `install.sh`, `install.ps1`, `scripts/verify-cli-release.py`, delivery sections of `docs/cli.md`, `docs/github-actions.md` and directly affected README/installation links and focused tests. Do not restore the removed CLI release workflow.
@@ -17,7 +17,7 @@ requirements intact.
 
 ## Outcome and boundary
 
-Stop publishing and depending on Minicloud-provided CLI executables. Keep the CLI source, commands, canonical API contracts and reusable customer-deployment workflow. Users and ephemeral CI runners build the existing `modules/cli/Minicloud.Cli.csproj` with .NET 10 from an identified canonical source revision. No new package manager, NuGet/npm package, containerized CLI product or command family is required.
+Stop publishing and depending on Selfrun-provided CLI executables. Keep the CLI source, commands, canonical API contracts and reusable customer-deployment workflow. Users and ephemeral CI runners build the existing `modules/cli/Selfrun.Cli.csproj` with .NET 10 from an identified canonical source revision. No new package manager, NuGet/npm package, containerized CLI product or command family is required.
 
 This supersedes the **future binary-publication requirement** in [DB repair R5](../../database-release-repairs/05-canonical-cli.md). It does not undo the already merged removal of Intel Mac builds or require another binary release before removal. Published historical tags, checksums and assets remain immutable; no deletion of old releases is part of this task.
 
@@ -25,10 +25,10 @@ This supersedes the **future binary-publication requirement** in [DB repair R5](
 
 | Path | Updated delivery behavior |
 | --- | --- |
-| Former `.github/workflows/cli-release.yml` | Removed entirely, including the four-platform release-build matrix, archive publication and tag/manual triggers. Ordinary backend CI still builds/tests CLI source through `Minicloud.slnx`; do not recreate binary-release CI. |
+| Former `.github/workflows/cli-release.yml` | Removed entirely, including the four-platform release-build matrix, archive publication and tag/manual triggers. Ordinary backend CI still builds/tests CLI source through `Selfrun.slnx`; do not recreate binary-release CI. |
 | `install.sh`, `install.ps1` | Preserve CLI installer paths and configuration inputs; verify a canonical Git SHA/tag, publish the selected source, then replace the installation only after version/help checks pass. |
-| `.github/workflows/customer-deploy.yml` | Build verified canonical CLI source with pinned .NET 10 setup in a runner-temporary directory; `minicloud_version` defaults to the frozen initial SHA. |
-| `modules/cli/Minicloud.Cli.csproj` | Existing .NET 10 executable referencing `modules/contracts`; source material must include that dependency. |
+| `.github/workflows/customer-deploy.yml` | Build verified canonical CLI source with pinned .NET 10 setup in a runner-temporary directory; `selfrun_version` defaults to the frozen initial SHA. |
+| `modules/cli/Selfrun.Cli.csproj` | Existing .NET 10 executable referencing `modules/contracts`; source material must include that dependency. |
 | `scripts/verify-cli-release.py` | Retained version/help and mocked canonical API smoke assertions for source-built output; normal backend CI publishes and runs it. |
 
 ## Implementation contract
@@ -38,7 +38,7 @@ The frozen selector, initial SHA, version-output, publish-mode and server-channe
 1. Preserve existing installer paths as **CLI** entry points and preserve configuration inputs where applicable. Replace binary acquisition with clear, documented source-build behavior; never repurpose these paths as server installers. Require .NET 10 and fail before modifying an existing installation when prerequisites or source verification fail. Do not silently install an SDK or require elevated writes when a user-selected install directory works.
 2. T00 records the supported source selector and initial default before implementation: an exact 40-character canonical commit SHA or an explicit CLI version tag resolved once to its commit. Replace the workflow's floating `latest` default with a reviewed exact source pin. T80 advances that pin to a merged revision containing the final auth/SSH/numbered-deployment client before final validation. Reject unrecognized selectors; never treat `server-v*`, a branch name or repository-wide latest release as a CLI source version. Print the resolved revision without credentials.
 3. Obtain source from the canonical public repository into a separate build directory, never over the customer's checkout. A Git checkout must verify its resolved HEAD equals the expected full SHA. An archive must verify a trusted published SHA256 before extraction and must resolve to that same revision; do not trust a checksum supplied only by an unverified adjacent download. Use one of these existing source acquisition paths, not a new distribution service.
-4. Publish the existing CLI project with the version and source revision from that pin. For example, `dotnet publish modules/cli/Minicloud.Cli.csproj --configuration Release --output <temporary-output>` is the build entry point; choose explicit runtime settings and install all required output files so the result runs on the documented target. Preserve the public `minicloud` command and Windows executable naming. Do not advertise an untested architecture or require an Intel Mac CI build.
+4. Publish the existing CLI project with the version and source revision from that pin. For example, `dotnet publish modules/cli/Selfrun.Cli.csproj --configuration Release --output <temporary-output>` is the build entry point; choose explicit runtime settings and install all required output files so the result runs on the documented target. Preserve the public `selfrun` command and Windows executable naming. Do not advertise an untested architecture or require an Intel Mac CI build.
 5. Build in temporary storage, verify version/help before replacing an installed CLI, and clean up only this invocation's temporary files. Preserve prior installed output on acquisition/build failure. Document SDK versus runtime requirements for the chosen publish mode.
 6. Update the reusable customer workflow to build that pinned source with a pinned `actions/setup-dotnet` action on its ephemeral runner. Keep the customer's source checkout and working directory intact. Preserve workflow inputs, token masking, generated configuration, instance selection, service scope and the existing CLI deploy invocation. Do not replace the CLI with direct API/SSH deployment or introduce a hosted default instance.
 7. Keep CLI binary archive/publication and installer-asset publication jobs removed. Ordinary backend CI already builds source and runs CLI contract tests; add version/help and mocked API smoke checks for source-built output without restoring the release matrix. Source/version metadata may continue using the existing CLI version sequence; server releases use independent `server-v*` tags and explicit server discovery. No source pin may accidentally resolve from a server release.

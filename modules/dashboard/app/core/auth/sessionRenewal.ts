@@ -31,8 +31,8 @@ const lockRetryDelay = 5_000;
 const maximumTimerDelay = 6 * 60 * 60_000;
 const retryDelays = [5_000, 15_000, 30_000, 60_000];
 
-export const sessionChannelName = "minicloud-session";
-export const renewalLockName = "minicloud-session-renewal";
+export const sessionChannelName = "selfrun-session";
+export const renewalLockName = "selfrun-session-renewal";
 
 function defaultLocks(): RenewalLocks | null {
   return typeof navigator !== "undefined" && navigator.locks ? navigator.locks as unknown as RenewalLocks : null;

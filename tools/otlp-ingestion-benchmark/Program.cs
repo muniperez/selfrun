@@ -9,11 +9,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Diagnostics;
-using Minicloud.Telemetry.Controllers;
-using Minicloud.Telemetry.Data;
-using Minicloud.Telemetry.Otlp;
-using Minicloud.Telemetry.Services;
+using Selfrun.Common.Diagnostics;
+using Selfrun.Telemetry.Controllers;
+using Selfrun.Telemetry.Data;
+using Selfrun.Telemetry.Otlp;
+using Selfrun.Telemetry.Services;
 
 // Synthetic OTLP/HTTP logs ingestion benchmark: real telemetry gateway services on loopback Kestrel,
 // a file-backed SQLite store (the self-hosted default) and a loopback fake Loki. No external services.
@@ -412,7 +412,7 @@ sealed class Gateway : IAsyncDisposable
         builder.Logging.SetMinimumLevel(LogLevel.Information);
         builder.Logging.AddProvider(logs);
 
-        // Same registrations the OTLP path uses in Minicloud.Telemetry.Program.
+        // Same registrations the OTLP path uses in Selfrun.Telemetry.Program.
         builder.Services.Configure<TelemetryOptions>(builder.Configuration.GetSection(TelemetryOptions.SectionName));
         var database = Path.Combine(scratch, "telemetry.db");
         builder.Services.AddDbContext<TelemetryDbContext>(options => options.UseSqlite($"Data Source={database}"));

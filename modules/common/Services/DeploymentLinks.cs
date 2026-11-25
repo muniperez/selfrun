@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>Customer links address a deployment by number and always carry its organization scope.</summary>
 public static class DeploymentLinks

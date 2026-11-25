@@ -2,15 +2,15 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -20,7 +20,7 @@ public sealed class DomainsController : ControllerBase
     [HttpGet("services")]
     public async Task<IResult> GetServices(
         [FromQuery] string appId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentServiceSetService serviceSets,
         CancellationToken cancellationToken,
@@ -66,7 +66,7 @@ public sealed class DomainsController : ControllerBase
     [HttpGet]
     public async Task<IResult> ListDomains(
         [FromQuery] string appId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         CancellationToken cancellationToken,
         [FromQuery] string? applicationId = null,
@@ -96,7 +96,7 @@ public sealed class DomainsController : ControllerBase
     public async Task<IResult> CheckDomainAvailability(
         [FromQuery] string appId,
         [FromQuery] string label,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DomainBindingService domains,
         CancellationToken cancellationToken,
@@ -123,7 +123,7 @@ public sealed class DomainsController : ControllerBase
     public async Task<IResult> CreateDomain(
         [FromQuery] string appId,
         [FromBody] CreateDomainBindingRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] AuditEventService audit,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentServiceSetService serviceSets,
@@ -198,7 +198,7 @@ public sealed class DomainsController : ControllerBase
     [HttpPost("{domainId}/verify")]
     public async Task<IResult> VerifyDomain(
         [FromQuery] string appId, string domainId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] CustomDomainVerificationService verification,
         CancellationToken cancellationToken,
@@ -230,7 +230,7 @@ public sealed class DomainsController : ControllerBase
         [FromQuery] string appId,
         [FromRoute] string domainId,
         [FromBody] UpdateDomainBindingRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] AuditEventService audit,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] TimeProvider timeProvider,
@@ -290,7 +290,7 @@ public sealed class DomainsController : ControllerBase
     public async Task<IResult> DeleteDomain(
         [FromQuery] string appId,
         [FromRoute] string domainId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] AuditEventService audit,
         [FromServices] ControlPlaneAuthorization authorization,
         CancellationToken cancellationToken,
@@ -320,7 +320,7 @@ public sealed class DomainsController : ControllerBase
         return Results.NoContent();
     }
 
-    private static async Task<(Dictionary<string, RuntimeServiceStatusDto> Services, DateTimeOffset? ObservedAt)> LatestStatusByServiceAsync(MinicloudDbContext db, string appId, CancellationToken cancellationToken)
+    private static async Task<(Dictionary<string, RuntimeServiceStatusDto> Services, DateTimeOffset? ObservedAt)> LatestStatusByServiceAsync(SelfrunDbContext db, string appId, CancellationToken cancellationToken)
     {
         var snapshot = await db.RuntimeStatusSnapshots.AsNoTracking()
             .Where(x => x.AppId == appId)

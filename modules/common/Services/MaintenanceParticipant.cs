@@ -3,10 +3,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class MaintenanceAuthorityOptions
 {
@@ -110,7 +110,7 @@ public sealed class MaintenanceParticipant
     /// PostgreSQL the row is read FOR SHARE, so the decision is ordered against fence/transfer.
     /// Accepted work may be claimed while fenced; only a revoked or foreign authority refuses it.
     /// </summary>
-    public async Task<MaintenanceAdmissionDecision> CheckAsync(MinicloudDbContext db, bool requireOpen, CancellationToken ct, bool lockRow = true)
+    public async Task<MaintenanceAdmissionDecision> CheckAsync(SelfrunDbContext db, bool requireOpen, CancellationToken ct, bool lockRow = true)
     {
         var record = await MaintenanceAuthorityStore.ReadAsync(db, lockRow ? MaintenanceAuthorityLock.Share : MaintenanceAuthorityLock.None, ct);
         return Evaluate(record, requireOpen);
@@ -120,7 +120,7 @@ public sealed class MaintenanceParticipant
     /// Claim gate. Use <paramref name="lockRow"/> = false only for claim transactions that stay open across
     /// remote calls, where holding a share lock would block fence/transfer for the call's duration.
     /// </summary>
-    public async Task<bool> CanClaimAsync(MinicloudDbContext db, CancellationToken ct, bool lockRow = true)
+    public async Task<bool> CanClaimAsync(SelfrunDbContext db, CancellationToken ct, bool lockRow = true)
     {
         var decision = await CheckAsync(db, requireOpen: false, ct, lockRow);
         if (!decision.IsAdmitted)
@@ -131,7 +131,7 @@ public sealed class MaintenanceParticipant
     }
 
     /// <summary>Throws when this process may not commit owned work (authority revoked or foreign).</summary>
-    public async Task EnsureCommitAuthorityAsync(MinicloudDbContext db, CancellationToken ct)
+    public async Task EnsureCommitAuthorityAsync(SelfrunDbContext db, CancellationToken ct)
     {
         var decision = await CheckAsync(db, requireOpen: false, ct);
         if (!decision.IsAdmitted)
@@ -191,7 +191,7 @@ public sealed class MaintenanceParticipant
         ArgumentException.ThrowIfNullOrWhiteSpace(kind);
         var factory = scopes ?? throw new InvalidOperationException("This maintenance participant cannot record activities.");
         await using var scope = factory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var strategy = db.Database.CreateExecutionStrategy();
         var activity = new MaintenanceActivity
         {
@@ -272,7 +272,7 @@ public sealed class MaintenanceParticipant
     {
         var factory = scopes ?? throw new InvalidOperationException("This maintenance participant cannot register.");
         await using var scope = factory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var decision = Evaluate(await MaintenanceAuthorityStore.ReadAsync(db, MaintenanceAuthorityLock.None, ct), requireOpen: false);
         var now = clock.GetUtcNow();
         var row = await db.MaintenanceParticipants.SingleOrDefaultAsync(x => x.Id == Id, ct);
@@ -319,7 +319,7 @@ public sealed class MaintenanceActivityLease : IAsyncDisposable
                 try
                 {
                     await using var scope = scopes.CreateAsyncScope();
-                    var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+                    var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
                     var row = await db.MaintenanceActivities.SingleOrDefaultAsync(x => x.Id == Id, stop.Token);
                     if (row is null) return;
                     row.ExpiresAt = clock.GetUtcNow() + MaintenanceParticipant.ActivityLeaseDuration;
@@ -344,7 +344,7 @@ public sealed class MaintenanceActivityLease : IAsyncDisposable
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             await using var scope = scopes.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             var row = await db.MaintenanceActivities.SingleOrDefaultAsync(x => x.Id == Id, timeout.Token);
             if (row is not null)
             {
@@ -368,7 +368,7 @@ internal enum MaintenanceAuthorityLock
 
 internal static class MaintenanceAuthorityStore
 {
-    public static async Task<MaintenanceAuthorityRecord?> ReadAsync(MinicloudDbContext db, MaintenanceAuthorityLock mode, CancellationToken ct)
+    public static async Task<MaintenanceAuthorityRecord?> ReadAsync(SelfrunDbContext db, MaintenanceAuthorityLock mode, CancellationToken ct)
     {
         if (db.Database.IsNpgsql() && mode != MaintenanceAuthorityLock.None)
         {
@@ -390,7 +390,7 @@ internal static class MaintenanceAuthorityStore
 public static class MaintenanceServiceCollectionExtensions
 {
     /// <summary>Registers the process-wide participant. Hosts also add a hosted service that calls RunRegistrationLoopAsync.</summary>
-    public static IServiceCollection AddMinicloudMaintenanceParticipant(this IServiceCollection services, IConfiguration configuration, string role)
+    public static IServiceCollection AddSelfrunMaintenanceParticipant(this IServiceCollection services, IConfiguration configuration, string role)
     {
         var hostId = MaintenanceAuthorityOptions.ResolveHostId(configuration);
         services.AddSingleton(provider => new MaintenanceParticipant(

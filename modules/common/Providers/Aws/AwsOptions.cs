@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Common.Providers.Aws;
+namespace Selfrun.Common.Providers.Aws;
 
 public sealed class AwsOptions
 {

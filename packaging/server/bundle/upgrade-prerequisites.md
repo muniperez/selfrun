@@ -1,7 +1,7 @@
 # Upgrade and full-recovery prerequisites
 
 Coordinated maintenance uses the durable maintenance authority
-(`dotnet Minicloud.Api.dll maintenance ...`, migration
+(`dotnet Selfrun.Api.dll maintenance ...`, migration
 `20261111134441_MaintenanceAuthority`). Every API write and scheduler pass is
 admitted through its fence. It reports drain status for queued, running,
 retrying and uncertain work, and it revokes processes registered at a

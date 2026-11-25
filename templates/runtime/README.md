@@ -5,28 +5,28 @@ V0 currently renders runtime files directly from GitHub Actions. This folder doc
 ## Generated Server Files
 
 - `/etc/caddy/Caddyfile`
-- `/opt/minicloud/metadata.env`
-- `/opt/minicloud/caddy/apps/<app>.caddy`
-- `/opt/minicloud/apps/<app>/compose.yml`
-- `/opt/minicloud/apps/<app>/shared/env`
-- `/opt/minicloud/apps/<app>/data/sqlite`
-- `/opt/minicloud/apps/<app>/data/postgres`
-- `/opt/minicloud/apps/<app>/deploys.json`
-- `/opt/minicloud/agent/config.json`
-- `/opt/minicloud/agent/runtime-token`
-- `/opt/minicloud/agent/minicloud-agent`
-- `/etc/systemd/system/minicloud-agent.service`
+- `/opt/selfrun/metadata.env`
+- `/opt/selfrun/caddy/apps/<app>.caddy`
+- `/opt/selfrun/apps/<app>/compose.yml`
+- `/opt/selfrun/apps/<app>/shared/env`
+- `/opt/selfrun/apps/<app>/data/sqlite`
+- `/opt/selfrun/apps/<app>/data/postgres`
+- `/opt/selfrun/apps/<app>/deploys.json`
+- `/opt/selfrun/agent/config.json`
+- `/opt/selfrun/agent/runtime-token`
+- `/opt/selfrun/agent/selfrun-agent`
+- `/etc/systemd/system/selfrun-agent.service`
 
 ## Provider Labels
 
 Hetzner servers are resolved through labels instead of GitHub-stored IP variables:
 
 ```text
-managed-by=minicloud
+managed-by=selfrun
 customer=<customer>
 app=<app-name>
 env=<environment>
-owner=minicloud
+owner=selfrun
 ```
 
 Deploy, logs, and rollback workflows query the provider for exactly one matching server.
@@ -35,8 +35,8 @@ Deploy, logs, and rollback workflows query the provider for exactly one matching
 
 V0 supports same-VPS database modes:
 
-- `sqlite`: mounts `/opt/minicloud/apps/<app>/data/sqlite` into the app container and sets `DATABASE_URL=sqlite:////data/sqlite/app.db`.
-- `postgres`: adds a `postgres:16-alpine` service to the app Compose project, stores data under `/opt/minicloud/apps/<app>/data/postgres`, and sets a Postgres `DATABASE_URL` for the app container.
+- `sqlite`: mounts `/opt/selfrun/apps/<app>/data/sqlite` into the app container and sets `DATABASE_URL=sqlite:////data/sqlite/app.db`.
+- `postgres`: adds a `postgres:16-alpine` service to the app Compose project, stores data under `/opt/selfrun/apps/<app>/data/postgres`, and sets a Postgres `DATABASE_URL` for the app container.
 - `none`: does not create a database service, mount database storage, or inject database environment variables. Use this for manual database setup or external services such as Firebase.
 
 A separate database VPS is intentionally deferred until same-VPS app/database deployments are working.
@@ -56,4 +56,4 @@ Public services are routed through one generated `app.muni.dev` hostname. Longer
 
 ## Runtime Agent
 
-Customer deployments install or update `minicloud-agent` when the deploy workflow receives an `app_id`. The workflow registers the provider server with the control-plane telemetry API, writes the returned runtime token to the VPS, and starts `minicloud-agent.service` so Docker Compose and Caddy logs are pushed over outbound HTTPS.
+Customer deployments install or update `selfrun-agent` when the deploy workflow receives an `app_id`. The workflow registers the provider server with the control-plane telemetry API, writes the returned runtime token to the VPS, and starts `selfrun-agent.service` so Docker Compose and Caddy logs are pushed over outbound HTTPS.

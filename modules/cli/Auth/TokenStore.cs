@@ -2,7 +2,7 @@
 
 using System.Runtime.InteropServices;
 
-namespace Minicloud.Cli.Auth;
+namespace Selfrun.Cli.Auth;
 
 public sealed class TokenStore
 {

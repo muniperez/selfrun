@@ -2,10 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Maintenance;
+namespace Selfrun.Worker.Maintenance;
 
 public sealed class RuntimeLogRetentionWorker(
     IServiceScopeFactory scopes,
@@ -37,7 +37,7 @@ public sealed class RuntimeLogRetentionWorker(
     internal async Task PruneAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var cutoff = clock.GetUtcNow() - RuntimeIngestionLimits.LogRetention;
         if (db.Database.IsSqlite())
         {

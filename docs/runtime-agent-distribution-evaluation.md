@@ -3,12 +3,12 @@
 Evaluated 2026-11-18. The baseline was the self-contained, single-file
 `linux-x64` and `linux-arm64` agent published by the worker image. The candidate
 moved the unchanged `LogRedactor` implementation into
-`modules/redaction/Minicloud.Redaction.csproj`; the runtime agent now references
+`modules/redaction/Selfrun.Redaction.csproj`; the runtime agent now references
 that dependency-free project rather than the EF-bearing common project. Both
 variants used the same .NET 10.0.404 SDK, RIDs and publish flags:
 
 ```sh
-dotnet publish modules/runtime-agent/Minicloud.RuntimeAgent.csproj \
+dotnet publish modules/runtime-agent/Selfrun.RuntimeAgent.csproj \
   -c Release -r <linux-x64|linux-arm64> --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:DebugType=None -p:DebugSymbols=false

@@ -1,4 +1,4 @@
-namespace Minicloud.Worker;
+namespace Selfrun.Worker;
 
 public sealed class WorkerOptions
 {
@@ -11,10 +11,10 @@ public sealed class WorkerOptions
 
     /// <summary>
     /// Root filesystem path where deployment artifacts are stored when accessed locally.
-    /// Mounted at /var/lib/minicloud/artifacts in containers.
+    /// Mounted at /var/lib/selfrun/artifacts in containers.
     /// Falls back to DeploymentArtifacts:RootPath when Worker:ArtifactRootPath is unset (see Program.cs).
     /// </summary>
-    public string ArtifactRootPath { get; set; } = "/var/lib/minicloud/artifacts";
+    public string ArtifactRootPath { get; set; } = "/var/lib/selfrun/artifacts";
 
     /// <summary>
     /// Polling interval for checking new queued deployments in PostgreSQL.
@@ -37,12 +37,12 @@ public sealed class WorkerOptions
     public TimeSpan DatabaseTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Base URL for the Minicloud API when running in remote worker mode.
+    /// Base URL for the Selfrun API when running in remote worker mode.
     /// </summary>
     public string? ApiBaseUrl { get; set; }
 
     /// <summary>
-    /// API token / key for authenticating with the Minicloud API when running remotely.
+    /// API token / key for authenticating with the Selfrun API when running remotely.
     /// </summary>
     public string? ApiToken { get; set; }
 

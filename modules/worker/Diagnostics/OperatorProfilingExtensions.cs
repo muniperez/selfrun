@@ -5,7 +5,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
-namespace Minicloud.Worker.Diagnostics;
+namespace Selfrun.Worker.Diagnostics;
 
 internal static class OperatorProfilingExtensions
 {
@@ -25,7 +25,7 @@ internal static class OperatorProfilingExtensions
 
         builder.Logging
             .AddFilter<OpenTelemetryLoggerProvider>("", LogLevel.None)
-            .AddFilter<OpenTelemetryLoggerProvider>("Minicloud.OperatorDiagnostics", LogLevel.Information)
+            .AddFilter<OpenTelemetryLoggerProvider>("Selfrun.OperatorDiagnostics", LogLevel.Information)
             .AddOpenTelemetry(options =>
             {
                 options.IncludeFormattedMessage = false;
@@ -39,7 +39,7 @@ internal static class OperatorProfilingExtensions
             .ConfigureResource(resource => resource.AddService(OperatorDiagnostics.ServiceName))
             .WithMetrics(metrics => metrics
                 .AddMeter(OperatorDiagnostics.MeterName)
-                .AddView("minicloud_worker_deployment_pipeline_duration", new ExplicitBucketHistogramConfiguration
+                .AddView("selfrun_worker_deployment_pipeline_duration", new ExplicitBucketHistogramConfiguration
                 {
                     Boundaries = [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300]
                 })

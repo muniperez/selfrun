@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal sealed class SeedLifecycle(ISeedProvider provider, ISeedHost host, Action<SeedState> save, Action<string> write)
 {

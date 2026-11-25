@@ -35,7 +35,7 @@ jobs:
       RID: ${{ matrix.rid }}
       SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       REVIEW_DIR: .local/artifacts/cli-seed-review
-      ARCHIVE: minicloud-seed-${{ matrix.rid }}.${{ matrix.rid == 'win-x64' && 'zip' || 'tar.gz' }}
+      ARCHIVE: selfrun-seed-${{ matrix.rid }}.${{ matrix.rid == 'win-x64' && 'zip' || 'tar.gz' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
           git check-ignore "$REVIEW_DIR/probe"
-          dotnet publish modules/cli/Minicloud.Cli.csproj --runtime "$RID" \
+          dotnet publish modules/cli/Selfrun.Cli.csproj --runtime "$RID" \
             -p:PublishProfile=Seed -o "$REVIEW_DIR/payload"
           test "$(find "$REVIEW_DIR/payload" -mindepth 1 | wc -l)" -eq 1
           suffix=""
@@ -59,8 +59,7 @@ jobs:
             suffix=.exe
             python=python
           fi
-          exe="minicloud$suffix"
-          mv "$REVIEW_DIR/payload/Minicloud.Cli$suffix" "$REVIEW_DIR/payload/$exe"
+          exe="selfrun$suffix"
           "$python" -B scripts/package-cli-notices.py "$REVIEW_DIR/payload" "$GITHUB_REPOSITORY" "$SOURCE_REVISION"
           cd "$REVIEW_DIR"
           mkdir extracted
@@ -81,7 +80,7 @@ jobs:
         id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: minicloud-seed-${{ matrix.rid }}
+          name: selfrun-seed-${{ matrix.rid }}
           path: |
             ${{ env.REVIEW_DIR }}/${{ env.ARCHIVE }}
             ${{ env.REVIEW_DIR }}/checksums.txt

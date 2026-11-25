@@ -1,19 +1,19 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Registry;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Registry;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
 [Route("api/environments/{appId}")]
-public sealed class ImagePublicationsController(MinicloudDbContext db, ControlPlaneAuthorization authorization, ImagePublicationService publications, ImageBuildTargetService targets, TimeProvider clock) : ControllerBase
+public sealed class ImagePublicationsController(SelfrunDbContext db, ControlPlaneAuthorization authorization, ImagePublicationService publications, ImageBuildTargetService targets, TimeProvider clock) : ControllerBase
 {
     [HttpGet("image-build-target")]
     public Task<IResult> Target(string appId, CancellationToken ct) => Handle(async () =>
@@ -83,7 +83,7 @@ public sealed class ImagePublicationsController(MinicloudDbContext db, ControlPl
         }, ct);
     });
 
-    private async Task<(MinicloudApp?, IResult?)> App(string id, OrganizationAction action, CancellationToken ct)
+    private async Task<(SelfrunApp?, IResult?)> App(string id, OrganizationAction action, CancellationToken ct)
     {
         var applicationId = Request.Query["applicationId"].FirstOrDefault();
         var environmentId = Request.Query["environmentId"].FirstOrDefault();

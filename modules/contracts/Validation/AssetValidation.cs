@@ -2,7 +2,7 @@
 
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Common.Validation;
+namespace Selfrun.Common.Validation;
 
 public static class AssetValidation
 {

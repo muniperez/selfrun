@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://minicloud.invalid/server-configuration.schema.json",
-  "title": "Minicloud server public configuration",
+  "$id": "https://selfrun.invalid/server-configuration.schema.json",
+  "title": "Selfrun server public configuration",
   "type": "object",
   "additionalProperties": false,
   "required": ["apiUrl", "consoleUrl", "appDomain", "apiHostname", "consoleHostname"],
@@ -79,7 +79,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
-          "default": "Minicloud"
+          "default": "Selfrun"
         },
         "rpId": {
           "$ref": "#/$defs/hostname",

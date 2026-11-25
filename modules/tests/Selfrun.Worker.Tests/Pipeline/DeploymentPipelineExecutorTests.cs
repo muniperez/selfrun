@@ -1,0 +1,894 @@
+using System.Net;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using System.IO.Compression;
+using Selfrun.Common.Models;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Worker.Pipeline.Steps;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Dns;
+using Selfrun.Common.Providers.Models;
+using Selfrun.Worker.Ssh;
+using Selfrun.Worker.Storage;
+using Selfrun.Common.Services;
+
+namespace Selfrun.Worker.Tests.Pipeline;
+
+public sealed class DeploymentPipelineExecutorTests : IClassFixture<WorkerSqliteTestHarness>
+{
+    private readonly WorkerSqliteTestHarness _harness;
+
+    public DeploymentPipelineExecutorTests(WorkerSqliteTestHarness harness)
+    {
+        _harness = harness;
+    }
+
+    [Theory]
+    [InlineData(true, true, false, DatabaseMode.Postgres, false, true)]
+    [InlineData(false, true, false, DatabaseMode.Postgres, false, false)]
+    [InlineData(true, false, false, DatabaseMode.Postgres, false, false)]
+    [InlineData(true, true, true, DatabaseMode.Postgres, false, false)]
+    [InlineData(true, true, false, DatabaseMode.None, false, false)]
+    [InlineData(true, true, false, DatabaseMode.Sqlite, false, false)]
+    [InlineData(true, true, false, DatabaseMode.Postgres, true, false)]
+    public async Task EmptyDesiredSetRequiresExactLiveManagedServerDeployment(
+        bool registered, bool exactDeployment, bool deleted, DatabaseMode database, bool foreignOrganization, bool admitted)
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (org, app) = await _harness.SeedOrgAndAppAsync("infra" + suffix);
+        var now = DateTimeOffset.UtcNow;
+        var deployment = new Deployment { Id = "dep_infra_" + suffix, OrganizationId = org.Id, AppId = app.Id,
+            Database = database, RequestedServiceNamesJson = "[]", OwnershipToken = "infra-owner-" + suffix, Status = DeploymentStatus.Provisioning,
+            CreatedAt = now, UpdatedAt = now };
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.Deployments.Add(deployment);
+            if (registered)
+            {
+                var ownerId = org.Id;
+                if (foreignOrganization)
+                {
+                    ownerId = "org_other_" + suffix;
+                    db.Organizations.Add(new Organization { Id = ownerId, Name = "Other", Slug = "other-" + suffix });
+                }
+                var account = new ProviderAccount { Id = "provider_infra_" + suffix, OrganizationId = ownerId,
+                    Name = "Fixture", CredentialPath = "fixture", CredentialGeneration = "fixture" };
+                var plan = new ProviderPlan { Id = "plan_infra_" + suffix, OrganizationId = ownerId,
+                    ProviderAccountId = account.Id, Name = "Fixture", NormalizedName = "FIXTURE", Region = "fixture", Sku = "fixture" };
+                db.ProviderAccounts.Add(account);
+                db.ProviderPlans.Add(plan);
+                db.ManagedDatabaseServers.Add(new ManagedDatabaseServer { Id = "dbserver_" + suffix, OrganizationId = ownerId,
+                    Name = "Fixture", PlanId = plan.Id, RuntimeAppId = app.Id,
+                    RuntimeDeploymentId = exactDeployment ? deployment.Id : "dep_different", Status = deleted ? "deleted" : "creating" });
+            }
+            await db.SaveChangesAsync();
+        }
+        var scopeFactory = _harness.CreateScopeFactory();
+        var pipelineOptions = Options.Create(new DeploymentPipelineOptions());
+        var sshOptions = Options.Create(new SshDeploymentOptions { PrivateKeyContent = "MOCK_KEY" });
+        var ssh = new MockSshDeploymentClient();
+        var executor = new DeploymentPipelineExecutor(scopeFactory,
+            new ResolveProvisionServerStep(scopeFactory, _ => new MockVpsProviderClient(), pipelineOptions, TimeProvider.System),
+            new DnsSetupStep(scopeFactory, new MockCloudflareDnsClient(), pipelineOptions, TimeProvider.System),
+            new SshDeployStep(scopeFactory, new MockArtifactRetriever(), ssh, sshOptions, pipelineOptions,
+                new TestHostEnvironment { ContentRootPath = Path.GetTempPath() }, TimeProvider.System),
+            new HealthCheckFinalizeStep(scopeFactory, new HttpClient(new MockHttpMessageHandler()), pipelineOptions, TimeProvider.System),
+            ssh, sshOptions, TimeProvider.System);
+        var context = new PipelineStepContext { DeploymentId = deployment.Id, OrganizationId = org.Id, AppId = app.Id, OwnershipToken = "infra-owner-" + suffix };
+        if (admitted)
+        {
+            await executor.RefreshDesiredServicesAsync(context, default);
+            await using var verify = _harness.CreateDbContext();
+            Assert.Empty(await verify.DeploymentServices.Where(x => x.DeploymentId == deployment.Id).ToListAsync());
+            Assert.Equal(DatabaseMode.Postgres, (await verify.Deployments.SingleAsync(x => x.Id == deployment.Id)).Database);
+        }
+        else
+        {
+            var failure = await Assert.ThrowsAsync<PipelineStepException>(() => executor.RefreshDesiredServicesAsync(context, default));
+            Assert.Equal("invalid_service_set", failure.FailureCode);
+        }
+    }
+
+    [Fact]
+    public async Task ConnectedLocalSshPipeline_CompletesWithOneDeploymentId()
+    {
+        var portText = Environment.GetEnvironmentVariable("SELFRUN_TEST_SSH_PORT");
+        var privateKeyPath = Environment.GetEnvironmentVariable("SELFRUN_TEST_SSH_PRIVATE_KEY");
+        var runtimeScriptPath = Environment.GetEnvironmentVariable("SELFRUN_TEST_RUNTIME_SCRIPT");
+        if (string.IsNullOrWhiteSpace(portText) || string.IsNullOrWhiteSpace(privateKeyPath) || string.IsNullOrWhiteSpace(runtimeScriptPath)) return;
+
+        var (org, app) = await _harness.SeedOrgAndAppAsync("connectedtrace");
+        var now = DateTimeOffset.UtcNow;
+        var deployment = new Deployment
+        {
+            Id = "dep_connected_trace", OrganizationId = org.Id, AppId = app.Id,
+            Status = DeploymentStatus.Provisioning, WorkerId = "connected-worker",
+            OwnershipToken = "connected-owner", OwnershipAcquiredAt = now,
+            Database = DatabaseMode.None, CreatedAt = now, UpdatedAt = now
+        };
+        byte[] artifactBytes;
+        await using (var buffer = new MemoryStream())
+        {
+            using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("Dockerfile");
+                await using var writer = new StreamWriter(entry.Open());
+                await writer.WriteAsync("FROM alpine\nRUN echo connected\n");
+            }
+            artifactBytes = buffer.ToArray();
+        }
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.ServerInstances.Add(new ServerInstance { Id = "srv-connected", OrganizationId = org.Id, AppId = app.Id, Provider = "hetzner", ProviderServerId = "provider-connected", IpAddress = "127.0.0.1", Region = "nbg1", Status = "active", BootstrapStatus = "ready", CreatedAt = now, UpdatedAt = now });
+            var artifact = new DeploymentArtifact { Id = "art-connected", OrganizationId = org.Id, AppId = app.Id, ServiceName = "web", FileName = "web.zip", ContentType = "application/zip", ManifestJson = "{}", StoragePath = "unused", SizeBytes = artifactBytes.Length, Sha256 = "fixture", Status = DeploymentArtifactStatus.Ready, CreatedAt = now, UpdatedAt = now, ExpiresAt = now.AddHours(1) };
+            db.DeploymentArtifacts.Add(artifact);
+            deployment.Services.Add(new DeploymentService { Id = "svc-connected", DeploymentId = deployment.Id, Name = "web", Image = "placeholder", ArtifactId = artifact.Id, Port = 8080, Public = true, Path = "/", HealthPath = "/health" });
+            db.Deployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
+
+        var tempDir = CreateArtifactDirectory();
+        try
+        {
+            var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "selfrun-deploy");
+            Directory.CreateDirectory(scriptDir);
+            File.Copy(runtimeScriptPath, Path.Combine(scriptDir, "remote-deploy.sh"));
+            var scopeFactory = _harness.CreateScopeFactory();
+            var pipelineOptions = Options.Create(new DeploymentPipelineOptions { SshReadyTimeout = TimeSpan.Zero, MaxParallelBuilds = 1, MaxParallelNetworkOperations = 1 });
+            var sshOptions = Options.Create(new SshDeploymentOptions { Port = int.Parse(portText), Username = "selfrun", PrivateKeyContent = await File.ReadAllTextAsync(privateKeyPath), MaxParallelArtifactTransfers = 1, CommandTimeout = TimeSpan.FromMinutes(2) });
+            var ssh = new SshDeploymentClient(sshOptions.Value);
+            var executor = new DeploymentPipelineExecutor(
+                scopeFactory,
+                new ResolveProvisionServerStep(scopeFactory, _ => new MockVpsProviderClient("127.0.0.1"), pipelineOptions, TimeProvider.System),
+                new DnsSetupStep(scopeFactory, new MockCloudflareDnsClient(), pipelineOptions, TimeProvider.System),
+                new SshDeployStep(scopeFactory, new MockArtifactRetriever(artifactBytes), ssh, sshOptions, pipelineOptions, new TestHostEnvironment { ContentRootPath = tempDir.FullName }, TimeProvider.System),
+                new HealthCheckFinalizeStep(scopeFactory, new HttpClient(new MockHttpMessageHandler()), pipelineOptions, TimeProvider.System),
+                ssh, sshOptions, TimeProvider.System);
+
+            await executor.ExecuteAsync(deployment, CancellationToken.None);
+            await using var verify = _harness.CreateDbContext();
+            var finished = await verify.Deployments.Include(item => item.Events).SingleAsync(item => item.Id == deployment.Id);
+            Assert.Equal(DeploymentStatus.Succeeded, finished.Status);
+            Assert.Contains(finished.Events, item => item.MetadataJson != null && item.MetadataJson.Contains("\"phase\":\"ssh-deploy\""));
+            var logRows = await verify.DeploymentLogs.Where(item => item.DeploymentId == deployment.Id).ToListAsync();
+            var logs = logRows.OrderBy(item => item.CreatedAt).Select(item => item.Content).ToList();
+            Assert.Contains(logs, line => line.Contains("phase=sftp_transfer"));
+            var tracePath = Environment.GetEnvironmentVariable("SELFRUN_SSH_TIMING_TRACE_OUTPUT");
+            if (!string.IsNullOrWhiteSpace(tracePath))
+            {
+                var traceLines = finished.Events.Where(item => item.MetadataJson != null)
+                    .OrderBy(item => item.CreatedAt)
+                    .Select(item => $"WORKER_EVENT {item.MetadataJson}")
+                    .Concat(logs);
+                await File.WriteAllLinesAsync(tracePath, traceLines);
+            }
+        }
+        finally { tempDir.Delete(true); }
+    }
+
+    [Fact]
+    public async Task ExecutesAllStepsSuccessfully()
+    {
+        var (org, app) = await _harness.SeedOrgAndAppAsync("pipeok");
+        var now = DateTimeOffset.UtcNow;
+
+        Deployment deployment;
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.ServerInstances.Add(new ServerInstance
+            {
+                Id = "srv-pipe-ok",
+                OrganizationId = org.Id,
+                AppId = app.Id,
+                Provider = "hetzner",
+                ProviderServerId = "prov-pipe-ok",
+                IpAddress = "192.0.2.88",
+                Region = "nbg1",
+                Status = "active",
+                BootstrapStatus = "ready",
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            deployment = new Deployment
+            {
+                Id = "dep-pipe-ok",
+                OrganizationId = org.Id,
+                AppId = app.Id,
+                Status = DeploymentStatus.Provisioning,
+                WorkerId = "test-worker",
+                OwnershipToken = "owner-pipe-ok",
+                OwnershipAcquiredAt = now,
+                Domain = "app-ok.example.com",
+                Database = DatabaseMode.None,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.Deployments.Add(deployment);
+
+            db.DeploymentServices.Add(new DeploymentService
+            {
+                Id = "svc-pipe-ok",
+                DeploymentId = deployment.Id,
+                Name = "web",
+                Image = "test/web:latest",
+                Path = "/",
+                Public = true,
+                Port = 8080,
+                HealthPath = "/health"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tempDir = CreateArtifactDirectory();
+        try
+        {
+            var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "selfrun-deploy");
+            Directory.CreateDirectory(scriptDir);
+            await File.WriteAllTextAsync(Path.Combine(scriptDir, "remote-deploy.sh"), "#!/bin/bash\necho ok");
+
+            var env = new TestHostEnvironment { ContentRootPath = tempDir.FullName };
+            var scopeFactory = _harness.CreateScopeFactory();
+            var pipelineOptions = Options.Create(new DeploymentPipelineOptions
+            {
+                HealthCheckTimeout = TimeSpan.FromSeconds(5),
+                HealthCheckInterval = TimeSpan.FromMilliseconds(50)
+            });
+            var sshOptions = Options.Create(new SshDeploymentOptions
+            {
+                PrivateKeyContent = "MOCK_KEY"
+            });
+
+            var mockProvider = new MockVpsProviderClient();
+            var mockDns = new MockCloudflareDnsClient();
+            var mockArtifact = new MockArtifactRetriever();
+            var mockSsh = new MockSshDeploymentClient();
+            var mockHttp = new HttpClient(new MockHttpMessageHandler());
+
+            var provisionStep = new ResolveProvisionServerStep(
+                scopeFactory, _ => mockProvider, pipelineOptions, TimeProvider.System, NullLogger<ResolveProvisionServerStep>.Instance);
+            var dnsStep = new DnsSetupStep(
+                scopeFactory, mockDns, pipelineOptions, TimeProvider.System, NullLogger<DnsSetupStep>.Instance);
+            var sshStep = new SshDeployStep(
+                scopeFactory, mockArtifact, mockSsh, sshOptions, pipelineOptions, env, TimeProvider.System, NullLogger<SshDeployStep>.Instance);
+            var healthStep = new HealthCheckFinalizeStep(
+                scopeFactory, mockHttp, pipelineOptions, TimeProvider.System, NullLogger<HealthCheckFinalizeStep>.Instance);
+
+            var executor = new DeploymentPipelineExecutor(
+                scopeFactory,
+                provisionStep,
+                dnsStep,
+                sshStep,
+                healthStep,
+                mockSsh,
+                sshOptions,
+                TimeProvider.System,
+                NullLogger<DeploymentPipelineExecutor>.Instance);
+
+            using (var telemetry = new WorkerTelemetryCapture())
+            {
+                await executor.ExecuteAsync(deployment, CancellationToken.None);
+
+                var steps = telemetry.Spans.Where(span => span.OperationName == "worker.step")
+                    .ToDictionary(span => (string)span.GetTagItem("operation")!);
+                Assert.Equal(["dns-setup", "health-finalize", "resolve-provision", "ssh-deploy"], steps.Keys.Order());
+                Assert.All(steps.Values, span => Assert.Equal("succeeded", span.GetTagItem("outcome")));
+                Assert.Equal(steps["dns-setup"].ParentSpanId, steps["ssh-deploy"].ParentSpanId);
+                Assert.NotEqual(steps["dns-setup"].SpanId, steps["ssh-deploy"].SpanId);
+                Assert.True(steps["health-finalize"].StartTimeUtc >= steps["ssh-deploy"].StartTimeUtc + steps["ssh-deploy"].Duration);
+                Assert.True(steps["health-finalize"].StartTimeUtc >= steps["dns-setup"].StartTimeUtc + steps["dns-setup"].Duration);
+                Assert.Contains(telemetry.Measurements, m => m.Name == "selfrun.worker.step.duration"
+                    && m.Tags == "operation=ssh-deploy;outcome=succeeded");
+            }
+
+            await using (var db = _harness.CreateDbContext())
+            {
+                var finished = await db.Deployments.FindAsync("dep-pipe-ok");
+                Assert.NotNull(finished);
+                Assert.Equal(DeploymentStatus.Succeeded, finished.Status);
+                Assert.NotNull(finished.CompletedAt);
+            }
+        }
+        finally
+        {
+            tempDir.Delete(true);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "docker_build_failed", null)]
+    [InlineData("restored", "health_check_failed", "restored the previous app services")]
+    [InlineData("no_previous", "health_check_failed", "No previous running revision was available")]
+    [InlineData("failed", "health_check_failed", "Inspect the target host")]
+    [InlineData("missing-marker", "health_check_failed", "runtime did not confirm rollback")]
+    public async Task RecordsSshFailureWithoutOverwritingRuntimeHealthRecovery(string? rollbackOutcome, string failureCode, string? failureSummary)
+    {
+        var fixture = "piperoll-" + (rollbackOutcome ?? "build");
+        // Theory cases share one database, so each needs its own server identity and route.
+        var caseIndex = Array.IndexOf(["build", "restored", "no_previous", "failed", "missing-marker"], rollbackOutcome ?? "build");
+        var (org, app) = await _harness.SeedOrgAndAppAsync(fixture);
+        var now = DateTimeOffset.UtcNow;
+
+        Deployment deployment;
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.ServerInstances.Add(new ServerInstance
+            {
+                Id = "srv-" + fixture,
+                OrganizationId = org.Id,
+                AppId = app.Id,
+                Provider = "hetzner",
+                ProviderServerId = "prov-" + fixture,
+                IpAddress = $"192.0.2.{89 + caseIndex}",
+                Region = "nbg1",
+                Status = "active",
+                BootstrapStatus = "ready",
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            deployment = new Deployment
+            {
+                Id = "dep-" + fixture,
+                OrganizationId = org.Id,
+                AppId = app.Id,
+                Status = DeploymentStatus.Provisioning,
+                WorkerId = "test-worker",
+                OwnershipToken = "owner-pipe-roll",
+                OwnershipAcquiredAt = now,
+                Domain = fixture + ".example.com",
+                Database = DatabaseMode.None,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.Deployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
+
+        var rollbackExecuted = false;
+        List<string> outputLines = rollbackOutcome is null
+            ? ["Build error"]
+            : ["Health check failed for web at http://127.0.0.1:18080/health",
+                "curl: (22) The requested URL returned error: 503",
+                "ERROR: health_check_failed: Deployment aborted during phase verify_local_health.",
+                "__SELFRUN_DEPLOY_FAILURE__=health_check_failed"];
+        if (rollbackOutcome is not (null or "missing-marker"))
+        {
+            outputLines.Add("__SELFRUN_DEPLOY_ROLLBACK__=" + rollbackOutcome);
+        }
+        // Raw proxy/runtime lines after rollback markers must not displace the rollback and health summary.
+        outputLines.AddRange(Enumerable.Repeat("● caddy.service - Caddy (active running)", 5));
+        var mockSsh = new MockSshDeploymentClient(
+            execDeploy: (_, _) => Task.FromResult(new SshDeploymentResult(1, false, null, outputLines)),
+            execCmd: (ip, user, key, cmd) =>
+            {
+                if (cmd.Contains("echo rollback-attempted", StringComparison.Ordinal))
+                {
+                    rollbackExecuted = true;
+                    Assert.Contains("install -m 0644", cmd);
+                    Assert.Contains("sudo -u caddy caddy validate", cmd);
+                }
+                return Task.FromResult(0);
+            });
+
+        var tempDir = CreateArtifactDirectory();
+        try
+        {
+            var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "selfrun-deploy");
+            Directory.CreateDirectory(scriptDir);
+            await File.WriteAllTextAsync(Path.Combine(scriptDir, "remote-deploy.sh"), "#!/bin/bash\necho ok");
+
+            var env = new TestHostEnvironment { ContentRootPath = tempDir.FullName };
+            var scopeFactory = _harness.CreateScopeFactory();
+            var pipelineOptions = Options.Create(new DeploymentPipelineOptions());
+            var sshOptions = Options.Create(new SshDeploymentOptions
+            {
+                PrivateKeyContent = "MOCK_KEY"
+            });
+
+            var provisionStep = new ResolveProvisionServerStep(
+                scopeFactory, _ => new MockVpsProviderClient(), pipelineOptions, TimeProvider.System);
+            var dnsStep = new DnsSetupStep(
+                scopeFactory, new MockCloudflareDnsClient(), pipelineOptions, TimeProvider.System);
+            var sshStep = new SshDeployStep(
+                scopeFactory, new MockArtifactRetriever(), mockSsh, sshOptions, pipelineOptions, env, TimeProvider.System);
+            var healthStep = new HealthCheckFinalizeStep(
+                scopeFactory, new HttpClient(new MockHttpMessageHandler()), pipelineOptions, TimeProvider.System);
+
+            var executor = new DeploymentPipelineExecutor(
+                scopeFactory,
+                provisionStep,
+                dnsStep,
+                sshStep,
+                healthStep,
+                mockSsh,
+                sshOptions,
+                TimeProvider.System);
+
+            var ex = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(deployment, CancellationToken.None));
+            Assert.Equal(failureCode, ex.FailureCode);
+            Assert.Equal(rollbackOutcome is null, rollbackExecuted);
+
+            await using (var db = _harness.CreateDbContext())
+            {
+                var failed = await db.Deployments.FindAsync(deployment.Id);
+                Assert.NotNull(failed);
+                Assert.Equal(DeploymentStatus.Failed, failed.Status);
+                Assert.Equal(failureCode, failed.FailureCode);
+                if (failureSummary is not null)
+                {
+                    Assert.Contains(failureSummary, failed.FailureMessage);
+                    Assert.Contains("Health check failed for web at http://127.0.0.1:18080/health (curl: (22) The requested URL returned error: 503).", failed.FailureMessage);
+                    Assert.DoesNotContain("remote-deploy.sh failed", failed.FailureMessage);
+                    Assert.DoesNotContain("caddy.service", failed.FailureMessage);
+                }
+                else
+                {
+                    var rollbackEvent = await db.DeploymentEvents.SingleAsync(e =>
+                        e.DeploymentId == failed.Id && e.Message.StartsWith("Rollback command attempted"));
+                    Assert.Equal(EventLevel.Warning, rollbackEvent.Level);
+                    Assert.Contains("health was not verified", rollbackEvent.Message);
+                }
+            }
+        }
+        finally
+        {
+            tempDir.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task DnsFailure_PrefersUnconfirmedRemoteQuiescenceFromCanceledSshWork()
+    {
+        var (org, app) = await _harness.SeedOrgAndAppAsync("pipe-quiescence");
+        var now = DateTimeOffset.UtcNow;
+        Deployment deployment;
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.ServerInstances.Add(new ServerInstance
+            {
+                Id = "srv-pipe-quiescence",
+                OrganizationId = org.Id,
+                AppId = app.Id,
+                Provider = "hetzner",
+                ProviderServerId = "prov-pipe-quiescence",
+                IpAddress = "192.0.2.90",
+                Region = "nbg1",
+                Status = "active",
+                BootstrapStatus = "ready",
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            deployment = new Deployment
+            {
+                Id = "dep-pipe-quiescence",
+                OrganizationId = org.Id,
+                AppId = app.Id,
+                Status = DeploymentStatus.Provisioning,
+                WorkerId = "test-worker",
+                OwnershipToken = "owner-pipe-quiescence",
+                OwnershipAcquiredAt = now,
+                Database = DatabaseMode.None,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            deployment.Services.Add(new DeploymentService
+            {
+                Id = "svc-pipe-quiescence",
+                DeploymentId = deployment.Id,
+                Name = "web",
+                Image = "test/web:latest",
+                Public = true,
+                Port = 8080,
+                Path = "/",
+                HealthPath = "/health"
+            });
+            db.Deployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
+
+        var remoteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockSsh = new MockSshDeploymentClient(execDeploy: async (_, cancellationToken) =>
+        {
+            remoteStarted.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                throw new InvalidOperationException("unreachable");
+            }
+            catch (OperationCanceledException)
+            {
+                throw new RemoteQuiescenceException("remote process group is still active");
+            }
+        });
+        var mockDns = new MockCloudflareDnsClient(async (_, cancellationToken) =>
+        {
+            await remoteStarted.Task.WaitAsync(cancellationToken);
+            throw new InvalidOperationException("dns failed");
+        });
+
+        var tempDir = CreateArtifactDirectory();
+        try
+        {
+            var scriptDir = Path.Combine(tempDir.FullName, "scripts", "github-actions", "selfrun-deploy");
+            Directory.CreateDirectory(scriptDir);
+            await File.WriteAllTextAsync(Path.Combine(scriptDir, "remote-deploy.sh"), "#!/bin/bash\necho ok");
+            var scopeFactory = _harness.CreateScopeFactory();
+            var pipelineOptions = Options.Create(new DeploymentPipelineOptions());
+            var sshOptions = Options.Create(new SshDeploymentOptions { PrivateKeyContent = "MOCK_KEY" });
+            var executor = new DeploymentPipelineExecutor(
+                scopeFactory,
+                new ResolveProvisionServerStep(scopeFactory, _ => new MockVpsProviderClient(), pipelineOptions, TimeProvider.System),
+                new DnsSetupStep(scopeFactory, mockDns, pipelineOptions, TimeProvider.System),
+                new SshDeployStep(scopeFactory, new MockArtifactRetriever(), mockSsh, sshOptions, pipelineOptions,
+                    new TestHostEnvironment { ContentRootPath = tempDir.FullName }, TimeProvider.System),
+                new HealthCheckFinalizeStep(scopeFactory, new HttpClient(new MockHttpMessageHandler()), pipelineOptions, TimeProvider.System),
+                mockSsh,
+                sshOptions,
+                TimeProvider.System);
+
+            var exception = await Assert.ThrowsAsync<RemoteQuiescenceException>(
+                () => executor.ExecuteAsync(deployment, CancellationToken.None));
+            Assert.Contains("still active", exception.Message);
+
+            await using var db = _harness.CreateDbContext();
+            var retained = await db.Deployments.FindAsync(deployment.Id);
+            Assert.NotNull(retained);
+            Assert.Equal("owner-pipe-quiescence", retained.OwnershipToken);
+            Assert.NotEqual(DeploymentStatus.Failed, retained.Status);
+        }
+        finally
+        {
+            tempDir.Delete(true);
+        }
+    }
+
+    [Theory]
+    [InlineData("missing_service_secret")]
+    [InlineData("secret_store_unavailable")]
+    [InlineData("docker_build_failed")]
+    public async Task PreparationFailureAfterDns_CancelsGateAndPersistsOriginalError(string code)
+    {
+        var (org, app) = await _harness.SeedOrgAndAppAsync("preparation-" + code);
+        var now = DateTimeOffset.UtcNow;
+        var deployment = new Deployment
+        {
+            Id = "dep-" + code, OrganizationId = org.Id, AppId = app.Id,
+            Status = DeploymentStatus.Provisioning, OwnershipToken = "owner-" + code,
+            WorkerId = "test-worker", Database = DatabaseMode.None, CreatedAt = now, UpdatedAt = now
+        };
+        deployment.Services.Add(new DeploymentService { Id = "svc-" + code, Name = "api", Image = "example/api:latest", Port = 8080, Public = true, Path = "/", HealthPath = "/health" });
+        await using (var db = _harness.CreateDbContext())
+        {
+            db.ServerInstances.Add(new ServerInstance { Id = "srv-" + code, OrganizationId = org.Id, AppId = app.Id, Provider = "hetzner", ProviderServerId = "provider-" + code, IpAddress = "192.0.2.88", Region = "nbg1", Status = "active", BootstrapStatus = "ready", CreatedAt = now, UpdatedAt = now });
+            db.Deployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
+        var gateStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ssh = new WaitingGateSshClient(gateStarted, code == "docker_build_failed");
+        var tempDir = CreateArtifactDirectory();
+        try
+        {
+            var scripts = Directory.CreateDirectory(Path.Combine(tempDir.FullName, "scripts", "github-actions", "selfrun-deploy"));
+            await File.WriteAllTextAsync(Path.Combine(scripts.FullName, "remote-deploy.sh"), "#!/bin/bash\necho ok");
+            var scopeFactory = _harness.CreateScopeFactory(services =>
+                Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddScoped<Selfrun.Common.Services.IAppServiceSecretResolver>(services,
+                    _ => new FailingSecretResolver(gateStarted.Task, code)));
+            var options = Options.Create(new DeploymentPipelineOptions());
+            var sshOptions = Options.Create(new SshDeploymentOptions { PrivateKeyContent = "MOCK_KEY" });
+            var executor = new DeploymentPipelineExecutor(scopeFactory,
+                new ResolveProvisionServerStep(scopeFactory, _ => new MockVpsProviderClient(), options, TimeProvider.System),
+                new DnsSetupStep(scopeFactory, new MockCloudflareDnsClient(), options, TimeProvider.System),
+                new SshDeployStep(scopeFactory, new MockArtifactRetriever(), ssh, sshOptions, options,
+                    new TestHostEnvironment { ContentRootPath = tempDir.FullName }, TimeProvider.System),
+                new HealthCheckFinalizeStep(scopeFactory, new HttpClient(new MockHttpMessageHandler()), options, TimeProvider.System),
+                ssh, sshOptions, TimeProvider.System);
+            var failure = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(deployment, default).WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(code, failure.FailureCode);
+            Assert.DoesNotContain("SSH preparation did not become ready", failure.Message);
+            if (code == "missing_service_secret")
+            {
+                Assert.Contains("INSTAGRAM_APP_SECRET", failure.Message);
+                Assert.Contains("api", failure.Message);
+            }
+            Assert.True(ssh.GateCanceled);
+            Assert.False(ssh.GateReleased);
+            await using var verify = _harness.CreateDbContext();
+            var failed = await verify.Deployments.FindAsync(deployment.Id);
+            Assert.Equal(DeploymentStatus.Failed, failed!.Status);
+            Assert.Equal(code, failed.FailureCode);
+            Assert.Equal(failure.Message, failed.FailureMessage);
+            if (code != "docker_build_failed")
+            {
+                Assert.False(ssh.RollbackAttempted);
+                Assert.Equal(0, ssh.DeployCalls);
+            }
+        }
+        finally { tempDir.Delete(true); }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FirstDeploymentWithManualDns_StopsBeforeRolloutAndReusesServerOnRetry(
+        bool retryHealthy)
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (org, app) = await _harness.SeedOrgAndAppAsync("first-dns-" + suffix);
+        var now = DateTimeOffset.UtcNow;
+        var hostname = $"web-{suffix}.apps.example.test";
+        Deployment NewDeployment(string attempt) => new()
+        {
+            Id = $"dep-{suffix}-{attempt}", OrganizationId = org.Id, AppId = app.Id,
+            Status = DeploymentStatus.Provisioning, OwnershipToken = $"owner-{suffix}-{attempt}",
+            Database = DatabaseMode.None, CreatedAt = now, UpdatedAt = now,
+            Services = [new DeploymentService
+            {
+                Id = $"svc-{suffix}-{attempt}", Name = "web", Image = "example/web:latest",
+                Public = true, Port = 8080, Path = "/", HealthPath = "/health"
+            }]
+        };
+        var first = NewDeployment("first");
+        await using (var db = _harness.CreateDbContext())
+        {
+            // The new server is registered before the first deployment's DNS handoff.
+            db.ServerInstances.Add(new ServerInstance
+            {
+                Id = "srv-" + suffix, OrganizationId = org.Id, AppId = app.Id,
+                Provider = "hetzner", ProviderServerId = "provider-" + suffix,
+                IpAddress = "192.0.2.88", Region = "nbg1", Status = "active", BootstrapStatus = "ready",
+                CreatedAt = now, UpdatedAt = now
+            });
+            db.Domains.Add(new Domain
+            {
+                Id = "dom-" + suffix, OrganizationId = org.Id, AppId = app.Id,
+                ServiceName = "web", Hostname = hostname, Kind = DomainBindingService.KindSelfrunSubdomain,
+                Status = DomainBindingService.StatusPendingApply, DnsStatus = DomainBindingService.DnsPending,
+                ApplyStatus = DomainBindingService.ApplyPending, SslStatus = DomainBindingService.SslPending,
+                PathPrefix = "/", CreatedAt = now, UpdatedAt = now
+            });
+            db.Deployments.Add(first);
+            await db.SaveChangesAsync();
+        }
+
+        var pending = true;
+        var remoteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remoteCanceled = false;
+        var rolloutReleased = false;
+        var rollbackAttempted = false;
+        var httpRequests = 0;
+        var ssh = new MockSshDeploymentClient(
+            execDeploy: async (_, ct) =>
+            {
+                remoteStarted.TrySetResult();
+                if (pending)
+                {
+                    try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+                    catch (OperationCanceledException) { remoteCanceled = true; throw; }
+                }
+                return new SshDeploymentResult(0, true, "sha123", ["__SELFRUN_DEPLOY_COMPLETE__=sha123"]);
+            },
+            execCmd: (_, _, _, command) =>
+            {
+                if (command.Contains("rollout.ready", StringComparison.Ordinal)) { rolloutReleased = true; }
+                if (command.Contains("rollback", StringComparison.Ordinal)) { rollbackAttempted = true; }
+                return Task.FromResult(0);
+            });
+        var dns = new MockCloudflareDnsClient(async (host, ct) =>
+        {
+            Assert.Equal(hostname, host);
+            if (pending)
+            {
+                await remoteStarted.Task.WaitAsync(ct);
+                throw new TimeoutException("synthetic DNS not propagated");
+            }
+        });
+        var provider = new MockVpsProviderClient(ipv6Address: "2001:db8::88");
+        var artifactDir = CreateArtifactDirectory();
+        try
+        {
+            var scriptDir = Directory.CreateDirectory(Path.Combine(artifactDir.FullName, "scripts", "github-actions", "selfrun-deploy"));
+            await File.WriteAllTextAsync(Path.Combine(scriptDir.FullName, "remote-deploy.sh"), "#!/bin/bash\necho ok");
+            var scopeFactory = _harness.CreateScopeFactory();
+            var options = Options.Create(new DeploymentPipelineOptions
+            {
+                HealthCheckTimeout = TimeSpan.FromMilliseconds(50), HealthCheckInterval = TimeSpan.FromMilliseconds(5)
+            });
+            var sshOptions = Options.Create(new SshDeploymentOptions { PrivateKeyContent = "MOCK_KEY" });
+            var executor = new DeploymentPipelineExecutor(scopeFactory,
+                new ResolveProvisionServerStep(scopeFactory, _ => provider, options, TimeProvider.System),
+                new DnsSetupStep(scopeFactory, dns, options, TimeProvider.System,
+                    managedDomains: Options.Create(new ManagedDomainOptions { Suffix = "apps.example.test", ManageDnsRecords = false })),
+                new SshDeployStep(scopeFactory, new MockArtifactRetriever(), ssh, sshOptions, options,
+                    new TestHostEnvironment { ContentRootPath = artifactDir.FullName }, TimeProvider.System),
+                new HealthCheckFinalizeStep(scopeFactory, new HttpClient(new MockHttpMessageHandler(
+                    retryHealthy ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable, () => httpRequests++)), options, TimeProvider.System),
+                ssh, sshOptions, TimeProvider.System);
+
+            var failure = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(first, default).WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal("dns_pending", failure.FailureCode);
+            Assert.Contains($"A {hostname} -> 192.0.2.88", failure.Message);
+            Assert.Contains($"AAAA {hostname} -> 2001:db8::88", failure.Message);
+            Assert.True(remoteCanceled);
+            Assert.False(rolloutReleased);
+            Assert.False(rollbackAttempted);
+            Assert.Equal(0, httpRequests);
+            await using (var verify = _harness.CreateDbContext())
+            {
+                var failed = await verify.Deployments.FindAsync(first.Id);
+                Assert.Equal(DeploymentStatus.Failed, failed!.Status);
+                Assert.Equal("dns_pending", failed.FailureCode);
+                Assert.Equal(failure.Message, failed.FailureMessage);
+                Assert.Null(failed.OwnershipToken);
+                var domain = await verify.Domains.FindAsync("dom-" + suffix);
+                Assert.Equal(DomainBindingService.DnsPending, domain!.DnsStatus);
+            }
+
+            pending = false;
+            var retry = NewDeployment("retry");
+            await using (var db = _harness.CreateDbContext())
+            {
+                db.Deployments.Add(retry);
+                await db.SaveChangesAsync();
+            }
+            if (retryHealthy)
+            {
+                await executor.ExecuteAsync(retry, default);
+            }
+            else
+            {
+                var healthFailure = await Assert.ThrowsAsync<PipelineStepException>(() => executor.ExecuteAsync(retry, default));
+                Assert.Equal("health_check_failed", healthFailure.FailureCode);
+            }
+            Assert.True(rolloutReleased);
+            Assert.Equal(!retryHealthy, rollbackAttempted);
+            Assert.True(httpRequests > 0);
+            Assert.Equal(0, provider.CreateCalls);
+            await using (var verify = _harness.CreateDbContext())
+            {
+                var finished = await verify.Deployments.FindAsync(retry.Id);
+                Assert.Equal(retryHealthy ? DeploymentStatus.Succeeded : DeploymentStatus.Failed, finished!.Status);
+                Assert.Equal(retryHealthy ? null : "health_check_failed", finished.FailureCode);
+                Assert.Equal(1, await verify.ServerInstances.CountAsync(server => server.AppId == app.Id));
+                var domain = await verify.Domains.FindAsync("dom-" + suffix);
+                Assert.Equal(DomainBindingService.DnsVerified, domain!.DnsStatus);
+                Assert.Equal("192.0.2.88", domain.TargetIp);
+            }
+        }
+        finally { artifactDir.Delete(true); }
+    }
+
+    private static DirectoryInfo CreateArtifactDirectory()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (!File.Exists(Path.Combine(root.FullName, "AGENTS.md")))
+        {
+            root = root.Parent ?? throw new InvalidOperationException("Repository root not found.");
+        }
+        return Directory.CreateDirectory(Path.Combine(root.FullName, ".local", "artifacts", "worker-pipeline-" + Guid.NewGuid().ToString("N")));
+    }
+
+    private sealed class FailingSecretResolver(Task gateStarted, string code) : Selfrun.Common.Services.IAppServiceSecretResolver
+    {
+        public async Task<IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>> ResolveForDeploymentAsync(
+            string appId, IReadOnlyList<Selfrun.Common.Contracts.DeploymentServiceRequest> services, CancellationToken cancellationToken)
+        {
+            await gateStarted.WaitAsync(cancellationToken);
+            if (code == "missing_service_secret")
+            {
+                throw new Selfrun.Common.Services.MissingAppServiceSecretException("api", "Instagram__AppSecret", "INSTAGRAM_APP_SECRET");
+            }
+            if (code == "secret_store_unavailable")
+            {
+                throw new Selfrun.Common.Services.SecretStoreUnavailableException("Secret store offline");
+            }
+            return new Dictionary<string, IReadOnlyDictionary<string, string>>();
+        }
+    }
+
+    private sealed class WaitingGateSshClient(TaskCompletionSource gateStarted, bool failTransfer) : ISshDeploymentClient
+    {
+        public bool GateCanceled { get; private set; }
+        public bool GateReleased { get; private set; }
+        public bool RollbackAttempted { get; private set; }
+        public int DeployCalls { get; private set; }
+        public Task<SshDeploymentResult> ExecuteDeploymentAsync(SshDeploymentRequest request, Func<string, string, Task> onLogLine, CancellationToken cancellationToken)
+        {
+            DeployCalls++;
+            if (failTransfer) { throw new IOException("Artifact transfer failed"); }
+            throw new InvalidOperationException("Remote execution must not start");
+        }
+        public async Task<int> ExecuteCommandAsync(SshTarget target, string username, string privateKeyContent, string command, Func<string, string, Task> onLogLine, CancellationToken cancellationToken)
+        {
+            if (command.Contains("preparation.ready", StringComparison.Ordinal))
+            {
+                gateStarted.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+                catch (OperationCanceledException) { GateCanceled = true; throw; }
+            }
+            if (command.Contains("rollout.ready", StringComparison.Ordinal)) { GateReleased = true; }
+            if (command.Contains("rollback", StringComparison.Ordinal)) { RollbackAttempted = true; }
+            return 0;
+        }
+    }
+
+    private sealed class MockVpsProviderClient(string ipAddress = "192.0.2.88", string? ipv6Address = null) : IVpsProviderClient
+    {
+        public int CreateCalls { get; private set; }
+        public CloudProvider Provider => CloudProvider.Hetzner;
+        public Task<ProviderServerInfo?> FindServerAsync(string name, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ProviderServerInfo?>(null);
+        public Task<ProviderServerInfo> CreateServerAsync(CreateServerRequest request, CancellationToken cancellationToken = default)
+        {
+            CreateCalls++;
+            return Task.FromResult(new ProviderServerInfo("srv-1", request.Name, ipAddress, "running", ipv6Address, request.Labels));
+        }
+        public Task<ProviderServerStatus> GetServerStatusAsync(string serverId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ProviderServerStatus(serverId, "running", ipAddress, ipv6Address, true));
+        public Task DeleteServerAsync(string serverId, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class MockCloudflareDnsClient(
+        Func<string, CancellationToken, Task>? waitForPropagation = null) : ICloudflareDnsClient
+    {
+        public Task DeleteDnsRecordsAsync(string hostname, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task UpsertDnsRecordAsync(string hostname, string ipAddress, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+        public Task WaitForPropagationAsync(string hostname, string expectedIp, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            waitForPropagation is null ? Task.CompletedTask : waitForPropagation(hostname, cancellationToken);
+    }
+
+    private sealed class MockSshDeploymentClient(
+        Func<SshDeploymentRequest, CancellationToken, Task<SshDeploymentResult>>? execDeploy = null,
+        Func<string, string, string, string, Task<int>>? execCmd = null) : ISshDeploymentClient
+    {
+        public Task<SshDeploymentResult> ExecuteDeploymentAsync(
+            SshDeploymentRequest request,
+            Func<string, string, Task>? onOutputLine = null,
+            CancellationToken cancellationToken = default) =>
+            execDeploy is not null
+                ? execDeploy(request, cancellationToken)
+                : Task.FromResult(new SshDeploymentResult(0, true, "sha123", ["__SELFRUN_DEPLOY_COMPLETE__=sha123"]));
+
+        public Task<int> ExecuteCommandAsync(
+            SshTarget target,
+            string username,
+            string privateKey,
+            string command,
+            Func<string, string, Task>? onOutputLine = null,
+            CancellationToken cancellationToken = default) =>
+            execCmd is not null
+                ? execCmd(target.Host, username, privateKey, command)
+                : Task.FromResult(0);
+    }
+
+    private sealed class MockArtifactRetriever(byte[]? content = null) : IArtifactRetriever
+    {
+        public Task<Stream> OpenArtifactStreamAsync(string artifactId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Stream>(new MemoryStream(content ?? "mock"u8.ToArray()));
+        public Task<string> DownloadArtifactToTempFileAsync(string artifactId, CancellationToken cancellationToken = default) =>
+            Task.FromResult("/tmp/mock.zip");
+    }
+
+    private sealed class MockHttpMessageHandler(HttpStatusCode status = HttpStatusCode.OK, Action? onRequest = null) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            onRequest?.Invoke();
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent("synthetic health response") });
+        }
+    }
+
+    private sealed class TestHostEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Development";
+        public string ApplicationName { get; set; } = "Test";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+}

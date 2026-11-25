@@ -2,17 +2,17 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Providers;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Providers;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -20,7 +20,7 @@ namespace Minicloud.Api.Controllers;
 public sealed class ApiKeysController : ControllerBase
 {
     [HttpGet]
-    public async Task<IResult> ListApiKeys([FromQuery] string organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
+    public async Task<IResult> ListApiKeys([FromQuery] string organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         if (!await authorization.CanAccessOrganizationAsync(principal.ToActorIdentity(), organizationId, OrganizationAction.ReadApiKeys, cancellationToken))
@@ -35,7 +35,7 @@ public sealed class ApiKeysController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IResult> CreateApiKey([FromBody] CreateApiKeyRequest request, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IIdGenerator ids, [FromServices] IApiKeyTokenService tokenService, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> CreateApiKey([FromBody] CreateApiKeyRequest request, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IIdGenerator ids, [FromServices] IApiKeyTokenService tokenService, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         var validation = ControlPlaneValidation.ValidateApiKey(request);
@@ -70,7 +70,7 @@ public sealed class ApiKeysController : ControllerBase
     }
 
     [HttpDelete("{apiKeyId}")]
-    public async Task<IResult> RevokeApiKey([FromRoute] string apiKeyId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
+    public async Task<IResult> RevokeApiKey([FromRoute] string apiKeyId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         var key = await db.ApiKeys.SingleOrDefaultAsync(x => x.Id == apiKeyId, cancellationToken);

@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.DigitalOcean;
+namespace Selfrun.Common.Providers.DigitalOcean;
 
 public class DigitalOceanOptions
 {

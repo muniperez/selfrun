@@ -20,8 +20,7 @@ acceptance are separate. Date: 2026-11-09.
 
 ## Brand
 
-Product name: **Selfrun** (`selfrun.dev`, formerly MiniCloud; see
-[Selfrun Rename Migration Guide](docs/selfrun-rename-migration.md)).
+Product name: **Selfrun** (`selfrun.dev`).
 Practical, restrained and operational. Preserve the dashboard shell and existing
 theme. Avoid decorative metrics, large promotional headers and new design systems.
 
@@ -133,12 +132,12 @@ implementation or release completion.
 ## Product boundary
 
 Cloud coding workspaces (`/workspaces`, ephemeral coding VMs, Git-save recovery,
-the workspace gateway, and T3 Connect) were extracted out of Minicloud into the
+the workspace gateway, and T3 Connect) were extracted out of Selfrun into the
 independent workspace product (Municode; see
-[#256](https://github.com/muniventures/minicloud/issues/256)). Minicloud's
+[#256](https://github.com/muniperez/selfrun/issues/256)). Selfrun's
 dashboard design covers application hosting, managed databases, plans and
 provider accounts, deployments, and organization administration (including
-Minicloud's own GitHub App integration).
+Selfrun's own GitHub App integration).
 
 ## Open questions
 

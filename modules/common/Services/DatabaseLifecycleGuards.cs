@@ -1,12 +1,12 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public static class DatabaseLifecycleGuards
 {
-    public static async Task<string?> AppDeletionBlockerAsync(MinicloudDbContext db, string appId, CancellationToken ct, bool allowManagedServerDeletion = false)
+    public static async Task<string?> AppDeletionBlockerAsync(SelfrunDbContext db, string appId, CancellationToken ct, bool allowManagedServerDeletion = false)
     {
         if (await db.ManagedDatabaseServers.AnyAsync(x => x.RuntimeAppId == appId && x.Status != "deleted" && !(allowManagedServerDeletion && x.Status == "deleting" && !db.ManagedDatabases.Any(d => d.ServerId == x.Id && d.Status != "deleted") && db.DatabaseOperations.Any(o => o.ServerId == x.Id && o.Kind == "delete-server" && (o.Status == "queued" || o.Status == "running"))), ct))
             return "Delete the database server through Database servers before deleting its backing application.";
