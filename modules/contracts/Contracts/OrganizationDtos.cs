@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record OrganizationSummaryDto(string Id, string Name, string Slug, string Role);
 public sealed record CreateOrganizationRequest(string Name, string Slug);

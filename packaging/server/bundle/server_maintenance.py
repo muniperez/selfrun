@@ -1,7 +1,7 @@
 """Verified host maintenance.
 
 Coordinated backup, upgrade, restore and transfer use the durable maintenance authority
-(`dotnet Minicloud.Api.dll maintenance ...`) run inside the API image. Independent
+(`dotnet Selfrun.Api.dll maintenance ...`) run inside the API image. Independent
 recovery-dependency archives (`*-recovery`) remain available and are NOT full backups.
 """
 
@@ -23,8 +23,8 @@ RECOVERY_FILES = {"openbao-ca.key", "openbao-recovery.json", "openbao-root-token
 MAX_ARCHIVE = 16 * 1024 * 1024
 MAX_FILE = 4 * 1024 * 1024
 CHUNK = 1024 * 1024
-FULL_KIND = "minicloud-coordinated-backup"
-DATABASES = ("minicloud", "kratos")
+FULL_KIND = "selfrun-coordinated-backup"
+DATABASES = ("selfrun", "kratos")
 VOLUMES = ("openbao", "artifacts", "caddy-data", "caddy-config")
 COMPONENTS = (tuple(f"postgres-{name}.dump" for name in DATABASES)
               + tuple(f"volume-{name}.tar" for name in VOLUMES) + ("installation.tar", "recovery.tar"))
@@ -225,7 +225,7 @@ class Maintenance:
 
     def pack(self, files):
         record = {
-            "schemaVersion": 1, "kind": "minicloud-openbao-recovery-dependencies",
+            "schemaVersion": 1, "kind": "selfrun-openbao-recovery-dependencies",
             "fullCoordinatedBackup": False, "backupId": str(uuid.uuid4()),
             "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "installationId": self.state["installationId"], "operationId": self.state["operationId"],
@@ -261,7 +261,7 @@ class Maintenance:
                   "installationId", "operationId", "releaseTag", "sourceRevision", "bundleSha256", "files"}
         self.need(isinstance(record, dict) and record.keys() == fields
                   and type(record["schemaVersion"]) is int and record["schemaVersion"] == 1
-                  and record["kind"] == "minicloud-openbao-recovery-dependencies"
+                  and record["kind"] == "selfrun-openbao-recovery-dependencies"
                   and record["fullCoordinatedBackup"] is False,
                   "Unknown recovery archive format; never accept it as a full backup.")
         for key in ("backupId", "installationId", "operationId"):
@@ -391,9 +391,9 @@ class Maintenance:
                   "Control characters are forbidden in scheduling paths.")
         quoted = " ".join(json.dumps(item).replace("%", "%%").replace("$", "$$") for item in command)
         if operation == "backup":
-            unit, description = "minicloud-backup", "Minicloud coordinated full backup (fence, drain, capture, release)"
+            unit, description = "selfrun-backup", "Selfrun coordinated full backup (fence, drain, capture, release)"
         else:
-            unit, description = "minicloud-recovery", "Minicloud independent recovery dependencies ONLY (not full backup)"
+            unit, description = "selfrun-recovery", "Selfrun independent recovery dependencies ONLY (not full backup)"
         service = (
             f"[Unit]\nDescription={description}\n"
             "[Service]\nType=oneshot\nUser=root\nUMask=0077\n"
@@ -522,13 +522,13 @@ class Maintenance:
     def volume_capture(self, volume):
         image = self.state["dependencies"]["postgres"]
         return (["docker", "run", "--rm", "--pull", "never", "--network", "none",
-                 "--volume", f"minicloud_{volume}:/source:ro", "--entrypoint", "tar", image,
+                 "--volume", f"selfrun_{volume}:/source:ro", "--entrypoint", "tar", image,
                  "-C", "/source", "-cf", "-", "."], self.i.docker_environment())
 
     def volume_restore(self, volume):
         image = self.state["dependencies"]["postgres"]
         return (["docker", "run", "--rm", "-i", "--pull", "never", "--network", "none",
-                 "--volume", f"minicloud_{volume}:/target", "--entrypoint", "sh", image,
+                 "--volume", f"selfrun_{volume}:/target", "--entrypoint", "sh", image,
                  "-c", "find /target -mindepth 1 -delete && tar -C /target -xpf -"], self.i.docker_environment())
 
     def installation_bytes(self):
@@ -656,7 +656,7 @@ class Maintenance:
                 installation[name] = archive.extractfile(member).read()
         self.need("installation.json" in installation, "Backup lacks installation metadata.")
         state = json.loads(installation["installation.json"], object_pairs_hook=self.p["no_duplicates"])
-        self.need(isinstance(state, dict) and state.get("product") == "minicloud"
+        self.need(isinstance(state, dict) and state.get("product") == "selfrun"
                   and state.get("installationId") == record["installationId"]
                   and all(state.get(key) == record[key] for key in RELEASE_FIELDS)
                   and state.get("credentialsComplete") is True,
@@ -711,7 +711,7 @@ class Maintenance:
                   and directory != self.args.assets_dir,
                   "Upgrade requires --previous-assets-dir: the retained verified assets of the installed release.")
         self.p["protected"](directory, True)
-        name = f"minicloud-server-{state['serverVersion']}.tar.gz"
+        name = f"selfrun-server-{state['serverVersion']}.tar.gz"
         path = directory / name
         self.p["protected"](path)
         digest = self.file_sha256(path)
@@ -914,7 +914,7 @@ class Maintenance:
         """Offline recovery must not stop a possibly active management participant."""
         env = self.i.docker_environment()
         containers = self.p["run"](
-            ["docker", "ps", "--all", "-q", "--filter", "label=com.docker.compose.project=minicloud"],
+            ["docker", "ps", "--all", "-q", "--filter", "label=com.docker.compose.project=selfrun"],
             env=env).decode().split()
         if not containers:
             return
@@ -926,7 +926,7 @@ class Maintenance:
             self.need(isinstance(container, dict) and isinstance(container.get("Config"), dict),
                       "Cannot establish restore container configuration; nothing was stopped.")
             labels = container["Config"].get("Labels")
-            self.need(isinstance(labels, dict) and labels.get("com.docker.compose.project") == "minicloud",
+            self.need(isinstance(labels, dict) and labels.get("com.docker.compose.project") == "selfrun",
                       "Cannot establish restore container ownership; nothing was stopped.")
             if labels.get("com.docker.compose.service") in ("postgres", "openbao", "openbao-agent", "caddy"):
                 continue
@@ -940,7 +940,7 @@ class Maintenance:
 
     def stop_project(self):
         env = self.i.docker_environment()
-        containers = self.p["run"](["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=minicloud"],
+        containers = self.p["run"](["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=selfrun"],
                                    env=env).decode().split()
         if containers:
             self.p["run"](["docker", "stop", *containers], env=env)

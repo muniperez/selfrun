@@ -1,7 +1,7 @@
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public class ProviderPlanOptions
 {

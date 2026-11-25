@@ -1,19 +1,19 @@
-using Minicloud.Common.Registry;
+using Selfrun.Common.Registry;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Providers;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Providers;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -21,7 +21,7 @@ namespace Minicloud.Api.Controllers;
 public sealed class DeploymentsController : ControllerBase
 {
     [HttpGet]
-    public async Task<IResult> ListDeployments([FromQuery] string organizationId, [FromQuery] string? appId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken, [FromQuery] bool all = false, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
+    public async Task<IResult> ListDeployments([FromQuery] string organizationId, [FromQuery] string? appId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken, [FromQuery] bool all = false, [FromQuery] string? applicationId = null, [FromQuery] string? environmentId = null)
     {
         var principal = RequirePrincipal(HttpContext);
         if (!await authorization.CanAccessOrganizationAsync(principal.ToActorIdentity(), organizationId, OrganizationAction.ReadDeployments, cancellationToken))
@@ -59,7 +59,7 @@ public sealed class DeploymentsController : ControllerBase
     [HttpPost("validate-secrets")]
     public async Task<IResult> ValidateDeploymentSecrets(
         [FromBody] ValidateDeploymentSecretsRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         CancellationToken cancellationToken)
@@ -95,7 +95,7 @@ public sealed class DeploymentsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IResult> CreateDeployment([FromBody] CreateDeploymentRequest request, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] DeploymentLifecycleService deploymentLifecycle, [FromServices] AssetReleaseService assetReleases, [FromServices] DeploymentServiceSetService serviceSets, [FromServices] DomainBindingService domainBindings, [FromServices] DeploymentOrchestrator deploymentOrchestrator, [FromServices] ImagePublicationService imagePublications, [FromServices] AppServiceSecretService secrets, [FromServices] DeploymentPreparationService preparations, [FromServices] ProviderCatalogService catalog, CancellationToken cancellationToken)
+    public async Task<IResult> CreateDeployment([FromBody] CreateDeploymentRequest request, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] DeploymentLifecycleService deploymentLifecycle, [FromServices] AssetReleaseService assetReleases, [FromServices] DeploymentServiceSetService serviceSets, [FromServices] DomainBindingService domainBindings, [FromServices] DeploymentOrchestrator deploymentOrchestrator, [FromServices] ImagePublicationService imagePublications, [FromServices] AppServiceSecretService secrets, [FromServices] DeploymentPreparationService preparations, [FromServices] ProviderCatalogService catalog, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         var ownershipError = await VerifyTargetOwnershipAsync(db, request.AppId, request.ApplicationId, request.EnvironmentId, cancellationToken);
@@ -245,7 +245,7 @@ public sealed class DeploymentsController : ControllerBase
             }
             deployment.Domain = defaultBindings.FirstOrDefault()?.Hostname;
             // T50: API is a fast queue gateway. The deployment stays Queued and
-            // minicloud-worker claims it via PostgreSQL SKIP LOCKED. No GitHub dispatch.
+            // selfrun-worker claims it via PostgreSQL SKIP LOCKED. No GitHub dispatch.
             var enqueue = await deploymentOrchestrator.EnqueueAsync(appRecord.Organization, appRecord, deployment, request.PostgresPassword, desiredServices, defaultBindings, cancellationToken);
             if (preparation is null) { db.Deployments.Add(deployment); }
             return new DeploymentCreated(deployment, enqueue.GeneratedPostgresPassword);
@@ -301,8 +301,8 @@ public sealed class DeploymentsController : ControllerBase
     }
 
     private static async Task<ValidationResult> FinalizeArtifactBackedServicesAsync(
-        MinicloudDbContext db,
-        MinicloudApp app,
+        SelfrunDbContext db,
+        SelfrunApp app,
         Deployment deployment,
         CancellationToken cancellationToken)
     {
@@ -347,11 +347,11 @@ public sealed class DeploymentsController : ControllerBase
         return result;
     }
 
-    private static string ArtifactImage(MinicloudApp app, Deployment deployment, DeploymentService service) =>
-        $"minicloud/{app.Slug}-{service.Name}:{deployment.Id}".ToLowerInvariant();
+    private static string ArtifactImage(SelfrunApp app, Deployment deployment, DeploymentService service) =>
+        $"selfrun/{app.Slug}-{service.Name}:{deployment.Id}".ToLowerInvariant();
 
     [HttpGet("{deploymentNumber}")]
-    public async Task<IResult> GetDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken)
+    public async Task<IResult> GetDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken)
     {
         var lookup = await DeploymentNumberResolver.ResolveAsync(HttpContext, authorization, db.Deployments
             .Include(x => x.App)
@@ -368,7 +368,7 @@ public sealed class DeploymentsController : ControllerBase
     }
 
     [HttpPost("{deploymentNumber}/dispatch")]
-    public async Task<IResult> DispatchDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] DeploymentLifecycleService deploymentLifecycle, [FromServices] DeploymentServiceSetService serviceSets, [FromServices] DomainBindingService domainBindings, [FromServices] DeploymentOrchestrator deploymentOrchestrator, [FromServices] IConsoleUrlProvider consoleUrls, [FromServices] ImagePublicationService imagePublications, [FromServices] ProviderCatalogService catalog, CancellationToken cancellationToken)
+    public async Task<IResult> DispatchDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] DeploymentLifecycleService deploymentLifecycle, [FromServices] DeploymentServiceSetService serviceSets, [FromServices] DomainBindingService domainBindings, [FromServices] DeploymentOrchestrator deploymentOrchestrator, [FromServices] IConsoleUrlProvider consoleUrls, [FromServices] ImagePublicationService imagePublications, [FromServices] ProviderCatalogService catalog, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         var lookup = await DeploymentNumberResolver.ResolveAsync(HttpContext, authorization, db.Deployments
@@ -419,7 +419,7 @@ public sealed class DeploymentsController : ControllerBase
             await catalog.ReserveAsync(deployment.App, deployment, cancellationToken);
             deploymentLifecycle.ResetForManualDispatch(deployment);
             deployment.Domain = defaultBindings.FirstOrDefault()?.Hostname;
-            // T50: manual re-queue for minicloud-worker. No GitHub dispatch.
+            // T50: manual re-queue for selfrun-worker. No GitHub dispatch.
             await deploymentOrchestrator.EnqueueAsync(deployment.App.Organization, deployment.App, deployment, requestedPostgresPassword: null, desiredServices, defaultBindings, cancellationToken);
             try
             {
@@ -439,7 +439,7 @@ public sealed class DeploymentsController : ControllerBase
 
     [HttpPost("{deploymentNumber}/cancel")]
     public async Task<IResult> CancelDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId,
-        [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization,
+        [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentCancellationService cancellations, CancellationToken cancellationToken)
     {
         // Cancellation keeps its resource-hiding 404 for inaccessible organizations.
@@ -458,7 +458,7 @@ public sealed class DeploymentsController : ControllerBase
     }
 
     [HttpPost("{deploymentNumber}/refresh")]
-    public async Task<IResult> RefreshDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken)
+    public async Task<IResult> RefreshDeployment([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, [FromServices] IConsoleUrlProvider consoleUrls, CancellationToken cancellationToken)
     {
         var lookup = await DeploymentNumberResolver.ResolveAsync(HttpContext, authorization, db.Deployments
             .Include(x => x.App)
@@ -473,7 +473,7 @@ public sealed class DeploymentsController : ControllerBase
             return lookup.Error;
         }
 
-        // T50: minicloud-worker owns lifecycle transitions; refresh reads current state.
+        // T50: selfrun-worker owns lifecycle transitions; refresh reads current state.
         return Results.Ok(lookup.Deployment!.ToResponse(consoleUrls.GetConsoleBaseUrl()));
     }
 
@@ -481,7 +481,7 @@ public sealed class DeploymentsController : ControllerBase
     public async Task<IResult> ResolveDeploymentSecrets(
         [FromRoute] string deploymentId,
         [FromBody] ResolveDeploymentSecretsRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppServiceSecretService secrets,
         [FromServices] ILogger<DeploymentsController> logger,
@@ -510,12 +510,12 @@ public sealed class DeploymentsController : ControllerBase
         catch (SecretStoreUnavailableException ex)
         {
             logger.LogWarning(ex, "Secret store unavailable while resolving deployment secrets for deployment {DeploymentId}.", deploymentId);
-            return EndpointResults.Problem("secret_store_unavailable", $"Minicloud could not resolve deployment secrets right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
+            return EndpointResults.Problem("secret_store_unavailable", $"Selfrun could not resolve deployment secrets right now: {ex.Message}", StatusCodes.Status503ServiceUnavailable);
         }
     }
 
     [HttpGet("{deploymentNumber}/events")]
-    public async Task<IResult> GetDeploymentEvents([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
+    public async Task<IResult> GetDeploymentEvents([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
     {
         var lookup = await DeploymentNumberResolver.ResolveAsync(HttpContext, authorization, db.Deployments.AsNoTracking().Include(x => x.App),
             organizationId, deploymentNumber, OrganizationAction.ReadDeployments, cancellationToken);
@@ -536,7 +536,7 @@ public sealed class DeploymentsController : ControllerBase
     }
 
     [HttpGet("{deploymentNumber}/activities")]
-    public async Task<IResult> GetDeploymentActivities([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
+    public async Task<IResult> GetDeploymentActivities([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
     {
         var lookup = await DeploymentNumberResolver.ResolveAsync(HttpContext, authorization, db.Deployments.AsNoTracking(),
             organizationId, deploymentNumber, OrganizationAction.ReadDeployments, cancellationToken);
@@ -545,14 +545,14 @@ public sealed class DeploymentsController : ControllerBase
             return lookup.Error;
         }
 
-        // T90: GitHub workflow polling was decommissioned. minicloud-worker owns
+        // T90: GitHub workflow polling was decommissioned. selfrun-worker owns
         // lifecycle transitions and surfaces progress via deployment events/logs.
         // Historical rows may still carry a GithubRunId; no GitHub lookup occurs.
         return Results.Ok(Array.Empty<DeploymentActivityResponse>());
     }
 
     [HttpGet("{deploymentNumber}/logs")]
-    public async Task<IResult> GetDeploymentLogs([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
+    public async Task<IResult> GetDeploymentLogs([FromRoute] string deploymentNumber, [FromQuery] string? organizationId, [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
     {
         var lookup = await DeploymentNumberResolver.ResolveAsync(HttpContext, authorization, db.Deployments.AsNoTracking(),
             organizationId, deploymentNumber, OrganizationAction.ReadDeployments, cancellationToken);

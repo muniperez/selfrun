@@ -1,17 +1,17 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class DeploymentServiceSetService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<IReadOnlyList<DeploymentServiceRequest>> BuildMergedServicesAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string appId,
         IReadOnlyList<DeploymentServiceRequest> requestedServices,
         CancellationToken cancellationToken)
@@ -30,14 +30,14 @@ public sealed class DeploymentServiceSetService
     }
 
     public Task<IReadOnlyList<DeploymentServiceRequest>> BuildMergedServicesAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string appId,
         IReadOnlyList<DeploymentService> requestedServices,
         CancellationToken cancellationToken) =>
         BuildMergedServicesAsync(db, appId, requestedServices.Select(ToRequest).ToArray(), cancellationToken);
 
     public async Task<IReadOnlyList<DeploymentServiceRequest>> BuildActiveServicesAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string appId,
         CancellationToken cancellationToken)
     {
@@ -50,7 +50,7 @@ public sealed class DeploymentServiceSetService
     }
 
     private static async Task<Dictionary<string, DeploymentServiceRequest>> BuildActiveServicesByNameAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string appId,
         CancellationToken cancellationToken)
     {
@@ -87,8 +87,8 @@ public sealed class DeploymentServiceSetService
             ? request
             : request with
             {
-                Image = service.Image?.StartsWith($"minicloud/{appSlug}-{service.Name}:", StringComparison.Ordinal) == true
-                    ? service.Image : $"minicloud/{appSlug}-{service.Name}:{deploymentId}".ToLowerInvariant()
+                Image = service.Image?.StartsWith($"selfrun/{appSlug}-{service.Name}:", StringComparison.Ordinal) == true
+                    ? service.Image : $"selfrun/{appSlug}-{service.Name}:{deploymentId}".ToLowerInvariant()
             };
     }
 

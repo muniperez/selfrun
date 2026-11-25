@@ -1,8 +1,8 @@
 using System.Net;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Services;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Common.Providers.Extensibility;
+namespace Selfrun.Common.Providers.Extensibility;
 
 public enum ProviderErrorCategory
 {
@@ -58,8 +58,8 @@ public sealed record ProviderRetryPolicy(
 /// </summary>
 public static class ProviderHttpOptions
 {
-    public static readonly HttpRequestOptionsKey<bool> NoRetry = new("minicloud.no-retry");
-    public static readonly HttpRequestOptionsKey<ProviderOperationSafety> OperationSafety = new("minicloud.operation-safety");
+    public static readonly HttpRequestOptionsKey<bool> NoRetry = new("selfrun.no-retry");
+    public static readonly HttpRequestOptionsKey<ProviderOperationSafety> OperationSafety = new("selfrun.operation-safety");
 }
 
 public sealed record ProviderErrorClassification(

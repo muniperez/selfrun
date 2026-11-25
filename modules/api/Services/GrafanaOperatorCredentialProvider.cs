@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 /// <summary>
 /// Resolves the Grafana server-admin credential used ONLY by the private

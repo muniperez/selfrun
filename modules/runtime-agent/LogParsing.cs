@@ -1,4 +1,4 @@
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public sealed record AgentLogRecord(
     string Source,

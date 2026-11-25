@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record InstanceInfoResponse(
     string Product,

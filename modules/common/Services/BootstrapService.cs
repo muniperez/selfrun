@@ -3,14 +3,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class BootstrapService(
-    MinicloudDbContext db, IBootstrapIdentityStore identities, IIdGenerator ids, TimeProvider clock)
+    SelfrunDbContext db, IBootstrapIdentityStore identities, IIdGenerator ids, TimeProvider clock)
 {
     public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(30);
 
@@ -253,9 +253,9 @@ public sealed class BootstrapService(
         var now = clock.GetUtcNow();
         await db.BrowserSessions.Where(x => x.UserId == userId && x.RevokedAt == null)
             .ExecuteUpdateAsync(x => x.SetProperty(s => s.RevokedAt, now), ct);
-        await db.GrafanaProxySessions.Where(x => x.MinicloudUserId == userId && x.RevokedAt == null)
+        await db.GrafanaProxySessions.Where(x => x.SelfrunUserId == userId && x.RevokedAt == null)
             .ExecuteUpdateAsync(x => x.SetProperty(s => s.RevokedAt, now), ct);
-        await db.GrafanaLaunchCodes.Where(x => x.MinicloudUserId == userId && x.ConsumedAt == null)
+        await db.GrafanaLaunchCodes.Where(x => x.SelfrunUserId == userId && x.ConsumedAt == null)
             .ExecuteUpdateAsync(x => x.SetProperty(s => s.ConsumedAt, now), ct);
         await transaction.CommitAsync(ct);
     }

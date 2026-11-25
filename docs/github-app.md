@@ -53,7 +53,7 @@ cached access immediately; **Reconcile with GitHub** refreshes authoritative
 state after suspension, permission changes or missed webhooks.
 
 Setup and installation callbacks expire after 30 minutes and belong to the
-initiating Minicloud browser identity. Expired, mismatched and substituted
+initiating Selfrun browser identity. Expired, mismatched and substituted
 callbacks are rejected. Repeating the identical completed callback does not
 repeat conversion or replace an installation.
 

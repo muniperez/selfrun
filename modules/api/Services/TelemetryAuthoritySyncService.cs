@@ -2,12 +2,12 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class TelemetryAuthoritySyncService(
     IServiceScopeFactory scopes,
@@ -69,7 +69,7 @@ public sealed class TelemetryAuthoritySyncService(
     private async Task ExecuteSyncCycleAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var now = timeProvider.GetUtcNow();
 
         // 1. Gather outbox items and build batch

@@ -1,17 +1,17 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY modules/contracts/Minicloud.Contracts.csproj modules/contracts/
-COPY modules/redaction/Minicloud.Redaction.csproj modules/redaction/
-COPY modules/common/Minicloud.Common.csproj modules/common/
-COPY modules/telemetry/Minicloud.Telemetry.csproj modules/telemetry/
-RUN dotnet restore modules/telemetry/Minicloud.Telemetry.csproj
+COPY modules/contracts/Selfrun.Contracts.csproj modules/contracts/
+COPY modules/redaction/Selfrun.Redaction.csproj modules/redaction/
+COPY modules/common/Selfrun.Common.csproj modules/common/
+COPY modules/telemetry/Selfrun.Telemetry.csproj modules/telemetry/
+RUN dotnet restore modules/telemetry/Selfrun.Telemetry.csproj
 
 COPY modules/contracts modules/contracts
 COPY modules/redaction modules/redaction
 COPY modules/common modules/common
 COPY modules/telemetry modules/telemetry
-RUN dotnet publish modules/telemetry/Minicloud.Telemetry.csproj \
+RUN dotnet publish modules/telemetry/Selfrun.Telemetry.csproj \
     --configuration Release \
     --no-restore \
     --output /app/publish
@@ -27,6 +27,6 @@ ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
 COPY --from=build /app/publish .
-COPY LICENSE /usr/share/minicloud/LICENSE
-COPY LICENSES /usr/share/minicloud/LICENSES
-ENTRYPOINT ["dotnet", "Minicloud.Telemetry.dll"]
+COPY LICENSE /usr/share/selfrun/LICENSE
+COPY LICENSES /usr/share/selfrun/LICENSES
+ENTRYPOINT ["dotnet", "Selfrun.Telemetry.dll"]

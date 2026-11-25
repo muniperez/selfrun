@@ -48,7 +48,7 @@ it("returns to TXT verification when a previously verified domain loses ownershi
   fireEvent.change(screen.getByLabelText("Subdomain (optional)"), { target: { value: "api" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect to api" }));
   await screen.findByText("Verify you own app1.example.com");
-  expect(screen.getByText("_minicloud-verification.app1.example.com")).toBeInTheDocument();
+  expect(screen.getByText("_selfrun-verification.app1.example.com")).toBeInTheDocument();
   expect(screen.queryByText("Domain verified")).not.toBeInTheDocument();
   expect(createAppCustomDomain).not.toHaveBeenCalled();
   vi.mocked(verifyCustomDomainOwnership).mockResolvedValue({ ...registration, status: "verified" });

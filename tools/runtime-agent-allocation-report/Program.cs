@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Diagnostics.Tracing.Etlx;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
-using Minicloud.Profiling.EventPipe;
+using Selfrun.Profiling.EventPipe;
 
 if (args.Length >= 2 && args[0] == "--capture-benchmark")
 {
@@ -70,7 +70,7 @@ if (args.Length >= 2 && args[0] == "--capture-benchmark")
             startInfo.ArgumentList.Add(stopFile);
 
             var providers = EventPipeSessionCoordinator.CreateRuntimeAgentProviders(
-                "Minicloud.RuntimeAgent",
+                "Selfrun.RuntimeAgent",
                 includeActivities: true,
                 includeGcAllocations: false,
                 includeMeters: false);
@@ -102,7 +102,7 @@ if (args.Length >= 2 && args[0] == "--capture-benchmark")
                 circularBufferMb: 16,
                 repositoryRoot: repoRoot);
 
-            var report = EventPipeTraceInspector.InspectAggregateOnly(fullTrace, "Minicloud.RuntimeAgent", repoRoot);
+            var report = EventPipeTraceInspector.InspectAggregateOnly(fullTrace, "Selfrun.RuntimeAgent", repoRoot);
             var reportJson = JsonSerializer.Serialize(report, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             EventPipeActivityClosureReport.ValidateAggregateOnlyJson(reportJson);
             Console.WriteLine(JsonSerializer.Serialize(new
@@ -135,7 +135,7 @@ if (args.Length >= 2 && args[0] == "--capture-benchmark")
 if (args.Length is 2 or 3 && args[0] == "--verify-activity")
 {
     var path = args[1];
-    var sourceFilter = args.Length == 3 ? args[2] : "Minicloud.RuntimeAgent";
+    var sourceFilter = args.Length == 3 ? args[2] : "Selfrun.RuntimeAgent";
     try
     {
         var report = EventPipeTraceInspector.InspectAggregateOnly(path, sourceFilter);

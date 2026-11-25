@@ -263,7 +263,7 @@ class MaintenanceTests(Fixture):
         self.args.at = "03:15"
         result = self.subject.execute()
         self.assertEqual("schedule_authored_not_installed", result["state"])
-        service = (self.output / "minicloud-recovery.service").read_text()
+        service = (self.output / "selfrun-recovery.service").read_text()
         self.assertIn('"maintenance" "backup-recovery"', service)
         self.assertIn('"--tag" "server-v0.1.0"', service)
         self.assertIn("UMask=0077", service)
@@ -318,7 +318,7 @@ elif args[:2] == ["ps", "-q"] or args[:3] == ["ps", "--all", "-q"]:
     out = b"c1\\nc2\\n"
 elif args[0] == "inspect":
     out = json.dumps([{{"Config": {{"Labels": {{
-        "com.docker.compose.project": "minicloud", "com.docker.compose.service": service}}}},
+        "com.docker.compose.project": "selfrun", "com.docker.compose.service": service}}}},
         "State": {{"Status": "running", "Running": True, "Restarting": False, "Paused": False}}}}
         for service in ("api", "worker")]).encode()
 with open(LOG, "a") as log:
@@ -331,7 +331,7 @@ sys.stdout.buffer.write(out)
 
 
 class Authority:
-    """Synthetic model of `dotnet Minicloud.Api.dll maintenance` (fence/release/transfer semantics of #56)."""
+    """Synthetic model of `dotnet Selfrun.Api.dll maintenance` (fence/release/transfer semantics of #56)."""
 
     def __init__(self):
         self.state, self.epoch, self.holder, self.host = "open", 1, None, None
@@ -392,7 +392,7 @@ class FakeInstaller:
         self.unseal_failures = 0
 
     def compose_invocation(self, *args):
-        return ["docker", "compose", "--project-name", "minicloud", *args], dict(os.environ)
+        return ["docker", "compose", "--project-name", "selfrun", *args], dict(os.environ)
 
     def compose(self, *args, input=None, allowed=(0,)):
         line = " ".join(args)
@@ -468,12 +468,12 @@ class CoordinatedMaintenanceTests(Fixture):
             item = tarfile.TarInfo("server-release.json")
             item.size = len(data)
             archive.addfile(item, io.BytesIO(data))
-        tarball = self.previous_assets / "minicloud-server-0.1.0.tar.gz"
+        tarball = self.previous_assets / "selfrun-server-0.1.0.tar.gz"
         self.write(tarball, bundle.getvalue())
         old_sha = installer.hashlib.sha256(bundle.getvalue()).hexdigest()
         self.state.clear()
         self.state.update({
-            "schemaVersion": 1, "product": "minicloud", "root": str(self.root),
+            "schemaVersion": 1, "product": "selfrun", "root": str(self.root),
             "installationId": str(uuid.uuid4()), "operationId": str(uuid.uuid4()),
             "credentialsComplete": True, "configuration": {"domain": "example.test"},
             **{key: old[key] for key in maintenance.RELEASE_FIELDS if key != "bundleSha256"},
@@ -568,7 +568,7 @@ class CoordinatedMaintenanceTests(Fixture):
         self.assertEqual([], list(self.backups.iterdir()))
 
     def test_failed_capture_removes_partial_output_and_releases(self):
-        self.docker_fail.write_text("volume minicloud_artifacts")
+        self.docker_fail.write_text("volume selfrun_artifacts")
         with self.assertRaisesRegex(installer.InstallError, "volume-artifacts.tar.age failed"):
             self.run_operation("backup")
         self.assertEqual("open", self.authority.state)
@@ -634,7 +634,7 @@ class CoordinatedMaintenanceTests(Fixture):
 
     def upgrade_target(self, version="0.2.0"):
         target = self.release(version, "20261201000000_Next")
-        self.runtime.manifest = target | {"bundle": {"name": f"minicloud-server-{version}.tar.gz", "sha256": "d" * 64}}
+        self.runtime.manifest = target | {"bundle": {"name": f"selfrun-server-{version}.tar.gz", "sha256": "d" * 64}}
         self.runtime.installed = self.runtime.manifest
         return {"previous_assets_dir": self.previous_assets}
 
@@ -827,7 +827,7 @@ class CoordinatedMaintenanceTests(Fixture):
                 def inspect(command, **kwargs):
                     if command[:2] == ["docker", "inspect"]:
                         return json.dumps([{
-                            "Config": {"Labels": {"com.docker.compose.project": "minicloud",
+                            "Config": {"Labels": {"com.docker.compose.project": "selfrun",
                                                    "com.docker.compose.service": service}},
                             "State": {"Status": status, "Running": status == "running",
                                       "Restarting": status == "restarting", "Paused": status == "paused"},
@@ -850,7 +850,7 @@ class CoordinatedMaintenanceTests(Fixture):
         def inspect(command, **kwargs):
             if command[:2] == ["docker", "inspect"]:
                 return json.dumps([{
-                    "Config": {"Labels": {"com.docker.compose.project": "minicloud",
+                    "Config": {"Labels": {"com.docker.compose.project": "selfrun",
                                            "com.docker.compose.service": service}},
                     "State": {"Status": "exited", "Running": False, "Restarting": False, "Paused": False},
                 } for service in ("api", "worker")]).encode()
@@ -938,8 +938,8 @@ class CoordinatedMaintenanceTests(Fixture):
     def test_schedule_backup_authors_coordinated_units_only(self):
         self.write(self.assets / "install-server.sh", b"#!/bin/sh\n")
         result = self.run_operation("schedule-backup", output_dir=self.output, at="02:30", drain_timeout=900)
-        self.assertEqual(["minicloud-backup.service", "minicloud-backup.timer"], result["units"])
-        service = (self.output / "minicloud-backup.service").read_text()
+        self.assertEqual(["selfrun-backup.service", "selfrun-backup.timer"], result["units"])
+        service = (self.output / "selfrun-backup.service").read_text()
         self.assertIn('"maintenance" "backup"', service)
         self.assertIn('"--drain-timeout" "900"', service)
         self.assertEqual([], self.authority.calls)
@@ -969,7 +969,7 @@ class StockMaintenanceInstaller(installer_tests.FixtureInstaller):
         return super().compose(*args, **kwargs)
 
     def compose_invocation(self, *args):
-        return ["docker", "compose", "--project-name", "minicloud", *args], dict(os.environ)
+        return ["docker", "compose", "--project-name", "selfrun", *args], dict(os.environ)
 
     def docker_environment(self):
         return dict(os.environ)

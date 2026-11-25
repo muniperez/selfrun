@@ -1,11 +1,11 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Telemetry.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed class TelemetryAuthUnavailableException(string message) : Exception(message);
 

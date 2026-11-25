@@ -1,17 +1,17 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Registry;
+namespace Selfrun.Common.Registry;
 
-public sealed class ImageBuildTargetService(MinicloudDbContext db, IOptions<RegistryOptions> registry, IOptions<ProviderPlanOptions> plans)
+public sealed class ImageBuildTargetService(SelfrunDbContext db, IOptions<RegistryOptions> registry, IOptions<ProviderPlanOptions> plans)
 {
-    public async Task<ImageBuildTarget> ResolveAsync(MinicloudApp app, CancellationToken ct)
+    public async Task<ImageBuildTarget> ResolveAsync(SelfrunApp app, CancellationToken ct)
     {
         var servers = await db.ServerInstances.AsNoTracking().Where(x => x.AppId == app.Id).ToListAsync(ct);
         var runtimes = await db.RuntimeServers.AsNoTracking().Where(x => x.AppId == app.Id).ToListAsync(ct);

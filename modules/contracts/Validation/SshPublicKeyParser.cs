@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Security.Cryptography;
 
-namespace Minicloud.Common.Validation;
+namespace Selfrun.Common.Validation;
 
 public sealed record ValidatedSshPublicKey(string PublicKey, string Fingerprint, string KeyType);
 

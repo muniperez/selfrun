@@ -90,7 +90,7 @@ export function TelemetryCredentialsCard({ appId, services, refreshToken, onChan
         {!loading && !hasActive ? (
           <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
             No active ingestion credential. Exporters using an old, expired, or revoked token are rejected;
-            issue a credential and store it as MINICLOUD_OTLP_LOGS_HEADERS to resume export.
+            issue a credential and store it as SELFRUN_OTLP_LOGS_HEADERS to resume export.
           </p>
         ) : null}
 

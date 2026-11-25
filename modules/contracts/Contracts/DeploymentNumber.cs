@@ -2,7 +2,7 @@
 
 using System.Globalization;
 
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 /// <summary>
 /// Customer-facing deployment identity <c>yyyyMMdd.N</c>: the UTC creation date and an unpadded

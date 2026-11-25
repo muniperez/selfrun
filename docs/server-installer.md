@@ -80,7 +80,7 @@ The optional `portalSessions` object sets dashboard sign-in timeouts and the
 Choose three distinct canonical absolute paths:
 
 - `$assets`: verified download directory (`0700`).
-- `$root`: installation directory, normally `/opt/minicloud`. Its parent
+- `$root`: installation directory, normally `/opt/selfrun`. Its parent
   must already exist and be root-owned, without group/world write access.
   The target must be absent for a fresh install; even an unknown empty
   directory is not silently adopted.
@@ -110,7 +110,7 @@ A host with unsupported IPv6, or a kernel-confirmed global IPv6 disablement,
 may pass using IPv4 alone. IPv6 TCP/UDP listener conflicts, permission errors
 and unconfirmed address errors still fail; the installer never enables IPv6.
 A fresh dedicated host must have no containers (including stopped ones) or
-Minicloud-prefixed volumes/networks. Recognized resumes may reuse only their
+Selfrun-prefixed volumes/networks. Recognized resumes may reuse only their
 installation-labeled persistent resources and original Compose working path.
 Never rename/delete existing populated volumes or edit metadata to bypass
 these checks.
@@ -177,7 +177,7 @@ Each step retains the same config, tag, paths, public addresses and operation
 identities and acquires the same persistent lock. The bundle under
 `$root/bundle/` is the release's digest-rendered Compose, not source Compose.
 The shared helper supplies only validated public values, image references,
-`MINICLOUD_INSTALLATION_ID` and protected secret **paths**. Direct Compose
+`SELFRUN_INSTALLATION_ID` and protected secret **paths**. Direct Compose
 host maintenance must preserve that exact environment and the same lock;
 do not bypass it with ad-hoc `docker compose up`, copied templates or parallel
 host commands. Existing migration/bootstrap/database locks remain separate.
@@ -244,7 +244,7 @@ For an opted-in **new** installation, add this non-secret object to `$config`:
 ```json
 "emailRecovery": {
   "enabled": true,
-  "smtpFile": "/root/minicloud-inputs/email-recovery.smtp.json"
+  "smtpFile": "/root/selfrun-inputs/email-recovery.smtp.json"
 }
 ```
 
@@ -255,7 +255,7 @@ protected SMTP input. All three fields are required:
 {
   "connectionUri": "smtps://synthetic-user:percent-encoded-password@smtp.example.invalid:465/",
   "fromAddress": "recovery@example.invalid",
-  "fromName": "MiniCloud"
+  "fromName": "Selfrun"
 }
 ```
 
@@ -308,7 +308,7 @@ protected recovery procedures and exact-configuration checks.
 This is a **future signed-candidate QA recipe**, not a command to run against a
 customer instance. Use two explicitly authorized disposable fixtures: a fresh
 dedicated signed-install host and a separate private capture-sink host. Do not
-run foreign sink containers on the dedicated MiniCloud host: the installer
+run foreign sink containers on the dedicated Selfrun host: the installer
 deliberately rejects them. Preserve its ordinary DNS/TLS/provisioning checks.
 Use only `recovery-synthetic@example.invalid`, generated fixture passwords and
 synthetic provider/key/membership data; never copy real identities, credentials
@@ -337,7 +337,7 @@ For this fixture only, use the private sink address in protected SMTP JSON:
 {
   "connectionUri": "smtp://192.0.2.10:1025/?disable_starttls=true",
   "fromAddress": "recovery@example.invalid",
-  "fromName": "MiniCloud fixture"
+  "fromName": "Selfrun fixture"
 }
 ```
 

@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed class DatabaseOperationWorker(IServiceScopeFactory scopes, ILogger<DatabaseOperationWorker> logger) : BackgroundService
 {

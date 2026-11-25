@@ -1,0 +1,32 @@
+<Solution>
+  <Folder Name="/modules/" />
+  <Folder Name="/modules/contracts/">
+    <Project Path="modules/contracts/Selfrun.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/modules/common/">
+    <Project Path="modules/common/Selfrun.Common.csproj" />
+  </Folder>
+  <Folder Name="/modules/redaction/">
+    <Project Path="modules/redaction/Selfrun.Redaction.csproj" />
+  </Folder>
+  <Folder Name="/modules/telemetry/">
+    <Project Path="modules/telemetry/Selfrun.Telemetry.csproj" />
+  </Folder>
+  <Folder Name="/modules/api/">
+    <Project Path="modules/api/Selfrun.Api.csproj" />
+  </Folder>
+  <Folder Name="/modules/cli/">
+    <Project Path="modules/cli/Selfrun.Cli.csproj" />
+  </Folder>
+  <Folder Name="/modules/runtime-agent/">
+    <Project Path="modules/runtime-agent/Selfrun.RuntimeAgent.csproj" />
+  </Folder>
+  <Folder Name="/modules/worker/">
+    <Project Path="modules/worker/Selfrun.Worker.csproj" />
+  </Folder>
+  <Folder Name="/modules/tests/">
+    <Project Path="modules/tests/Selfrun.Cli.Tests/Selfrun.Cli.Tests.csproj" />
+    <Project Path="modules/tests/Selfrun.Tests/Selfrun.Tests.csproj" />
+    <Project Path="modules/tests/Selfrun.Worker.Tests/Selfrun.Worker.Tests.csproj" />
+  </Folder>
+</Solution>

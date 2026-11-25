@@ -30,7 +30,7 @@ for provider-catalog errors, but that does not prove the observed request failed
 | [RuntimeAgentDeployment.cs:173](../../../modules/worker/Pipeline/Steps/RuntimeAgentDeployment.cs#L173) | Wait for current credential contact before revoking older credentials. |
 | [SshDeployStep.cs:112](../../../modules/worker/Pipeline/Steps/SshDeployStep.cs#L112) | Prepare agent as part of deployment; completion at line 204. |
 | [RuntimeApiClient.cs:8](../../../modules/runtime-agent/RuntimeApiClient.cs#L8) | Canonical log, heartbeat, status and routing requests. |
-| [RuntimeAgentDeploymentTests.cs:15](../../../modules/tests/Minicloud.Worker.Tests/Pipeline/RuntimeAgentDeploymentTests.cs#L15) | Credential rotation, observed host actions and ownership protections. |
+| [RuntimeAgentDeploymentTests.cs:15](../../../modules/tests/Selfrun.Worker.Tests/Pipeline/RuntimeAgentDeploymentTests.cs#L15) | Credential rotation, observed host actions and ownership protections. |
 
 ## Minimal implementation
 

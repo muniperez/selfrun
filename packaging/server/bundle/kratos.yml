@@ -35,7 +35,7 @@ selfservice:
       enabled: true
       config:
         rp:
-          display_name: Minicloud
+          display_name: Selfrun
           id: localhost
           origins:
             - https://localhost

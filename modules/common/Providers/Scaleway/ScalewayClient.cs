@@ -5,11 +5,11 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers.Scaleway;
+namespace Selfrun.Common.Providers.Scaleway;
 
 /// <summary>
 /// SDK-independent Scaleway Instance, IAM SSH Key, and Block Storage adapter with strict
@@ -191,7 +191,7 @@ public sealed class ScalewayClient :
         EnsureProjectConfigured();
 
         var zone = ResolveZone(request.Region);
-        var tags = new List<string> { "minicloud" };
+        var tags = new List<string> { "selfrun" };
         if (request.Tags is not null) tags.AddRange(request.Tags);
         if (request.Labels is not null)
         {
@@ -347,7 +347,7 @@ public sealed class ScalewayClient :
     {
         EnsureProjectConfigured();
         var zone = ResolveZone(region);
-        var tags = labels.Select(pair => $"{pair.Key}={pair.Value}").Prepend("minicloud").Distinct(StringComparer.Ordinal).ToArray();
+        var tags = labels.Select(pair => $"{pair.Key}={pair.Value}").Prepend("selfrun").Distinct(StringComparer.Ordinal).ToArray();
         using var request = CreateRequest(HttpMethod.Post, $"block/v1alpha1/zones/{Uri.EscapeDataString(zone)}/volumes");
         request.Content = JsonContent.Create(new
         {

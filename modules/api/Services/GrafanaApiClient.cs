@@ -3,9 +3,9 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 /// <summary>
 /// HTTP implementation of <see cref="IGrafanaApiClient"/> against the private

@@ -11,7 +11,7 @@ import tarfile
 import zipfile
 
 RIDS = ("linux-x64", "linux-arm64", "osx-arm64", "win-x64")
-WORKFLOW = "https://github.com/muniventures/minicloud/.github/workflows/cli-release.yml"
+WORKFLOW = "https://github.com/muniperez/selfrun/.github/workflows/cli-release.yml"
 
 
 def digest(data):
@@ -36,7 +36,7 @@ def package(root, output, tag, source):
     checksums = {}
     for rid in RIDS:
         directory = root / rid
-        executable = "minicloud.exe" if rid == "win-x64" else "minicloud"
+        executable = "selfrun.exe" if rid == "win-x64" else "selfrun"
         files = {}
         for path in directory.rglob("*"):
             if path.is_symlink() or not (path.is_dir() or path.is_file()):
@@ -52,7 +52,7 @@ def package(root, output, tag, source):
             raise ValueError("Missing license/single-file handoff; do not package a partial runtime.")
         files["cli-release.json"] = json.dumps({key: value for key, value in provenance.items() if key != "artifacts"}
                                               | {"rid": rid}, sort_keys=True).encode() + b"\n"
-        name = f"minicloud-{tag[1:]}-{rid}." + ("zip" if rid == "win-x64" else "tar.gz")
+        name = f"selfrun-{tag[1:]}-{rid}." + ("zip" if rid == "win-x64" else "tar.gz")
         archive = output / name
         if rid == "win-x64":
             with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as target:

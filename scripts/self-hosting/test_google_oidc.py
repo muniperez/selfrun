@@ -38,7 +38,7 @@ class GoogleOidcTests(unittest.TestCase):
                 subject = self.subject()
                 self.assertIsNone(subject.google_provider)
                 subject.state = {"installationId": "synthetic"}
-                self.assertEqual("false", subject.environment()["MINICLOUD_GOOGLE_OIDC_ENABLED"])
+                self.assertEqual("false", subject.environment()["SELFRUN_GOOGLE_OIDC_ENABLED"])
         subject.initialize_state()
         directory = subject.root / "secrets"
         directory.mkdir(mode=0o700)
@@ -69,7 +69,7 @@ class GoogleOidcTests(unittest.TestCase):
         }, provider)
         self.assertEqual(0o600, secret.stat().st_mode & 0o777)
         command, env = subject.compose_invocation("up", "-d", "api", "kratos")
-        self.assertEqual("true", env["MINICLOUD_GOOGLE_OIDC_ENABLED"])
+        self.assertEqual("true", env["SELFRUN_GOOGLE_OIDC_ENABLED"])
         self.assertNotIn(credentials["clientSecret"], json.dumps([command, env, subject.state]))
         self.assertEqual(str(path), subject.state["configuration"]["googleOidc"]["credentialsFile"])
         resumed = self.subject()

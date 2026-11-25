@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal sealed partial class SeedHost : ISeedInspector
 {
@@ -11,7 +11,7 @@ internal sealed partial class SeedHost : ISeedInspector
     {
         get
         {
-            using var stream = typeof(SeedHost).Assembly.GetManifestResourceStream("Minicloud.Cli.Seed.inspect-host.py")!;
+            using var stream = typeof(SeedHost).Assembly.GetManifestResourceStream("Selfrun.Cli.Seed.inspect-host.py")!;
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd().Replace("# __SEED_PROVIDER_LAYOUT__", ProviderLayoutScript);
         }
@@ -63,7 +63,7 @@ internal sealed partial class SeedHost : ISeedInspector
             if (response.StatusCode != HttpStatusCode.OK) return observation with { Health = "unavailable" };
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             var value = json.RootElement;
-            if (value.GetProperty("product").GetString() is not ("minicloud" or "selfrun") || value.GetProperty("protocolVersion").GetInt32() != 1
+            if (value.GetProperty("product").GetString() != "selfrun" || value.GetProperty("protocolVersion").GetInt32() != 1
                 || "server-v" + value.GetProperty("serverVersion").GetString() != observation.Release
                 || value.GetProperty("sourceRevision").GetString() != observation.Source
                 || value.GetProperty("appDomain").GetString() != state.Plan.Selection.AppDomain)

@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 internal static class BootstrapProtectedInput
 {

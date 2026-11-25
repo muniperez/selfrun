@@ -9,11 +9,11 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Worker;
-using Minicloud.Worker.Pipeline;
-using Minicloud.Worker.Queue;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Worker;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Worker.Queue;
 using Npgsql;
 
 // Local worker claim-polling benchmark (issue #125). Runs the real PostgresDeploymentQueueConsumer
@@ -47,7 +47,7 @@ static async Task<Dictionary<string, object>> RunAsync(string scenario, string a
     var connection = new NpgsqlConnectionStringBuilder(adminConnection) { Database = database }.ConnectionString;
     try
     {
-        var plain = new DbContextOptionsBuilder<MinicloudDbContext>().UseNpgsql(connection).Options;
+        var plain = new DbContextOptionsBuilder<SelfrunDbContext>().UseNpgsql(connection).Options;
         await SeedAsync(plain, s);
 
         var counter = new CommandCounter();
@@ -63,9 +63,9 @@ static async Task<Dictionary<string, object>> RunAsync(string scenario, string a
                 builder.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", efLevel);
         });
         services.AddSingleton(TimeProvider.System);
-        services.AddDbContext<MinicloudDbContext>(options =>
+        services.AddDbContext<SelfrunDbContext>(options =>
         {
-            MinicloudDatabase.ConfigureDbContext(options, "Postgres", connection);
+            SelfrunDatabase.ConfigureDbContext(options, "Postgres", connection);
             options.AddInterceptors(counter, counter.Transactions);
         });
         services.AddScoped<IDeploymentPipelineExecutor>(sp => new FakeExecutor(plain, s.StepMs));
@@ -150,7 +150,7 @@ static async Task<Dictionary<string, object>> RunAsync(string scenario, string a
         }
         else
         {
-            await using var db = new MinicloudDbContext(plain);
+            await using var db = new SelfrunDbContext(plain);
             var rows = await db.Deployments.AsNoTracking().Where(d => enqueued.Contains(d.Id))
                 .Select(d => new { d.Id, d.CreatedAt, d.StartedAt, d.CompletedAt, d.Status }).ToListAsync();
             var events = await db.DeploymentEvents.AsNoTracking()
@@ -189,16 +189,16 @@ static Dictionary<string, double> Percentiles(double[] sorted) => sorted.Length 
         ["max"] = Math.Round(sorted[^1], 1),
     };
 
-static async Task SeedAsync(DbContextOptions<MinicloudDbContext> options, Settings s)
+static async Task SeedAsync(DbContextOptions<SelfrunDbContext> options, Settings s)
 {
-    await using var db = new MinicloudDbContext(options);
+    await using var db = new SelfrunDbContext(options);
     await db.Database.MigrateAsync();
     var now = DateTimeOffset.UtcNow;
     db.BootstrapRecords.Add(new BootstrapRecord { InstallationId = "bench", OperationId = "bench", State = "ready", CreatedAt = now, UpdatedAt = now });
     db.Organizations.Add(new Organization { Id = "org_bench", Name = "Bench", Slug = "bench", CreatedAt = now, UpdatedAt = now });
     for (var a = 0; a < Math.Max(s.Apps, s.HistoryApps); a++)
     {
-        db.Apps.Add(new MinicloudApp { Id = $"app_{a}", OrganizationId = "org_bench", Name = $"App {a}", Slug = $"app-{a}",
+        db.Apps.Add(new SelfrunApp { Id = $"app_{a}", OrganizationId = "org_bench", Name = $"App {a}", Slug = $"app-{a}",
             Plan = AppPlan.P0V0, Database = DatabaseMode.None, CreatedAt = now, UpdatedAt = now });
     }
     for (var d = 0; d < s.HistoryDeployments; d++)
@@ -212,9 +212,9 @@ static async Task SeedAsync(DbContextOptions<MinicloudDbContext> options, Settin
     await db.Database.ExecuteSqlRawAsync("ANALYZE");
 }
 
-static async Task<string> EnqueueAsync(DbContextOptions<MinicloudDbContext> options, int index, Settings s)
+static async Task<string> EnqueueAsync(DbContextOptions<SelfrunDbContext> options, int index, Settings s)
 {
-    await using var db = new MinicloudDbContext(options);
+    await using var db = new SelfrunDbContext(options);
     var now = DateTimeOffset.UtcNow;
     var id = $"bench_{index}";
     db.Deployments.Add(new Deployment { Id = id, OrganizationId = "org_bench", AppId = $"app_{index % s.Apps}",
@@ -223,9 +223,9 @@ static async Task<string> EnqueueAsync(DbContextOptions<MinicloudDbContext> opti
     return id;
 }
 
-static async Task<int> PendingAsync(DbContextOptions<MinicloudDbContext> options)
+static async Task<int> PendingAsync(DbContextOptions<SelfrunDbContext> options)
 {
-    await using var db = new MinicloudDbContext(options);
+    await using var db = new SelfrunDbContext(options);
     return await db.Deployments.CountAsync(d => d.Id.StartsWith("bench_") && d.CompletedAt == null);
 }
 
@@ -284,12 +284,12 @@ internal sealed record Settings(int IdleSeconds, int WarmupSeconds, int Deployme
 internal sealed record Snapshot(long Xacts, long TuplesRead, long Blocks, double ProcessCpuMs, long Allocated, long PostgresCpuMs);
 
 // Completes the claimed deployment the way the real pipeline's terminal transition does, without remote calls.
-internal sealed class FakeExecutor(DbContextOptions<MinicloudDbContext> options, int stepMs) : IDeploymentPipelineExecutor
+internal sealed class FakeExecutor(DbContextOptions<SelfrunDbContext> options, int stepMs) : IDeploymentPipelineExecutor
 {
     public async Task ExecuteAsync(Deployment deployment, CancellationToken cancellationToken)
     {
         await Task.Delay(stepMs, cancellationToken);
-        await using var db = new MinicloudDbContext(options);
+        await using var db = new SelfrunDbContext(options);
         var now = DateTimeOffset.UtcNow;
         await db.Deployments.Where(d => d.Id == deployment.Id && d.OwnershipToken == deployment.OwnershipToken)
             .ExecuteUpdateAsync(update => update

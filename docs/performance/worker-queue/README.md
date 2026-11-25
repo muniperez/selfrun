@@ -10,14 +10,14 @@ The deployment worker polls PostgreSQL every `Worker:PollingInterval` (default
    `FOR UPDATE OF d, a SKIP LOCKED` claim, then rollback.
 
 With `OperatorDiagnostics:Enabled=true` the worker also emits these signals on
-the `Minicloud.Operator` meter and activity source. No deployment, app or host
+the `Selfrun.Operator` meter and activity source. No deployment, app or host
 identifiers are tagged.
 
 | Signal | Tags |
 | --- | --- |
-| `minicloud.worker.claims` | `outcome` (`claimed`, `empty`, `refused`) |
-| `minicloud.worker.queue.wait` (s) | none. Claim time minus the durable queued timestamp, the same value as the `queue_wait` event. |
-| `minicloud.worker.step.duration` (s) | `operation` (`resolve-provision`, `dns-setup`, `ssh-deploy`, `health-finalize`, `rollback`), `outcome` |
+| `selfrun.worker.claims` | `outcome` (`claimed`, `empty`, `refused`) |
+| `selfrun.worker.queue.wait` (s) | none. Claim time minus the durable queued timestamp, the same value as the `queue_wait` event. |
+| `selfrun.worker.step.duration` (s) | `operation` (`resolve-provision`, `dns-setup`, `ssh-deploy`, `health-finalize`, `rollback`), `outcome` |
 | `worker.deployment` span | Root span that starts at the durable claim time (`ownership_acquired_at`) |
 | `worker.step` span | One child per step. DNS and SSH run concurrently as siblings with separate intervals, so do not add their durations to get wall time. |
 
@@ -126,4 +126,4 @@ These need a VPS and live providers:
 - Lease renewal under network latency.
 - Postgres on a separate host.
 
-Collect them with the step spans and `minicloud.worker.step.duration` above.
+Collect them with the step spans and `selfrun.worker.step.duration` above.

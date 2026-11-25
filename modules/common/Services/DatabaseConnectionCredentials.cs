@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed record DatabaseConnectionCredentials(string DatabaseName, string Username, string Password, string? Host = null, int Port = 5432, string? SslMode = null, string? CaCertificatePem = null)
 {

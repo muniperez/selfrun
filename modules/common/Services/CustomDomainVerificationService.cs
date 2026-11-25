@@ -1,13 +1,13 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers.Dns;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers.Dns;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class CustomDomainVerificationService(
-    MinicloudDbContext db, ICustomDomainDnsResolver dns, TimeProvider clock, AuditEventService? audit = null)
+    SelfrunDbContext db, ICustomDomainDnsResolver dns, TimeProvider clock, AuditEventService? audit = null)
 {
     public async Task VerifyAsync(Domain binding, CancellationToken cancellationToken)
     {
@@ -36,7 +36,7 @@ public sealed class CustomDomainVerificationService(
             {
                 var registration = await db.CustomDomainRegistrations.AsNoTracking().SingleOrDefaultAsync(x =>
                     x.AppId == binding.AppId && x.OrganizationId == binding.OrganizationId && x.VerificationToken == binding.VerificationToken, cancellationToken);
-                var txt = registration is null ? Array.Empty<string>() : await dns.QueryAsync("_minicloud-verification." + registration.Hostname, 16, cancellationToken);
+                var txt = registration is null ? Array.Empty<string>() : await dns.QueryAsync("_selfrun-verification." + registration.Hostname, 16, cancellationToken);
                 var a = await dns.QueryAsync(binding.Hostname, 1, cancellationToken);
                 var aaaa = await dns.QueryAsync(binding.Hostname, 28, cancellationToken);
                 var addresses = a.Concat(aaaa).ToArray();

@@ -3,7 +3,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 // Implements Moby's ordered MatchesOrParentMatches contract, not Git ignore semantics.
 // Reference: https://github.com/moby/patternmatcher (Apache-2.0).

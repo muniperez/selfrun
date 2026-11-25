@@ -2,7 +2,7 @@ extensions:
   health_check:
     endpoint: 0.0.0.0:13133
   bearertokenauth/operator:
-    token: ${env:MINICLOUD_OPERATOR_OTLP_TOKEN}
+    token: ${env:SELFRUN_OPERATOR_OTLP_TOKEN}
 
 receivers:
   otlp:
@@ -21,7 +21,7 @@ processors:
     error_mode: ignore
     logs:
       log_record:
-        - 'instrumentation_scope.name != "Minicloud.OperatorDiagnostics" and instrumentation_scope.name != "Minicloud.RuntimeAgent"'
+        - 'instrumentation_scope.name != "Selfrun.OperatorDiagnostics" and instrumentation_scope.name != "Selfrun.RuntimeAgent"'
   transform/operator_logs:
     error_mode: ignore
     log_statements:

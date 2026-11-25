@@ -41,13 +41,13 @@ class InspectorTests(unittest.TestCase):
         return p
 
     def bind(self):
-        self.write("/opt/minicloud.seed-operation", seed + "\n")
-        self.write("/var/lib/minicloud-seed/" + seed + "/operation", seed + "\n")
+        self.write("/opt/selfrun.seed-operation", seed + "\n")
+        self.write("/var/lib/selfrun-seed/" + seed + "/operation", seed + "\n")
 
     def install(self, **updates):
         self.bind()
-        state = dict(schemaVersion=1, product="minicloud", root="/opt/minicloud",
-                     recoveryDir="/var/lib/minicloud-seed/" + seed + "/recovery",
+        state = dict(schemaVersion=1, product="selfrun", root="/opt/selfrun",
+                     recoveryDir="/var/lib/selfrun-seed/" + seed + "/recovery",
                      installationId="11111111-1111-4111-8111-111111111111",
                      operationId="22222222-2222-4222-8222-222222222222",
                      releaseTag="server-v1.2.3", sourceRevision="c" * 40, phase="ready", credentialsComplete=True,
@@ -55,7 +55,7 @@ class InspectorTests(unittest.TestCase):
                                         appDomain="apps.example.com"), publicAddresses=["203.0.113.1"],
                      setupTokenFile="DO-NOT-EXPORT", recoverySecret="DO-NOT-EXPORT")
         state.update(updates)
-        self.write("/opt/minicloud/installation.json", state)
+        self.write("/opt/selfrun/installation.json", state)
         return state
 
     def run_docker(self, args, **kwargs):
@@ -82,7 +82,7 @@ class InspectorTests(unittest.TestCase):
 
     def test_empty_host_never_creates_lock_or_metadata(self):
         self.assertEqual("empty", self.observe()["state"])
-        self.assertFalse((self.root / "opt/minicloud.installation.lock").exists())
+        self.assertFalse((self.root / "opt/selfrun.installation.lock").exists())
 
     def test_only_empty_protected_containerd_package_directories_are_accepted(self):
         containerd = self.root / "opt/containerd"
@@ -100,24 +100,24 @@ class InspectorTests(unittest.TestCase):
     def test_missing_corrupt_future_and_unknown_installation_metadata_fail_closed(self):
         for content in (None, "{", {"schemaVersion": 2}, {"schemaVersion": True}):
             with self.subTest(content=content):
-                p = self.root / "opt/minicloud"
+                p = self.root / "opt/selfrun"
                 p.mkdir(mode=0o700, exist_ok=True)
                 if content is not None:
-                    self.write("/opt/minicloud/installation.json", content)
+                    self.write("/opt/selfrun/installation.json", content)
                 self.assertEqual("reconciliation_required", self.observe()["state"])
 
     def test_preparation_interruption_is_not_a_fresh_installation(self):
         self.bind()
         self.assertEqual("preparing", self.observe()["state"])
-        self.write("/var/lib/minicloud-seed/" + seed + "/preparation.pending", "{")
+        self.write("/var/lib/selfrun-seed/" + seed + "/preparation.pending", "{")
         self.assertEqual("reconciliation_required", self.observe()["state"])
 
     def test_unknown_preparation_or_interrupted_asset_upload_is_not_an_empty_host(self):
-        self.write("/var/lib/minicloud-seed/" + "b" * 32 + "/operation", "b" * 32)
+        self.write("/var/lib/selfrun-seed/" + "b" * 32 + "/operation", "b" * 32)
         self.assertEqual("reconciliation_required", self.observe()["state"])
-        shutil.rmtree(self.root / "var/lib/minicloud-seed" / ("b" * 32))
+        shutil.rmtree(self.root / "var/lib/selfrun-seed" / ("b" * 32))
         self.bind()
-        self.write("/var/lib/minicloud-seed/" + seed + "/assets/checksums.txt.pending", "partial")
+        self.write("/var/lib/selfrun-seed/" + seed + "/assets/checksums.txt.pending", "partial")
         self.assertEqual("reconciliation_required", self.observe()["state"])
 
     def test_partial_installer_preserves_ids_and_never_uses_its_status_or_bootstrap(self):
@@ -134,25 +134,25 @@ class InspectorTests(unittest.TestCase):
         self.install()
         for field in ("pendingUpgrade", "pendingRestore", "restoreInProgress", "heldFence"):
             with self.subTest(field=field):
-                self.write("/opt/minicloud/maintenance.json", {"state": "upgraded", field: {}})
+                self.write("/opt/selfrun/maintenance.json", {"state": "upgraded", field: {}})
                 self.assertEqual("reconciliation_required", self.observe()["state"])
-        self.write("/opt/minicloud/maintenance.json", {"state": "started"})
+        self.write("/opt/selfrun/maintenance.json", {"state": "started"})
         self.assertEqual("reconciliation_required", self.observe()["state"])
-        self.write("/opt/minicloud/maintenance.json", {"state": "upgraded", "lastFailure": {"fenceReleased": False}})
+        self.write("/opt/selfrun/maintenance.json", {"state": "upgraded", "lastFailure": {"fenceReleased": False}})
         self.assertEqual("reconciliation_required", self.observe()["state"])
 
     def test_completed_signed_maintenance_is_not_mistaken_for_active_upgrade(self):
         self.install()
-        self.write("/opt/minicloud/maintenance.json", {
+        self.write("/opt/selfrun/maintenance.json", {
             "operation": "upgrade", "at": "2026-11-12", "state": "upgraded", "lastSuccessfulUpgrade": {}})
         self.assertEqual("installed", self.observe()["state"])
 
     def test_interrupted_installer_metadata_and_busy_shared_installer_lock_fail_closed(self):
         self.install()
-        pending = self.write("/opt/minicloud/installation.json.pending", "{")
+        pending = self.write("/opt/selfrun/installation.json.pending", "{")
         self.assertEqual("reconciliation_required", self.observe()["state"])
         pending.unlink()
-        lock = self.write("/opt/minicloud.installation.lock", "")
+        lock = self.write("/opt/selfrun.installation.lock", "")
         with lock.open("r+") as stream:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual("reconciliation_required", self.observe()["state"])
@@ -160,12 +160,12 @@ class InspectorTests(unittest.TestCase):
 
     def test_duplicate_json_and_symlinked_binding_fail_without_following_or_writing(self):
         self.bind()
-        self.write("/var/lib/minicloud-seed/" + seed + "/preparation.json",
+        self.write("/var/lib/selfrun-seed/" + seed + "/preparation.json",
                    '{"schemaVersion":1,"schemaVersion":2}')
         self.assertEqual("reconciliation_required", self.observe()["state"])
-        binding = self.root / "opt/minicloud.seed-operation"
+        binding = self.root / "opt/selfrun.seed-operation"
         binding.unlink()
-        binding.symlink_to(self.root / "var/lib/minicloud-seed" / seed / "operation")
+        binding.symlink_to(self.root / "var/lib/selfrun-seed" / seed / "operation")
         self.assertEqual("reconciliation_required", self.observe()["state"])
 
     def test_occupied_host_with_missing_metadata_is_not_empty(self):
@@ -175,15 +175,15 @@ class InspectorTests(unittest.TestCase):
     def test_provider_layout_does_not_override_unknown_occupancy_or_conflicting_binding(self):
         self.write("/opt/digitalocean/unknown", "not a vendor agent")
         self.assertEqual("reconciliation_required", self.observe(provider="digitalocean")["state"])
-        self.write("/opt/minicloud.seed-operation", "b" * 32)
+        self.write("/opt/selfrun.seed-operation", "b" * 32)
         self.assertEqual("reconciliation_required", self.observe(provider="digitalocean")["state"])
 
     def test_stale_ready_metadata_never_means_live_ready_or_auto_unseal_after_reboot(self):
         self.install()
         for i, name in enumerate(("postgres", "openbao", "openbao-agent", "kratos", "api", "dashboard", "worker", "caddy")):
             self.containers.append({
-                "Config": {"Labels": {"com.docker.compose.project": "minicloud",
-                                      "com.docker.compose.project.working_dir": "/opt/minicloud/bundle",
+                "Config": {"Labels": {"com.docker.compose.project": "selfrun",
+                                      "com.docker.compose.project.working_dir": "/opt/selfrun/bundle",
                                       "com.docker.compose.service": name}},
                 "State": {"Running": True, "Health": {"Status": "unhealthy" if name == "openbao" else "healthy"}}})
         result = self.observe()
@@ -362,7 +362,7 @@ class ProviderLayoutTests(unittest.TestCase):
         unknown.mkdir()
         self.assertEqual("reconciliation_required", observe())
         unknown.rmdir()
-        binding = self.root / "opt/minicloud.seed-operation"
+        binding = self.root / "opt/selfrun.seed-operation"
         binding.write_text("b" * 32)
         binding.chmod(0o600)
         self.assertEqual("reconciliation_required", observe())
@@ -440,7 +440,7 @@ class ProviderLayoutTests(unittest.TestCase):
         self.register_conffile()
         source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
         start = source.index("if test -e /opt/containerd")
-        end = source.index("test ! -e /opt/minicloud.seed-operation.pending")
+        end = source.index("test ! -e /opt/selfrun.seed-operation.pending")
         prefix = source[start:end]
         # Supply only synthetic filesystem/metadata and dpkg authorities to the
         # embedded helper; execute the actual preparation occupancy gate in bash.
@@ -496,7 +496,7 @@ pathlib.Path.lstat=fixture_lstat
         (commands / "find").symlink_to(shutil.which("find"))
         source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
         prefix = source[source.index("if test -e /opt/containerd"):
-                        source.index("test ! -e /opt/minicloud.seed-operation.pending")]
+                        source.index("test ! -e /opt/selfrun.seed-operation.pending")]
         quote = lambda value: "'" + value.replace("'", "'\\''") + "'"
         script = "set -euo pipefail\n" + prefix.replace("/opt", str(self.root / "opt")).replace(
             "__SEED_PROVIDER_LAYOUT__", quote(helper + "\nvalidate_provider_layout(sys.argv[1])\n"))
@@ -577,7 +577,7 @@ class VultrLayoutTests(unittest.TestCase):
     def test_preparation_accepts_stock_vultr_opt_only_for_vultr(self):
         source = (pathlib.Path(__file__).parents[1] / "prepare-host.sh").read_text()
         prefix = source[source.index("if test -e /opt/containerd"):
-                        source.index("test ! -e /opt/minicloud.seed-operation.pending")]
+                        source.index("test ! -e /opt/selfrun.seed-operation.pending")]
         python = ("import os,pathlib,sys\nreal_lstat=pathlib.Path.lstat\n"
                   "def fixture_lstat(p,*args,**kwargs):\n"
                   " values=list(real_lstat(p,*args,**kwargs))\n"

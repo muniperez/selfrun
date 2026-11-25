@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed partial class DatabaseOperationProcessor
 {

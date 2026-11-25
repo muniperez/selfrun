@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public interface IRuntimeTokenService
 {
@@ -19,7 +19,7 @@ public sealed record RuntimeTokenValue(string Prefix, string Token);
 
 public sealed record RuntimeTokenAuthenticationResult(RuntimeServer Server, RuntimeToken Token);
 
-public sealed class RuntimeTokenService(MinicloudDbContext db, TimeProvider timeProvider) : IRuntimeTokenService
+public sealed class RuntimeTokenService(SelfrunDbContext db, TimeProvider timeProvider) : IRuntimeTokenService
 {
     private const string PrefixRoot = "mrt";
     private const int SaltBytes = 16;

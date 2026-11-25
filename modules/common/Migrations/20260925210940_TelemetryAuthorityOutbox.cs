@@ -4,7 +4,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <inheritdoc />
     public partial class TelemetryAuthorityOutbox : Migration

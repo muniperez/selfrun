@@ -1,6 +1,0 @@
-@Minicloud.Api_HostAddress = http://localhost:5288
-
-GET {{Minicloud.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

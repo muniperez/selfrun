@@ -2,20 +2,20 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Telemetry.Controllers;
-using Minicloud.Telemetry.Data;
-using Minicloud.Telemetry.Services;
-using Minicloud.Common.Diagnostics;
+using Selfrun.Telemetry.Controllers;
+using Selfrun.Telemetry.Data;
+using Selfrun.Telemetry.Services;
+using Selfrun.Common.Diagnostics;
 using OpenTelemetry.Trace;
 
-namespace Minicloud.Telemetry;
+namespace Selfrun.Telemetry;
 
 public class Program
 {
     public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
-        builder.Services.AddOperatorDiagnostics(builder.Configuration, "minicloud-telemetry", tracing =>
+        builder.Services.AddOperatorDiagnostics(builder.Configuration, "selfrun-telemetry", tracing =>
     tracing.AddAspNetCoreInstrumentation(options => options.Filter = context =>
         OperatorDiagnostics.IsTracedServerPath(context.Request.Path.Value)));
 

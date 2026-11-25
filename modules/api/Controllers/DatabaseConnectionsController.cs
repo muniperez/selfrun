@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/databases/{id}/connection")]
 public sealed class DatabaseConnectionsController(DatabaseConnectionService service) : ControllerBase

@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 internal static class RuntimeAgentBundle
 {
@@ -26,11 +26,11 @@ esac
             _ => throw new PipelineStepException("runtime_agent_install_failed",
                 "Could not determine runtime agent target architecture using remote uname -m.")
         };
-        var path = Path.Combine(bundlePath, rid, "minicloud-agent");
+        var path = Path.Combine(bundlePath, rid, "selfrun-agent");
         // Source/development bundles may contain one flat executable; never assume its architecture.
         if (!File.Exists(path))
         {
-            path = Path.Combine(bundlePath, "minicloud-agent");
+            path = Path.Combine(bundlePath, "selfrun-agent");
         }
         if (!File.Exists(path))
         {

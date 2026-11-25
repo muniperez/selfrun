@@ -2,13 +2,13 @@
 
 using System.Security.Cryptography;
 using System.Text.Json;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal static class ServiceChecksumCalculator
 {
-    public static string Compute(string serviceName, MinicloudServiceConfig service, ServiceInputSnapshot? snapshot = null)
+    public static string Compute(string serviceName, SelfrunServiceConfig service, ServiceInputSnapshot? snapshot = null)
     {
         using var ownedSession = snapshot is null ? new DeploymentInputSession() : null;
         snapshot ??= ownedSession!.Get(serviceName, service);
@@ -37,9 +37,9 @@ internal static class ServiceChecksumCalculator
         hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(configuration));
         if (service.Storage is { Count: > 0 })
         { hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(new { storage = Ordered(service.Storage) })); }
-        if (hasSource && service.BuildMode == Minicloud.Common.Contracts.ServiceBuildModes.Local)
+        if (hasSource && service.BuildMode == Selfrun.Common.Contracts.ServiceBuildModes.Local)
         {
-            if (!Minicloud.Common.Validation.ImagePublicationValidation.IsPlatform(service.BuildPlatform))
+            if (!Selfrun.Common.Validation.ImagePublicationValidation.IsPlatform(service.BuildPlatform))
             { throw new CliCommandException(CliExitCodes.ValidationError, "Local build requires an API-resolved Linux platform."); }
             hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(new { service.BuildMode, service.BuildPlatform }));
         }

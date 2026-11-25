@@ -1,8 +1,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class OpenBaoTokenRenewalService(
     IHttpClientFactory clients,

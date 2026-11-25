@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class ManagedDatabaseBinding
 {

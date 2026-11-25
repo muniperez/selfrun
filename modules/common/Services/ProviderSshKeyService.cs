@@ -1,15 +1,15 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Models;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Models;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class ProviderSshKeyException(string code, string message) : Exception(message)
 {
@@ -17,7 +17,7 @@ public sealed class ProviderSshKeyException(string code, string message) : Excep
 }
 
 public sealed class ProviderSshKeyService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ProviderAccountClientFactory clients,
     ControlPlaneAuthorization authorization,
     IIdGenerator ids,
@@ -134,7 +134,7 @@ public sealed class ProviderSshKeyService(
                 if (external is null)
                 {
                     var definiteRejection = ex is ProviderApiException apiEx &&
-                        Minicloud.Common.Providers.Extensibility.DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(apiEx);
+                        Selfrun.Common.Providers.Extensibility.DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(apiEx);
                     var error = definiteRejection
                         ? new ProviderSshKeyException("ssh_registration_failed", "The provider rejected SSH key registration.")
                         : new ProviderSshKeyException("ssh_registration_unknown", "SSH key registration outcome is unknown; reconcile provider inventory before retrying.");

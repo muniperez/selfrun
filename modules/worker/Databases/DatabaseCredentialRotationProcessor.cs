@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed partial class DatabaseOperationProcessor
 {
@@ -18,7 +18,7 @@ public sealed partial class DatabaseOperationProcessor
     }
     private sealed record CredentialRotationRollout(string AppId, string DeploymentId);
 
-    private async Task<bool> RotateCredentialsAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task<bool> RotateCredentialsAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         if (database.AppId is not null || database.Engine != "postgres" || database.Status != "ready")
             throw new InvalidOperationException("Credential rotation requires a standalone PostgreSQL database.");
@@ -39,7 +39,7 @@ public sealed partial class DatabaseOperationProcessor
         if (!state.SqlApplied)
         {
             var changed = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(state.EncryptedCredentials), Json)!;
-            await ExecuteRemoteAsync(operation, sourceHost, "operation.py", new { action = "rotate", databaseName = changed.DatabaseName, username = changed.Username, password = changed.Password, container = "minicloud-" + sourceApp.Slug + "-db-1", adminUser = "minicloud", operationId = operation.Id }, ct);
+            await ExecuteRemoteAsync(operation, sourceHost, "operation.py", new { action = "rotate", databaseName = changed.DatabaseName, username = changed.Username, password = changed.Password, container = "selfrun-" + sourceApp.Slug + "-db-1", adminUser = "selfrun", operationId = operation.Id }, ct);
             database.EncryptedCredentialsJson = state.EncryptedCredentials;
             database.Revision++;
             database.UpdatedAt = clock.GetUtcNow();

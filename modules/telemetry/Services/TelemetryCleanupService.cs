@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Telemetry.Data;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed class TelemetryCleanupService(
     TelemetryDbContext db,
@@ -83,8 +83,8 @@ public sealed class TelemetryCleanupService(
         var endpoint = options.Value.LokiBaseAddress.TrimEnd('/') + "/";
         var client = httpClients.CreateClient();
 
-        // Loki delete API: POST /loki/api/v1/delete?query={minicloud_app_id="<appId>"}&end=<cutoff>
-        var deleteUrl = $"{endpoint}loki/api/v1/delete?query=%7Bminicloud_source%3D%22otlp%22%7D&end={cutoff.ToUnixTimeMilliseconds() * 1_000_000}";
+        // Loki delete API: POST /loki/api/v1/delete?query={selfrun_app_id="<appId>"}&end=<cutoff>
+        var deleteUrl = $"{endpoint}loki/api/v1/delete?query=%7Bselfrun_source%3D%22otlp%22%7D&end={cutoff.ToUnixTimeMilliseconds() * 1_000_000}";
         using var request = new HttpRequestMessage(HttpMethod.Post, deleteUrl);
         request.Headers.TryAddWithoutValidation("X-Scope-OrgID", tenantId);
 

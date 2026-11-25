@@ -1,6 +1,6 @@
 # T60–T62 — Sequential deployment numbers
 
-Status: not started. Repository: `muniventures/minicloud`.
+Status: not started. Repository: `muniperez/selfrun`.
 Read the [feature overview](../1.pre-v1-release.md) and [execution plan](../0.execution-plan.md). Each task below is a separate Copilot issue/PR; the user triggers the sessions. This document authorizes specifications only, not implementation or dispatch by Codex.
 
 ## Order and ownership

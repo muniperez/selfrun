@@ -7,7 +7,7 @@ Date: 2026-11-09.
 
 Replace the account-first Providers page with a plan-first collection. A user
 should find and maintain named deployment plans using the same collection and
-form interactions already used elsewhere in Minicloud. Provider accounts remain
+form interactions already used elsewhere in Selfrun. Provider accounts remain
 available as secondary configuration.
 
 The approved pattern is a shared refresh/search/Filter & sort toolbar, a standard
@@ -15,18 +15,18 @@ Card/table, explicit Edit buttons, overflow menus and centered add/edit dialogs.
 There is no permanent details panel, Accounts/Plans tab switcher or account card
 containing another collection. This specification does not authorize implementation.
 
-![Approved plan collection and edit-dialog direction](assets/plan-management-ux.png)
+![Plans collection with sample provider accounts](assets/plan-management-ux.png)
 
-The image establishes hierarchy and styling, not live account data or new API
-capabilities. The constraints below govern account selection, placement locking
-and catalog inputs even where the illustration shows generic dropdowns.
+![Edit plan dialog for a sample plan](assets/plan-management-edit-ux.png)
+
+The screenshots use sample provider accounts and plans. The constraints below govern account selection, placement locking, and catalog inputs.
 
 ## Scope and existing contracts
 
 - Keep organization-owned accounts and organization-wide unique plan names.
 - Each plan resolves exactly one account. Multiple accounts of the same provider
   remain independent; there is no quota fallback or automatic account selection.
-- CLI and `minicloud.yml` still reference the plan name only.
+- CLI and `selfrun.yml` still reference the plan name only.
 - Preserve stable plan IDs, retired-name protection, revision checks, resource
   bindings, credential custody and backend mutation rules.
 - This is dashboard UX work. No API/schema migration, provisioning, billing,

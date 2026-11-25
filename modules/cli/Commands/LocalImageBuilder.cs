@@ -3,15 +3,15 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Config;
-using Minicloud.Cli.Rendering;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Validation;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Config;
+using Selfrun.Cli.Rendering;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
-internal sealed class LocalImageBuilder(MinicloudApiClient api, LocalImageBuildRenderer output, string builderName)
+internal sealed class LocalImageBuilder(SelfrunApiClient api, LocalImageBuildRenderer output, string builderName)
 {
     public static async Task<string> PreflightAsync(string platform, CancellationToken ct)
     {
@@ -38,7 +38,7 @@ internal sealed class LocalImageBuilder(MinicloudApiClient api, LocalImageBuildR
         return name;
     }
 
-    public async Task BuildAsync(string name, MinicloudServiceConfig service, ImageBuildTarget target, string localImage, CancellationToken ct)
+    public async Task BuildAsync(string name, SelfrunServiceConfig service, ImageBuildTarget target, string localImage, CancellationToken ct)
     {
         var args = new List<string> { "buildx", "build", "--builder", builderName, "--platform", target.Platform,
             "--provenance=false", "--sbom=false", "--load", "--progress", "rawjson", "--tag", localImage, "--file", service.Dockerfile! };
@@ -67,7 +67,7 @@ internal sealed class LocalImageBuilder(MinicloudApiClient api, LocalImageBuildR
         {
             var credentials = await api.GetImagePublicationCredentialsAsync(appId, publication.Id, ct);
             remoteImage = credentials.Registry + "/" + publication.Repository + ":" + publication.CandidateTag;
-            directory = Directory.CreateTempSubdirectory("minicloud-docker-");
+            directory = Directory.CreateTempSubdirectory("selfrun-docker-");
             if (!OperatingSystem.IsWindows()) { directory.UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute; }
             await WritePushConfigAsync(directory.FullName, credentials, ct);
 

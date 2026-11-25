@@ -1,18 +1,18 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class AssetReleaseService(MinicloudDbContext db, DeploymentLifecycleService lifecycle, IIdGenerator ids, TimeProvider timeProvider,
+public sealed class AssetReleaseService(SelfrunDbContext db, DeploymentLifecycleService lifecycle, IIdGenerator ids, TimeProvider timeProvider,
     ProviderCatalogService? catalog = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    public async Task<(AssetRelease Release, Deployment Deployment)> PublishAsync(MinicloudApp app, PublishAssetRequest request, CancellationToken ct)
+    public async Task<(AssetRelease Release, Deployment Deployment)> PublishAsync(SelfrunApp app, PublishAssetRequest request, CancellationToken ct)
     {
         if (!AssetValidation.SafeName(request.Name) || !AssetValidation.SafeMountPath(request.OutputPath) || !Regex.IsMatch(request.InputSha256, "\\A[a-f0-9]{64}\\z"))
         { throw new ArgumentException("Invalid asset name, output path or input fingerprint."); }
@@ -50,7 +50,7 @@ public sealed class AssetReleaseService(MinicloudDbContext db, DeploymentLifecyc
             foreach (var (name, mount) in service.AssetMounts ?? new Dictionary<string, AssetMountRequest>())
             {
                 if (mount is null || !AssetValidation.SafeName(name) || mount.ProtocolVersion != 1 || !AssetValidation.SafeMountPath(mount.MountPath) ||
-                    (mount.MountPath == "/app" || new[] { "/etc", "/proc", "/sys", "/dev", "/run", "/opt/minicloud" }.Any(x => mount.MountPath == x || mount.MountPath.StartsWith(x + '/', StringComparison.Ordinal))) ||
+                    (mount.MountPath == "/app" || new[] { "/etc", "/proc", "/sys", "/dev", "/run", "/opt/selfrun" }.Any(x => mount.MountPath == x || mount.MountPath.StartsWith(x + '/', StringComparison.Ordinal))) ||
                     paths.Any(x => x == mount.MountPath || x.StartsWith(mount.MountPath + '/') || mount.MountPath.StartsWith(x + '/')))
                 { throw new ArgumentException("Invalid or overlapping asset mount."); }
                 paths.Add(mount.MountPath);
@@ -65,7 +65,7 @@ public sealed class AssetReleaseService(MinicloudDbContext db, DeploymentLifecyc
         }
     }
 
-    public static async Task<AssetRelease?> ResolveAsync(MinicloudDbContext db, string appId, string organizationId, string name, string? releaseId, CancellationToken ct)
+    public static async Task<AssetRelease?> ResolveAsync(SelfrunDbContext db, string appId, string organizationId, string name, string? releaseId, CancellationToken ct)
     {
         var releases = db.AssetReleases.Where(r => r.AppId == appId && r.OrganizationId == organizationId && r.Name == name);
         if (releaseId is not null) { return await releases.SingleOrDefaultAsync(r => r.Id == releaseId, ct); }

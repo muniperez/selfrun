@@ -4,15 +4,15 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal static class DeploymentArtifactBundler
 {
     public const long MaxArtifactBytes = 250L * 1024L * 1024L;
-    internal const string ManifestEntryName = "minicloud-artifact-manifest.json";
+    internal const string ManifestEntryName = "selfrun-artifact-manifest.json";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -36,7 +36,7 @@ internal static class DeploymentArtifactBundler
     public static DeploymentArtifactBundle Create(
         string appId,
         string serviceName,
-        MinicloudServiceConfig service,
+        SelfrunServiceConfig service,
         string? commitSha,
         string outputDirectory,
         long maxArtifactBytes = MaxArtifactBytes,
@@ -83,7 +83,7 @@ internal static class DeploymentArtifactBundler
         var dockerfileFullPath = Path.GetFullPath(dockerfilePath);
         var dockerfileEntryPath = IsUnderDirectory(sourceRoot, dockerfileFullPath)
             ? RelativeArchivePath(sourceRoot, dockerfileFullPath)
-            : "minicloud-artifact/Dockerfile";
+            : "selfrun-artifact/Dockerfile";
         if (!IsUnderDirectory(sourceRoot, dockerfileFullPath))
         {
             files.Add(dockerfileFullPath);
@@ -276,7 +276,7 @@ internal static class DeploymentArtifactBundler
             fileName.StartsWith(".env.", StringComparison.OrdinalIgnoreCase) ||
             ((fileName.StartsWith("credentials", StringComparison.OrdinalIgnoreCase) || fileName.StartsWith("secrets", StringComparison.OrdinalIgnoreCase)) && fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ||
             fileName.Equals(LocalSecretsFile.FileName, StringComparison.OrdinalIgnoreCase) ||
-            fileName.Equals(LocalSecretsFile.LegacyFileName, StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("minicloud.secrets.env", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals("id_rsa", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals("id_ed25519", StringComparison.OrdinalIgnoreCase) ||

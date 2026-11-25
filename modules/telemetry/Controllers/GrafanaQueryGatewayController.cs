@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Minicloud.Telemetry.Services;
+using Selfrun.Telemetry.Services;
 
-namespace Minicloud.Telemetry.Controllers;
+namespace Selfrun.Telemetry.Controllers;
 
 [ApiController]
 public sealed class GrafanaQueryGatewayController(GrafanaQueryGateway gateway) : ControllerBase

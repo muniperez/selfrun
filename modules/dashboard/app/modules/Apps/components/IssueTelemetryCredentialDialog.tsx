@@ -98,7 +98,7 @@ export function IssueTelemetryCredentialDialog({
               <div className="rounded-md border border-border bg-warning-surface p-3">
                 <p className="text-sm font-medium">Copy this token now</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Store it as an app secret named MINICLOUD_OTLP_LOGS_HEADERS. It will never be shown again.
+                  Store it as an app secret named SELFRUN_OTLP_LOGS_HEADERS. It will never be shown again.
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <code className="max-w-full break-all rounded-md bg-background px-3 py-2 text-xs">{issued.token}</code>

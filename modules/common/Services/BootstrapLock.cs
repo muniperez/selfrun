@@ -1,21 +1,21 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 internal sealed class BootstrapLock : IAsyncDisposable
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(StringComparer.Ordinal);
-    private readonly MinicloudDbContext db;
+    private readonly SelfrunDbContext db;
     private SemaphoreSlim? gate;
     private FileStream? file;
     private bool postgres;
     private bool gateHeld;
 
-    private BootstrapLock(MinicloudDbContext db) => this.db = db;
+    private BootstrapLock(SelfrunDbContext db) => this.db = db;
 
-    public static async Task<BootstrapLock> AcquireAsync(MinicloudDbContext db, CancellationToken ct)
+    public static async Task<BootstrapLock> AcquireAsync(SelfrunDbContext db, CancellationToken ct)
     {
         var result = new BootstrapLock(db);
         try

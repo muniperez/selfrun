@@ -4,12 +4,12 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed record GrafanaLaunchOutcome(bool Ok, string? Code, string? Destination, DateTimeOffset? ExpiresAt, string? Error);
 public sealed record GrafanaExchangeOutcome(bool Ok, string? SessionToken, string? Destination, DateTimeOffset? ExpiresAt, string? Error);
@@ -17,7 +17,7 @@ public sealed record GrafanaSessionSnapshot(
     string SessionId,
     string OrganizationId,
     string AppId,
-    string MinicloudUserId,
+    string SelfrunUserId,
     long GrafanaOrgId,
     long GrafanaUserId,
     string GrafanaLogin,
@@ -30,11 +30,11 @@ public sealed record GrafanaSessionSnapshot(
 /// allowlisted relative destination); only SHA256 digests are stored, and the
 /// audience is folded into the digest so a code from another environment never
 /// verifies. Proxy sessions are opaque tokens (digest-only storage) with 15-minute
-/// idle and 1-hour absolute lifetimes; every validation rechecks current Minicloud
+/// idle and 1-hour absolute lifetimes; every validation rechecks current Selfrun
 /// membership with at most a 30-second cache.
 /// </summary>
 public sealed class GrafanaSessionService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     GrafanaProvisioningService provisioning,
     ControlPlaneAuthorization authorization,
     IIdGenerator ids,
@@ -85,7 +85,7 @@ public sealed class GrafanaSessionService(
             Id = ids.NewId("glaunch"),
             OrganizationId = app.OrganizationId,
             AppId = app.Id,
-            MinicloudUserId = principal.UserId,
+            SelfrunUserId = principal.UserId,
             CodeHash = HashLaunchCode(code, _options.Audience),
             Destination = safeDestination,
             ExpiresAt = now.Add(TelemetryLimits.GrafanaLaunchCodeTtl),
@@ -129,7 +129,7 @@ public sealed class GrafanaSessionService(
             return new GrafanaExchangeOutcome(false, null, null, null, "invalid_code");
         }
 
-        if (!await IsCurrentMemberAsync(row.MinicloudUserId, row.OrganizationId, cancellationToken))
+        if (!await IsCurrentMemberAsync(row.SelfrunUserId, row.OrganizationId, cancellationToken))
         {
             logger.LogWarning("Grafana exchange denied: membership lapsed for launch {LaunchId}.", row.Id);
             return new GrafanaExchangeOutcome(false, null, null, null, "membership_revoked");
@@ -138,7 +138,7 @@ public sealed class GrafanaSessionService(
         var orgBinding = await db.GrafanaOrganizationBindings.AsNoTracking()
             .SingleOrDefaultAsync(x => x.OrganizationId == row.OrganizationId, cancellationToken);
         var userBinding = await db.GrafanaUserBindings.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.OrganizationId == row.OrganizationId && x.MinicloudUserId == row.MinicloudUserId, cancellationToken);
+            .SingleOrDefaultAsync(x => x.OrganizationId == row.OrganizationId && x.SelfrunUserId == row.SelfrunUserId, cancellationToken);
         var dsBinding = await db.GrafanaDataSourceBindings.AsNoTracking()
             .SingleOrDefaultAsync(x => x.AppId == row.AppId && x.DeletedAt == null, cancellationToken);
         if (orgBinding?.ReconciliationStatus != "ready" || userBinding?.ReconciliationStatus != "ready"
@@ -153,7 +153,7 @@ public sealed class GrafanaSessionService(
             Id = ids.NewId("gsess"),
             OrganizationId = row.OrganizationId,
             AppId = row.AppId,
-            MinicloudUserId = row.MinicloudUserId,
+            SelfrunUserId = row.SelfrunUserId,
             SessionHash = HashSessionToken(sessionToken),
             ExpiresAt = now.Add(TelemetryLimits.GrafanaSessionAbsolute),
             LastSeenAt = now,
@@ -185,7 +185,7 @@ public sealed class GrafanaSessionService(
             return null;
         }
 
-        if (!await IsCurrentMemberAsync(session.MinicloudUserId, session.OrganizationId, cancellationToken))
+        if (!await IsCurrentMemberAsync(session.SelfrunUserId, session.OrganizationId, cancellationToken))
         {
             session.RevokedAt = now;
             await db.SaveChangesAsync(cancellationToken);
@@ -195,7 +195,7 @@ public sealed class GrafanaSessionService(
         var orgBinding = await db.GrafanaOrganizationBindings.AsNoTracking()
             .SingleOrDefaultAsync(x => x.OrganizationId == session.OrganizationId, cancellationToken);
         var userBinding = await db.GrafanaUserBindings.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.OrganizationId == session.OrganizationId && x.MinicloudUserId == session.MinicloudUserId, cancellationToken);
+            .SingleOrDefaultAsync(x => x.OrganizationId == session.OrganizationId && x.SelfrunUserId == session.SelfrunUserId, cancellationToken);
         var dsBinding = await db.GrafanaDataSourceBindings.AsNoTracking()
             .SingleOrDefaultAsync(x => x.AppId == session.AppId && x.DeletedAt == null, cancellationToken);
         if (orgBinding?.ReconciliationStatus != "ready" || userBinding?.ReconciliationStatus != "ready"
@@ -214,9 +214,9 @@ public sealed class GrafanaSessionService(
         await db.SaveChangesAsync(cancellationToken);
 
         return new GrafanaSessionSnapshot(
-            session.Id, session.OrganizationId, session.AppId, session.MinicloudUserId,
+            session.Id, session.OrganizationId, session.AppId, session.SelfrunUserId,
             orgBinding.GrafanaOrgId, userBinding.GrafanaUserId,
-            GrafanaProvisioningService.ExpectedLogin(session.MinicloudUserId, session.OrganizationId),
+            GrafanaProvisioningService.ExpectedLogin(session.SelfrunUserId, session.OrganizationId),
             dsBinding.GrafanaUid, session.ExpiresAt);
     }
 
@@ -240,10 +240,10 @@ public sealed class GrafanaSessionService(
     {
         var now = timeProvider.GetUtcNow();
         await db.GrafanaProxySessions
-            .Where(x => x.MinicloudUserId == userId && x.RevokedAt == null)
+            .Where(x => x.SelfrunUserId == userId && x.RevokedAt == null)
             .ExecuteUpdateAsync(update => update.SetProperty(x => x.RevokedAt, now), cancellationToken);
         await db.GrafanaLaunchCodes
-            .Where(x => x.MinicloudUserId == userId && x.ConsumedAt == null)
+            .Where(x => x.SelfrunUserId == userId && x.ConsumedAt == null)
             .ExecuteUpdateAsync(update => update.SetProperty(x => x.ConsumedAt, now), cancellationToken);
     }
 

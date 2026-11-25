@@ -241,7 +241,7 @@ def portal_sessions(config):
 
 PASSKEY_DEFAULTS = {
     "enabled": True,
-    "rpDisplayName": "Minicloud",
+    "rpDisplayName": "Selfrun",
 }
 
 
@@ -394,19 +394,19 @@ class Host:
 
     def conflicts(self, state):
         volumes = [name for name in run(["docker", "volume", "ls", "--format", "{{.Name}}"]).decode().splitlines()
-                   if name.startswith("minicloud_")]
+                   if name.startswith("selfrun_")]
         networks = [name for name in run(["docker", "network", "ls", "--format", "{{.Name}}"]).decode().splitlines()
-                    if name.startswith("minicloud_")]
+                    if name.startswith("selfrun_")]
         containers = run(["docker", "ps", "-a", "--format", "{{.ID}}"]).decode().splitlines()
         if state is None:
             require(not volumes and not networks and not containers,
-                    "Dedicated host has existing containers/Minicloud volumes/networks; refusing adoption.")
+                    "Dedicated host has existing containers/Selfrun volumes/networks; refusing adoption.")
             return set()
         owned_ports = set()
         for container in containers:
             item = json.loads(run(["docker", "inspect", container]))[0]
             labels = item.get("Config", {}).get("Labels", {})
-            require(labels.get("com.docker.compose.project") == "minicloud"
+            require(labels.get("com.docker.compose.project") == "selfrun"
                     and labels.get("com.docker.compose.project.working_dir") == state["bundlePath"],
                     "Foreign containers found; refusing dedicated-host mutation.")
             if labels.get("com.docker.compose.service") == "caddy":
@@ -417,8 +417,8 @@ class Host:
             for name in names:
                 item = json.loads(run(["docker", kind, "inspect", name]))[0]
                 labels = item.get("Labels") or {}
-                require(labels.get("com.docker.compose.project") == "minicloud"
-                        and labels.get("com.minicloud.installation-id") == state["installationId"],
+                require(labels.get("com.docker.compose.project") == "selfrun"
+                        and labels.get("com.selfrun.installation-id") == state["installationId"],
                         "Unrecognized populated volume/network; refusing adoption.")
         return owned_ports
 
@@ -508,7 +508,7 @@ class Installer:
             require(self.state_path.exists(), "Unknown installation directory; refusing adoption.")
             protected(self.state_path)
             state = read_json(self.state_path)
-            require(isinstance(state, dict) and state.get("schemaVersion") == 1 and state.get("product") == "minicloud"
+            require(isinstance(state, dict) and state.get("schemaVersion") == 1 and state.get("product") == "selfrun"
                     and state.get("root") == str(self.root), "Unknown installation metadata.")
             require(state["releaseTag"] == manifest["releaseTag"], "Existing installation requires an explicit upgrade, not reinstall.")
             require(state["configuration"] == self.config and state["recoveryDir"] == str(self.args.recovery_dir)
@@ -599,7 +599,7 @@ class Installer:
     def initialize_state(self):
         self.root.mkdir(mode=0o700)
         self.state = {
-            "schemaVersion": 1, "product": "minicloud", "root": str(self.root),
+            "schemaVersion": 1, "product": "selfrun", "root": str(self.root),
             "installationId": str(uuid.uuid4()), "operationId": str(uuid.uuid4()),
             "releaseTag": self.args.tag, "serverVersion": self.manifest["serverVersion"],
             "sourceRevision": self.manifest["sourceRevision"], "images": self.manifest["images"],
@@ -693,7 +693,7 @@ class Installer:
         if not key.exists():
             require(not self.state["credentialsComplete"], "Established SSH key missing; restore it.")
             require(not key.with_suffix(".pub").exists(), "SSH public key exists without its private key; refusing replacement.")
-            run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "minicloud-deployment", "-f", str(key)])
+            run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "selfrun-deployment", "-f", str(key)])
             os.chmod(key.with_suffix(".pub"), 0o600)
         protected(key)
         self.ensure_secret(directory / "deploy-ssh-public-key", lambda: run(["ssh-keygen", "-y", "-f", str(key)]))
@@ -723,7 +723,7 @@ class Installer:
             self.ensure_secret(key, lambda: run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072"]))
         self.ensure_secret(directory / "openbao-ca.crt", lambda: run([
             "openssl", "req", "-new", "-x509", "-key", str(ca_key), "-days", "3650",
-            "-subj", "/CN=Minicloud private OpenBao CA",
+            "-subj", "/CN=Selfrun private OpenBao CA",
             "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign"]))
         self.ensure_secret(directory / "openbao-server.csr", lambda: run([
             "openssl", "req", "-new", "-key", str(server_key), "-subj", "/CN=openbao",
@@ -762,34 +762,34 @@ class Installer:
             "API_HOSTNAME": self.config["apiHostname"], "CONSOLE_HOSTNAME": self.config["consoleHostname"],
             "APP_DOMAIN": self.config["appDomain"],
             "MANAGE_DNS_RECORDS": str(self.config.get("manageDnsRecords", False)).lower(),
-            "MINICLOUD_SOURCE_URL": self.config.get("sourceUrl", "https://github.com/muniventures/minicloud"),
-            "MINICLOUD_INSTALLATION_ID": self.state["installationId"],
-            "MINICLOUD_SECRETS_DIR": str(self.root / "secrets"),
-            "MINICLOUD_HOST_ID": self.host_id(),
-            "MINICLOUD_GOOGLE_OIDC_ENABLED": str(self.google_provider is not None).lower(),
+            "SELFRUN_SOURCE_URL": self.config.get("sourceUrl", "https://github.com/muniperez/selfrun"),
+            "SELFRUN_INSTALLATION_ID": self.state["installationId"],
+            "SELFRUN_SECRETS_DIR": str(self.root / "secrets"),
+            "SELFRUN_HOST_ID": self.host_id(),
+            "SELFRUN_GOOGLE_OIDC_ENABLED": str(self.google_provider is not None).lower(),
         })
         if self.smtp_courier:
-            env["MINICLOUD_EMAIL_RECOVERY_ENABLED"] = "true"
+            env["SELFRUN_EMAIL_RECOVERY_ENABLED"] = "true"
         sessions = portal_sessions(self.config)
         env.update({
-            "MINICLOUD_PORTAL_KEEP_SIGNED_IN_ENABLED": str(sessions["keepSignedInEnabled"]).lower(),
-            "MINICLOUD_PORTAL_STANDARD_IDLE_MINUTES": str(sessions["standardIdleMinutes"]),
-            "MINICLOUD_PORTAL_STANDARD_MAX_MINUTES": str(sessions["standardMaxMinutes"]),
-            "MINICLOUD_PORTAL_REMEMBERED_IDLE_MINUTES": str(sessions["rememberedIdleMinutes"]),
-            "MINICLOUD_PORTAL_REMEMBERED_MAX_MINUTES": str(sessions["rememberedMaxMinutes"]),
+            "SELFRUN_PORTAL_KEEP_SIGNED_IN_ENABLED": str(sessions["keepSignedInEnabled"]).lower(),
+            "SELFRUN_PORTAL_STANDARD_IDLE_MINUTES": str(sessions["standardIdleMinutes"]),
+            "SELFRUN_PORTAL_STANDARD_MAX_MINUTES": str(sessions["standardMaxMinutes"]),
+            "SELFRUN_PORTAL_REMEMBERED_IDLE_MINUTES": str(sessions["rememberedIdleMinutes"]),
+            "SELFRUN_PORTAL_REMEMBERED_MAX_MINUTES": str(sessions["rememberedMaxMinutes"]),
             # Each renewal extends the upstream Kratos session by its lifespan, so it must cover the longest idle window.
-            "MINICLOUD_KRATOS_SESSION_LIFESPAN": "%dm" % (sessions["rememberedIdleMinutes"]
+            "SELFRUN_KRATOS_SESSION_LIFESPAN": "%dm" % (sessions["rememberedIdleMinutes"]
                                                          if sessions["keepSignedInEnabled"]
                                                          else sessions["standardIdleMinutes"]),
         })
         passkey_policy = passkeys(self.config)
         env.update({
-            "MINICLOUD_PASSKEY_ENABLED": str(passkey_policy["enabled"]).lower(),
-            "MINICLOUD_PASSKEY_RP_DISPLAY_NAME": passkey_policy["rpDisplayName"],
-            "MINICLOUD_PASSKEY_RP_ID": passkey_policy["rpId"],
+            "SELFRUN_PASSKEY_ENABLED": str(passkey_policy["enabled"]).lower(),
+            "SELFRUN_PASSKEY_RP_DISPLAY_NAME": passkey_policy["rpDisplayName"],
+            "SELFRUN_PASSKEY_RP_ID": passkey_policy["rpId"],
         })
         for component, reference in (self.installed["images"] | self.installed["dependencies"]).items():
-            env[f"MINICLOUD_{component.upper()}_IMAGE"] = reference
+            env[f"SELFRUN_{component.upper()}_IMAGE"] = reference
         return env
 
     def validate_kratos_credentials(self):
@@ -826,7 +826,7 @@ class Installer:
             env["OPENBAO_ROOT_TOKEN_FILE"] = str(root_token)
         if arguments[0] in ("up", "run"):
             arguments = (arguments[0], "--pull", "never", *arguments[1:])
-        command = ["docker", "compose", "--project-name", "minicloud", "--project-directory", str(bundle),
+        command = ["docker", "compose", "--project-name", "selfrun", "--project-directory", str(bundle),
                    "--env-file", str(bundle / "images.env"), "-f", str(bundle / "compose.yml")]
         if self.smtp_courier:
             require(set(EMAIL_RECOVERY_FILES) <= self.installed["files"].keys(),
@@ -909,9 +909,9 @@ class Installer:
 
     def bootstrap(self, operation="status", output=None):
         arguments = ["run", "--rm", "-T", "--no-deps", "api-bootstrap", "bootstrap", operation,
-                     "--input-file", "/run/minicloud-bootstrap/input/request.json"]
+                     "--input-file", "/run/selfrun-bootstrap/input/request.json"]
         if output:
-            arguments += ["--output-file", "/run/minicloud-bootstrap/output/" + output]
+            arguments += ["--output-file", "/run/selfrun-bootstrap/output/" + output]
         return json.loads(self.compose(*arguments))
 
     def initialize(self):
@@ -1005,7 +1005,7 @@ class Installer:
                         "Maintenance requires the original complete installation and verified exact installed release.")
                 self.verify_installed_bundle()
                 code = (self.root / "bundle/server_maintenance.py").read_bytes()
-            namespace = {"__name__": "minicloud_verified_maintenance"}
+            namespace = {"__name__": "selfrun_verified_maintenance"}
             exec(compile(code, "verified-release/server_maintenance.py", "exec"), namespace)
             return namespace["execute"](self, globals())
         # Main holds the shared installation lock here; do not race seed against
@@ -1082,7 +1082,7 @@ def main(argv=None):
     parser.add_argument("maintenance_operation", nargs="?", choices=MAINTENANCE_OPERATIONS)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--assets-dir", type=Path, required=True)
-    parser.add_argument("--root", type=Path, default=Path("/opt/minicloud"))
+    parser.add_argument("--root", type=Path, default=Path("/opt/selfrun"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--recovery-dir", type=Path, required=True)
     parser.add_argument("--public-address", action="append", required=True)

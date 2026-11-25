@@ -1,13 +1,13 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class AssetRelease
 {
     [Key] public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string Name { get; set; } = default!;
     public string ArtifactId { get; set; } = default!;
     public DeploymentArtifact Artifact { get; set; } = default!;

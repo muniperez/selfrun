@@ -2,9 +2,9 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Numerics;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class ServerReleaseOptions
 {

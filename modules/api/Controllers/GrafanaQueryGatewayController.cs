@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 /// <summary>
 /// T20 private Loki query gateway. Authenticated ONLY by the app-bound internal

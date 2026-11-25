@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Minicloud.Telemetry.Services;
+using Selfrun.Telemetry.Services;
 
-namespace Minicloud.Telemetry.Controllers;
+namespace Selfrun.Telemetry.Controllers;
 
 [ApiController]
 public sealed class GrafanaProxyController(

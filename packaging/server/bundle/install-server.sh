@@ -43,7 +43,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def main():
     os.umask(0o077)
-    parser = argparse.ArgumentParser(description="Exact signed Minicloud server installer; no latest discovery.")
+    parser = argparse.ArgumentParser(description="Exact signed Selfrun server installer; no latest discovery.")
     parser.add_argument("--tag", required=True)
     parser.add_argument("--assets-dir", type=Path, required=True)
     parser.add_argument("--download", action="store_true",
@@ -54,7 +54,7 @@ def main():
             "Select an exact server-v semantic version.")
     assets = args.assets_dir.absolute()
     protected(assets, True)
-    names = {f"minicloud-server-{args.tag[8:]}.tar.gz", "server-manifest.json",
+    names = {f"selfrun-server-{args.tag[8:]}.tar.gz", "server-manifest.json",
              "install-server.sh", "verify-server-release.py"}
     for name in sorted(names | {"checksums.txt", "checksums.txt.sigstore.json"}):
         path = assets / name
@@ -62,7 +62,7 @@ def main():
             # A partial failed download is retained separately, never mistaken for a release asset.
             partial = assets / (name + ".partial")
             fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            url = f"https://github.com/muniventures/minicloud/releases/download/{args.tag}/{name}"
+            url = f"https://github.com/muniperez/selfrun/releases/download/{args.tag}/{name}"
             with os.fdopen(fd, "wb") as target, urllib.request.build_opener(NoRedirect()).open(url, timeout=60) as source:
                 while data := source.read(1024 * 1024):
                     target.write(data)
@@ -79,7 +79,7 @@ def main():
             finally:
                 os.close(directory)
         protected(path)
-    identity = f"https://github.com/muniventures/minicloud/.github/workflows/server-release.yml@refs/tags/{args.tag}"
+    identity = f"https://github.com/muniperez/selfrun/.github/workflows/server-release.yml@refs/tags/{args.tag}"
     subprocess.run(["cosign", "verify-blob", "--new-bundle-format", "--bundle",
                     str(assets / "checksums.txt.sigstore.json"), "--certificate-identity", identity,
                     "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
@@ -111,7 +111,7 @@ def main():
         helper = archive.extractfile("server_install.py").read()
     require(hashlib.sha256(helper).hexdigest() == manifest["files"]["server_install.py"],
             "Installer helper checksum mismatch.")
-    namespace = {"__name__": "minicloud_verified_installer"}
+    namespace = {"__name__": "selfrun_verified_installer"}
     exec(compile(helper, "verified-release/server_install.py", "exec"), namespace)
     try:
         return namespace["main"](["--tag", args.tag, "--assets-dir", str(assets), *remainder])

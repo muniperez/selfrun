@@ -1,9 +1,9 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Controllers;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public enum MaintenanceAdmissionClass
 {

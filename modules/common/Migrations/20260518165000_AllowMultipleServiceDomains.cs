@@ -1,13 +1,13 @@
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <inheritdoc />
-    [DbContext(typeof(MinicloudDbContext))]
+    [DbContext(typeof(SelfrunDbContext))]
     [Migration("20260518165000_AllowMultipleServiceDomains")]
     public partial class AllowMultipleServiceDomains : Migration
     {

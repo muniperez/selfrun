@@ -1,13 +1,13 @@
 ﻿using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <inheritdoc />
-    [DbContext(typeof(MinicloudDbContext))]
+    [DbContext(typeof(SelfrunDbContext))]
     [Migration("20260506103000_FixCliLoginSessionPostgresTimestamps")]
     public partial class FixCliLoginSessionPostgresTimestamps : Migration
     {

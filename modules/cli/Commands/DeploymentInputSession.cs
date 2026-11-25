@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 using System.Security.Cryptography;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal sealed class DeploymentInputSession : IDisposable
 {
     private const long MaxSnapshotBytes = 2L * 1024 * 1024 * 1024;
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), "minicloud-inputs", Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "selfrun-inputs", Guid.NewGuid().ToString("N"));
     private readonly Dictionary<string, (string Path, string Digest)> _files = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ServiceInputSnapshot> _services = new(StringComparer.Ordinal);
     private long _bytes;
@@ -18,7 +18,7 @@ internal sealed class DeploymentInputSession : IDisposable
     public long SnapshotBytes => _bytes;
     public long CapturedBytes => _capturedBytes;
 
-    public ServiceInputSnapshot Get(string name, MinicloudServiceConfig service)
+    public ServiceInputSnapshot Get(string name, SelfrunServiceConfig service)
     {
         if (_services.TryGetValue(name, out var existing)) { return existing; }
         service = service with
@@ -59,7 +59,7 @@ internal sealed class DeploymentInputSession : IDisposable
             var relative = Path.GetRelativePath(sourceRoot, source).Replace('\\', '/');
             if (relative.StartsWith("../", StringComparison.Ordinal))
             {
-                relative = source == dockerfile ? "minicloud-artifact/Dockerfile" : "minicloud-artifact/Dockerfile.dockerignore";
+                relative = source == dockerfile ? "selfrun-artifact/Dockerfile" : "selfrun-artifact/Dockerfile.dockerignore";
             }
             if (!_files.TryGetValue(source, out var frozen))
             {
@@ -126,4 +126,4 @@ internal sealed class DeploymentInputSession : IDisposable
 }
 
 internal sealed record SnapshotFile(string RelativePath, string Digest, int ExecuteMode);
-internal sealed record ServiceInputSnapshot(MinicloudServiceConfig Service, IReadOnlyList<SnapshotFile> Files);
+internal sealed record ServiceInputSnapshot(SelfrunServiceConfig Service, IReadOnlyList<SnapshotFile> Files);

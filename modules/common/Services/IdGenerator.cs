@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public interface IIdGenerator
 {

@@ -1,8 +1,8 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Common.Data;
+namespace Selfrun.Common.Data;
 
 public static class SqliteDatabaseConfigurator
 {
@@ -17,7 +17,7 @@ public static class SqliteDatabaseConfigurator
         return builder.ToString();
     }
 
-    public static async Task ConfigureDatabaseAsync(MinicloudDbContext db)
+    public static async Task ConfigureDatabaseAsync(SelfrunDbContext db)
     {
         await db.Database.OpenConnectionAsync();
         try

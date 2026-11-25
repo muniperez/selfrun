@@ -1,9 +1,9 @@
 using System.Security.Claims;
 using System.Text.Json;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed class BrowserRequestSecurityMiddleware(RequestDelegate next)
 {
@@ -21,7 +21,7 @@ public sealed class BrowserRequestSecurityMiddleware(RequestDelegate next)
                 ? null
                 : await sessions.FindByIdAsync(sessionId, context.RequestAborted);
             var origin = context.Request.Headers.Origin;
-            var csrf = context.Request.Headers["X-Minicloud-CSRF"].ToString();
+            var csrf = context.Request.Headers["X-Selfrun-CSRF"].ToString();
             if (session is null || session.RevokedAt is not null ||
                 !origins.IsAllowed(origin.Count == 1 ? origin.ToString() : null) ||
                 !sessions.ValidateCsrf(session, csrf))

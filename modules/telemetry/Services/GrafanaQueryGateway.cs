@@ -5,11 +5,11 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Telemetry.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed record GrafanaGatewayResolution(string AppId, string OrganizationId, string TenantId, string DataSourceUid);
 public sealed record GrafanaGatewayOutcome(int StatusCode, byte[]? Body, string? ContentType, string? ErrorCode, string? ErrorMessage);

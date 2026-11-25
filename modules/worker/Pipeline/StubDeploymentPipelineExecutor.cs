@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
-using Minicloud.Common.Models;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Worker.Pipeline;
+namespace Selfrun.Worker.Pipeline;
 
 /// <summary>
 /// Stub pipeline executor for foundation testing before full pipeline implementation (T40).

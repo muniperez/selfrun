@@ -3,7 +3,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Rendering;
+namespace Selfrun.Cli.Rendering;
 
 public static partial class TerminalTextHelper
 {

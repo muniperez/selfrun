@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record GitHubAppStatus(string OrganizationId, string Status, string? ConnectionId = null,
     string? OwnerLogin = null, string? OwnerType = null, long? AppId = null, string? AppSlug = null,

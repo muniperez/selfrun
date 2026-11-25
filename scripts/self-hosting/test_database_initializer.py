@@ -40,9 +40,9 @@ class DatabaseInitializerTests(unittest.TestCase):
             "PATH": f"{self.bin}:{environment.get('PATH', '')}",
             "CAPTURE_SQL": str(self.sql),
             "CAPTURE_LOG": str(self.log),
-            "MINICLOUD_POSTGRES_ADMIN_PASSWORD_FILE": str(self.secret("admin", "synthetic-admin")),
-            "MINICLOUD_APP_DB_PASSWORD_FILE": str(self.secret("app", values.get("app", "synthetic-app"))),
-            "MINICLOUD_KRATOS_DB_PASSWORD_FILE": str(self.secret("kratos", values.get("kratos", "synthetic-kratos"))),
+            "SELFRUN_POSTGRES_ADMIN_PASSWORD_FILE": str(self.secret("admin", "synthetic-admin")),
+            "SELFRUN_APP_DB_PASSWORD_FILE": str(self.secret("app", values.get("app", "synthetic-app"))),
+            "SELFRUN_KRATOS_DB_PASSWORD_FILE": str(self.secret("kratos", values.get("kratos", "synthetic-kratos"))),
         })
         return subprocess.run(
             ["/bin/sh", str(INITIALIZER)], env=environment, text=True,
@@ -59,9 +59,9 @@ class DatabaseInitializerTests(unittest.TestCase):
         result = self.run_initializer({})
         self.assertEqual(0, result.returncode, result.stderr)
         sql = self.sql.read_text()
-        self.assertIn("CREATE ROLE minicloud LOGIN PASSWORD", sql)
+        self.assertIn("CREATE ROLE selfrun LOGIN PASSWORD", sql)
         self.assertIn("CREATE ROLE kratos LOGIN PASSWORD", sql)
-        self.assertIn("CREATE DATABASE minicloud OWNER minicloud", sql)
+        self.assertIn("CREATE DATABASE selfrun OWNER selfrun", sql)
         self.assertIn("CREATE DATABASE kratos OWNER kratos", sql)
         self.assertIn("NOT EXISTS", sql)
         self.assertIn("refusing to alter it", sql)
@@ -75,9 +75,9 @@ class DatabaseInitializerTests(unittest.TestCase):
     def test_missing_or_empty_protected_credential_fails_closed(self):
         missing = dict(os.environ)
         missing["PATH"] = f"{self.bin}:{missing.get('PATH', '')}"
-        missing["MINICLOUD_POSTGRES_ADMIN_PASSWORD_FILE"] = str(self.secrets / "missing")
-        missing["MINICLOUD_APP_DB_PASSWORD_FILE"] = str(self.secret("app", "app"))
-        missing["MINICLOUD_KRATOS_DB_PASSWORD_FILE"] = str(self.secret("kratos", "kratos"))
+        missing["SELFRUN_POSTGRES_ADMIN_PASSWORD_FILE"] = str(self.secrets / "missing")
+        missing["SELFRUN_APP_DB_PASSWORD_FILE"] = str(self.secret("app", "app"))
+        missing["SELFRUN_KRATOS_DB_PASSWORD_FILE"] = str(self.secret("kratos", "kratos"))
         result = subprocess.run(
             ["/bin/sh", str(INITIALIZER)], env=missing, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
@@ -98,8 +98,8 @@ class DatabaseInitializerTests(unittest.TestCase):
         result = self.run_initializer({"app": app, "kratos": kratos})
         self.assertEqual(0, result.returncode, result.stderr)
         sql = self.sql.read_text()
-        self.assertIn("\\getenv app_password MINICLOUD_APP_DB_PASSWORD", sql)
-        self.assertIn("\\getenv kratos_password MINICLOUD_KRATOS_DB_PASSWORD", sql)
+        self.assertIn("\\getenv app_password SELFRUN_APP_DB_PASSWORD", sql)
+        self.assertIn("\\getenv kratos_password SELFRUN_KRATOS_DB_PASSWORD", sql)
         self.assertIn(":'app_password'", sql)
         self.assertIn(":'kratos_password'", sql)
         self.assertNotIn(app, sql)
@@ -124,14 +124,14 @@ class DatabaseInitializerTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    os.environ.get("MINICLOUD_TEST_CACHED_POSTGRES") == "1",
-    "Set MINICLOUD_TEST_CACHED_POSTGRES=1 for the isolated cached-image Docker check.",
+    os.environ.get("SELFRUN_TEST_CACHED_POSTGRES") == "1",
+    "Set SELFRUN_TEST_CACHED_POSTGRES=1 for the isolated cached-image Docker check.",
 )
 class DatabaseInitializerPostgresTests(unittest.TestCase):
     def test_concurrent_replay_interruption_and_existing_volume_preserve_state(self):
         image = "postgres:16-alpine"
         subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True)
-        name = f"minicloud-t41-db-{uuid.uuid4().hex[:12]}"
+        name = f"selfrun-t41-db-{uuid.uuid4().hex[:12]}"
         volume = f"{name}-data"
         artifacts = ROOT / ".local/artifacts"
         artifacts.mkdir(parents=True, exist_ok=True)
@@ -177,9 +177,9 @@ class DatabaseInitializerPostgresTests(unittest.TestCase):
                 return docker(
                     "exec",
                     "--env", "PGUSER=postgres", "--env", "PGDATABASE=postgres",
-                    "--env", "MINICLOUD_POSTGRES_ADMIN_PASSWORD_FILE=/fixture/admin",
-                    "--env", "MINICLOUD_APP_DB_PASSWORD_FILE=/fixture/app",
-                    "--env", "MINICLOUD_KRATOS_DB_PASSWORD_FILE=/fixture/kratos",
+                    "--env", "SELFRUN_POSTGRES_ADMIN_PASSWORD_FILE=/fixture/admin",
+                    "--env", "SELFRUN_APP_DB_PASSWORD_FILE=/fixture/app",
+                    "--env", "SELFRUN_KRATOS_DB_PASSWORD_FILE=/fixture/kratos",
                     name, "/bin/sh", "/init-databases.sh", check=False,
                 )
 
@@ -192,14 +192,14 @@ class DatabaseInitializerPostgresTests(unittest.TestCase):
                     "APP_PASSWORD=$(cat /fixture/app); export APP_PASSWORD; "
                     "psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'\n"
                     "\\getenv app_password APP_PASSWORD\n"
-                    "SELECT format('CREATE ROLE minicloud LOGIN PASSWORD %L', :'app_password') \\gexec\n"
+                    "SELECT format('CREATE ROLE selfrun LOGIN PASSWORD %L', :'app_password') \\gexec\n"
                     "SQL",
                 )
                 with ThreadPoolExecutor(max_workers=3) as executor:
                     results = list(executor.map(lambda _: initialize(), range(3)))
                 for result in results:
                     self.assertEqual(0, result.returncode, result.stderr)
-                for user, credential in (("minicloud", "app"), ("kratos", "kratos")):
+                for user, credential in (("selfrun", "app"), ("kratos", "kratos")):
                     authenticated = docker(
                         "exec", name, "/bin/sh", "-ec",
                         'PGPASSWORD=$(cat "$1"); export PGPASSWORD; '
@@ -208,27 +208,27 @@ class DatabaseInitializerPostgresTests(unittest.TestCase):
                     )
                     self.assertEqual(user, authenticated.stdout.strip())
 
-                sql("CREATE TABLE t41_marker (value text); INSERT INTO t41_marker VALUES ('retained')", "minicloud")
-                self.assertEqual("minicloud|minicloud\nkratos|kratos", sql(
+                sql("CREATE TABLE t41_marker (value text); INSERT INTO t41_marker VALUES ('retained')", "selfrun")
+                self.assertEqual("selfrun|selfrun\nkratos|kratos", sql(
                     "SELECT datname, pg_get_userbyid(datdba) FROM pg_database "
-                    "WHERE datname IN ('minicloud', 'kratos') ORDER BY datname DESC"
+                    "WHERE datname IN ('selfrun', 'kratos') ORDER BY datname DESC"
                 ))
                 docker("rm", "--force", name)
                 start()
                 result = initialize()
                 self.assertEqual(0, result.returncode, result.stderr)
-                self.assertEqual("retained", sql("SELECT value FROM t41_marker", "minicloud"))
+                self.assertEqual("retained", sql("SELECT value FROM t41_marker", "selfrun"))
 
                 sql("ALTER DATABASE kratos OWNER TO postgres")
                 result = initialize()
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("unexpected owner", result.stderr)
                 self.assertEqual("postgres", sql("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='kratos'"))
-                sql("ALTER DATABASE kratos OWNER TO kratos; ALTER ROLE minicloud SUPERUSER")
+                sql("ALTER DATABASE kratos OWNER TO kratos; ALTER ROLE selfrun SUPERUSER")
                 result = initialize()
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("unexpected privileges", result.stderr)
-                self.assertEqual("retained", sql("SELECT value FROM t41_marker", "minicloud"))
+                self.assertEqual("retained", sql("SELECT value FROM t41_marker", "selfrun"))
             finally:
                 docker("rm", "--force", name, check=False)
                 docker("volume", "rm", volume, check=False)

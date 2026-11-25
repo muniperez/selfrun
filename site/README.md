@@ -4,7 +4,7 @@ The site uses plain HTML and CSS targeting <https://selfrun.dev>. The build
 script stages the public files and an explicit list of shared README assets.
 Asset links stay relative (`./`) so they work both at the custom domain root
 (`https://selfrun.dev/`) and under the GitHub Pages project path
-(`/minicloud/`) during the repository migration.
+(`/selfrun/`).
 
 ## Preview locally
 
@@ -27,5 +27,4 @@ and smoke-tests the CLI on each supported platform and stages its archive under
 `downloads/`. The local HTML preview omits these archives.
 
 Once DNS for `selfrun.dev` is pointed at GitHub Pages, configure the custom
-domain in **Settings → Pages** (and add `CNAME` to `site/public/` in the
-Stage 3 cutover; see [rename migration notes](../docs/selfrun-rename-migration.md)).
+domain in **Settings → Pages**.

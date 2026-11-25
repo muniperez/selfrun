@@ -1,7 +1,7 @@
 using System.Net;
-using Minicloud.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Extensibility;
 
-namespace Minicloud.Common.Providers.Common;
+namespace Selfrun.Common.Providers.Common;
 
 public class ProviderApiException : HttpRequestException
 {

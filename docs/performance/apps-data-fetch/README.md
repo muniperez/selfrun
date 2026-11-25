@@ -70,21 +70,21 @@ rejects a nonempty public schema, applies product migrations, and inserts
 synthetic data. It does not drop or clear databases.
 
 ```sh
-docker run --name minicloud-apps-perf --rm -d \
+docker run --name selfrun-apps-perf --rm -d \
   -e POSTGRES_PASSWORD=synthetic-perf -e POSTGRES_DB=apps_perf \
   -p 127.0.0.1:55439:5432 postgres:17-alpine
 # Wait until this readiness check succeeds.
-docker exec minicloud-apps-perf pg_isready -U postgres
-MINICLOUD_PERF_DATABASE='Host=127.0.0.1;Port=55439;Database=apps_perf;Username=postgres;******' \
+docker exec selfrun-apps-perf pg_isready -U postgres
+SELFRUN_PERF_DATABASE='Host=127.0.0.1;Port=55439;Database=apps_perf;Username=postgres;******' \
   dotnet run --project tools/app-summary-benchmark/AppSummaryBenchmark.csproj -c Release
-docker stop minicloud-apps-perf
+docker stop selfrun-apps-perf
 ```
 
 Replace the redacted suffix with the Npgsql connection-string password key and
 the same value configured in `POSTGRES_PASSWORD`.
 
 The tool writes captured SQL and PostgreSQL plans under the git-ignored
-`.local/artifacts/apps-data-fetch/` directory. Set `MINICLOUD_PERF_OUTPUT` to
+`.local/artifacts/apps-data-fetch/` directory. Set `SELFRUN_PERF_OUTPUT` to
 override the SQL/plan directory; redirect console output to a file there when
 keeping run logs. Do not copy generated outputs into `docs/` or stage them;
 update this maintained summary only after reviewing matched runs.

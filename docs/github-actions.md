@@ -1,18 +1,13 @@
 # GitHub Actions Workflow
 
-> **Rename note:** MiniCloud is transitioning to **Selfrun** (`selfrun.dev`). The
-> reusable workflow path `muniventures/minicloud/.github/workflows/customer-deploy.yml`
-> and all legacy `minicloud_*` inputs/secrets remain supported alongside the new
-> `selfrun_*` aliases. See [Selfrun Rename Migration Guide](selfrun-rename-migration.md).
-
 Use the reusable Selfrun workflow when you want GitHub Actions to deploy source artifacts through the Selfrun API.
 To create or check your own control-plane VPS from Actions, see
 [Seed a control plane](#seed-a-control-plane).
 
-For self-hosting, pass your HTTPS API origin as `selfrun_api_url` (or legacy `minicloud_api_url`). When the
+For self-hosting, pass your HTTPS API origin as `selfrun_api_url`. When the
 instance has no managed registry, use `buildMode: source` for source-backed
 services. Pin the reusable workflow to a reviewed commit and set
-`selfrun_version` (or legacy `minicloud_version`) to a full CLI source commit SHA for repeatable builds.
+`selfrun_version` to a full CLI source commit SHA for repeatable builds.
 
 ## Prerequisites
 
@@ -25,14 +20,14 @@ Add these secrets to your app repository. Repository or organization secrets wor
 
 | Secret | Required | Description |
 | --- | --- | --- |
-| `SELFRUN_API_KEY` (or legacy `MINICLOUD_API_KEY`) | Yes | Selfrun API key from the console. |
-| `SELFRUN_POSTGRES_PASSWORD` (or `MINICLOUD_POSTGRES_PASSWORD`) | Only for `database: postgres` | Postgres password used by the deployment. |
+| `SELFRUN_API_KEY` | Yes | Selfrun API key from the console. |
+| `SELFRUN_POSTGRES_PASSWORD` | Only for `database: postgres` | Postgres password used by the deployment. |
 
 Add this repository or organization variable:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `SELFRUN_APP_ID` (or `MINICLOUD_APP_ID`) | Yes | App id from the Selfrun console URL, for example `app_52kqllu8k1nq4kg352kqllu8`. |
+| `SELFRUN_APP_ID` | Yes | App id from the Selfrun console URL, for example `app_52kqllu8k1nq4kg352kqllu8`. |
 
 ## Managed VPS Plans
 
@@ -59,7 +54,7 @@ permissions:
 
 ## Backend App
 
-Create `.github/workflows/selfrun-deploy.yml` (existing `.github/workflows/minicloud-deploy.yml` files continue to work unchanged):
+Create `.github/workflows/selfrun-deploy.yml`:
 
 ```yaml
 name: Deploy With Selfrun
@@ -75,8 +70,9 @@ permissions:
 
 jobs:
   selfrun:
-    uses: muniventures/minicloud/.github/workflows/customer-deploy.yml@main
+    uses: muniperez/selfrun/.github/workflows/customer-deploy.yml@<reviewed-commit-sha>
     with:
+      selfrun_version: <reviewed-cli-source-commit-sha>
       app_id: ${{ vars.SELFRUN_APP_ID }}
       database: postgres
       services: |
@@ -108,8 +104,9 @@ permissions:
 
 jobs:
   selfrun:
-    uses: muniventures/minicloud/.github/workflows/customer-deploy.yml@main
+    uses: muniperez/selfrun/.github/workflows/customer-deploy.yml@<reviewed-commit-sha>
     with:
+      selfrun_version: <reviewed-cli-source-commit-sha>
       app_id: ${{ vars.SELFRUN_APP_ID }}
       database: postgres
       services: |
@@ -139,20 +136,13 @@ jobs:
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `app_id` | Yes | | App id from the Selfrun console URL. Pass `${{ vars.SELFRUN_APP_ID }}` (or `${{ vars.MINICLOUD_APP_ID }}`) from the caller workflow. |
+| `app_id` | Yes | | App id from the Selfrun console URL. Pass `${{ vars.SELFRUN_APP_ID }}` from the caller workflow. |
 | `database` | No | `sqlite` | `sqlite` or `postgres`. |
-| `selfrun_environment` / `minicloud_environment` | No | `prod` | `prod` or `staging`. `selfrun_environment` takes precedence when set. `prod` uses the production API; `staging` uses `https://api.cloud-dev.muni.dev`. |
-| `services` | Yes | | YAML service array. Uses the same service fields as `selfrun.yml` / `minicloud.yml`, with `name` added because a workflow input cannot receive the keyed `services` map directly. |
-| `selfrun_version` / `minicloud_version` | No | `2a5ae0ccea6c3dd680b4146586ec0668c60c8b93` | Full lowercase CLI source commit SHA or exact CLI version tag (for example `v3.1.0`). `selfrun_version` takes precedence when set. Branches, `latest`, and `server-v*` tags are rejected. The workflow builds this source using Git and the .NET 10 SDK. |
-| `selfrun_api_url` / `minicloud_api_url` | No | | HTTPS API origin for a self-hosted instance. `selfrun_api_url` takes precedence when set. |
-| `selfrun_app_domain` / `minicloud_app_domain` | No | | Application domain (`APP_DOMAIN`) for a self-hosted instance. `selfrun_app_domain` takes precedence when set. |
-
-Legacy secret `minicloud_api_key` remains accepted when `selfrun_api_key` is omitted.
-
-This default selects the merged public authentication, SSH and numbered-deployment
-client for the [unpublished public candidate](public-candidate-handoff.md).
-It is a source/protocol selection, not evidence of tested runtime compatibility
-or permission to deploy that candidate.
+| `selfrun_environment` | No | `prod` | `prod` or `staging`. `prod` uses the production API; `staging` uses `https://api.cloud-dev.muni.dev`. |
+| `services` | Yes | | YAML service array. Uses the same service fields as `selfrun.yml`, with `name` added because a workflow input cannot receive the keyed `services` map directly. |
+| `selfrun_version` | Yes | | Full lowercase CLI source commit SHA or exact CLI version tag (for example `v3.1.0`). Branches, `latest`, and `server-v*` tags are rejected. The workflow builds this source using Git and the .NET 10 SDK. |
+| `selfrun_api_url` | No | | HTTPS API origin for a self-hosted instance. |
+| `selfrun_app_domain` | No | | Application domain (`APP_DOMAIN`) for a self-hosted instance. |
 
 ## Services
 
@@ -216,7 +206,7 @@ The workflow sends `secretEnv` references to the Selfrun API. Selfrun resolves t
 The workflow runs one deploy job:
 
 - checks out the repository
-- clones and verifies the selected CLI source revision, then builds the CLI with the .NET 10 SDK in a separate runner-temporary directory (providing both `selfrun` and `minicloud` commands)
+- clones and verifies the selected CLI source revision, then builds the CLI with the .NET 10 SDK in a separate runner-temporary directory
 - converts the `services` YAML input into a temporary `selfrun.yml`
 - runs `selfrun deploy --all --config selfrun.yml`
 
@@ -244,54 +234,52 @@ For SQLite, omit `postgres_password`.
 
 ## Self-hosted domains
 
-Set `selfrun_api_url` (or `minicloud_api_url`) to your HTTPS API origin and `selfrun_app_domain` (or `minicloud_app_domain`) to
-that installation's APP_DOMAIN. The latter sets `SELFRUN_APP_DOMAIN` (and legacy `MINICLOUD_APP_DOMAIN`) for
+Set `selfrun_api_url` to your HTTPS API origin and `selfrun_app_domain` to
+that installation's APP_DOMAIN. The latter sets `SELFRUN_APP_DOMAIN` for
 framework host validation. Both are required when selecting a self-hosted instance.
-Select a CLI source revision containing these options with `selfrun_version` (or `minicloud_version`).
+Select a CLI source revision containing these options with `selfrun_version`.
 
 ## Seed a control plane
 
 `seed.yml` is a separate reusable workflow that wraps the stateless
-`minicloud seed check|plan|apply` CLI so a fresh GitHub-hosted runner can
+`selfrun seed check|plan|apply` CLI so a fresh GitHub-hosted runner can
 create or continue your **own** first control-plane VPS. It needs no fork,
-existing Minicloud instance, persistent runner, Docker image or external state
+existing Selfrun instance, persistent runner, Docker image or external state
 service. Progress lives with the provider and on the VPS; every run starts
 from the secrets you pass and the live provider/host state. Read the
 [seed guide](seed.md) first: the same prerequisites, provider permissions,
-costs and security boundaries apply. This workflow does not change
-`customer-deploy.yml`, the public installers or package names.
+costs and security boundaries apply.
 
 This is source functionality, not a release or live-provider qualification.
-The CLI revision must be the canonical stateless seed merge (`7a4b161`) or one
-of its descendants on canonical `main`: select either an exact signed CLI tag
-or an explicit full source commit SHA. A compatible signed server release is
+Select an exact signed Selfrun CLI tag or the full SHA of a Selfrun commit
+on canonical `main`. A compatible signed server release is
 still required for planning and installation; no example tag is approval to use it.
 
 ### Set up
 
 1. Create a GitHub Environment in your repository, for example
-   `minicloud-seed`. Add **required reviewers** (strongly recommended for
+   `selfrun-seed`. Add **required reviewers** (strongly recommended for
    `apply`, which can create a billable VPS) and restrict deployment branches
    to your default branch.
 2. Add these **Environment** secrets. Repository secrets are not needed.
 
    | Secret | Required | Contents |
    | --- | --- | --- |
-   | `MINICLOUD_SEED_CONFIG` | Yes | [Stateless seed JSON](stateless-seed.md#protected-configuration-and-user-owned-key) (`schemaVersion` 1): stable `seedId` from `minicloud seed new-id`, `provider`, **`providerAccount`** (stable account scope, never a credential), `region`, `size`, `domain`, `appDomain`, exact `serverVersion`, and optional `providerCredential` or operator keys. Add explicit initial intent or an existing `target` as described below. Keep the same `seedId` for every run. |
-   | `MINICLOUD_SEED_SSH_KEY` | For `plan`/`apply` | **Unencrypted** OpenSSH private key used as the seed root identity. |
-   | `MINICLOUD_SEED_PROVIDER_CREDENTIAL` | For initial creation if not in config | Provider API credential; overrides embedded `providerCredential`. Optional for an explicit existing target. |
+   | `SELFRUN_SEED_CONFIG` | Yes | [Stateless seed JSON](stateless-seed.md#protected-configuration-and-user-owned-key) (`schemaVersion` 1): stable `seedId` from `selfrun seed new-id`, `provider`, **`providerAccount`** (stable account scope, never a credential), `region`, `size`, `domain`, `appDomain`, exact `serverVersion`, and optional `providerCredential` or operator keys. Add explicit initial intent or an existing `target` as described below. Keep the same `seedId` for every run. |
+   | `SELFRUN_SEED_SSH_KEY` | For `plan`/`apply` | **Unencrypted** OpenSSH private key used as the seed root identity. |
+   | `SELFRUN_SEED_PROVIDER_CREDENTIAL` | For initial creation if not in config | Provider API credential; overrides embedded `providerCredential`. Optional for an explicit existing target. |
 
    Generate a dedicated key for this purpose, for example
-   `ssh-keygen -t ed25519 -N '' -f minicloud-seed`, store the private key only
+   `ssh-keygen -t ed25519 -N '' -f selfrun-seed`, store the private key only
    in the Environment secret and your own offline backup, then delete local
    copies you do not need. GitHub Actions has no interactive passphrase and the
    workflow does not use an SSH agent, so encrypted keys are rejected. Anyone
    who can run jobs in this Environment can use the key: protect it with
    reviewers and branch rules, and rotate it if exposed.
-3. Commit a caller workflow such as `.github/workflows/minicloud-seed.yml`:
+3. Commit a caller workflow such as `.github/workflows/selfrun-seed.yml`:
 
 ```yaml
-name: Minicloud control plane
+name: Selfrun control plane
 
 on:
   workflow_dispatch:
@@ -314,17 +302,17 @@ permissions:
 
 jobs:
   seed:
-    uses: muniventures/minicloud/.github/workflows/seed.yml@<reviewed-commit-sha>
+    uses: muniperez/selfrun/.github/workflows/seed.yml@<reviewed-commit-sha>
     with:
       operation: ${{ inputs.operation }}
       approve: ${{ inputs.approve }}
       new_seed: ${{ inputs.new_seed }}
-      environment: minicloud-seed
-      minicloud_version: v<exact-cli-version>
+      environment: selfrun-seed
+      selfrun_version: v<exact-cli-version>
     secrets:
-      MINICLOUD_SEED_CONFIG: ${{ secrets.MINICLOUD_SEED_CONFIG }}
-      MINICLOUD_SEED_SSH_KEY: ${{ secrets.MINICLOUD_SEED_SSH_KEY }}
-      MINICLOUD_SEED_PROVIDER_CREDENTIAL: ${{ secrets.MINICLOUD_SEED_PROVIDER_CREDENTIAL }}
+      SELFRUN_SEED_CONFIG: ${{ secrets.SELFRUN_SEED_CONFIG }}
+      SELFRUN_SEED_SSH_KEY: ${{ secrets.SELFRUN_SEED_SSH_KEY }}
+      SELFRUN_SEED_PROVIDER_CREDENTIAL: ${{ secrets.SELFRUN_SEED_PROVIDER_CREDENTIAL }}
 ```
 
 The caller job cannot set `environment`; the reusable workflow binds the
@@ -348,10 +336,10 @@ from source integration and publication.
 | --- | --- | --- |
 | `operation` | Yes | `check` (read-only), `plan` (read-only) or `apply`. |
 | `environment` | Yes | GitHub Environment holding the seed secrets and protection rules. |
-| `minicloud_version` | Yes | Exact signed CLI tag `vX.Y.Z[-prerelease]` (verified binary install) or full lowercase canonical-`main` commit SHA (explicit source build with the .NET 10 SDK). Branches, `latest` and `server-v*` tags are rejected. There is no fallback between the two modes. |
+| `selfrun_version` | Yes | Exact signed CLI tag `vX.Y.Z[-prerelease]` (verified binary install) or full lowercase canonical-`main` commit SHA (explicit source build with the .NET 10 SDK). Branches, `latest` and `server-v*` tags are rejected. There is no fallback between the two modes. |
 | `approve` | For `apply` | 64-character approval digest printed by a reviewed `plan`. Rejected for other operations. |
 | `new_seed` | No | Default `false`. For initial `plan`/`apply`, also requires explicit `initialCreationIntent` in the protected config. Rejected for `check`. |
-| `report_artifact_name` | No | Default `minicloud-seed-report`. Use distinct names when one run calls the workflow more than once. |
+| `report_artifact_name` | No | Default `selfrun-seed-report`. Use distinct names when one run calls the workflow more than once. |
 
 Outputs: `result` (`success`, `handoff_pending`, `upgrade_required`,
 `reconciliation_required` or `error`), `classification` and `approval_digest`.
@@ -367,7 +355,7 @@ Outputs: `result` (`success`, `handoff_pending`, `upgrade_required`,
    prices, release and target in the job summary with its **approval digest**.
    For initial creation, include a provider credential and add
    `"initialCreationIntent": "one-authorized-creator-no-unresolved-create"` to
-   `MINICLOUD_SEED_CONFIG` with no `target`. This, together with `new_seed: true`,
+   `SELFRUN_SEED_CONFIG` with no `target`. This, together with `new_seed: true`,
    asserts that there is exactly one authorized creator and no unresolved prior
    request. Never repeat the assertion after an uncertain create; reconcile first.
 3. `apply` with `approve: <digest>` and the same `new_seed` value. The fresh
@@ -376,7 +364,7 @@ Outputs: `result` (`success`, `handoff_pending`, `upgrade_required`,
    plan and review again.
 4. Handoff: after creation the run ends with `handoff_pending`. Read the server
    details from the job summary or validated report and verify them in the provider's
-   authenticated console. In `MINICLOUD_SEED_CONFIG`, map report `target.id` to
+   authenticated console. In `SELFRUN_SEED_CONFIG`, map report `target.id` to
    config `target.serverId`, `target.address` to `target.ipv4`, `target.image` to
    `target.image`, and `target.primaryIpId` to `target.primaryIpId` if reported.
    If the report has no address yet, obtain it from the authenticated inventory.
@@ -407,7 +395,7 @@ them, and a copy that exists only on the VPS is not an independent backup.
 
 The job summary shows the operation, result, classification, successful plan
 and approval digest, SSH key fingerprint, target details, reasons and next
-actions, read from the CLI's `minicloud-seed-report` (`schemaVersion` 1).
+actions, read from the CLI's `selfrun-seed-report` (`schemaVersion` 1).
 Raw CLI output is not published. Invalid reports and reports containing
 supplied secrets fail the job, set `result` to `error`, and publish neither an
 approval digest nor an artifact. Short credentials can conservatively cause
@@ -429,8 +417,7 @@ recover an artifact.
   printed; extracted credentials are additionally masked. Raw CLI output
   cannot issue workflow commands. A report containing supplied secret material is
   not uploaded.
-- The installer is pinned to a separately reviewed, GitHub-signed canonical
-  commit and verified by SHA-256, independent of the selected CLI ref.
+- The installer is pinned to a reviewed Git blob and verified by SHA-256, independent of the selected CLI ref.
   Binary installs verify the Sigstore-signed release inventory and compare
   its installed source revision to the resolved tag. Source builds use only
   the exact supported canonical commit. Cosign 2.6.5 is installed from its

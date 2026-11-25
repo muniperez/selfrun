@@ -4,9 +4,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using Minicloud.Cli.Commands;
+using Selfrun.Cli.Commands;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal sealed record SeedSelection(string Provider, string Region, string Size, string Domain, string AppDomain, string ServerVersion)
 {
@@ -121,5 +121,5 @@ internal static class SeedGuard
         if (!condition) throw new CliCommandException(CliExitCodes.ValidationError, message);
     }
     public static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-    public static string Scope(string token, string operation) => Hash("minicloud-seed-scope:" + operation + ":" + token);
+    public static string Scope(string token, string operation) => Hash("selfrun-seed-scope:" + operation + ":" + token);
 }

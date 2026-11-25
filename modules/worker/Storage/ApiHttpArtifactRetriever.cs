@@ -1,6 +1,6 @@
 using System.Net.Http.Headers;
 
-namespace Minicloud.Worker.Storage;
+namespace Selfrun.Worker.Storage;
 
 public sealed class ApiHttpArtifactRetriever : IArtifactRetriever
 {

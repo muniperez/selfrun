@@ -38,7 +38,7 @@ This architecture builds on [Provider Accounts and Plans](provider-accounts-and-
   - Enforces unique wire types, aliases, and `CloudProvider` bindings at startup.
   - `GetAll()` exposes all registered descriptors for diagnostics and contract verification.
   - `GetSupported()` exposes only `Qualified` providers (plus explicitly allowlisted gated providers via `ProviderRegistryOptions.EnabledGatedProviders`).
-  - Registered via `AddMinicloudProviders(...)` and extensible via `services.AddVpsProvider<TRegistration>()` or `services.AddVpsProvider(registration)`.
+  - Registered via `AddSelfrunProviders(...)` and extensible via `services.AddVpsProvider<TRegistration>()` or `services.AddVpsProvider(registration)`.
 - **API exposure**: `GET /api/provider-types` projects `IVpsProviderRegistry.GetSupported()` into `ProviderTypeResponse`, preserving all existing fields (`type`, `name`, `supportsStorage`, `defaultImage`, `defaultOsId`) and adding additive `capabilities` (`ProviderTypeCapabilitiesDto`) and `qualificationState`.
 
 ---
@@ -106,7 +106,7 @@ Optional read-only discovery contract:
 
 ### Least-Privilege Credential Guidance for Planned Providers
 
-- **AWS (`#346`)**: Dedicated IAM user/role scoped to a single AWS account and required EC2/VPC/EBS/STS permissions restricted by `minicloud` resource tags where supported; never root credentials.
+- **AWS (`#346`)**: Dedicated IAM user/role scoped to a single AWS account and required EC2/VPC/EBS/STS permissions restricted by `selfrun` resource tags where supported; never root credentials.
 - **Azure (`#347`)**: Dedicated Entra application / managed identity scoped to a dedicated Resource Group (or single Subscription with narrow VM/Network/Disk contributor role); never Tenant-wide Owner.
 - **GCP (`#348`)**: Dedicated Service Account in a single GCP project with narrow Compute Instance/Disk/Network admin roles (no Project Owner or Billing Admin).
 - **OVHcloud (`#349`)**: Dedicated OAuth2 client or scoped Consumer Key restricted to the target `serviceName` (Public Cloud project ID or dedicated bare-metal service list) with read/write limited to required compute/network endpoints.
@@ -115,7 +115,7 @@ Optional read-only discovery contract:
 
 ### Ownership Evidence and Verification
 
-- `ProviderOwnershipEvidence` standardizes deterministic naming (`ManagedServerName.ForApp`), labels (`managed-by=minicloud`, `customer`, `app`, `env`), and tags (`minicloud`, `minicloud-customer-...`, `minicloud-app-...`, `minicloud-env-...`).
+- `ProviderOwnershipEvidence` standardizes deterministic naming (`ManagedServerName.ForApp`), labels (`managed-by=selfrun`, `customer`, `app`, `env`), and tags (`selfrun`, `selfrun-customer-...`, `selfrun-app-...`, `selfrun-env-...`).
 - `ProviderOwnershipVerifier.VerifyDiscoveredServer(descriptor, discovered, expectedServerName, ownership)` validates exact server name and, when `descriptor.Capabilities.SupportsExactLabelOwnershipVerification` is true, exact label ownership. `ResolveProvisionServerStep` uses this verifier rather than provider-specific `if` branches.
 
 ---

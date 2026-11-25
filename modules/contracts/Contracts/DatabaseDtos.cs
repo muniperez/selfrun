@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record CreateDatabaseServerRequest(string OrganizationId, string Name, string Mode, string Plan, string Engine = "postgres", string EngineVersion = "16");
 public sealed record CreateManagedDatabaseRequest(string OrganizationId, string Name, string? ServerId = null, string? AppId = null, BackupPolicyRequest? Backup = null);

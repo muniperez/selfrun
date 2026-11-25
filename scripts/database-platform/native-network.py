@@ -34,8 +34,8 @@ if __name__=='__main__':
     try:
         with open(sys.argv[1]) as stream:
             request=json.load(stream)
-        print('__MINICLOUD_DATABASE_RESULT__='+json.dumps(verify(request)))
-        print('__MINICLOUD_DEPLOY_COMPLETE__='+request['operationId'])
+        print('__SELFRUN_DATABASE_RESULT__='+json.dumps(verify(request)))
+        print('__SELFRUN_DEPLOY_COMPLETE__='+request['operationId'])
     except Exception as error:
-        print('__MINICLOUD_DATABASE_RESULT__='+json.dumps({'status':'failed','errorType':type(error).__name__}))
+        print('__SELFRUN_DATABASE_RESULT__='+json.dumps({'status':'failed','errorType':type(error).__name__}))
         raise SystemExit(1)

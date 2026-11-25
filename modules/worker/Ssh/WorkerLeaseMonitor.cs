@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Renci.SshNet;
 
-namespace Minicloud.Worker.Ssh;
+namespace Selfrun.Worker.Ssh;
 
 internal sealed class WorkerLeaseOwnershipException() : Exception("Remote ownership lease token no longer matches.");
 

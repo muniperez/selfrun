@@ -37,10 +37,10 @@ do not initialize it again or replace its persistent volume.
 Focused source checks use `python3 -B -m unittest discover -s
 scripts/self-hosting -p 'test_*.py'`. The optional isolated dependency checks
 require already-cached `postgres:16-alpine` / `openbao/openbao:2.2.1` images;
-enable them with `MINICLOUD_TEST_CACHED_POSTGRES=1` and
-`MINICLOUD_TEST_CACHED_OPENBAO=1`. They never pull images, publish ports or use
+enable them with `SELFRUN_TEST_CACHED_POSTGRES=1` and
+`SELFRUN_TEST_CACHED_OPENBAO=1`. They never pull images, publish ports or use
 provider credentials, and remove only their uniquely named containers/volumes.
-Set `MINICLOUD_TEST_COMPOSE_BINARY` to an installed Compose executable to check
+Set `SELFRUN_TEST_COMPOSE_BINARY` to an installed Compose executable to check
 the rendered source/bundle startup and exposure model without starting a stack.
 These checks do not qualify Kratos, public routing/TLS or the full packaged
 stack.

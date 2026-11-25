@@ -1,13 +1,13 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed record TelemetryServiceError(string Code, string Message, bool IsConflict = false);
 
@@ -32,7 +32,7 @@ public sealed record TelemetrySettingsResult(TelemetrySettingsResponse? Settings
 /// non-disclosing 404.
 /// </summary>
 public sealed class TelemetryService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IIdGenerator ids,
     TimeProvider timeProvider,
     ITelemetryTokenService tokens,
@@ -408,7 +408,7 @@ public sealed class TelemetryService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<Minicloud.Common.Contracts.TelemetryReadTokenIssueResponse?> IssueReadTokenAsync(
+    public async Task<Selfrun.Common.Contracts.TelemetryReadTokenIssueResponse?> IssueReadTokenAsync(
         ControlPlanePrincipal principal,
         string appId,
         CancellationToken cancellationToken)
@@ -429,18 +429,18 @@ public sealed class TelemetryService(
         var now = timeProvider.GetUtcNow();
         var lifetime = TimeSpan.FromMinutes(15);
         var expiresAt = now.Add(lifetime);
-        var token = Minicloud.Common.Services.TelemetryReadToken.Create(
+        var token = Selfrun.Common.Services.TelemetryReadToken.Create(
             principal.UserId ?? principal.ApiKeyId ?? principal.Kind,
             app.OrganizationId,
             app.Id,
             settings.TenantId,
             lifetime,
-            options?.Value?.AuthSigningKey ?? "minicloud-telemetry-auth-signing-dev-key-must-be-long",
+            options?.Value?.AuthSigningKey ?? "selfrun-telemetry-auth-signing-dev-key-must-be-long",
             timeProvider);
 
         var accessOrigin = options?.Value?.AccessOrigin ?? "http://localhost:8088";
         var queryUrl = $"{accessOrigin.TrimEnd('/')}/api/logs";
-        return new Minicloud.Common.Contracts.TelemetryReadTokenIssueResponse(token, expiresAt, queryUrl);
+        return new Selfrun.Common.Contracts.TelemetryReadTokenIssueResponse(token, expiresAt, queryUrl);
     }
 
     private async Task<string> GenerateUniqueTenantIdAsync(CancellationToken cancellationToken)

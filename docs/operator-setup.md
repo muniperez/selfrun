@@ -71,7 +71,7 @@ it is never installation bootstrap.
 
 ### First application deployment with manual DNS
 
-When DNS management is disabled (`MANAGE_DNS_RECORDS=false`), MiniCloud
+When DNS management is disabled (`MANAGE_DNS_RECORDS=false`), Selfrun
 provisions or reuses the **application environment's server**, then waits for
 each enabled public service hostname within the configured managed suffix to
 resolve to that server before releasing the rollout gate. Custom hostnames
@@ -88,7 +88,7 @@ at the dashboard/control-plane server or assume a control-plane wildcard routes
 applications on another VPS.
 
 After DNS propagates, rerun the deployment for the same app/environment.
-MiniCloud reuses its registered server; do not delete it or provision another
+Selfrun reuses its registered server; do not delete it or provision another
 VPS to fix DNS. Waiting resources remain billable. DNS failure does not release
 the rollout gate or trigger rollback of an existing running revision. Once DNS
 is ready, genuine build, runtime, TLS or public HTTP health failures retain their

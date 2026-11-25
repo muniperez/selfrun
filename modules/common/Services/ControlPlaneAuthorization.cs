@@ -1,11 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class ControlPlaneAuthorization(MinicloudDbContext db)
+public sealed class ControlPlaneAuthorization(SelfrunDbContext db)
 {
     public async Task<bool> CanAccessOrganizationAsync(ActorIdentity principal, string organizationId, OrganizationAction action, CancellationToken cancellationToken)
     {

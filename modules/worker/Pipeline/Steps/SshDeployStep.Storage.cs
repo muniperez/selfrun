@@ -1,14 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Common.Providers.ProviderServiceCollectionExtensions;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 public sealed partial class SshDeployStep
 {
@@ -23,7 +23,7 @@ public sealed partial class SshDeployStep
             : BuiltInProviderDescriptors.ForBuiltIn(context.Provider);
         if (!descriptor.Capabilities.SupportsDurableVolumes)
         { throw new PipelineStepException("storage_provider_unsupported", "Durable storage is not supported by the selected provider."); }
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var server = await db.ServerInstances.SingleAsync(x => x.Id == context.ServerInstanceId && x.AppId == context.AppId, ct);
         if (server.OrganizationId != context.OrganizationId || server.ProviderAccountId != context.ProviderAccountId ||
             !string.Equals(server.Provider, context.Provider.ToString(), StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(server.ProviderServerId))
@@ -39,7 +39,7 @@ public sealed partial class SshDeployStep
         var service = new AppStorageService(db, provider);
         try
         {
-            var validation = StorageValidation.Validate(deployment.Services.Select(x => (x.Name, (IReadOnlyDictionary<string, Minicloud.Common.Contracts.StorageMountRequest>?)StorageMounts.Read(x.StorageJson),
+            var validation = StorageValidation.Validate(deployment.Services.Select(x => (x.Name, (IReadOnlyDictionary<string, Selfrun.Common.Contracts.StorageMountRequest>?)StorageMounts.Read(x.StorageJson),
                 (IEnumerable<string>)AssetReleaseService.Mounts(x).Values.Select(m => m.MountPath))), deployment.Database == DatabaseMode.Sqlite);
             if (!validation.IsValid) { throw new InvalidOperationException("Invalid storage configuration: " + string.Join(" ", validation.Errors.Select(x => x.Message))); }
             foreach (var configured in deployment.Services.OrderBy(x => x.Name, StringComparer.Ordinal))

@@ -30,7 +30,7 @@ export const SERVICES = [
     runtime: { state: "running", health: "healthy", restartCount: 0, container: "web-abc123", image: "ghcr.io/example/web:1.2.3" },
     domains: [
       { id: "b1", appId: APP_ID, serviceName: "web", hostname: "app.example.com", kind: "custom_domain", pathPrefix: "/", dnsStatus: "verified", applyStatus: "applied", sslStatus: "active", status: "active", isPrimary: true },
-      { id: "b2", appId: APP_ID, serviceName: "web", hostname: "web-app.example.muni.dev", kind: "minicloud_subdomain", pathPrefix: "/", dnsStatus: "verified", applyStatus: "applied", sslStatus: "pending", status: "pending", isPrimary: false },
+      { id: "b2", appId: APP_ID, serviceName: "web", hostname: "web-app.example.muni.dev", kind: "selfrun_subdomain", pathPrefix: "/", dnsStatus: "verified", applyStatus: "applied", sslStatus: "pending", status: "pending", isPrimary: false },
       { id: "b3", appId: APP_ID, serviceName: "web", hostname: "old.example.com", kind: "custom_domain", pathPrefix: "/", dnsStatus: "verified", applyStatus: "applied", sslStatus: "active", status: "disabled", isPrimary: false },
     ],
   },

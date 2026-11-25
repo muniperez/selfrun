@@ -36,7 +36,7 @@ def validate_account(account):
 
 
 def install_sshd_policy():
-    directory = '/etc/minicloud/database-network'
+    directory = '/etc/selfrun/database-network'
     run(['sudo','-n','install','-d','-o','root','-g','root','-m','755',directory])
     policy = directory + '/sshd.conf'
     content = ('Match User mcdb_*\n'
@@ -44,7 +44,7 @@ def install_sshd_policy():
                '    AllowStreamLocalForwarding no\n'
                '    PermitTunnel no\n'
                '    PermitListen none\n'
-               '    AuthorizedKeysFile /etc/minicloud/database-network/%u/authorized_keys\n'
+               '    AuthorizedKeysFile /etc/selfrun/database-network/%u/authorized_keys\n'
                '    ForceCommand /bin/false\n'
                '    PasswordAuthentication no\n'
                '    KbdInteractiveAuthentication no\n'
@@ -57,7 +57,7 @@ def install_sshd_policy():
     main = '/etc/ssh/sshd_config'
     previous = run(['sudo','-n','cat',main]) + '\n'
     include = 'Include ' + policy
-    updated = previous if include in previous.splitlines() else previous + '\n# Minicloud database forwarding\nMatch all\n' + include + '\n'
+    updated = previous if include in previous.splitlines() else previous + '\n# Selfrun database forwarding\nMatch all\n' + include + '\n'
     try:
         old_policy = run(['sudo','-n','cat',policy]) + '\n'
     except subprocess.CalledProcessError:
@@ -88,21 +88,21 @@ def reload_sshd():
 
 def execute(request):
     binding = identity(request['bindingId'])
-    root = Path('/opt/minicloud/database-network') / binding
+    root = Path('/opt/selfrun/database-network') / binding
     if root.is_symlink():
         raise ValueError('Invalid private network root')
-    run(['sudo','-n','install','-d','-m','700','-o','minicloud','-g','minicloud',str(root)])
+    run(['sudo','-n','install','-d','-m','700','-o','selfrun','-g','selfrun',str(root)])
     if root.is_symlink() or root.stat().st_uid != os.geteuid():
         raise ValueError('Invalid private network root')
     root.chmod(0o700)
     action = request['action']
     if action == 'stop-client':
-        service = f'minicloud-db-{binding}.service'
+        service = f'selfrun-db-{binding}.service'
         run(['sudo','-n','systemctl','disable','--now',service])
         return {'status':'stopped'}
     if action == 'revoke-client':
         user = tunnel_user(binding)
-        authorization = '/etc/minicloud/database-network/' + user + '/authorized_keys'
+        authorization = '/etc/selfrun/database-network/' + user + '/authorized_keys'
         run(['sudo','-n','rm','-f','--',authorization])
         try:
             account = pwd.getpwnam(user)
@@ -150,9 +150,9 @@ def execute(request):
         validate_account(account)
         run(['sudo','-n','usermod','--expiredate','',user])
         install_sshd_policy()
-        directory = '/etc/minicloud/database-network/' + user
+        directory = '/etc/selfrun/database-network/' + user
         run(['sudo','-n','install','-d','-o','root','-g','root','-m','755',directory])
-        keyline = f'restrict,port-forwarding,command="/bin/false",permitopen="{target}:15432" {public} minicloud-database-{binding}\n'
+        keyline = f'restrict,port-forwarding,command="/bin/false",permitopen="{target}:15432" {public} selfrun-database-{binding}\n'
         authorization = directory + '/authorized_keys'
         run(['sudo','-n','tee',authorization],input=keyline.encode())
         run(['sudo','-n','chmod','644',authorization])
@@ -175,8 +175,8 @@ def execute(request):
         known = root/'known_hosts'
         known.write_text(host+' '+hostkey+'\n')
         known.chmod(0o600)
-        service = f'minicloud-db-{binding}.service'
-        config = '[Unit]\nAfter=network-online.target docker.service\nWants=network-online.target\n[Service]\nUser=minicloud\nExecStart=/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile='+str(known)+' -i '+str(root/'identity')+' -L '+gateway+':'+str(port)+':'+target+':15432 '+user+'@'+host+'\nRestart=always\nRestartSec=5\n[Install]\nWantedBy=multi-user.target\n'
+        service = f'selfrun-db-{binding}.service'
+        config = '[Unit]\nAfter=network-online.target docker.service\nWants=network-online.target\n[Service]\nUser=selfrun\nExecStart=/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile='+str(known)+' -i '+str(root/'identity')+' -L '+gateway+':'+str(port)+':'+target+':15432 '+user+'@'+host+'\nRestart=always\nRestartSec=5\n[Install]\nWantedBy=multi-user.target\n'
         run(['sudo','-n','tee','/etc/systemd/system/'+service],input=config.encode())
         run(['sudo','-n','systemctl','daemon-reload'])
         run(['sudo','-n','systemctl','enable','--now',service])
@@ -216,8 +216,8 @@ if __name__ == '__main__':
         with open(sys.argv[1]) as stream:
             request=json.load(stream)
         result=execute(request)
-        print('__MINICLOUD_DATABASE_RESULT__='+json.dumps(result))
-        print('__MINICLOUD_DEPLOY_COMPLETE__='+request['operationId'])
+        print('__SELFRUN_DATABASE_RESULT__='+json.dumps(result))
+        print('__SELFRUN_DEPLOY_COMPLETE__='+request['operationId'])
     except Exception as error:
-        print('__MINICLOUD_DATABASE_RESULT__='+json.dumps({'status':'failed','errorType':type(error).__name__}))
+        print('__SELFRUN_DATABASE_RESULT__='+json.dumps({'status':'failed','errorType':type(error).__name__}))
         raise SystemExit(1)

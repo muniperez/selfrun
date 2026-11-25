@@ -296,7 +296,7 @@ done
   and restart with a pending acknowledgement, reporting synthetic collector
   footprint separately from product work.
 - **Graceful EventPipe completion and aggregate-only inspection (#324):**
-  `Minicloud.RuntimeAgent` handles `SIGTERM`/`SIGINT` by completing the active
+  `Selfrun.RuntimeAgent` handles `SIGTERM`/`SIGINT` by completing the active
   cycle so started `Activity` spans emit stop markers before exit.
   `tools/runtime-agent-benchmark` supports `--start-file` / `--ready-file` / `--stop-file`
   coordination, `EventPipeSessionCoordinator` (`CaptureWhileAliveAsync` and

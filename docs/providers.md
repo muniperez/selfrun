@@ -6,7 +6,7 @@ several accounts of one provider.
 
 CLI plan listing and app creation require an API key with `plans:read`.
 Existing keys do not gain new permissions automatically. Refresh an older CLI
-login with `selfrun login` (or legacy `minicloud login`) or use a key with the required scope. Managing
+login with `selfrun login` or use a key with the required scope. Managing
 provider credentials requires the separate `providers:write` operator scope.
 
 ## Configure an account
@@ -47,9 +47,9 @@ services:
 ```
 
 ```sh
-minicloud plans list
-minicloud deploy --plan "Hetzner secondary small"
-minicloud deploy --environment staging --plan "Hetzner secondary small"
+selfrun plans list
+selfrun deploy --plan "Hetzner secondary small"
+selfrun deploy --environment staging --plan "Hetzner secondary small"
 ```
 
 The command-line plan overrides YAML. Omitting both uses the selected
@@ -88,7 +88,7 @@ provider entry and plan for an unprovisioned environment, or reconcile a known
 original resource before rotating the existing entry.
 
 If DigitalOcean creates a droplet but then rejects its project assignment, the
-allocation remains unresolved. Minicloud keeps its original account reservation
+allocation remains unresolved. Selfrun keeps its original account reservation
 and checks that account for the existing droplet before any retry; project errors
 do not permit another allocation or a plan switch.
 
@@ -119,7 +119,7 @@ Add an account in the portal, or import an existing locally configured credentia
 without passing its value in a command argument:
 
 ```sh
-minicloud providers add --organization org_example --name "Original Hetzner" --provider hetzner
+selfrun providers add --organization org_example --name "Original Hetzner" --provider hetzner
 ```
 
 The command reads `HCLOUD_TOKEN`/`HETZNER_API_TOKEN`,
@@ -142,7 +142,7 @@ Create an explicit, non-secret ownership manifest using the returned account ID:
 ```
 
 ```sh
-minicloud providers import-legacy --manifest legacy-bindings.json
+selfrun providers import-legacy --manifest legacy-bindings.json
 ```
 
 Import verifies the original server/volume identities through read-only requests

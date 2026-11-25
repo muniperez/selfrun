@@ -8,6 +8,6 @@
     <DefineConstants Condition="'$(Baseline)' == 'true'">$(DefineConstants);BASELINE</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(AgentSourceRoot)/modules/runtime-agent/Minicloud.RuntimeAgent.csproj" />
+    <ProjectReference Include="$(AgentSourceRoot)/modules/runtime-agent/Selfrun.RuntimeAgent.csproj" />
   </ItemGroup>
 </Project>

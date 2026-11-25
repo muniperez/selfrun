@@ -16,12 +16,12 @@ _checker = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_checker)
 
 
-def restore(directory, key, expected_database_id, target, *, container=None, admin_user='minicloud', target_role=None, expected_backup_id=None, run=subprocess.run):
+def restore(directory, key, expected_database_id, target, *, container=None, admin_user='selfrun', target_role=None, expected_backup_id=None, run=subprocess.run):
     encrypted_path = Path(directory) / 'database.dump.enc'
     if encrypted_path.is_symlink() or not encrypted_path.is_file():
         raise ValueError('Encrypted backup unavailable')
     require_capacity(encrypted_path.stat().st_size * 2 + 2 * 1024**2)
-    with tempfile.TemporaryDirectory(prefix='minicloud-recovery-', dir='/dev/shm') as work:
+    with tempfile.TemporaryDirectory(prefix='selfrun-recovery-', dir='/dev/shm') as work:
         root = Path(work)
         payload, ciphertext, keyfile = _checker.verify_backup(directory, key, root)
         if payload['databaseId'] != expected_database_id or (expected_backup_id is not None and payload['backupId'] != expected_backup_id):
@@ -80,7 +80,7 @@ def download_restore(request):
             not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{7,95}', backup_id)):
         raise ValueError('Invalid repository or source binding')
     opener = urllib.request.build_opener(NoRedirect)
-    with tempfile.TemporaryDirectory(prefix='minicloud-download-') as directory:
+    with tempfile.TemporaryDirectory(prefix='selfrun-download-') as directory:
         root = Path(directory)
         for name, maximum in [('manifest.json.enc',1024**2),('database.dump.enc',8*1024**3)]:
             endpoint = url.rstrip('/') + f'/v1/{namespace}/{database_id}/{backup_id}/{name}'
@@ -89,7 +89,7 @@ def download_restore(request):
                 require_disk_capacity(root, 1024**2)
                 write_encrypted_stream(response, target, root, maximum)
         result = restore(root,request['encryptionKey'],database_id,request['target'],
-                       container=request.get('container'),admin_user=request.get('adminUser','minicloud'),
+                       container=request.get('container'),admin_user=request.get('adminUser','selfrun'),
                        target_role=request.get('username'),expected_backup_id=backup_id)
         if result['backupId'] != backup_id:
             raise ValueError('Backup identity mismatch')

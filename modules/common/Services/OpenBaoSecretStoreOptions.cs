@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class OpenBaoSecretStoreOptions
 {
@@ -8,7 +8,7 @@ public sealed class OpenBaoSecretStoreOptions
     public string Token { get; set; } = "";
     public string TokenFile { get; set; } = "";
     public string CaCertificateFile { get; set; } = "";
-    public string MountPath { get; set; } = "minicloud-apps";
+    public string MountPath { get; set; } = "selfrun-apps";
     public string EnvironmentPrefix { get; set; } = "dev";
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(10);
 }

@@ -1,9 +1,9 @@
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed record ApplicationEnvironmentPreflightConflict(
     string Code,
@@ -50,12 +50,12 @@ public static partial class ApplicationEnvironmentMigrationService
             ? "appl_" + rootAppId[4..]
             : "appl_" + rootAppId;
 
-    public static bool IsInternalRecord(MinicloudApp app, IReadOnlySet<string>? databaseServerAppIds = null) =>
+    public static bool IsInternalRecord(SelfrunApp app, IReadOnlySet<string>? databaseServerAppIds = null) =>
         string.Equals(app.EnvironmentKind, EnvironmentKinds.Internal, StringComparison.Ordinal) ||
         app.Slug.StartsWith("dbrepo-", StringComparison.Ordinal) ||
         (databaseServerAppIds is not null && databaseServerAppIds.Contains(app.Id));
 
-    public static string? SelectNextDefaultEnvironmentId(IEnumerable<MinicloudApp> environments) =>
+    public static string? SelectNextDefaultEnvironmentId(IEnumerable<SelfrunApp> environments) =>
         environments
             .Where(x => x.DeletionStatus is null && !string.Equals(x.EnvironmentKind, EnvironmentKinds.Internal, StringComparison.Ordinal))
             .OrderBy(x => string.Equals(x.EnvironmentKind, EnvironmentKinds.Persistent, StringComparison.Ordinal) ? 0 : 1)
@@ -65,7 +65,7 @@ public static partial class ApplicationEnvironmentMigrationService
             .FirstOrDefault();
 
     public static async Task<ApplicationEnvironmentPreflightReport> InspectPreflightAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         IReadOnlyDictionary<string, string>? explicitBranchMappings = null,
         CancellationToken ct = default)
     {
@@ -143,7 +143,7 @@ public static partial class ApplicationEnvironmentMigrationService
             var family = familyGroup.ToList();
             var root = family.FirstOrDefault(x => x.ParentAppId is null) ?? family[0];
 
-            var persistentByNorm = new Dictionary<string, MinicloudApp>(StringComparer.Ordinal);
+            var persistentByNorm = new Dictionary<string, SelfrunApp>(StringComparer.Ordinal);
             foreach (var env in family.Where(x => x.BranchName is null && !string.Equals(x.EnvironmentKind, EnvironmentKinds.Preview, StringComparison.Ordinal)))
             {
                 persistentCount++;
@@ -175,7 +175,7 @@ public static partial class ApplicationEnvironmentMigrationService
                 }
             }
 
-            var previewByNorm = new Dictionary<string, MinicloudApp>(StringComparer.Ordinal);
+            var previewByNorm = new Dictionary<string, SelfrunApp>(StringComparer.Ordinal);
             foreach (var branch in family.Where(x => x.BranchName is not null || string.Equals(x.EnvironmentKind, EnvironmentKinds.Preview, StringComparison.Ordinal)))
             {
                 previewCount++;
@@ -227,7 +227,7 @@ public static partial class ApplicationEnvironmentMigrationService
     }
 
     public static async Task<ApplicationEnvironmentBackfillResult> BackfillAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         IReadOnlyDictionary<string, string>? explicitBranchMappings = null,
         CancellationToken ct = default)
     {
@@ -269,7 +269,7 @@ public static partial class ApplicationEnvironmentMigrationService
         var customerApps = allApps.Where(x => !IsInternalRecord(x, dbServerAppIds)).ToList();
         var roots = customerApps.Where(x => x.ParentAppId is null).ToList();
         var children = customerApps.Where(x => x.ParentAppId is not null).ToList();
-        var rootApplications = new Dictionary<string, MinicloudApplication>(StringComparer.Ordinal);
+        var rootApplications = new Dictionary<string, SelfrunApplication>(StringComparer.Ordinal);
 
         foreach (var root in roots)
         {
@@ -279,7 +279,7 @@ public static partial class ApplicationEnvironmentMigrationService
                 if (root.EnvironmentKind == EnvironmentKinds.Preview) previewCount++; else persistentCount++;
                 continue;
             }
-            MinicloudApplication? application = null;
+            SelfrunApplication? application = null;
             if (root.ApplicationId is not null)
             {
                 appsById.TryGetValue(root.ApplicationId, out application);
@@ -297,7 +297,7 @@ public static partial class ApplicationEnvironmentMigrationService
             if (application is null)
             {
                 var appId = DeterministicApplicationId(root.Id);
-                application = new MinicloudApplication
+                application = new SelfrunApplication
                 {
                     Id = appId,
                     OrganizationId = root.OrganizationId,
@@ -379,12 +379,12 @@ public static partial class ApplicationEnvironmentMigrationService
     }
 
     public static Task EnsureBackfilledAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         CancellationToken ct) =>
         EnsureBackfilledAsync(db, null, ct);
 
     public static async Task EnsureBackfilledAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string? organizationId = null,
         CancellationToken ct = default)
     {
@@ -434,7 +434,7 @@ public static partial class ApplicationEnvironmentMigrationService
                         ct);
                 if (application is null)
                 {
-                    application = new MinicloudApplication
+                    application = new SelfrunApplication
                     {
                         Id = appId,
                         OrganizationId = app.OrganizationId,
@@ -476,7 +476,7 @@ public static partial class ApplicationEnvironmentMigrationService
                         ct);
                 if (application is null)
                 {
-                    application = new MinicloudApplication
+                    application = new SelfrunApplication
                     {
                         Id = parentAppId,
                         OrganizationId = parent.OrganizationId,
@@ -530,7 +530,7 @@ public static partial class ApplicationEnvironmentMigrationService
         }
     }
 
-    private static string ResolvePersistentDisplayName(MinicloudApp env)
+    private static string ResolvePersistentDisplayName(SelfrunApp env)
     {
         if (!string.IsNullOrWhiteSpace(env.EnvironmentName))
         {
@@ -541,8 +541,8 @@ public static partial class ApplicationEnvironmentMigrationService
     }
 
     private static string ResolvePreviewDisplayName(
-        MinicloudApp root,
-        MinicloudApp branch,
+        SelfrunApp root,
+        SelfrunApp branch,
         IReadOnlyDictionary<string, string>? explicitBranchMappings)
     {
         if (explicitBranchMappings is not null)

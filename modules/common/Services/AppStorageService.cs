@@ -1,18 +1,18 @@
 using System.Security.Cryptography;
 using System.Net;
-using Minicloud.Common.Providers.Common;
+using Selfrun.Common.Providers.Common;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed record RuntimeStorageMount(string Name, string VolumeId, string MountPath, int Uid, int Gid);
 
-public sealed class AppStorageService(MinicloudDbContext db, IStorageVolumeProvider provider)
+public sealed class AppStorageService(SelfrunDbContext db, IStorageVolumeProvider provider)
 {
     public static string VolumeName(string appId, string name) => "mc-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(appId + ":" + name)))[..32].ToLowerInvariant();
 
@@ -20,7 +20,7 @@ public sealed class AppStorageService(MinicloudDbContext db, IStorageVolumeProvi
         string? organizationId = null, string? providerAccountId = null, bool allowAllocation = true)
     {
         var identity = VolumeName(appId, name);
-        var labels = new Dictionary<string, string> { ["managed-by"] = "minicloud", ["app-id"] = appId, ["storage-name"] = name, ["purpose"] = "customer-storage" };
+        var labels = new Dictionary<string, string> { ["managed-by"] = "selfrun", ["app-id"] = appId, ["storage-name"] = name, ["purpose"] = "customer-storage" };
         var stored = await db.AppStorageVolumes.SingleOrDefaultAsync(x => x.AppId == appId && x.Name == name, ct);
         if (stored is null)
         {
@@ -43,7 +43,7 @@ public sealed class AppStorageService(MinicloudDbContext db, IStorageVolumeProvi
             stored.CreationAttempted = true;
             await db.SaveChangesAsync(ct);
             try { volume = await provider.CreateVolumeAsync(identity, mount.SizeGb, region, labels, ct); }
-            catch (ProviderApiException ex) when (Minicloud.Common.Providers.Extensibility.DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(ex))
+            catch (ProviderApiException ex) when (Selfrun.Common.Providers.Extensibility.DefaultProviderErrorClassifier.IsDefiniteAllocationRejection(ex))
             {
                 // Explicit rejection did not allocate a disk. Ambiguous transport/5xx outcomes stay unresolved.
                 stored.CreationAttempted = false;

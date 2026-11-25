@@ -1,6 +1,6 @@
 # T70 — Private hosted-operations integration
 
-Implementation repository: `muniventures/minicloud-services`, not this public product repository.
+The private hosted operations repository owns implementation.
 Status: **backlog, outside the current public pre-v1 completion scope**, by explicit user direction on 2026-11-12. Not performed or required for public T80; its native blocking relationship to #37 is removed.
 Future prerequisites: separately authorized private access/readiness handoff and the then-current public contracts. Earlier public implementation links remain resolved history, not a request to begin private work.
 
@@ -12,7 +12,7 @@ Local private readiness commit `7751939` already checks the pinned running API a
 
 ## Deliverable and ownership
 
-- Own only hosted workflow/configuration and existing maintenance/recovery scripts plus their tests. Retained private `modules/` are historical; product code belongs in public `minicloud`.
+- Own only hosted workflow/configuration and existing maintenance/recovery scripts plus their tests. Retained private `modules/` are historical; product code belongs in public `selfrun`.
 - Preserve the existing readiness patch, exact rehearsal/live inventory equality, candidate digest, operation owner and ingress fence. No ignored fields, forced reconciled state or stale-data rollback after ambiguous migration.
 - Consume the merged public Kratos/session/setup/configuration/release contracts. Wire private identity/dependency configuration and shared public seed/migration primitives; do not create a second bootstrap implementation or ship a Firebase fallback.
 - Keep the existing operator's explicit identity binding, new password setup, application/environment ownership, API keys, provider records, encryption/SSH keys and data-preserving backup/restore path. Codex later verifies an isolated rehearsal before any live cutover.

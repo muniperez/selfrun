@@ -5,14 +5,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Worker.Diagnostics;
-using Minicloud.Worker.Pipeline;
-using Minicloud.Worker.Ssh;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Worker.Diagnostics;
+using Selfrun.Worker.Pipeline;
+using Selfrun.Worker.Ssh;
 
-namespace Minicloud.Worker.Queue;
+namespace Selfrun.Worker.Queue;
 
 public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploymentQueueConsumer
 {
@@ -52,7 +52,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
     public async Task<Deployment?> TryClaimNextDeploymentAsync(CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var dbContext = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var strategy = dbContext.Database.CreateExecutionStrategy();
 
         return await strategy.ExecuteAsync(async () =>
@@ -201,7 +201,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
     {
         await using (var ownershipScope = _scopeFactory.CreateAsyncScope())
         {
-            var ownershipDb = ownershipScope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+            var ownershipDb = ownershipScope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
             if (!await ownershipDb.Deployments.AsNoTracking().AnyAsync(
                     d => d.Id == deployment.Id &&
                          d.WorkerId == _options.WorkerId &&
@@ -309,7 +309,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var scope = _scopeFactory.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<MinicloudDbContext>().Deployments.AsNoTracking()
+        return await scope.ServiceProvider.GetRequiredService<SelfrunDbContext>().Deployments.AsNoTracking()
             .AnyAsync(d => d.Id == id && d.OwnershipToken == owner && d.CancellationRequestedAt != null, timeout.Token);
     }
 
@@ -321,7 +321,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+                var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
                 if (await db.Deployments.AsNoTracking().AnyAsync(d => d.Id == id && d.OwnershipToken == owner &&
                     d.CancellationRequestedAt != null, ct))
                 {
@@ -382,7 +382,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+                var dbContext = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
                 var now = _timeProvider.GetUtcNow();
 
                 if ((await _maintenance.CheckAsync(dbContext, requireOpen: false, cancellationToken)).IsRevoked)
@@ -509,7 +509,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
         };
 
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var isPostgres = db.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;
         var staleCandidates = isPostgres
             ? await db.Deployments.AsNoTracking()
@@ -586,9 +586,9 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
     private async Task<int> FailAbandonedLocalBuildsAsync(CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var now = _timeProvider.GetUtcNow();
-        var cutoff = now - Minicloud.Common.Services.DeploymentPreparationService.HeartbeatTimeout;
+        var cutoff = now - Selfrun.Common.Services.DeploymentPreparationService.HeartbeatTimeout;
         // Conditional updates serialize with heartbeats/admission without touching worker-owned rows.
         var candidates = db.Deployments.AsNoTracking().Where(d => d.Status == DeploymentStatus.WaitingForBuild);
         if (db.Database.IsNpgsql()) { candidates = candidates.Where(d => d.UpdatedAt < cutoff).OrderBy(d => d.UpdatedAt).Take(100); }
@@ -693,7 +693,7 @@ public sealed class PostgresDeploymentQueueConsumer : BackgroundService, IDeploy
     private async Task<bool> HasCurrentAuthorityAsync(CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         return (await _maintenance.CheckAsync(db, requireOpen: false, cancellationToken)).IsAdmitted;
     }
 

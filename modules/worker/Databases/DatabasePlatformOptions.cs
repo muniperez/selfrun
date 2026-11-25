@@ -1,4 +1,4 @@
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed class DatabasePlatformOptions
 {

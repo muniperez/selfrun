@@ -33,7 +33,7 @@ def crypt(source, target, keyfile, decrypt=False):
 
 
 def signature(payload, key):
-    return hmac.new(key.encode(), b'minicloud-db-backup-v1\0' +
+    return hmac.new(key.encode(), b'selfrun-db-backup-v1\0' +
                     json.dumps(payload, sort_keys=True, separators=(',', ':')).encode(),
                     hashlib.sha256).hexdigest()
 
@@ -91,7 +91,7 @@ def upload(url, token, path):
 def source_lock(source_id):
     if not re.fullmatch(r'(?:db|database)_[a-z0-9]{8,64}', source_id):
         raise ValueError('Invalid source identity')
-    root = Path(os.environ.get('BACKUP_LOCK_ROOT', '/opt/minicloud/locks/db-backups'))
+    root = Path(os.environ.get('BACKUP_LOCK_ROOT', '/opt/selfrun/locks/db-backups'))
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     if root.is_symlink() or root.stat().st_uid != os.geteuid() or root.stat().st_mode & 0o077:
         raise ValueError('Unsafe backup lock directory')
@@ -139,7 +139,7 @@ def capture():
     engine = os.environ.get('BACKUP_ENGINE', 'postgres')
     if engine not in ('postgres', 'sqlite') or not re.fullmatch(r'(?:db|database)_[a-z0-9]{8,64}', app) or not re.fullmatch(r'[a-z][a-z0-9-]{0,31}', environment):
         raise ValueError('Invalid source identity or engine')
-    env = postgres_env(os.environ.get('DATABASE_URL') or os.environ.get('ConnectionStrings__Minicloud', '')) if engine == 'postgres' else None
+    env = postgres_env(os.environ.get('DATABASE_URL') or os.environ.get('ConnectionStrings__Selfrun', '')) if engine == 'postgres' else None
     if engine == 'sqlite':
         source = Path(os.environ['SQLITE_PATH'])
         if source.is_symlink() or not source.is_file():

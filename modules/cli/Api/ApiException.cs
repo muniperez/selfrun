@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-namespace Minicloud.Cli.Api;
+namespace Selfrun.Cli.Api;
 
 public sealed class ApiException : Exception
 {
@@ -8,7 +8,7 @@ public sealed class ApiException : Exception
         int statusCode,
         string code,
         string message,
-        IReadOnlyList<Minicloud.Common.Contracts.ErrorDetail>? details = null)
+        IReadOnlyList<Selfrun.Common.Contracts.ErrorDetail>? details = null)
         : base(message)
     {
         StatusCode = statusCode;
@@ -18,5 +18,5 @@ public sealed class ApiException : Exception
 
     public int StatusCode { get; }
     public string Code { get; }
-    public IReadOnlyList<Minicloud.Common.Contracts.ErrorDetail> Details { get; }
+    public IReadOnlyList<Selfrun.Common.Contracts.ErrorDetail> Details { get; }
 }

@@ -30,8 +30,8 @@ def dispatch(request):
             container = request['container']
             if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', container):
                 raise ValueError('Invalid container identity')
-            subprocess.run(['docker','exec',container,'pg_isready','-U','minicloud','-d',request['databaseName']],check=True,capture_output=True,timeout=30)
-            version = subprocess.run(['docker','exec',container,'psql','-X','-U','minicloud','-d',request['databaseName'],'-Atc','SHOW server_version_num'],check=True,capture_output=True,timeout=30)
+            subprocess.run(['docker','exec',container,'pg_isready','-U','selfrun','-d',request['databaseName']],check=True,capture_output=True,timeout=30)
+            version = subprocess.run(['docker','exec',container,'psql','-X','-U','selfrun','-d',request['databaseName'],'-Atc','SHOW server_version_num'],check=True,capture_output=True,timeout=30)
             if not 160000 <= int(version.stdout.strip()) < 170000:
                 raise ValueError('Unsupported PostgreSQL version')
         else:
@@ -78,8 +78,8 @@ if __name__ == '__main__':
         with open(sys.argv[1]) as source:
             request = json.load(source)
         result = dispatch(request)
-        print('__MINICLOUD_DATABASE_RESULT__=' + json.dumps(result))
-        print('__MINICLOUD_DEPLOY_COMPLETE__=' + request['operationId'])
+        print('__SELFRUN_DATABASE_RESULT__=' + json.dumps(result))
+        print('__SELFRUN_DEPLOY_COMPLETE__=' + request['operationId'])
     except Exception as error:
-        print('__MINICLOUD_DATABASE_RESULT__=' + json.dumps(failure_result(error)))
+        print('__SELFRUN_DATABASE_RESULT__=' + json.dumps(failure_result(error)))
         raise SystemExit(1)

@@ -1,6 +1,6 @@
-using Minicloud.Common.Models;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Worker.Queue;
+namespace Selfrun.Worker.Queue;
 
 public interface IDeploymentQueueConsumer
 {

@@ -15,7 +15,7 @@ Keep the first release simple: consistent database snapshots, configurable sched
 - Add independently managed shared and dedicated database servers. An organization may own multiple servers of either kind.
 - A shared server holds multiple PostgreSQL databases. A dedicated server holds one user-managed PostgreSQL database; PostgreSQL's required maintenance/template databases do not count toward this limit. Shared means sharing within the organization, not pooling unrelated customers on one server.
 - Initially support PostgreSQL for standalone hosting. SQLite stays application-local and gains consistent backups and restore; remote/shared/dedicated SQLite hosting is deferred.
-- Support internal access through a Minicloud-managed encrypted network across VPSs and providers. Also offer provider-native private networking where supported and explicitly configured public access.
+- Support internal access through a Selfrun-managed encrypted network across VPSs and providers. Also offer provider-native private networking where supported and explicitly configured public access.
 - Users configure backup settings; provide reasonable defaults.
 - Existing databases remain running. Offer explicit migration to shared or dedicated hosting rather than moving live data automatically.
 - Keep engine-specific behavior behind an extensible boundary so another engine can be added without redefining hosting modes or backup policy.
@@ -27,15 +27,15 @@ These paths describe existing source, not the proposed feature:
 
 | Area | Current behavior and source |
 | --- | --- |
-| Database ownership | `MinicloudApp` and `Deployment` contain an application-bound `DatabaseMode`; supported values include PostgreSQL, SQLite, and none. See `modules/common/Models/ControlPlaneModels.cs`. |
-| PostgreSQL runtime | `scripts/github-actions/minicloud-deploy/remote-deploy.sh` generates a `postgres:16-alpine` service and persistent data directory beside application services. |
+| Database ownership | `SelfrunApp` and `Deployment` contain an application-bound `DatabaseMode`; supported values include PostgreSQL, SQLite, and none. See `modules/common/Models/ControlPlaneModels.cs`. |
+| PostgreSQL runtime | `scripts/github-actions/selfrun-deploy/remote-deploy.sh` generates a `postgres:16-alpine` service and persistent data directory beside application services. |
 | SQLite runtime | The same script mounts the application SQLite directory and injects `sqlite:////data/sqlite/app.db`. SQLite is an embedded file, not a remote database service. |
 | Portal | `modules/dashboard/app/modules/Apps/CreateAppModule.tsx` selects a database when creating an app. No standalone database-management section exists. |
 | Provisioning | `modules/common/Providers/IVpsProviderClient.cs` provides server find/create/status/delete operations. Its contract does not provide private-network or firewall lifecycle management. |
 | Storage | `docs/durable-storage.md` documents Hetzner application volumes and explicitly excludes automatic backup and restore. |
 | Deferred platform draft | Local branch `feat/database-recovery` has unfinished configuration admission, identity binding, key custody, and encrypted repository transport. Its checkpoint explicitly excludes completed execution, persistence migrations, and hosted acceptance. Reuse only after review; do not merge the draft wholesale. |
 
-The separate Munipages implementation supplies evidence for daily encrypted logical backups and isolated restores. It is not a released Minicloud platform capability. Product code and public documentation must remain self-contained; do not import private application IDs, credentials, endpoints, or files from another checkout.
+The separate Munipages implementation supplies evidence for daily encrypted logical backups and isolated restores. It is not a released Selfrun platform capability. Product code and public documentation must remain self-contained; do not import private application IDs, credentials, endpoints, or files from another checkout.
 
 ## Product model and terminology
 
@@ -65,7 +65,7 @@ Do not impose an arbitrary product count of shared databases. Validate real capa
 
 A repository is an organization-owned off-server destination for encrypted backup artifacts and manifests. Several source databases may use it, with source-specific credentials and namespaces. The source database host and its repository must be independent VPS resources; a second container or disk on the same host does not qualify as off-server protection.
 
-The initial implementation uses a Minicloud-managed repository service with persistent registered storage, reusing supported provisioning/storage contracts. Repositories can serve source databases across providers over authenticated HTTPS. Provider-specific storage support is a capability, not an assumption; the initial managed-volume implementation can remain Hetzner-backed. External S3 and other repository adapters are future additions.
+The initial implementation uses a Selfrun-managed repository service with persistent registered storage, reusing supported provisioning/storage contracts. Repositories can serve source databases across providers over authenticated HTTPS. Provider-specific storage support is a capability, not an assumption; the initial managed-volume implementation can remain Hetzner-backed. External S3 and other repository adapters are future additions.
 
 ## Portal workflows
 
@@ -101,8 +101,8 @@ An application may opt into a standalone PostgreSQL database by binding selected
 
 | Mode | Meaning |
 | --- | --- |
-| Internal only — default | Authorized Minicloud applications connect through managed encrypted connectivity. This works across VPSs/providers; membership alone does not grant access to every database. Connections to this database through a public path are denied. |
-| Provider private network | Reachability uses a selected provider-native VNet/VPC/private network. Offer only when that provider account, region, server topology, and Minicloud integration support it. |
+| Internal only — default | Authorized Selfrun applications connect through managed encrypted connectivity. This works across VPSs/providers; membership alone does not grant access to every database. Connections to this database through a public path are denied. |
+| Provider private network | Reachability uses a selected provider-native VNet/VPC/private network. Offer only when that provider account, region, server topology, and Selfrun integration support it. |
 | Public | Explicit public database endpoint with TLS, database authentication, and user-managed IP/CIDR allowlists. Default to no admitted public clients; opening to all addresses requires an explicit user choice. |
 
 Internal is a platform-managed access path; provider private network is a different optional access path. The user selects a primary mode and may retain selected internal application bindings when enabling another mode. Display every effective endpoint and admitted client path; changing modes must not leave an old public path open invisibly.
@@ -145,7 +145,7 @@ Record an expiry for each completed backup from the retention policy at capture 
 5. Commit a completed backup only after artifact and authenticated manifest upload succeed. Incomplete uploads are not listed as restorable points and are cleaned up safely.
 6. The repository owns retention. Source upload credentials cannot overwrite or delete completed backups. Keep bounded capacity reserves and return explicit full/unavailable failures rather than deleting required recovery points or falling back to a local directory.
 
-Minicloud's secret system holds source-side encryption material and repository access secrets. Keys must be recoverable after loss of the source VPS and versioned so rotation does not make retained backups unreadable. The repository must not receive plaintext decryption keys. A documented protected recovery-key export/escrow procedure is part of delivery; never return keys through inventory/history APIs.
+Selfrun's secret system holds source-side encryption material and repository access secrets. Keys must be recoverable after loss of the source VPS and versioned so rotation does not make retained backups unreadable. The repository must not receive plaintext decryption keys. A documented protected recovery-key export/escrow procedure is part of delivery; never return keys through inventory/history APIs.
 
 ### Status and honest recovery claims
 

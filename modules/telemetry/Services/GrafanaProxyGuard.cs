@@ -1,19 +1,19 @@
 using System.Text.Json;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 /// <summary>
 /// Auth-proxy enforcement decisions. The proxy strips every caller-supplied
 /// credential/identity/tenant signal and forwards only the trusted identity
-/// derived from a validated Minicloud proxy session. Public login, basic-auth,
+/// derived from a validated Selfrun proxy session. Public login, basic-auth,
 /// admin and mutation routes are denied; only the pinned-version read paths
 /// required by Explore plus the validated unified-query endpoint are forwarded.
 /// </summary>
 public static class GrafanaProxyGuard
 {
-    public const string IdentityHeader = "X-Minicloud-Grafana-Identity";
-    public const string EmailHeader = "X-Minicloud-Grafana-Email";
-    public const string NameHeader = "X-Minicloud-Grafana-Name";
+    public const string IdentityHeader = "X-Selfrun-Grafana-Identity";
+    public const string EmailHeader = "X-Selfrun-Grafana-Email";
+    public const string NameHeader = "X-Selfrun-Grafana-Name";
     public const string WebAuthHeader = "X-WEBAUTH-USER";
 
     private static readonly HashSet<string> StrippedHeaders = new(StringComparer.OrdinalIgnoreCase)
@@ -22,9 +22,9 @@ public static class GrafanaProxyGuard
         "Proxy-Authorization",
         "Cookie",
         "X-Grafana-Org-Id",
-        "X-Minicloud-Grafana-Identity",
-        "X-Minicloud-Grafana-Email",
-        "X-Minicloud-Grafana-Name",
+        "X-Selfrun-Grafana-Identity",
+        "X-Selfrun-Grafana-Email",
+        "X-Selfrun-Grafana-Name",
         "X-WEBAUTH-USER",
         "X-Forwarded-User",
         "X-Scope-OrgID",
@@ -39,8 +39,8 @@ public static class GrafanaProxyGuard
         Deny
     }
 
-    public static string IdentityFor(string minicloudUserId, string organizationId) =>
-        $"mc-{minicloudUserId}-{organizationId}";
+    public static string IdentityFor(string selfrunUserId, string organizationId) =>
+        $"mc-{selfrunUserId}-{organizationId}";
 
     public static Dictionary<string, string> StripUntrustedHeaders(IEnumerable<KeyValuePair<string, string>> incoming)
     {
@@ -52,7 +52,7 @@ public static class GrafanaProxyGuard
                 continue;
             }
 
-            if (key.StartsWith("X-Minicloud-Grafana-", StringComparison.OrdinalIgnoreCase))
+            if (key.StartsWith("X-Selfrun-Grafana-", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

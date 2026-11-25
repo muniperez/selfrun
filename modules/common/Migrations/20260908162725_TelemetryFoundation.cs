@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <inheritdoc />
     public partial class TelemetryFoundation : Migration
@@ -112,7 +112,7 @@ namespace Minicloud.Common.Migrations
                     id = table.Column<string>(type: "text", nullable: false),
                     organization_id = table.Column<string>(type: "text", nullable: false),
                     app_id = table.Column<string>(type: "text", nullable: false),
-                    minicloud_user_id = table.Column<string>(type: "text", nullable: false),
+                    selfrun_user_id = table.Column<string>(type: "text", nullable: false),
                     code_hash = table.Column<string>(type: "text", nullable: false),
                     destination = table.Column<string>(type: "text", nullable: false),
                     expires_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -153,7 +153,7 @@ namespace Minicloud.Common.Migrations
                     id = table.Column<string>(type: "text", nullable: false),
                     organization_id = table.Column<string>(type: "text", nullable: false),
                     app_id = table.Column<string>(type: "text", nullable: false),
-                    minicloud_user_id = table.Column<string>(type: "text", nullable: false),
+                    selfrun_user_id = table.Column<string>(type: "text", nullable: false),
                     session_hash = table.Column<string>(type: "text", nullable: false),
                     expires_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     last_seen_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -171,7 +171,7 @@ namespace Minicloud.Common.Migrations
                 {
                     id = table.Column<string>(type: "text", nullable: false),
                     organization_id = table.Column<string>(type: "text", nullable: false),
-                    minicloud_user_id = table.Column<string>(type: "text", nullable: false),
+                    selfrun_user_id = table.Column<string>(type: "text", nullable: false),
                     grafana_user_id = table.Column<long>(type: "bigint", nullable: false),
                     expected_role = table.Column<string>(type: "text", nullable: false),
                     reconciliation_status = table.Column<string>(type: "text", nullable: false),
@@ -331,9 +331,9 @@ namespace Minicloud.Common.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_grafana_proxy_sessions_organization_id_minicloud_user_id",
+                name: "IX_grafana_proxy_sessions_organization_id_selfrun_user_id",
                 table: "grafana_proxy_sessions",
-                columns: new[] { "organization_id", "minicloud_user_id" });
+                columns: new[] { "organization_id", "selfrun_user_id" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_grafana_proxy_sessions_session_hash",
@@ -342,9 +342,9 @@ namespace Minicloud.Common.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_grafana_user_bindings_organization_id_minicloud_user_id",
+                name: "IX_grafana_user_bindings_organization_id_selfrun_user_id",
                 table: "grafana_user_bindings",
-                columns: new[] { "organization_id", "minicloud_user_id" },
+                columns: new[] { "organization_id", "selfrun_user_id" },
                 unique: true);
 
             migrationBuilder.CreateIndex(

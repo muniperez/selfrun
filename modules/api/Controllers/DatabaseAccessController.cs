@@ -2,16 +2,16 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/databases/{id}/access")]
-public sealed class DatabaseAccessController(MinicloudDbContext db, DatabaseManagementService service, TimeProvider clock) : ControllerBase
+public sealed class DatabaseAccessController(SelfrunDbContext db, DatabaseManagementService service, TimeProvider clock) : ControllerBase
 {
     [HttpPut]
     public Task<IResult> Update(string id, DatabaseAccessRequest request, CancellationToken ct) => DatabasesController.Handle(async () =>

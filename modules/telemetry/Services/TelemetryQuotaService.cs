@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Telemetry.Data;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed record TelemetryQuotaDecision(bool Admitted, string? Reason, TimeSpan? RetryAfter);
 

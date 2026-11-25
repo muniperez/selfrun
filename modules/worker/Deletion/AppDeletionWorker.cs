@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Minicloud.Worker.Deletion;
+namespace Selfrun.Worker.Deletion;
 
 public sealed class AppDeletionWorker(IServiceScopeFactory scopes, ILogger<AppDeletionWorker> logger) : BackgroundService
 {

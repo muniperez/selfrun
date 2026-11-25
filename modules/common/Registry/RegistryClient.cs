@@ -2,11 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
 
-namespace Minicloud.Common.Registry;
+namespace Selfrun.Common.Registry;
 
 public sealed class RegistryClient(HttpClient http, IOptions<RegistryOptions> options, RegistryTokens tokens, TimeProvider clock)
 {
@@ -22,7 +22,7 @@ public sealed class RegistryClient(HttpClient http, IOptions<RegistryOptions> op
     public HttpRequestMessage Request(HttpMethod method, string path, string repository, bool write = false)
     {
         var request = new HttpRequestMessage(method, new Uri(new Uri(_options.BackendUrl.TrimEnd('/') + "/"), path.TrimStart('/')));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.Issue("minicloud-internal", repository, write, clock.GetUtcNow().AddMinutes(5), delete: method == HttpMethod.Delete));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.Issue("selfrun-internal", repository, write, clock.GetUtcNow().AddMinutes(5), delete: method == HttpMethod.Delete));
         request.Headers.TryAddWithoutValidation("Accept", RegistryImageValidator.OciManifest + ", " + RegistryImageValidator.DockerManifest);
         return request;
     }

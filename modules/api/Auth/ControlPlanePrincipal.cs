@@ -1,12 +1,12 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed record ControlPlanePrincipal(
     string Kind,
@@ -22,7 +22,7 @@ public sealed record ControlPlanePrincipal(
 
 public static class ControlPlanePrincipalExtensions
 {
-    public static Minicloud.Common.Auth.ActorIdentity ToActorIdentity(this ControlPlanePrincipal principal) =>
+    public static Selfrun.Common.Auth.ActorIdentity ToActorIdentity(this ControlPlanePrincipal principal) =>
         new(principal.Kind, principal.UserId, principal.ApiKeyId, principal.OrganizationId, principal.Scopes);
 
     public static ControlPlanePrincipal? GetControlPlanePrincipal(this ClaimsPrincipal user)
@@ -45,7 +45,7 @@ public static class ControlPlanePrincipalExtensions
 }
 
 public sealed class ControlPlanePrincipalResolver(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IApiKeyTokenService apiKeyTokenService,
     TimeProvider timeProvider,
     BrowserSessionService browserSessions,

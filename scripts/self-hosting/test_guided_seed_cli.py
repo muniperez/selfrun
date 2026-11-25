@@ -114,7 +114,7 @@ def proxy(root, fixtures):
 
         def do_GET(self):
             if self.headers["Host"] == "github.com":
-                assert self.path.startswith("/muniventures/minicloud/releases/download/server-v0.0.0-unavailable/")
+                assert self.path.startswith("/muniperez/selfrun/releases/download/server-v0.0.0-unavailable/")
                 assert self.headers["Authorization"] is None
                 self.send_error(404)
             else:
@@ -224,7 +224,7 @@ def check_hetzner_resume(cli, root, env, fixture):
     scope = session["hetznerCredentialScope"]
     seed_id = session["config"]["seedId"]
     assert session["keyPath"] == str(state / f"operator-{seed_id}_ed25519")
-    assert scope == hashlib.sha256(f"minicloud-seed-scope:{seed_id}:{TOKEN}".encode()).hexdigest()
+    assert scope == hashlib.sha256(f"selfrun-seed-scope:{seed_id}:{TOKEN}".encode()).hexdigest()
     report_file = state / "reports" / "seed-report.json"
     assert scope not in report_file.read_text()
     mismatch = "Hetzner credential differs from the original guided seed"
@@ -443,7 +443,7 @@ esac
             sha = hashlib.sha256(original).hexdigest()
             assert archive.stat().st_ino == archive_inode and archive.read_bytes() == original
             with tarfile.open(archive) as source:
-                descriptor = json.load(source.extractfile("minicloud-local-source.json"))
+                descriptor = json.load(source.extractfile("selfrun-local-source.json"))
                 assert descriptor["sourceRevision"] == revision and descriptor["cliCompatibility"]["sourceRevisions"] == [revision]
                 assert source.getmember("modules/api/Dockerfile").isfile()
             assert sha in output and revision in output and fixture.posts == []
@@ -485,10 +485,10 @@ esac
                 # Even under the original secret, a different seed or host key cannot enroll.
                 secret = (state / "ssh-enrollment.secret").read_bytes()
                 wrong_public = (root / "wrong-host-key.pub").read_text().split()[1]
-                proofs = [hmac.new(secret, f"minicloud-seed-host-v1\n{seed}\nssh-ed25519 {key}".encode(),
+                proofs = [hmac.new(secret, f"selfrun-seed-host-v1\n{seed}\nssh-ed25519 {key}".encode(),
                                    hashlib.sha256).hexdigest()
                           for seed, key in (("0" * 32, public), (session["config"]["seedId"], wrong_public))]
-                (root / "wrong-proofs").write_text("".join(f"minicloud-seed-host-v1 {mac}\n" for mac in proofs))
+                (root / "wrong-proofs").write_text("".join(f"selfrun-seed-host-v1 {mac}\n" for mac in proofs))
                 output = dialogue(cli, root, env, state, [credential], 10)
                 (root / "wrong-proofs").unlink()
             else:
@@ -509,14 +509,14 @@ esac
             assert re.search(r'bytes.fromhex\("([0-9A-F]{64})"\)', fixture.user_data)[1] == secret.hex().upper()
             assert "PRIVATE KEY" not in fixture.user_data
             if not real_ssh:
-                proof = hmac.new(secret, f"minicloud-seed-host-v1\n{saved['seedId']}\nssh-ed25519 {public}".encode(),
+                proof = hmac.new(secret, f"selfrun-seed-host-v1\n{saved['seedId']}\nssh-ed25519 {public}".encode(),
                                  hashlib.sha256).hexdigest()
-                (root / "proof").write_text(f"minicloud-seed-host-v1 {proof}\n")
+                (root / "proof").write_text(f"selfrun-seed-host-v1 {proof}\n")
             config = {"consoleUrl": f"https://{DOMAIN}", "apiUrl": f"https://api.{DOMAIN}", "appDomain": APP_DOMAIN}
             identity = {"installationId": "4cacbcc7-c4d3-4f94-8848-fa700870238d", "operationId": "02f942fe-36f4-488f-9f35-4d508603d8de"}
-            metadata = dict(identity, schemaVersion=1, product="minicloud", root="/opt/minicloud",
+            metadata = dict(identity, schemaVersion=1, product="selfrun", root="/opt/selfrun",
                             releaseTag=saved["serverVersion"], sourceRevision=revision,
-                            recoveryDir=f"/var/lib/minicloud-seed/{saved['seedId']}/recovery", publicAddresses=[ADDRESS],
+                            recoveryDir=f"/var/lib/selfrun-seed/{saved['seedId']}/recovery", publicAddresses=[ADDRESS],
                             configuration=config, setupTokenFile="test-setup-token", phase="awaiting_dns_tls")
             observation = dict(identity, state="installed", progress="awaiting_dns_tls", release=saved["serverVersion"],
                                source=revision, health="pending", prepared=True, artifactTrust="operator-pinned-local-source",
@@ -560,7 +560,7 @@ esac
             (root / "https-ready").touch()
             output = dialogue(cli, root, env, state, [("Export private recovery", "y")], 10)
             assert f"https://{DOMAIN}/setup" in output and "Protected setup token file:" in output
-            assert "minicloud login" in output
+            assert "selfrun login" in output
             assert (state / "private-recovery" / "test-setup-token").stat().st_mode & 0o777 == 0o600
             (root / "ready.json").write_text(json.dumps(dict(observation, progress="ready", health="ready",
                                                              openBao="ready", browser="ready")))

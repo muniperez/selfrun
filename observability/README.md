@@ -1,7 +1,7 @@
-# Minicloud observability (T10): private Loki + Grafana OSS
+# Selfrun observability (T10): private Loki + Grafana OSS
 
-Beta application-log storage for Minicloud self-deploy. Single-binary Loki
-plus Grafana OSS, colocated with Minicloud services on their own
+Beta application-log storage for Selfrun self-deploy. Single-binary Loki
+plus Grafana OSS, colocated with Selfrun services on their own
 provider-backed volume. This document records the T10 infrastructure
 decisions, pinned versions, and operating procedures.
 
@@ -44,11 +44,11 @@ repo:
   observability/profiling/grafana-provisioning/ # operator-only static datasources and dashboard
   observability/README.md             # this file
 
-VPS (/var/lib/minicloud/observability, separate mounted volume):
+VPS (/var/lib/selfrun/observability, separate mounted volume):
   loki/        -> /loki in the Loki container (chunks, TSDB index, WAL, compactor state)
   grafana/     -> /var/lib/grafana in the Grafana container (grafana.db, sessions, plugins)
 
-/opt/minicloud/apps/minicloud/shared/observability/ (re-rendered each deploy):
+/opt/selfrun/apps/selfrun/shared/observability/ (re-rendered each deploy):
   loki.yml, grafana.ini, provisioning/ (empty until T20), grafana-admin-password (0600)
 ```
 
@@ -68,7 +68,7 @@ docker compose -f compose.dev.yml -f compose.observability.yml config  # render 
 docker compose -f compose.dev.yml -f compose.observability.yml up -d loki grafana
 curl http://127.0.0.1:3100/ready
 curl http://127.0.0.1:3000/api/health
-# Grafana UI: http://localhost:3000 (admin / minicloud-dev-only)
+# Grafana UI: http://localhost:3000 (admin / selfrun-dev-only)
 ```
 
 Ports bind to 127.0.0.1 only. Production publishes **no** host ports.
@@ -132,16 +132,16 @@ retention is 2 days best-effort; **no log backup or availability SLA** is
 promised in beta.
 
 - **Grafana**: stop the Grafana container
-  (`docker compose -p minicloud-minicloud stop grafana`), copy
-  `/var/lib/minicloud/observability/grafana/grafana.db` plus
-  `/opt/minicloud/apps/minicloud/shared/observability/grafana.ini` and the
+  (`docker compose -p selfrun-selfrun stop grafana`), copy
+  `/var/lib/selfrun/observability/grafana/grafana.db` plus
+  `/opt/selfrun/apps/selfrun/shared/observability/grafana.ini` and the
   `grafana-admin-password` file to encrypted offline storage, restart.
   The admin password and `grafana.db` encryption material must be backed up
   together; one without the other is unrestorable.
 - **Loki**: crash recovery is via the WAL on the same volume; host/volume
   failure can lose unflushed data (documented beta limitation). For a
   point-in-time copy, stop Loki first, then snapshot or copy the whole
-  `/var/lib/minicloud/observability/loki` tree.
+  `/var/lib/selfrun/observability/loki` tree.
 - **Isolated restore test** (required before relying on backups): restore
   to a disposable host or directory, start Loki/Grafana against the copy
   with the backed-up configs, and verify login + a historical query. Never
@@ -170,7 +170,7 @@ a fixed 5% head-sampling rate.
 The collector receiver accepts only bearer-authenticated requests. It has no
 published OTLP port; container producers reach it only over a private Compose
 bridge. Logs are limited both at the worker exporter and in the collector to the
-`Minicloud.OperatorDiagnostics` category; collector transforms keep only
+`Selfrun.OperatorDiagnostics` category; collector transforms keep only
 approved numeric fields, fixed service/operation/outcome values, and trace
 metadata. Export requests always receive the reserved `operator` Loki tenant
 header from the collector; inbound tenant headers and arbitrary resource/log
@@ -182,8 +182,8 @@ capture. Collector memory and exporter queues are bounded, retries stop after
 Start the optional stores with throwaway local credentials:
 
 ```bash
-export MINICLOUD_OPERATOR_OTLP_TOKEN="$(openssl rand -hex 32)"
-export MINICLOUD_OPERATOR_GRAFANA_PASSWORD="$(openssl rand -hex 24)"
+export SELFRUN_OPERATOR_OTLP_TOKEN="$(openssl rand -hex 32)"
+export SELFRUN_OPERATOR_GRAFANA_PASSWORD="$(openssl rand -hex 24)"
 docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml config
 docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml \
   up -d loki grafana-operator otel-collector prometheus tempo worker
@@ -204,17 +204,17 @@ and Tempo 2.7.2
 After at least one deployment pipeline completes, the operator Grafana
 datasources can verify the pilot:
 
-- Explore **Minicloud Operator Logs** with
-  `{service_name="minicloud-worker"}`. A summary includes
+- Explore **Selfrun Operator Logs** with
+  `{service_name="selfrun-worker"}`. A summary includes
   `Operation="deployment.pipeline"` and the structured fields
   `Service`, `Outcome`, `WindowDurationMs`, `Count`, `TotalDurationMs`,
   `Bytes`, `Failures`, and `TraceId`.
-- Explore **Minicloud Operator Metrics** with
-  `histogram_quantile(0.95, sum by (le, service, operation) (rate(minicloud_worker_deployment_pipeline_duration_seconds_bucket[5m])))`.
+- Explore **Selfrun Operator Metrics** with
+  `histogram_quantile(0.95, sum by (le, service, operation) (rate(selfrun_worker_deployment_pipeline_duration_seconds_bucket[5m])))`.
   The explicit histogram boundaries are 0.1, 0.5, 1, 2.5, 5, 10, 30, 60,
   120, and 300 seconds.
-- Explore **Minicloud Operator Traces**, select
-  `service.name="minicloud-worker"`, and open a sampled
+- Explore **Selfrun Operator Traces**, select
+  `service.name="selfrun-worker"`, and open a sampled
   `deployment.pipeline` span. The sampling rate is 5%; low-volume pilots may
   need several operations before a trace appears.
 
@@ -234,8 +234,8 @@ docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profil
   stop worker grafana-operator otel-collector prometheus tempo
 docker compose -f compose.dev.yml -f compose.observability.yml -f compose.profiling.yml \
   rm -f worker grafana-operator otel-collector prometheus tempo
-docker volume rm minicloud-operator-prometheus-dev minicloud-operator-tempo-dev \
-  minicloud-operator-grafana-dev
+docker volume rm selfrun-operator-prometheus-dev selfrun-operator-tempo-dev \
+  selfrun-operator-grafana-dev
 ```
 
 Remove `compose.profiling.yml` from the Compose command and unset the worker's
@@ -245,7 +245,7 @@ non-exporting behavior.
 ### Operator Grafana dashboard and remote runtime-agent profiling (#119)
 
 `observability/profiling/grafana-provisioning/dashboards/` provisions the
-read-only **Minicloud Operator Profiling** dashboard with panels for CPU
+read-only **Selfrun Operator Profiling** dashboard with panels for CPU
 seconds per idle host-hour, subprocesses per cycle, DB commands per batch,
 allocated bytes per accepted MiB, operation p95 latency, exporter drops, queue
 lag, and bounded operator diagnostic summaries.
@@ -260,12 +260,12 @@ loopback collector:
   non-loopback `receiverUrl`, embedded URI credentials, or unbounded queue/timeout
   values when enabled.
 - **Bounded structured summary & restricted reader:** When enabled, the agent
-  emits single-line allowlisted JSON summaries (`minicloud.runtime-agent.summary.v1`)
+  emits single-line allowlisted JSON summaries (`selfrun.runtime-agent.summary.v1`)
   and optionally exports bounded OTLP/HTTP payloads over a dedicated non-blocking
   queue (`DropWrite` when saturated). A failed or slow receiver increments
-  `minicloud.runtime.agent.exporter.drops` and never delays heartbeats, routing,
+  `selfrun.runtime.agent.exporter.drops` and never delays heartbeats, routing,
   or application-log ingestion. The example local collector restricts its
-  `journald` reader to `minicloud-runtime-agent.service` and the summary schema,
+  `journald` reader to `selfrun-runtime-agent.service` and the summary schema,
   and forwards only through an operator-managed authenticated SSH tunnel
   (`127.0.0.1:14318`) so collector and tunnel overhead can be measured separately.
 - **Reproducible synthetic fixture:** `tools/runtime-agent-benchmark` includes a

@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <summary>
     /// Adds the "Keep me signed in" preference and remembered/renewal state to portal sessions. Existing sessions stay

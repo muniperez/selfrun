@@ -1,9 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 /// <summary>
 /// Shared EF Core helpers for pipeline steps. All multi-entity state
@@ -16,11 +16,11 @@ internal static class PipelineDb
 
     public static async Task ExecuteInTransactionAsync(
         IServiceScopeFactory scopeFactory,
-        Func<MinicloudDbContext, CancellationToken, Task> operation,
+        Func<SelfrunDbContext, CancellationToken, Task> operation,
         CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var serializeSqlite = db.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
         if (serializeSqlite)
         {
@@ -56,7 +56,7 @@ internal static class PipelineDb
     }
 
     public static void AddEvent(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string deploymentId,
         EventLevel level,
         string message,

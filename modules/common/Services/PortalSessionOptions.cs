@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Options;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>
 /// Operator policy for dashboard (portal) browser sessions. Durations are whole minutes so the same values can be

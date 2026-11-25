@@ -1,9 +1,9 @@
 # Drawing review
 
 - Medium: static full-screen drawings at 1440px; separate 390px layout.
-- Reference: existing Minicloud shell, PageScaffold, CollectionToolbar and the
+- Reference: existing Selfrun shell, PageScaffold, CollectionToolbar and the
   Plans design contract. Stageshow static-card informed visual grouping; actual
-  Minicloud components replace the generic illustration kit. No animation.
+  Selfrun components replace the generic illustration kit. No animation.
 - Product code changed: none. Static illustration source is separate.
 - Checked: all five desktop compositions, expanded service details, environment
   selector and mobile Overview; control fit, URL disclosure, hierarchy and scope.

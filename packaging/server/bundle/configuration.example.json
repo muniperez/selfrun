@@ -13,7 +13,7 @@
     "rememberedIdleMinutes": 10080,
     "rememberedMaxMinutes": 43200
   },
-  "sourceUrl": "https://github.com/muniventures/minicloud",
+  "sourceUrl": "https://github.com/muniperez/selfrun",
   "recovery": {
     "openBaoUnsealMaterialPath": "/mnt/operator-recovery",
     "backupDestination": "operator-managed-off-host-location"

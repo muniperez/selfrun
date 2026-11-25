@@ -1,4 +1,4 @@
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 internal sealed class DatabaseRemoteOperationException(
     string code, string script = "remote", string? stage = null, string? runtimeErrorType = null) : Exception(code)

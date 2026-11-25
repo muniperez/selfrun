@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <inheritdoc />
     public partial class ProtectCustomDomainRegistrationRemoval : Migration

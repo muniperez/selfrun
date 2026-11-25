@@ -88,10 +88,10 @@ def command(arguments, *, stdin=None, env=None, timeout=60, optional=False):
 
 
 def restore_check(directory, key, run=command, sleep=time.sleep):
-    name = 'minicloud-restore-' + secrets.token_hex(12)
+    name = 'selfrun-restore-' + secrets.token_hex(12)
     ownership = secrets.token_hex(16)
     started = False
-    with tempfile.TemporaryDirectory(prefix='minicloud-restore-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='selfrun-restore-') as temporary:
         root = Path(temporary)
         payload, encrypted, keyfile = verify_backup(directory, key, root)
         dump = root / 'database.dump'
@@ -102,7 +102,7 @@ def restore_check(directory, key, run=command, sleep=time.sleep):
             docker_env.pop('BACKUP_ENCRYPTION_KEY', None)
             docker_env['POSTGRES_PASSWORD'] = secrets.token_hex(24)
             run(['docker', 'run', '--detach', '--pull=never', '--name', name, '--network', 'none',
-                 '--label', 'minicloud.restore-check=' + ownership, '--user', 'postgres',
+                 '--label', 'selfrun.restore-check=' + ownership, '--user', 'postgres',
                  '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
                  '--memory', '768m', '--cpus', '1', '--pids-limit', '128',
                  '--env', 'POSTGRES_PASSWORD', '--env', 'POSTGRES_DB=restorecheck', 'postgres:16-alpine'], env=docker_env)
@@ -129,7 +129,7 @@ def restore_check(directory, key, run=command, sleep=time.sleep):
                         databaseId=payload['databaseId'], createdAt=payload['createdAt'], tableCount=table_count)
 
         finally:
-            label = run(['docker', 'inspect', '--format', '{{index .Config.Labels "minicloud.restore-check"}}', name], optional=True)
+            label = run(['docker', 'inspect', '--format', '{{index .Config.Labels "selfrun.restore-check"}}', name], optional=True)
             if label == ownership:
                 run(['docker', 'rm', '--force', '--volumes', name])
             elif started:

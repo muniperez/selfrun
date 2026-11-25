@@ -3,14 +3,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Databases;
+namespace Selfrun.Worker.Databases;
 
 public sealed partial class DatabaseOperationProcessor
 {
-    private async Task<bool> ApplyBindingNetworkAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task<bool> ApplyBindingNetworkAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         using var request = JsonDocument.Parse(operation.RequestJson);
         var bindingId = request.RootElement.GetProperty("bindingId").GetString();
@@ -22,9 +22,9 @@ public sealed partial class DatabaseOperationProcessor
         var port = 20000 + (int)(BinaryPrimitives.ReadUInt32BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes(binding.Id))) % 40001);
         if (await db.ManagedDatabaseBindings.AnyAsync(x => x.AppId == app.Id && x.Id != binding.Id && x.Port == port && x.Status == "applied", ct))
         { throw new InvalidOperationException("Private connection port conflicts with another binding."); }
-        var client = await ExecuteRemoteAsync(operation, host, "private-network.py", new { action = "prepare-client", bindingId = binding.Id, dockerNetwork = "minicloud-" + app.Slug + "_default", operationId = operation.Id }, ct);
+        var client = await ExecuteRemoteAsync(operation, host, "private-network.py", new { action = "prepare-client", bindingId = binding.Id, dockerNetwork = "selfrun-" + app.Slug + "_default", operationId = operation.Id }, ct);
         await RequireApplicationMutationAsync(operation, app.Id, ct);
-        var server = await ExecuteRemoteAsync(operation, sourceHost, "private-network.py", new { action = "authorize-client", bindingId = binding.Id, container = "minicloud-" + sourceApp.Slug + "-db-1", publicKey = client.GetProperty("publicKey").GetString(), operationId = operation.Id }, ct);
+        var server = await ExecuteRemoteAsync(operation, sourceHost, "private-network.py", new { action = "authorize-client", bindingId = binding.Id, container = "selfrun-" + sourceApp.Slug + "-db-1", publicKey = client.GetProperty("publicKey").GetString(), operationId = operation.Id }, ct);
         await RequireApplicationMutationAsync(operation, app.Id, ct);
         var credentials = JsonSerializer.Deserialize<DatabaseConnectionCredentials>(encryption.Decrypt(database.EncryptedCredentialsJson!), Json)!;
         var connection = await ExecuteRemoteAsync(operation, host, "private-network.py", new { action = "connect-client", bindingId = binding.Id, gateway = client.GetProperty("gateway").GetString(), serverIp = sourceHost.IpAddress, target = server.GetProperty("target").GetString(), hostKey = server.GetProperty("hostKey").GetString(), sshUser = server.GetProperty("sshUser").GetString(), credentials, port, operationId = operation.Id }, ct);
@@ -37,9 +37,9 @@ public sealed partial class DatabaseOperationProcessor
         binding.UpdatedAt = clock.GetUtcNow();
         return true;
     }
-    private async Task<bool> ApplyDatabaseAccessAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task<bool> ApplyDatabaseAccessAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
-        var request = JsonSerializer.Deserialize<Minicloud.Common.Contracts.DatabaseAccessRequest>(operation.RequestJson, Json)
+        var request = JsonSerializer.Deserialize<Selfrun.Common.Contracts.DatabaseAccessRequest>(operation.RequestJson, Json)
             ?? throw new InvalidOperationException("Access request is unavailable.");
         if (database.Status != "ready" || await HasRetainedMigrationFenceAsync(database.Id, database.OrganizationId, ct))
         { throw new InvalidOperationException("Database access requires explicit migration reconciliation."); }
@@ -88,7 +88,7 @@ public sealed partial class DatabaseOperationProcessor
         return false;
     }
 
-    private async Task<bool> ReconcileDatabaseAccessAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, string mode, IReadOnlyList<string> cidrs, CancellationToken ct)
+    private async Task<bool> ReconcileDatabaseAccessAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, string mode, IReadOnlyList<string> cidrs, CancellationToken ct)
     {
         var neighbors = await db.ManagedDatabases.Where(x => x.OrganizationId == database.OrganizationId && x.Status != "deleted" &&
             x.EncryptedCredentialsJson != null &&
@@ -114,7 +114,7 @@ public sealed partial class DatabaseOperationProcessor
         return true;
     }
 
-    private async Task<bool> RevokeBindingNetworkAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task<bool> RevokeBindingNetworkAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         using var request = JsonDocument.Parse(operation.RequestJson);
         var binding = await db.ManagedDatabaseBindings.SingleAsync(x => x.Id == request.RootElement.GetProperty("bindingId").GetString() && x.DatabaseId == database.Id && x.OrganizationId == operation.OrganizationId, ct);
@@ -131,7 +131,7 @@ public sealed partial class DatabaseOperationProcessor
         return true;
     }
 
-    private async Task<bool> ProcessBindingAsync(DatabaseOperation operation, ManagedDatabase database, MinicloudApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
+    private async Task<bool> ProcessBindingAsync(DatabaseOperation operation, ManagedDatabase database, SelfrunApp sourceApp, ServerInstance sourceHost, CancellationToken ct)
     {
         if (operation.ResultJson is not null)
         {

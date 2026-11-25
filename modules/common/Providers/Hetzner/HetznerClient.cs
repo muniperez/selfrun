@@ -6,11 +6,11 @@ using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Models;
 using System.Net.Http;
 
-namespace Minicloud.Common.Providers.Hetzner;
+namespace Selfrun.Common.Providers.Hetzner;
 
 public sealed partial class HetznerClient : IVpsProviderClient, IVpsProviderSshKeyClient
 {

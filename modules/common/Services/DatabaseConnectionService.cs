@@ -1,12 +1,12 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class DatabaseConnectionService(MinicloudDbContext db, ControlPlaneAuthorization authorization, SecretEncryptionService encryption, AuditEventService audit)
+public sealed class DatabaseConnectionService(SelfrunDbContext db, ControlPlaneAuthorization authorization, SecretEncryptionService encryption, AuditEventService audit)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 

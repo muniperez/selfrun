@@ -1,8 +1,8 @@
 using System.Globalization;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 /// <summary>
 /// Shared bounds for Grafana-driven Loki reads. Applied uniformly to Explore

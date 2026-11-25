@@ -1,15 +1,15 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers.Dns;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers.Dns;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class CustomDomainRegistrationService(
-    MinicloudDbContext db, IIdGenerator ids, ICustomDomainDnsResolver dns, TimeProvider clock, AuditEventService audit,
+    SelfrunDbContext db, IIdGenerator ids, ICustomDomainDnsResolver dns, TimeProvider clock, AuditEventService audit,
     IOptions<ManagedDomainOptions>? managedDomains = null)
 {
     public async Task<CustomDomainRegistration> RegisterAsync(string organizationId, string appId, string hostname, CancellationToken ct, string actor = "system")
@@ -103,7 +103,7 @@ public sealed class CustomDomainRegistrationService(
         var failure = "The TXT record is not visible yet. Check its name and value, then try again.";
         try
         {
-            var answers = await dns.QueryAsync("_minicloud-verification." + row.Hostname, 16, ct);
+            var answers = await dns.QueryAsync("_selfrun-verification." + row.Hostname, 16, ct);
             verified = answers.Any(x => x.Trim('"') == row.VerificationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

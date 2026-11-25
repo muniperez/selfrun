@@ -2,17 +2,17 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Providers;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Providers;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -20,7 +20,7 @@ namespace Minicloud.Api.Controllers;
 public sealed class MeController : ControllerBase
 {
     [HttpGet]
-    public async Task<IResult> GetMe([FromServices] MinicloudDbContext db, CancellationToken cancellationToken)
+    public async Task<IResult> GetMe([FromServices] SelfrunDbContext db, CancellationToken cancellationToken)
     {
         var principal = RequirePrincipal(HttpContext);
         if (principal.IsApiKey && principal.ApiKeyId is not null && principal.OrganizationId is not null)

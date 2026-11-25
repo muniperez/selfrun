@@ -28,8 +28,8 @@ local/
 
 # Local secrets
 appsettings.Development.json
-minicloud-dev.db
-minicloud-dev.db-*
+selfrun-dev.db
+selfrun-dev.db-*
 
 # Generated files
 *.GeneratedMSBuildEditorConfig.editorconfig

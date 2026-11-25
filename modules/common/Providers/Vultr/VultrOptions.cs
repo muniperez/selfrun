@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Providers.Vultr;
+namespace Selfrun.Common.Providers.Vultr;
 
 public class VultrOptions
 {

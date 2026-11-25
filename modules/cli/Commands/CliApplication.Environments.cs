@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Config;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Config;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -23,7 +23,7 @@ public sealed partial class CliApplication
         var sshAccess = action is "create" or "update" ? ParseSshAccessOptions(args) : null;
         if (action == "update" && sshAccess is null)
             throw new CliCommandException(CliExitCodes.ValidationError, $"Nothing to update. Supply {SshKeyOption} <key-id> or {SshPublicKeyFileOption} <path>; omitting both keeps the current SSH selection.");
-        var result = MinicloudConfigLoader.Load(GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath());
+        var result = SelfrunConfigLoader.Load(GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName);
         if (!result.IsValid || result.Config is null) { PrintDiagnostics(result.Diagnostics); return CliExitCodes.ValidationError; }
         var application = await GetApplicationContextAsync(result.Config.AppId!, ct);
         if (action == "create")

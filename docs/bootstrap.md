@@ -3,8 +3,8 @@
 The API executable provides one host-only maintenance entry point:
 
 ```text
-Minicloud.Api bootstrap <operation> --input-file <protected-path>
-Minicloud.Api bootstrap <operation> --stdin
+Selfrun.Api bootstrap <operation> --input-file <protected-path>
+Selfrun.Api bootstrap <operation> --stdin
 ```
 
 Run migrations first and supply the normal API database configuration,
@@ -60,7 +60,7 @@ a password. Browser completion is deliberately different: reuse returns
 `setup_already_completed`.
 
 The service persists `in_progress` before identity creation. Kratos private
-`metadata_admin.minicloud_bootstrap` contains the exact `installationId`
+`metadata_admin.selfrun_bootstrap` contains the exact `installationId`
 and `operationId`. An interrupted attempt reconciles only that exact pair;
 an email match is never sufficient. If the external outcome is uncertain
 and no exact match is visible, the attempt remains `setup_in_progress` and
@@ -69,7 +69,7 @@ same pending operation, but cannot reset it or permit another creation.
 Do not delete the record to work around uncertainty.
 
 Explicit binding/recovery preserve user/organization IDs, memberships and
-independent API keys. They revoke the affected Minicloud browser sessions,
+independent API keys. They revoke the affected Selfrun browser sessions,
 Grafana proxy sessions/unused launch codes, and Kratos identity sessions.
 Recovery requires host access, not SMTP.
 
@@ -82,7 +82,7 @@ and final local transaction. No schema or second seed path is introduced.
 
 ## Service integration
 
-Register `AddMinicloudBootstrap()` after the normal API registrations and
+Register `AddSelfrunBootstrap()` after the normal API registrations and
 inject `BootstrapService`. T42's transport calls:
 
 - `StatusAsync(installationId, cancellationToken)`

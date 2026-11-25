@@ -4,7 +4,7 @@ The tenant-facing Grafana instance intentionally provisions **no** static data
 sources or dashboards here.
 
 Per-organization Grafana organizations and per-app Loki data sources are
-provisioned dynamically by the Minicloud API (T20) through the private
+provisioned dynamically by the Selfrun API (T20) through the private
 operator path, using desired-state records and idempotent retries. A static
 data source loaded by the tenant instance would bypass the app-bound
 credential model, so tenant Grafana must not load the operator-only datasource.

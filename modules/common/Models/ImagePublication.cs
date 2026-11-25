@@ -1,13 +1,13 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class ImagePublication
 {
     [Key] public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string ServiceName { get; set; } = default!;
     public string IdempotencyKey { get; set; } = default!;
     public string Repository { get; set; } = default!;
@@ -43,7 +43,7 @@ public sealed class RegistrySession
     [Key] public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string? ImagePublicationId { get; set; }
     public ImagePublication? ImagePublication { get; set; }
     public string? DeploymentId { get; set; }

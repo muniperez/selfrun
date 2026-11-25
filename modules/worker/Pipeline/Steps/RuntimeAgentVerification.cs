@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace Minicloud.Worker.Pipeline.Steps;
+namespace Selfrun.Worker.Pipeline.Steps;
 
 internal static class RuntimeAgentVerification
 {
@@ -10,9 +10,9 @@ internal static class RuntimeAgentVerification
     internal const string Script = """
 import base64, hashlib, hmac, json, os, pathlib, pwd, stat, subprocess, sys
 expected = json.loads(base64.b64decode(sys.argv[1]))
-root = pathlib.Path('/opt/minicloud/agent')
+root = pathlib.Path('/opt/selfrun/agent')
 try:
-    agent = pwd.getpwnam('minicloud-agent')
+    agent = pwd.getpwnam('selfrun-agent')
     if root.is_symlink() or root.stat().st_uid != 0 or root.stat().st_mode & 0o022:
         sys.exit(12)
     for name, digest in expected['files'].items():
@@ -22,20 +22,20 @@ try:
             sys.exit(12)
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             sys.exit(12)
-    unit = pathlib.Path('/etc/systemd/system/minicloud-agent.service')
-    if unit.is_symlink() or unit.read_bytes() != (root / 'minicloud-agent.service').read_bytes():
+    unit = pathlib.Path('/etc/systemd/system/selfrun-agent.service')
+    if unit.is_symlink() or unit.read_bytes() != (root / 'selfrun-agent.service').read_bytes():
         sys.exit(12)
-    running = subprocess.run(['systemctl', 'is-active', '--quiet', 'minicloud-agent.service']).returncode == 0
-    for field, wanted in [('FragmentPath', '/etc/systemd/system/minicloud-agent.service'), ('User', 'minicloud-agent'), ('DropInPaths', '')]:
-        if subprocess.check_output(['systemctl', 'show', '-p', field, '--value', 'minicloud-agent.service'], text=True).strip() != wanted:
+    running = subprocess.run(['systemctl', 'is-active', '--quiet', 'selfrun-agent.service']).returncode == 0
+    for field, wanted in [('FragmentPath', '/etc/systemd/system/selfrun-agent.service'), ('User', 'selfrun-agent'), ('DropInPaths', '')]:
+        if subprocess.check_output(['systemctl', 'show', '-p', field, '--value', 'selfrun-agent.service'], text=True).strip() != wanted:
             sys.exit(12)
-    sudoers = pathlib.Path('/etc/sudoers.d/minicloud-agent-routing')
-    if sudoers.is_symlink() or sudoers.stat().st_uid != 0 or stat.S_IMODE(sudoers.stat().st_mode) != 0o440 or sudoers.read_text().strip() != 'minicloud-agent ALL=(root) NOPASSWD: /opt/minicloud/agent/apply-minicloud-routing ""':
+    sudoers = pathlib.Path('/etc/sudoers.d/selfrun-agent-routing')
+    if sudoers.is_symlink() or sudoers.stat().st_uid != 0 or stat.S_IMODE(sudoers.stat().st_mode) != 0o440 or sudoers.read_text().strip() != 'selfrun-agent ALL=(root) NOPASSWD: /opt/selfrun/agent/apply-selfrun-routing ""':
         sys.exit(12)
-    if subprocess.check_output(['systemctl', 'show', '-p', 'NeedDaemonReload', '--value', 'minicloud-agent.service'], text=True).strip() != 'no':
+    if subprocess.check_output(['systemctl', 'show', '-p', 'NeedDaemonReload', '--value', 'selfrun-agent.service'], text=True).strip() != 'no':
         sys.exit(12)
-    pid = subprocess.check_output(['systemctl', 'show', '-p', 'MainPID', '--value', 'minicloud-agent.service'], text=True).strip()
-    if running and (not pid.isdigit() or pathlib.Path('/proc/' + pid + '/exe').resolve() != root / 'minicloud-agent'):
+    pid = subprocess.check_output(['systemctl', 'show', '-p', 'MainPID', '--value', 'selfrun-agent.service'], text=True).strip()
+    if running and (not pid.isdigit() or pathlib.Path('/proc/' + pid + '/exe').resolve() != root / 'selfrun-agent'):
         sys.exit(12)
     configuration = root / 'config.json'
     token = root / 'runtime-token'
@@ -62,10 +62,10 @@ sys.exit(0)
     internal static IReadOnlyDictionary<string, string> Fingerprints(string bundlePath, string binaryPath) =>
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["minicloud-agent"] = Digest(Path.GetDirectoryName(binaryPath)!, Path.GetFileName(binaryPath)),
-            ["apply-minicloud-routing"] = Digest(bundlePath, "apply-minicloud-routing.py"),
-            ["minicloud-agent.service"] = Digest(bundlePath, "minicloud-agent.service"),
-            ["install-minicloud-agent.sh"] = Digest(bundlePath, "install-minicloud-agent.sh")
+            ["selfrun-agent"] = Digest(Path.GetDirectoryName(binaryPath)!, Path.GetFileName(binaryPath)),
+            ["apply-selfrun-routing"] = Digest(bundlePath, "apply-selfrun-routing.py"),
+            ["selfrun-agent.service"] = Digest(bundlePath, "selfrun-agent.service"),
+            ["install-selfrun-agent.sh"] = Digest(bundlePath, "install-selfrun-agent.sh")
         };
 
     private static string Digest(string root, string name)

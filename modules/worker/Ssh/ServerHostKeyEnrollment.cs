@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 
-namespace Minicloud.Worker.Ssh;
+namespace Selfrun.Worker.Ssh;
 
 /// <summary>
 /// First-boot SSH host-key enrollment for worker-provisioned servers. The worker supplies a one-time
@@ -14,11 +14,11 @@ namespace Minicloud.Worker.Ssh;
 /// </summary>
 public static class ServerHostKeyEnrollment
 {
-    // Distinct from the seed wizard's "minicloud-seed-host-v1" label.
-    public const string Protocol = "minicloud-server-host-v1";
+    // Distinct from the seed wizard's "selfrun-seed-host-v1" label.
+    public const string Protocol = "selfrun-server-host-v1";
     public const string HostKeyAlgorithm = "ssh-ed25519";
     public const int SecretLength = 32;
-    internal const string ScriptPath = "/run/minicloud/host-enrollment.py";
+    internal const string ScriptPath = "/run/selfrun/host-enrollment.py";
 
     public static byte[] CreateSecret() => RandomNumberGenerator.GetBytes(SecretLength);
 
@@ -104,8 +104,8 @@ def effective_banner():
 
 def main():
     value = proof(pathlib.Path("/etc/ssh/ssh_host_ed25519_key.pub").read_text())
-    banner = pathlib.Path("/etc/ssh/minicloud-host-enrollment")
-    config = pathlib.Path("/etc/ssh/sshd_config.d/01-minicloud-host-enrollment.conf")
+    banner = pathlib.Path("/etc/ssh/selfrun-host-enrollment")
+    config = pathlib.Path("/etc/ssh/sshd_config.d/01-selfrun-host-enrollment.conf")
     pathlib.Path("/run/sshd").mkdir(mode=0o755, exist_ok=True)
     if effective_banner() != "none":
         raise RuntimeError("Existing SSH banner retained; host enrollment blocked.")
@@ -148,7 +148,7 @@ public sealed class SshNetServerHostKeyProbe : IServerHostKeyProbe
     public async Task<SshHostKeyObservation?> ObserveAsync(string host, int port, TimeSpan timeout, CancellationToken cancellationToken)
     {
         // "none" is the only method: SSH.NET sends it first and then stops because nothing else is offered.
-        var info = new ConnectionInfo(host, port, "minicloud", new NoneAuthenticationMethod("minicloud")) { Timeout = timeout };
+        var info = new ConnectionInfo(host, port, "selfrun", new NoneAuthenticationMethod("selfrun")) { Timeout = timeout };
         foreach (var name in info.HostKeyAlgorithms.Keys.Where(name => name != ServerHostKeyEnrollment.HostKeyAlgorithm).ToArray())
         {
             info.HostKeyAlgorithms.Remove(name);

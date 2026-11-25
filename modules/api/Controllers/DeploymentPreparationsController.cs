@@ -1,15 +1,15 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -18,7 +18,7 @@ public sealed class DeploymentPreparationsController : ControllerBase
 {
     [HttpPost]
     public async Task<IResult> Start([FromBody] StartDeploymentPreparationRequest request,
-        [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization,
+        [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentPreparationService preparations, [FromServices] ProviderCatalogService catalog, CancellationToken ct)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, request.AppId, request.ApplicationId, request.EnvironmentId, ct);
@@ -68,7 +68,7 @@ public sealed class DeploymentPreparationsController : ControllerBase
 
     [HttpPost("{id}")]
     public async Task<IResult> Update(string id, [FromBody] UpdateDeploymentPreparationRequest request,
-        [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization,
+        [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] DeploymentPreparationService preparations, CancellationToken ct)
     {
         var ownershipError = await VerifyTargetOwnershipAsync(db, request.AppId, request.ApplicationId, request.EnvironmentId, ct);

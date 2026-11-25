@@ -1,11 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Telemetry.Otlp;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Telemetry.Data;
+using Selfrun.Telemetry.Otlp;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed class OtlpRequestValidationException(string message) : Exception(message);
 
@@ -21,12 +21,12 @@ public sealed class OtlpNormalizationService(
     TelemetryDbContext db,
     IOptions<TelemetryOptions> options)
 {
-    public const string OrgIdKey = "minicloud.organization.id";
-    public const string AppIdKey = "minicloud.app.id";
-    public const string EnvironmentKey = "minicloud.platform.environment";
-    public const string SourceKey = "minicloud.source";
+    public const string OrgIdKey = "selfrun.organization.id";
+    public const string AppIdKey = "selfrun.app.id";
+    public const string EnvironmentKey = "selfrun.platform.environment";
+    public const string SourceKey = "selfrun.source";
     public const string ServiceNameKey = "service.name";
-    public const string DeploymentIdKey = "minicloud.deployment.id";
+    public const string DeploymentIdKey = "selfrun.deployment.id";
     public const string SourceValue = "otlp";
 
     private static readonly HashSet<string> CanonicalKeys = new(StringComparer.Ordinal)

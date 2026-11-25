@@ -4,7 +4,7 @@
 # Never install fleet-wide or expose this receiver off loopback.
 extensions:
   bearertokenauth/remote_agent:
-    token: ${env:MINICLOUD_REMOTE_AGENT_OTLP_TOKEN}
+    token: ${env:SELFRUN_REMOTE_AGENT_OTLP_TOKEN}
 
 receivers:
   otlp:
@@ -15,13 +15,13 @@ receivers:
           authenticator: bearertokenauth/remote_agent
   journald/runtime_agent:
     units:
-      - minicloud-runtime-agent.service
+      - selfrun-runtime-agent.service
     operators:
       - type: json_parser
         parse_from: body
         on_error: drop
       - type: filter
-        expr: 'attributes.schema != "minicloud.runtime-agent.summary.v1"'
+        expr: 'attributes.schema != "selfrun.runtime-agent.summary.v1"'
 
 processors:
   memory_limiter:
@@ -32,7 +32,7 @@ processors:
     error_mode: ignore
     logs:
       log_record:
-        - 'instrumentation_scope.name != "Minicloud.RuntimeAgent" and attributes["schema"] != "minicloud.runtime-agent.summary.v1"'
+        - 'instrumentation_scope.name != "Selfrun.RuntimeAgent" and attributes["schema"] != "selfrun.runtime-agent.summary.v1"'
   transform/runtime_agent_summary:
     error_mode: ignore
     log_statements:
@@ -42,7 +42,7 @@ processors:
           - set(body, "")
       - context: resource
         statements:
-          - set(attributes["service.name"], "minicloud-runtime-agent")
+          - set(attributes["service.name"], "selfrun-runtime-agent")
           - keep_keys(attributes, ["service.name"])
   batch:
     timeout: 2s
@@ -53,7 +53,7 @@ exporters:
   otlphttp/operator_tunnel:
     endpoint: http://127.0.0.1:14318
     headers:
-      Authorization: Bearer ${env:MINICLOUD_OPERATOR_OTLP_TOKEN}
+      Authorization: Bearer ${env:SELFRUN_OPERATOR_OTLP_TOKEN}
     compression: gzip
     timeout: 5s
     sending_queue:

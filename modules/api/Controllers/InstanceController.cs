@@ -2,11 +2,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Api.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Api.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Route("api/instance")]
@@ -15,7 +15,7 @@ public sealed class InstanceController(IOptions<ServerReleaseOptions> release) :
     [HttpGet]
     [AllowAnonymous]
     public InstanceInfoResponse Get([FromServices] IOptions<ManagedDomainOptions> options) =>
-        new("minicloud", 1, options.Value.Suffix,
+        new("selfrun", 1, options.Value.Suffix,
             release.Value.Metadata?.ServerVersion,
             release.Value.Metadata?.SourceRevision,
             release.Value.Metadata?.CliCompatibility);

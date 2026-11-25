@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>
 /// T20 Grafana configuration. Grafana and Loki stay private: the API reaches

@@ -1,6 +1,6 @@
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Api.Providers;
+namespace Selfrun.Api.Providers;
 
 public sealed class DatabaseConnectionStringProvider(IConfiguration configuration, IWebHostEnvironment environment) : IDatabaseConnectionStringProvider
 {
@@ -9,11 +9,11 @@ public sealed class DatabaseConnectionStringProvider(IConfiguration configuratio
 
     public string? GetConnectionString()
     {
-        var connectionString = configuration.GetConnectionString("Minicloud")
+        var connectionString = configuration.GetConnectionString("Selfrun")
         ?? configuration.GetConnectionString("DefaultConnection")
-        ?? MinicloudDatabase.NormalizeDatabaseUrl(Environment.GetEnvironmentVariable("DATABASE_URL"));
+        ?? SelfrunDatabase.NormalizeDatabaseUrl(Environment.GetEnvironmentVariable("DATABASE_URL"));
         return connectionString is null
             ? null
-            : MinicloudDatabase.ApplyPasswordFile(connectionString, configuration["Database:PasswordFile"]);
+            : SelfrunDatabase.ApplyPasswordFile(connectionString, configuration["Database:PasswordFile"]);
     }
 }

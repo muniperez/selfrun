@@ -3,11 +3,11 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Telemetry.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed record TelemetryLogFilters(
     DateTimeOffset? Start,
@@ -284,7 +284,7 @@ public sealed class TelemetryQueryService(
 
     public static string BuildLogQuery(string? service, string? text)
     {
-        var builder = new StringBuilder("{minicloud_source=\"otlp\"");
+        var builder = new StringBuilder("{selfrun_source=\"otlp\"");
         if (service is not null)
         {
             builder.Append(", service_name=\"").Append(EscapeLogQlLiteral(service)).Append('"');

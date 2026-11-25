@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Worker.Ssh;
+namespace Selfrun.Worker.Ssh;
 
 /// <summary>Supplies host-key pins recorded for worker-provisioned servers.</summary>
 public interface ISshHostKeyPinSource
@@ -16,7 +16,7 @@ public sealed class ServerHostKeyPinSource(IServiceScopeFactory scopeFactory) : 
     public async Task<string?> GetPinnedFingerprintAsync(SshTarget target, CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MinicloudDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<SelfrunDbContext>();
         var record = await db.ServerInstances.AsNoTracking()
             .SingleOrDefaultAsync(s => s.Id == target.ServerInstanceId, cancellationToken);
         if (record is null || string.IsNullOrWhiteSpace(target.Host) ||

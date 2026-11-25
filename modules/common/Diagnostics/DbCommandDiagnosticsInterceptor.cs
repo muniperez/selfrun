@@ -3,7 +3,7 @@ using System.Data.Common;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
-namespace Minicloud.Common.Diagnostics;
+namespace Selfrun.Common.Diagnostics;
 
 public sealed class DbCommandDiagnosticsInterceptor : DbCommandInterceptor
 {

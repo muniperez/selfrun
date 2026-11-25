@@ -3,11 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
-namespace Minicloud.Common.Data;
+namespace Selfrun.Common.Data;
 
 public static class SqliteDatabaseInitializer
 {
-    public static async Task InitializeAsync(MinicloudDbContext db, CancellationToken cancellationToken = default)
+    public static async Task InitializeAsync(SelfrunDbContext db, CancellationToken cancellationToken = default)
     {
         if (!db.Database.IsSqlite() || db.Database.GetDbConnection() is not SqliteConnection connection)
             throw new InvalidOperationException("SQLite initialization requires a SQLite database.");
@@ -58,7 +58,7 @@ public static class SqliteDatabaseInitializer
                     throw new InvalidOperationException(
                         "SQLite schema is not a recognized upgrade prerequisite or the current EF-created schema; " +
                         "refusing to upgrade or rebuild existing data. Supported historical prerequisite: " +
-                        "the full SQLite EnsureCreated schema from source feb8073.");
+                        "the Selfrun SQLite schema based on source feb8073.");
 
                 await SqliteHistoricalUpgrade.UpgradeAsync(connection, transaction, reference, actual, expected, cancellationToken);
                 var upgraded = await ReadSchemaAsync(connection, transaction, cancellationToken);

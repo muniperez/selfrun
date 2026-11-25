@@ -1,4 +1,4 @@
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public sealed class RuntimeStatusPublisher(TimeProvider? timeProvider = null)
 {

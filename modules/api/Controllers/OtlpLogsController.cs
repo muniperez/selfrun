@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 /// <summary>
 /// T35: Public OTLP ingestion on the Control API is retired.

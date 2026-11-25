@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-namespace Minicloud.Cli;
+namespace Selfrun.Cli;
 
 public static class CliExitCodes
 {

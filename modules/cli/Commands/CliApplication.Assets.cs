@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli.Config;
-using Minicloud.Common.Contracts;
+using Selfrun.Cli.Config;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -11,23 +11,23 @@ public sealed partial class CliApplication
     {
         if (args.Length < 2 || args[0] != "publish")
         { throw new CliCommandException(CliExitCodes.ValidationError, "Usage: selfrun assets publish <name> [--config path]"); }
-        var loaded = MinicloudConfigLoader.Load(GetOption(args, "--config") ?? MinicloudConfigLoader.ResolveDefaultPath());
+        var loaded = SelfrunConfigLoader.Load(GetOption(args, "--config") ?? SelfrunConfigLoader.DefaultFileName);
         if (!loaded.IsValid || loaded.Config is null) { PrintDiagnostics(loaded.Diagnostics); return CliExitCodes.ValidationError; }
         var config = loaded.Config;
         if (!config.Assets.TryGetValue(args[1], out var asset))
-        { throw new CliCommandException(CliExitCodes.ValidationError, "Asset is not declared in selfrun.yml (or minicloud.yml)."); }
+        { throw new CliCommandException(CliExitCodes.ValidationError, "Asset is not declared in selfrun.yml."); }
         var app = await ResolveAppOptionAsync(args, ct);
         var plan = GetOption(args, "--plan") ?? config.Plan;
         if (args.Any(x => x == "--plan" || x.StartsWith("--plan=", StringComparison.Ordinal)) && string.IsNullOrWhiteSpace(GetOption(args, "--plan")))
             throw new CliCommandException(CliExitCodes.ValidationError, "--plan requires a plan name.");
         if (plan is not null || app.PlanId is not null) app = await _apiClient.SelectPlanAsync(app.Id, plan ?? app.Plan, ct);
-        var source = new MinicloudServiceConfig(asset.SourcePath, asset.Dockerfile, null, 1, false, "/", "/",
+        var source = new SelfrunServiceConfig(asset.SourcePath, asset.Dockerfile, null, 1, false, "/", "/",
             Env: new Dictionary<string, string> { ["outputPath"] = asset.OutputPath, ["protocolVersion"] = "1" },
             BuildMode: ServiceBuildModes.Source);
         using var inputs = new DeploymentInputSession();
         var snapshot = inputs.Get(args[1], source);
         var fingerprint = ServiceChecksumCalculator.Compute(args[1], source, snapshot);
-        var directory = Directory.CreateTempSubdirectory("minicloud-asset-");
+        var directory = Directory.CreateTempSubdirectory("selfrun-asset-");
         try
         {
             var bundle = DeploymentArtifactBundler.Create(app.Id, args[1], source, config.CommitSha, directory.FullName, snapshot: snapshot);

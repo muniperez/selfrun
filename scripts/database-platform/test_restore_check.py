@@ -182,9 +182,9 @@ class ConnectionParsingTests(unittest.TestCase):
                              ('db.example', '5433', 'user@tenant', 'pa=ss;word', 'site db'))
             self.assertEqual(worker.postgres_env('postgres://user:password@db/app')['PGPORT'], '5432')
 
-    def test_minicloud_connection_string_preserves_equals_inside_password(self):
+    def test_selfrun_connection_string_preserves_equals_inside_password(self):
         with patch.dict(os.environ, {}, clear=True):
-            env = worker.postgres_env('Host=db;Port=5432;Database=minicloud;Username=minicloud;Password=secret=with=equals')
+            env = worker.postgres_env('Host=db;Port=5432;Database=selfrun;Username=selfrun;Password=secret=with=equals')
             self.assertEqual(env['PGPASSWORD'], 'secret=with=equals')
             self.assertEqual(env['PGCONNECT_TIMEOUT'], '15')
 

@@ -4,20 +4,20 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Providers.Dns;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Providers.Dns;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Worker.Pipeline;
+namespace Selfrun.Worker.Pipeline;
 
 public sealed class DomainDnsReconciler(
-    MinicloudDbContext db, ICloudflareDnsClient dns, TimeProvider timeProvider, ILogger<DomainDnsReconciler> logger,
+    SelfrunDbContext db, ICloudflareDnsClient dns, TimeProvider timeProvider, ILogger<DomainDnsReconciler> logger,
     IOptions<ManagedDomainOptions>? managedDomains = null)
 {
     public async Task ReconcileAsync(CancellationToken cancellationToken)
     {
         var candidates = await db.Domains
-            .Where(d => d.Kind == DomainBindingService.KindMinicloudSubdomain &&
+            .Where(d => d.Kind == DomainBindingService.KindSelfrunSubdomain &&
                 d.Status != DomainBindingService.StatusDisabled && d.App.DeletionStatus == null &&
                 (d.TargetIp == null || d.DnsStatus != DomainBindingService.DnsVerified))
             .OrderBy(d => d.Id).Take(100).ToListAsync(cancellationToken);

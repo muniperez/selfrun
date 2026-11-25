@@ -1,14 +1,14 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
-public sealed class DatabaseManagementService(MinicloudDbContext db, ControlPlaneAuthorization authorization, ProviderCatalogService catalog, IIdGenerator ids, TimeProvider clock)
+public sealed class DatabaseManagementService(SelfrunDbContext db, ControlPlaneAuthorization authorization, ProviderCatalogService catalog, IIdGenerator ids, TimeProvider clock)
 {
     public async Task RequireAsync(ActorIdentity actor, string organizationId, bool write, CancellationToken ct)
     {

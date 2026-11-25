@@ -44,7 +44,7 @@ describe("dashboard container startup", () => {
   function start(root: string, environment: Record<string, string>) {
     return spawnSync(process.execPath, [startupScript], {
       encoding: "utf8",
-      env: { PATH: `${stubPath}:${process.env.PATH}`, MINICLOUD_DASHBOARD_HTML_ROOT: root, ...environment }
+      env: { PATH: `${stubPath}:${process.env.PATH}`, SELFRUN_DASHBOARD_HTML_ROOT: root, ...environment }
     });
   }
 
@@ -54,11 +54,11 @@ describe("dashboard container startup", () => {
     cpSync(image, first, { recursive: true });
     cpSync(image, second, { recursive: true });
 
-    const one = start(first, { MINICLOUD_API_URL: "https://api.one.example", MINICLOUD_APP_DOMAIN: "apps.one.example" });
+    const one = start(first, { SELFRUN_API_URL: "https://api.one.example", SELFRUN_APP_DOMAIN: "apps.one.example" });
     const two = start(second, {
-      MINICLOUD_API_URL: "https://api.two.example",
-      MINICLOUD_APP_DOMAIN: "apps.two.example",
-      MINICLOUD_SOURCE_URL: "https://source.two.example/minicloud"
+      SELFRUN_API_URL: "https://api.two.example",
+      SELFRUN_APP_DOMAIN: "apps.two.example",
+      SELFRUN_SOURCE_URL: "https://source.two.example/selfrun"
     });
 
     expect(one.status, one.stderr).toBe(0);
@@ -69,51 +69,22 @@ describe("dashboard container startup", () => {
     expect(firstConfig).toEqual({
       apiBaseUrl: "https://api.one.example",
       appDomain: "apps.one.example",
-      sourceUrl: "https://github.com/muniventures/minicloud",
+      sourceUrl: "https://github.com/muniperez/selfrun",
       auth: { origin: "https://api.one.example", capabilitiesUrl: "https://api.one.example/api/account/capabilities" }
     });
     expect(secondConfig.apiBaseUrl).toBe("https://api.two.example");
     expect(secondConfig.appDomain).toBe("apps.two.example");
-    expect(secondConfig.sourceUrl).toBe("https://source.two.example/minicloud");
+    expect(secondConfig.sourceUrl).toBe("https://source.two.example/selfrun");
     expect(snapshot(first)).toEqual(snapshot(image));
     expect(snapshot(second)).toEqual(snapshot(image));
   });
 
-  it("prefers SELFRUN_* configuration over legacy MINICLOUD_* aliases", () => {
-    const target = path.join(workspace, "selfrun-primary");
-    cpSync(image, target, { recursive: true });
-
-    const result = spawnSync(process.execPath, [startupScript], {
-      encoding: "utf8",
-      env: {
-        PATH: `${stubPath}:${process.env.PATH}`,
-        SELFRUN_DASHBOARD_HTML_ROOT: target,
-        MINICLOUD_DASHBOARD_HTML_ROOT: path.join(workspace, "unused"),
-        SELFRUN_API_URL: "https://api.selfrun.example",
-        MINICLOUD_API_URL: "https://api.legacy.example",
-        SELFRUN_APP_DOMAIN: "apps.selfrun.example",
-        MINICLOUD_APP_DOMAIN: "apps.legacy.example",
-        SELFRUN_SOURCE_URL: "https://selfrun.dev/source",
-        MINICLOUD_SOURCE_URL: "https://legacy.example/source"
-      }
-    });
-
-    expect(result.status, result.stderr).toBe(0);
-    const config = parseRuntimeConfig(JSON.parse(readFileSync(path.join(target, "runtime-config.json"), "utf8")));
-    expect(config).toEqual({
-      apiBaseUrl: "https://api.selfrun.example",
-      appDomain: "apps.selfrun.example",
-      sourceUrl: "https://selfrun.dev/source",
-      auth: { origin: "https://api.selfrun.example", capabilitiesUrl: "https://api.selfrun.example/api/account/capabilities" }
-    });
-  });
-
   it.each([
-    [{ MINICLOUD_APP_DOMAIN: "apps.example" }],
-    [{ MINICLOUD_API_URL: "http://api.example", MINICLOUD_APP_DOMAIN: "apps.example" }],
-    [{ MINICLOUD_API_URL: "https://api.example/path", MINICLOUD_APP_DOMAIN: "apps.example" }],
-    [{ MINICLOUD_API_URL: "https://api.example", MINICLOUD_APP_DOMAIN: "https://apps.example" }],
-    [{ MINICLOUD_API_URL: "https://api.example", MINICLOUD_APP_DOMAIN: "apps.example", MINICLOUD_SOURCE_URL: "https://u:p@source.example" }]
+    [{ SELFRUN_APP_DOMAIN: "apps.example" }],
+    [{ SELFRUN_API_URL: "http://api.example", SELFRUN_APP_DOMAIN: "apps.example" }],
+    [{ SELFRUN_API_URL: "https://api.example/path", SELFRUN_APP_DOMAIN: "apps.example" }],
+    [{ SELFRUN_API_URL: "https://api.example", SELFRUN_APP_DOMAIN: "https://apps.example" }],
+    [{ SELFRUN_API_URL: "https://api.example", SELFRUN_APP_DOMAIN: "apps.example", SELFRUN_SOURCE_URL: "https://u:p@source.example" }]
   ])("refuses invalid public configuration before serving %#", (environment) => {
     const result = start(image, environment);
     expect(result.status).toBe(1);

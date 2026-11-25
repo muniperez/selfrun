@@ -2,23 +2,23 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class DomainBindingService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     IIdGenerator ids,
     TimeProvider timeProvider,
     IOptions<ManagedDomainOptions>? managedDomains = null)
 {
     private readonly ManagedDomainOptions _managedDomains = managedDomains?.Value ?? new();
-    public const string MinicloudSuffix = "app.muni.dev";
+    public const string SelfrunSuffix = "app.muni.dev";
     public const string KindCustomDomain = "custom_domain";
     public const string StatusPendingDns = "pending_dns";
-    public const string KindMinicloudSubdomain = "minicloud_subdomain";
+    public const string KindSelfrunSubdomain = "selfrun_subdomain";
     public const string DnsPending = "pending";
     public const string DnsVerified = "verified";
     public const string ApplyPending = "pending";
@@ -34,7 +34,7 @@ public sealed class DomainBindingService(
 
     public async Task<IReadOnlyList<Domain>> EnsureDefaultBindingsAsync(
         Organization organization,
-        MinicloudApp app,
+        SelfrunApp app,
         IReadOnlyList<DeploymentServiceRequest> services,
         CancellationToken cancellationToken)
     {
@@ -84,7 +84,7 @@ public sealed class DomainBindingService(
     }
 
     public async Task<DomainBindingCreateResult> CreateSubdomainBindingAsync(
-        MinicloudApp app,
+        SelfrunApp app,
         string serviceName,
         string? label,
         IReadOnlyList<DeploymentServiceRequest> activeServices,
@@ -122,7 +122,7 @@ public sealed class DomainBindingService(
     }
 
     public async Task<DomainBindingCreateResult> CreateCustomBindingAsync(
-        MinicloudApp app, string serviceName, string hostname,
+        SelfrunApp app, string serviceName, string hostname,
         IReadOnlyList<DeploymentServiceRequest> activeServices, CancellationToken cancellationToken)
     {
         if (!activeServices.Any(x => x.Name == serviceName && x.Public))
@@ -132,7 +132,7 @@ public sealed class DomainBindingService(
         var normalized = NormalizeCustomHostname(hostname);
         if (normalized is null || _managedDomains.IsReserved(normalized))
         {
-            return DomainBindingCreateResult.Validation("hostname", "Enter an apex domain or subdomain, without a URL, port, path or wildcard. Minicloud domains are reserved.");
+            return DomainBindingCreateResult.Validation("hostname", "Enter an apex domain or subdomain, without a URL, port, path or wildcard. Selfrun domains are reserved.");
         }
         if (await db.Domains.AnyAsync(x => x.Hostname == normalized, cancellationToken))
         {
@@ -173,7 +173,7 @@ public sealed class DomainBindingService(
             return null;
         }
         var labels = hostname.Split('.');
-        return ("_minicloud-verification." + hostname).Length <= 253 && labels.Length >= 2 && labels.All(IsValidLabel) &&
+        return ("_selfrun-verification." + hostname).Length <= 253 && labels.Length >= 2 && labels.All(IsValidLabel) &&
             char.IsAsciiLetterLower(labels[^1][0]) && !System.Net.IPAddress.TryParse(hostname, out _)
             ? hostname : null;
     }
@@ -218,10 +218,10 @@ public sealed class DomainBindingService(
             binding.VerificationToken,
             binding.LastCheckedAt);
 
-    public static string DefaultHostname(string organizationSlug, string appSlug, string serviceName, string suffix = MinicloudSuffix) =>
+    public static string DefaultHostname(string organizationSlug, string appSlug, string serviceName, string suffix = SelfrunSuffix) =>
         $"{DefaultLabel(organizationSlug, appSlug, serviceName)}.{suffix}";
 
-    public static string DefaultBranchHostname(string organizationSlug, string appSlug, string serviceName, string branchName, string suffix = MinicloudSuffix) =>
+    public static string DefaultBranchHostname(string organizationSlug, string appSlug, string serviceName, string branchName, string suffix = SelfrunSuffix) =>
         $"{CompactLabel($"{organizationSlug}-{appSlug}-{serviceName}-{branchName}")}.{suffix}";
 
     private Domain CreateBinding(string organizationId, string appId, string serviceName, string hostname, DateTimeOffset now, bool isPrimary = false) =>
@@ -232,7 +232,7 @@ public sealed class DomainBindingService(
             AppId = appId,
             ServiceName = serviceName,
             Hostname = hostname,
-            Kind = KindMinicloudSubdomain,
+            Kind = KindSelfrunSubdomain,
             PathPrefix = "/",
             DnsStatus = DnsPending,
             ApplyStatus = ApplyPending,

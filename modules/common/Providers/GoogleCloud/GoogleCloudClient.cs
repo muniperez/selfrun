@@ -8,11 +8,11 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Extensibility;
-using Minicloud.Common.Providers.Models;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Extensibility;
+using Selfrun.Common.Providers.Models;
 
-namespace Minicloud.Common.Providers.GoogleCloud;
+namespace Selfrun.Common.Providers.GoogleCloud;
 
 /// <summary>
 /// SDK-independent Google Cloud Compute Engine adapter supporting service-account RS256 JWT assertion
@@ -243,7 +243,7 @@ public sealed class GoogleCloudClient :
         var zone = ResolveZone(request.Region);
         var labels = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["minicloud-managed"] = "true"
+            ["selfrun-managed"] = "true"
         };
         if (request.Labels is not null)
         {
@@ -261,7 +261,7 @@ public sealed class GoogleCloudClient :
 
         if (request.SshKeyReferences.Count > 0)
         {
-            var sshLines = string.Join('\n', request.SshKeyReferences.Select(k => k.Contains(':') ? k : $"minicloud:{k}"));
+            var sshLines = string.Join('\n', request.SshKeyReferences.Select(k => k.Contains(':') ? k : $"selfrun:{k}"));
             metadataItems.Add(new { key = "ssh-keys", value = sshLines });
         }
 
@@ -406,7 +406,7 @@ public sealed class GoogleCloudClient :
     {
         EnsureProjectConfigured();
         var zone = ResolveZone(region);
-        var safeLabels = new Dictionary<string, string>(StringComparer.Ordinal) { ["minicloud-managed"] = "true" };
+        var safeLabels = new Dictionary<string, string>(StringComparer.Ordinal) { ["selfrun-managed"] = "true" };
         foreach (var pair in labels) safeLabels[SanitizeLabelKey(pair.Key)] = SanitizeLabelValue(pair.Value);
 
         var path = $"projects/{Uri.EscapeDataString(_options.ProjectId)}/zones/{Uri.EscapeDataString(zone)}/disks";

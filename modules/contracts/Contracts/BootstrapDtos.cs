@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Contracts;
+namespace Selfrun.Common.Contracts;
 
 public sealed record BootstrapStatusResponse(string State, DateTimeOffset? ExpiresAt);
 

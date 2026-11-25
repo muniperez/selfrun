@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli;
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Auth;
-using Minicloud.Cli.Commands;
+using Selfrun.Cli;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Auth;
+using Selfrun.Cli.Commands;
 
 using var cts = new CancellationTokenSource();
 try
@@ -22,7 +22,7 @@ catch (InvalidOperationException)
 var console = new SystemConsole();
 var environment = CliEnvironment.FromEnvironment();
 var tokenStore = new TokenStore(environment);
-var apiClient = new MinicloudApiClient(environment, tokenStore);
+var apiClient = new SelfrunApiClient(environment, tokenStore);
 var app = new CliApplication(console, environment, tokenStore, apiClient);
 
 return await app.RunAsync(args, cts.Token);

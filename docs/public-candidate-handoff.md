@@ -1,16 +1,15 @@
-# Public candidate handoff (T80 #37)
+# Historical public candidate handoff (T80 #37)
+
+This records the prelaunch candidate. For current artifacts and version selection, see the [server release contract](../packaging/server/README.md) and [CLI delivery guide](cli-distribution.md).
 
 ## Selected identifiers, not a qualified release
 
 - Server candidate: **`0.0.1-rc.3`**, unpublished metadata pending operator
   review (#261). Both previous `server-v0.0.1-rc.1` and `server-v0.0.1-rc.2`
   tags exist; their publishers failed. Never move or reuse either tag.
-  [The rc2 run](https://github.com/muniventures/minicloud/actions/runs/44935673888)
+  [The rc2 run](https://github.com/muniperez/selfrun/actions/runs/44935673888)
   failed on its first image push with `permission_denied: read_package` because
-  the old name collides with a pre-existing private package. New builds use only
-  `ghcr.io/muniventures/minicloud-release-{api,dashboard,worker}`. Never expose
-  or grant access to the old packages; the operator owns authorized publication
-  and public visibility of the newly created release-only packages.
+  its image name collided with a pre-existing private package.
 - CLI source: **`2a5ae0ccea6c3dd680b4146586ec0668c60c8b93`**, actual canonical
   public `main` containing the merged authentication, SSH and numbered-deployment
   clients. Public prerequisite repairs #70–#75 and ledger #76 were already
@@ -26,16 +25,14 @@
   Identity and configuration schema versions are both `1`, the initial bundled
   `identity.schema.json` and `configuration.schema.json` contracts (including
   the merged optional Google configuration); JSON Schema draft identifiers and
-  Kratos's own software version are not these Minicloud schema versions.
+  Kratos's own software version are not these Selfrun schema versions.
 
 The public-only scope decision in #37 supersedes the older private-integration
 prerequisite: #36 is backlog, not passed; #44 is later optional-provider/auth
 validation, not a code-completion blocker. No private source, readiness commit
 or private candidate identifier was inspected or recreated.
 
-The customer workflow defaults to the selected CLI SHA. Existing CLI installer
-names/interfaces are unchanged; their historical default remains separate.
-Use the explicit `MINICLOUD_VERSION` override in the [CLI guide](cli.md).
+This candidate predates the current Selfrun CLI and reusable workflows.
 
 ## Dependency index evidence
 
@@ -56,7 +53,7 @@ The release input pins index digests, not these mutable discovery tags.
 Version provenance: PostgreSQL follows `compose.dev.yml` and the database
 initializer contract; OpenBao follows `bundle/openbao-handoff.md` and its
 focused contract; Kratos follows `bundle/kratos.yml`; Caddy preserves the
-existing `scripts/github-actions/minicloud-deploy/test-caddy-permissions.py`
+existing `scripts/github-actions/selfrun-deploy/test-caddy-permissions.py`
 baseline. This is not a dependency-upgrade or vulnerability qualification.
 
 Raw index responses, response headers and timestamped resolution summaries
@@ -107,11 +104,11 @@ remain:
 ```sh
 python3 -B -m unittest discover -s scripts/server-release -p 'test_*.py' -v
 python3 -B -m unittest discover -s scripts/self-hosting -p 'test_*.py' -v
-dotnet test modules/tests/Minicloud.Cli.Tests/Minicloud.Cli.Tests.csproj \
+dotnet test modules/tests/Selfrun.Cli.Tests/Selfrun.Cli.Tests.csproj \
   --configuration Release --artifacts-path .local/artifacts/t80-cli-dotnet \
   --results-directory .local/artifacts/t80-cli-results \
   --filter 'FullyQualifiedName~Seed|FullyQualifiedName~Release' -m:1
-dotnet test modules/tests/Minicloud.Tests/Minicloud.Tests.csproj \
+dotnet test modules/tests/Selfrun.Tests/Selfrun.Tests.csproj \
   --configuration Release --artifacts-path .local/artifacts/t80-dotnet \
   --results-directory .local/artifacts/t80-test-results \
   --filter 'FullyQualifiedName~ServerReleaseMetadataTests|FullyQualifiedName~Instance_discovery' -m:1

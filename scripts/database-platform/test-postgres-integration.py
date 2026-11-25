@@ -9,7 +9,7 @@ import access
 import importlib.util
 from pathlib import Path
 
-name='minicloud-db-test-'+secrets.token_hex(6)
+name='selfrun-db-test-'+secrets.token_hex(6)
 password='synthetic-integration-'+secrets.token_hex(24)
 clients=[]
 
@@ -20,9 +20,9 @@ def sql(database,user,statement):
     return run(['docker','exec','-i',name,'psql','-X','-U',user,'-d',database,'-v','ON_ERROR_STOP=1'],input=statement.encode())
 
 try:
-    run(['docker','run','-d','--name',name,'--network','none','-e','POSTGRES_USER=minicloud','-e','POSTGRES_PASSWORD='+password,'postgres:16-alpine'])
+    run(['docker','run','-d','--name',name,'--network','none','-e','POSTGRES_USER=selfrun','-e','POSTGRES_PASSWORD='+password,'postgres:16-alpine'])
     for attempt in range(60):
-        probe=subprocess.run(['docker','exec','-e','PGPASSWORD='+password,name,'psql','-h','127.0.0.1','-U','minicloud','-d','postgres','-c','SELECT 1'],capture_output=True)
+        probe=subprocess.run(['docker','exec','-e','PGPASSWORD='+password,name,'psql','-h','127.0.0.1','-U','selfrun','-d','postgres','-c','SELECT 1'],capture_output=True)
         if probe.returncode==0:
             break
         time.sleep(1)
@@ -62,7 +62,7 @@ try:
     for database,user,label in [('fixture_one','fixture_user_one','revoked-client'),('fixture_two','fixture_user_two','retained-client')]:
         clients.append(subprocess.Popen(['docker','exec','-e','PGPASSWORD='+password,'-e','PGAPPNAME='+label,name,'psql','-h','127.0.0.1','-U',user,'-d',database,'-c','SELECT pg_sleep(60)'],stdout=subprocess.PIPE,stderr=subprocess.PIPE))
     for attempt in range(50):
-        count=run(['docker','exec',name,'psql','-X','-U','minicloud','-d','postgres','-Atc',"SELECT count(*) FROM pg_stat_activity WHERE application_name IN ('revoked-client','retained-client')"]).stdout.strip()
+        count=run(['docker','exec',name,'psql','-X','-U','selfrun','-d','postgres','-Atc',"SELECT count(*) FROM pg_stat_activity WHERE application_name IN ('revoked-client','retained-client')"]).stdout.strip()
         if count==b'2':
             break
         time.sleep(0.1)
@@ -71,7 +71,7 @@ try:
     access.apply(dict(container=name,databases=[dict(databaseName='fixture_one',username='fixture_user_one',mode='internal',internalCidrs=[]),dict(databaseName='fixture_two',username='fixture_user_two',mode='public',internalCidrs=['127.0.0.1/32'],allowedCidrs=[])]))
     assert clients[0].wait(timeout=10) != 0, 'Revoked existing connection remained active'
     assert clients[1].poll() is None, 'Allowed database neighbor was disconnected'
-    sql('postgres','minicloud',"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='retained-client'")
+    sql('postgres','selfrun',"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='retained-client'")
     clients[1].wait(timeout=10)
     operation.execute(dict(first,action='rotate',password='rotated-fixture-'+secrets.token_hex(24)))
     operation.execute(dict(second,action='delete'))

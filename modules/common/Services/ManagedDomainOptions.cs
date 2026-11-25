@@ -1,9 +1,9 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class ManagedDomainOptions
 {
     public const string SectionName = "ManagedDomains";
-    public string Suffix { get; set; } = DomainBindingService.MinicloudSuffix;
+    public string Suffix { get; set; } = DomainBindingService.SelfrunSuffix;
     public bool ManageDnsRecords { get; set; } = true;
     public string[] ReservedHostnames { get; set; } = [];
 

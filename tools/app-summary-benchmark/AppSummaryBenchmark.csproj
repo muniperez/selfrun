@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../modules/api/Minicloud.Api.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../modules/api/Selfrun.Api.csproj" /></ItemGroup>
 </Project>

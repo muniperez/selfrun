@@ -1,8 +1,8 @@
 # Licensing
 
-| License | Selfrun (formerly MiniCloud) source covered |
+| License | Selfrun source covered |
 | --- | --- |
-| [MPL-2.0](../LICENSES/MPL-2.0.txt) | `modules/cli/`, `modules/contracts/`, `modules/tests/Minicloud.Cli.Tests/`, CLI installers, CLI release and customer deploy workflows, and CLI packaging and verification scripts. |
+| [MPL-2.0](../LICENSES/MPL-2.0.txt) | `modules/cli/`, `modules/contracts/`, `modules/tests/Selfrun.Cli.Tests/`, CLI installers, CLI release and customer deploy workflows, and CLI packaging and verification scripts. |
 | [AGPL-3.0-only](../LICENSES/AGPL-3.0-only.txt) | API, dashboard, worker, runtime agent, telemetry, server-side `modules/common/`, server tests, deployment/runtime tooling, and other Selfrun-authored files. |
 
 The CLI references only the MPL client contracts project. That project contains
@@ -14,8 +14,8 @@ restriction on secondary licensing. See [MPL section 3.3](https://www.mozilla.or
 The CLI archives include their license, dependency notices, and a link to the
 corresponding source tag. Hosted Selfrun dashboard builds expose a Source code
 link. For a modified instance available over a network, configure
-`SELFRUN_SOURCE_URL` (or `MINICLOUD_SOURCE_URL`) for Compose, or
-`VITE_MINICLOUD_SOURCE_URL` at dashboard build time, to point to the
+`SELFRUN_SOURCE_URL` for Compose, or
+`VITE_SELFRUN_SOURCE_URL` at dashboard build time, to point to the
 corresponding source for that running version.
 See [AGPL section 13](https://www.gnu.org/licenses/agpl-3.0.html#section13).
 

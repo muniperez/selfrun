@@ -12,27 +12,27 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Controllers;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Controllers;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-var connection = Environment.GetEnvironmentVariable("MINICLOUD_PERF_DATABASE")
-    ?? throw new InvalidOperationException("Set MINICLOUD_PERF_DATABASE to a disposable local PostgreSQL database.");
+var connection = Environment.GetEnvironmentVariable("SELFRUN_PERF_DATABASE")
+    ?? throw new InvalidOperationException("Set SELFRUN_PERF_DATABASE to a disposable local PostgreSQL database.");
 var cs = new Npgsql.NpgsqlConnectionStringBuilder(connection);
 if (cs.Host is not ("localhost" or "127.0.0.1") || string.IsNullOrEmpty(cs.Database) || !cs.Database.StartsWith("apps_perf", StringComparison.Ordinal))
     throw new InvalidOperationException("Benchmark requires a local database named apps_perf*.");
 
 var httpContextAccessor = new HttpContextAccessor();
 var recorder = new Commands(httpContextAccessor);
-DbContextOptions<MinicloudDbContext> Options() => new DbContextOptionsBuilder<MinicloudDbContext>()
+DbContextOptions<SelfrunDbContext> Options() => new DbContextOptionsBuilder<SelfrunDbContext>()
     .UseNpgsql(connection, o => o.CommandTimeout(10))
     .AddInterceptors(recorder)
     .Options;
 
-await using (var db = new MinicloudDbContext(Options()))
+await using (var db = new SelfrunDbContext(Options()))
 {
     await db.Database.OpenConnectionAsync();
     await using var check = db.Database.GetDbConnection().CreateCommand();
@@ -42,7 +42,7 @@ await using (var db = new MinicloudDbContext(Options()))
 }
 
 Console.WriteLine($".NET {Environment.Version}; CPUs {Environment.ProcessorCount}; {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
-await using (var db = new MinicloudDbContext(Options()))
+await using (var db = new SelfrunDbContext(Options()))
 {
     await db.Database.OpenConnectionAsync();
     using var cmd = db.Database.GetDbConnection().CreateCommand();
@@ -64,7 +64,7 @@ var requests = new ConcurrentDictionary<string, RequestMetrics>(StringComparer.O
 var builder = WebApplication.CreateBuilder();
 builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
 builder.Logging.ClearProviders();
-builder.Services.AddDbContext<MinicloudDbContext>(options => options
+builder.Services.AddDbContext<SelfrunDbContext>(options => options
     .UseNpgsql(connection, o => o.CommandTimeout(10))
     .AddInterceptors(recorder));
 builder.Services.AddControllers().AddApplicationPart(typeof(ApplicationsController).Assembly);
@@ -150,7 +150,7 @@ await app.StopAsync();
 
 async Task<(ApiKeyToken ApiKey, RuntimeTokenValue RuntimeToken)> Seed(string org, int roots, int history)
 {
-    await using var db = new MinicloudDbContext(Options());
+    await using var db = new SelfrunDbContext(Options());
     var now = DateTimeOffset.Parse("2026-11-01T00:00:00Z");
     var apiKeyService = new ApiKeyTokenService();
     var apiKey = apiKeyService.Generate();
@@ -168,7 +168,7 @@ async Task<(ApiKeyToken ApiKey, RuntimeTokenValue RuntimeToken)> Seed(string org
     {
         var root = $"{org}-{r:D3}-0";
         var application = $"appl-{org}-{r:D3}";
-        db.Applications.Add(new MinicloudApplication
+        db.Applications.Add(new SelfrunApplication
         {
             Id = application, OrganizationId = org, Name = root, Slug = root, NormalizedSlug = root,
             DefaultEnvironmentId = root, LegacyRootAppId = root, CreatedAt = now, UpdatedAt = now
@@ -176,7 +176,7 @@ async Task<(ApiKeyToken ApiKey, RuntimeTokenValue RuntimeToken)> Seed(string org
         for (var e = 0; e < 3; e++)
         {
             var id = $"{org}-{r:D3}-{e}";
-            db.Apps.Add(new MinicloudApp
+            db.Apps.Add(new SelfrunApp
             {
                 Id = id, OrganizationId = org, ApplicationId = application, Name = id, Slug = id,
                 ParentAppId = e == 0 ? null : root, EnvironmentName = $"env{e}", NormalizedEnvironmentName = $"env{e}",
@@ -335,7 +335,7 @@ async Task<ApiResponse> Send(HttpClient client, string path, string token, objec
 
 async Task WritePlans(IReadOnlyList<SqlEntry> sql)
 {
-    var dir = Environment.GetEnvironmentVariable("MINICLOUD_PERF_OUTPUT") ?? Path.Combine(FindRepositoryRoot(), ".local/artifacts/apps-data-fetch");
+    var dir = Environment.GetEnvironmentVariable("SELFRUN_PERF_OUTPUT") ?? Path.Combine(FindRepositoryRoot(), ".local/artifacts/apps-data-fetch");
     Directory.CreateDirectory(dir);
     var queries = sql.Where(x => x.Sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
         .GroupBy(x => x.Sql, StringComparer.Ordinal).Select(x => x.First()).Take(20).ToArray();
@@ -343,7 +343,7 @@ async Task WritePlans(IReadOnlyList<SqlEntry> sql)
     {
         var entry = queries[i];
         await File.WriteAllTextAsync(Path.Combine(dir, $"query-{i + 1}.sql"), entry.Sql);
-        await using var db = new MinicloudDbContext(Options());
+        await using var db = new SelfrunDbContext(Options());
         await db.Database.OpenConnectionAsync();
         await using var cmd = db.Database.GetDbConnection().CreateCommand();
         cmd.CommandText = "EXPLAIN (ANALYZE, BUFFERS) " + entry.Sql;

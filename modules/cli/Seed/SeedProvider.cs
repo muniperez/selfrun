@@ -5,7 +5,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 // Deliberately separate from the server's EF/OpenBao-backed provider factory.
 internal sealed partial class SeedProvider : ISeedProvider
@@ -151,7 +151,7 @@ internal sealed partial class SeedProvider : ISeedProvider
     {
         object body = provider switch
         {
-            "hetzner" => new { name = Name(operation), public_key = publicKey, labels = new Dictionary<string, string> { ["minicloud-seed"] = operation } },
+            "hetzner" => new { name = Name(operation), public_key = publicKey, labels = new Dictionary<string, string> { ["selfrun-seed"] = operation } },
             "digitalocean" => new { name = Name(operation), public_key = publicKey },
             _ => (object)new { name = Name(operation), ssh_key = publicKey }
         };
@@ -182,7 +182,7 @@ internal sealed partial class SeedProvider : ISeedProvider
         {
             "hetzner" => new { name = Name(state.Id), location = s.Region, server_type = s.Size, image = long.Parse(q.Image, CultureInfo.InvariantCulture),
                 ssh_keys = new[] { long.Parse(state.SshKeyId!, CultureInfo.InvariantCulture) },
-                labels = new Dictionary<string, string> { ["minicloud-seed"] = state.Id },
+                labels = new Dictionary<string, string> { ["selfrun-seed"] = state.Id },
                 public_net = new { enable_ipv4 = true, enable_ipv6 = false }, start_after_create = true },
             "digitalocean" => new { name = Name(state.Id), region = s.Region, size = s.Size,
                 image = long.Parse(q.Image, CultureInfo.InvariantCulture),
@@ -206,7 +206,7 @@ internal sealed partial class SeedProvider : ISeedProvider
     }
 
     private bool Owned(JsonElement value, string operation) => provider == "hetzner"
-        ? value.TryGetProperty("labels", out var labels) && labels.TryGetProperty("minicloud-seed", out var id) && id.GetString() == operation
+        ? value.TryGetProperty("labels", out var labels) && labels.TryGetProperty("selfrun-seed", out var id) && id.GetString() == operation
         : value.TryGetProperty("tags", out var tags) && tags.EnumerateArray().Any(x => x.GetString() == Name(operation));
 
     private SeedResource Resource(JsonElement value, string operation)

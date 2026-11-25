@@ -1,4 +1,4 @@
-namespace Minicloud.Worker.Storage;
+namespace Selfrun.Worker.Storage;
 
 public interface IArtifactRetriever
 {

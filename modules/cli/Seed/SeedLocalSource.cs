@@ -5,12 +5,12 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal static class SeedLocalSource
 {
     internal const string Trust = "operator-pinned-local-source";
-    private const string SourceResource = "Minicloud.Cli.Seed.source.tar";
+    private const string SourceResource = "Selfrun.Cli.Seed.source.tar";
     internal static string? EmbeddedTag => typeof(SeedLocalSource).Assembly.GetManifestResourceInfo(SourceResource) is not null
         && SeedRelease.CliSourceRevision is { Length: 40 } revision ? "server-v0.0.1-local." + revision : null;
 
@@ -63,7 +63,7 @@ internal static class SeedLocalSource
                 maximumExclusiveVersion = (string?)null, sourceRevisions = new[] { revision } }
         };
         using var data = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(descriptor));
-        writer.WriteEntry(new UstarTarEntry(TarEntryType.RegularFile, "minicloud-local-source.json")
+        writer.WriteEntry(new UstarTarEntry(TarEntryType.RegularFile, "selfrun-local-source.json")
         {
             DataStream = data, Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
             ModificationTime = DateTimeOffset.UnixEpoch
@@ -99,12 +99,12 @@ internal static class SeedLocalSource
                 && entry.EntryType is TarEntryType.Directory or TarEntryType.RegularFile or TarEntryType.V7RegularFile
                 && entry.Length is >= 0 and <= 64 * 1024 * 1024 && expanded <= 512L * 1024 * 1024
                 && seen.Count <= 20000, "Unsafe or oversized local source archive.");
-            if (name is not ("minicloud-local-source.json" or "scripts/self-hosting/local_source.py")) continue;
+            if (name is not ("selfrun-local-source.json" or "scripts/self-hosting/local_source.py")) continue;
             SeedGuard.Require(entry.EntryType != TarEntryType.Directory && entry.Length <= 1048576,
                 "Invalid local source descriptor/runner.");
             using var bytes = new MemoryStream();
             entry.DataStream!.CopyTo(bytes);
-            if (name == "minicloud-local-source.json") descriptor = bytes.ToArray();
+            if (name == "selfrun-local-source.json") descriptor = bytes.ToArray();
             else runner = bytes.ToArray();
         }
         SeedGuard.Require(descriptor is not null && runner is not null

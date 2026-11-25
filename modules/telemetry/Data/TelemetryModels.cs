@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Telemetry.Data;
+namespace Selfrun.Telemetry.Data;
 
 public sealed class TelemetryAuthorityCheckpoint
 {
@@ -59,7 +59,7 @@ public sealed class TelemetryGrafanaSession
     public string SessionHash { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public string MinicloudUserId { get; set; } = default!;
+    public string SelfrunUserId { get; set; } = default!;
     public string GrafanaLogin { get; set; } = default!;
     public string DataSourceUid { get; set; } = default!;
     public DateTimeOffset ExpiresAt { get; set; }
@@ -75,7 +75,7 @@ public sealed class TelemetryLaunchCode
     public string CodeHash { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public string MinicloudUserId { get; set; } = default!;
+    public string SelfrunUserId { get; set; } = default!;
     public string Destination { get; set; } = default!;
     public string GrafanaLogin { get; set; } = default!;
     public string DataSourceUid { get; set; } = default!;

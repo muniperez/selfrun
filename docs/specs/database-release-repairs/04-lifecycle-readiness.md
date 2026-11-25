@@ -32,7 +32,7 @@ Source and ownership:
 - `modules/api/Controllers/DatabaseServersController.cs:30` accepts normal DELETE
   only without remaining databases or active operations. Preserve those guards.
 - Owner: public worker agent; relevant tests are
-  `modules/tests/Minicloud.Worker.Tests/Databases/DatabaseOperationPostgresTests.cs`
+  `modules/tests/Selfrun.Worker.Tests/Databases/DatabaseOperationPostgresTests.cs`
   and `DatabaseOwnershipTests.cs` in the same directory.
 
 Implementation and acceptance:
@@ -59,17 +59,17 @@ Implementation and acceptance:
 
 Source and ownership:
 
-- In private hosted operations, `scripts/github-actions/minicloud-deploy/remote-deploy.sh:1903`
+- In private hosted operations, `scripts/github-actions/selfrun-deploy/remote-deploy.sh:1903`
   runs `before-live`, Compose backend startup with `--wait`, then `reconcile`.
-- `scripts/github-actions/minicloud-deploy/platform-maintenance-upgrade.py:171`
+- `scripts/github-actions/selfrun-deploy/platform-maintenance-upgrade.py:171`
   reads inventory; line 314 requires exact equality before `reconciled`;
   line 355 rechecks saved candidate/ownership/fence during recovery.
 - Public API startup awaits configured migrations in
-  `modules/api/Extensions/MinicloudApplicationExtensions.cs:25` before mapping
+  `modules/api/Extensions/SelfrunApplicationExtensions.cs:25` before mapping
   `/health` in `modules/api/Program.cs:19`. Verify effective candidate configuration
   and container readiness instead of assuming startup does not await migrations.
 - Owner: private hosted-operations agent. Own the two deployment scripts and
-  `scripts/github-actions/minicloud-deploy/test-platform-maintenance-upgrade.py`.
+  `scripts/github-actions/selfrun-deploy/test-platform-maintenance-upgrade.py`.
   Historical private `modules/` are outside the implementation boundary.
 
 Implementation and acceptance:

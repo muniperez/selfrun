@@ -74,7 +74,7 @@ export type DomainBindingResponse = {
   appId: string;
   serviceName: string;
   hostname: string;
-  kind: "minicloud_subdomain" | "custom_domain";
+  kind: "selfrun_subdomain" | "custom_domain";
   targetIp?: string | null;
   verificationToken?: string | null;
   lastCheckedAt?: string | null;

@@ -2,14 +2,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 /// <summary>
 /// Browser-session-authorized Grafana launch/exchange/logout endpoints. The launch
@@ -23,7 +23,7 @@ public sealed class GrafanaSessionController(
     IOptions<GrafanaOptions> grafanaOptions,
     IOptions<TelemetryClientOptions> telemetryOptions,
     IHttpClientFactory httpClients,
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ControlPlaneAuthorization authorization,
     IHostEnvironment hosting) : ControllerBase
 {
@@ -73,9 +73,9 @@ public sealed class GrafanaSessionController(
             try
             {
                 var client = httpClients.CreateClient();
-                var launchReq = new Minicloud.Common.Contracts.TelemetryLaunchCodeIssueRequest
+                var launchReq = new Selfrun.Common.Contracts.TelemetryLaunchCodeIssueRequest
                 {
-                    MinicloudUserId = principal.UserId,
+                    SelfrunUserId = principal.UserId,
                     OrganizationId = app.OrganizationId,
                     AppId = app.Id,
                     Destination = destination
@@ -88,7 +88,7 @@ public sealed class GrafanaSessionController(
                 using var resp = await client.SendAsync(msg, cancellationToken);
                 if (resp.IsSuccessStatusCode)
                 {
-                    var launchResult = await resp.Content.ReadFromJsonAsync<Minicloud.Common.Contracts.TelemetryLaunchCodeIssueResponse>(cancellationToken);
+                    var launchResult = await resp.Content.ReadFromJsonAsync<Selfrun.Common.Contracts.TelemetryLaunchCodeIssueResponse>(cancellationToken);
                     if (launchResult is not null)
                     {
                         Response.Headers.CacheControl = "no-store";

@@ -1,6 +1,6 @@
-using Minicloud.Common.Services;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class ProviderCredentialCleanupWorker(IServiceScopeFactory scopes, ILogger<ProviderCredentialCleanupWorker> logger,
     MaintenanceParticipant? participant = null)

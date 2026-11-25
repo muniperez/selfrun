@@ -78,7 +78,7 @@ export function TelemetrySettingsCard({ appId, settings, onChanged }: Props) {
               <p className="font-medium">Exporter configuration</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Point the OpenTelemetry logs exporter at the signal-specific endpoint and store the complete
-                headers value as the reserved app secret MINICLOUD_OTLP_LOGS_HEADERS, mapped with secretEnv:
+                headers value as the reserved app secret SELFRUN_OTLP_LOGS_HEADERS, mapped with secretEnv:
               </p>
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs text-muted-foreground">
 {`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
@@ -88,7 +88,7 @@ OTEL_SERVICE_NAME=<service-name>`}
               </pre>
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs text-muted-foreground">
 {`secretEnv:
-  OTEL_EXPORTER_OTLP_LOGS_HEADERS: MINICLOUD_OTLP_LOGS_HEADERS`}
+  OTEL_EXPORTER_OTLP_LOGS_HEADERS: SELFRUN_OTLP_LOGS_HEADERS`}
               </pre>
               <p className="mt-2 text-xs text-muted-foreground">
                 Only the logs signal is supported; metrics and traces exporters are rejected. Branch apps need

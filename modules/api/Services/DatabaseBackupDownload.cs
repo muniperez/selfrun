@@ -1,4 +1,4 @@
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class DatabaseBackupDownload(HttpResponseMessage response, string filename, long expectedLength) : IDisposable
 {

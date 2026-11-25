@@ -2,7 +2,7 @@
 services:
   kratos-migrate:
     environment: &email-recovery
-      SELFSERVICE_FLOWS_RECOVERY_ENABLED: ${MINICLOUD_EMAIL_RECOVERY_ENABLED:?set the protected email recovery opt-in}
+      SELFSERVICE_FLOWS_RECOVERY_ENABLED: ${SELFRUN_EMAIL_RECOVERY_ENABLED:?set the protected email recovery opt-in}
       SELFSERVICE_FLOWS_RECOVERY_USE: code
       SELFSERVICE_METHODS_CODE_ENABLED: "true"
       SELFSERVICE_METHODS_CODE_PASSWORDLESS_ENABLED: "false"
@@ -17,4 +17,4 @@ services:
       - ./identity.recovery.schema.json:/etc/config/identity.schema.json:ro
   api:
     environment:
-      Kratos__EmailRecoveryEnabled: ${MINICLOUD_EMAIL_RECOVERY_ENABLED:?set the protected email recovery opt-in}
+      Kratos__EmailRecoveryEnabled: ${SELFRUN_EMAIL_RECOVERY_ENABLED:?set the protected email recovery opt-in}

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 internal static class LocalSecretsFile
 {
     public const string FileName = "selfrun.secrets.env";
-    public const string LegacyFileName = "minicloud.secrets.env";
 
     public static string? ResolvePath(string? sourcePath)
     {
@@ -16,14 +15,8 @@ internal static class LocalSecretsFile
             return null;
         }
 
-        var primary = Path.Combine(sourcePath, FileName);
-        if (File.Exists(primary))
-        {
-            return primary;
-        }
-
-        var legacy = Path.Combine(sourcePath, LegacyFileName);
-        return File.Exists(legacy) ? legacy : null;
+        var path = Path.Combine(sourcePath, FileName);
+        return File.Exists(path) ? path : null;
     }
 
     public static IReadOnlyDictionary<string, string> Parse(string path)
@@ -44,7 +37,7 @@ internal static class LocalSecretsFile
             }
 
             var name = line[..separator].Trim();
-            if (!MinicloudConfigValidator.IsEnvironmentVariableKey(name))
+            if (!SelfrunConfigValidator.IsEnvironmentVariableKey(name))
             {
                 throw new CliCommandException(CliExitCodes.ValidationError, $"Invalid local secret name '{name}' in '{path}'. Secret names must match ^[A-Za-z_][A-Za-z0-9_]*$.");
             }

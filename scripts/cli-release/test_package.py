@@ -19,7 +19,7 @@ class PackageTests(unittest.TestCase):
         for rid in RIDS:
             directory = self.payload / rid
             (directory / "licenses").mkdir(parents=True)
-            for name in ("minicloud.exe" if rid == "win-x64" else "minicloud",
+            for name in ("selfrun.exe" if rid == "win-x64" else "selfrun",
                          "LICENSE.txt", "SOURCE.txt", "licenses/YamlDotNet-MIT.txt",
                          "licenses/dotnet-LICENSE.TXT", "licenses/dotnet-THIRD-PARTY-NOTICES.TXT"):
                 (directory / name).write_bytes(b"synthetic package fixture, not an executable")
@@ -59,7 +59,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual("do not replace", (output / "historical").read_text())
 
     def test_links_and_partial_runtime_are_not_publishable(self):
-        (self.payload / "linux-x64" / "link").symlink_to("minicloud")
+        (self.payload / "linux-x64" / "link").symlink_to("selfrun")
         with self.assertRaises(ValueError):
             package(self.payload, self.root / "linked", "v4.0.0", "a" * 40)
         (self.payload / "linux-x64" / "link").unlink()
@@ -68,7 +68,7 @@ class PackageTests(unittest.TestCase):
             package(self.payload, self.root / "partial", "v4.0.0", "a" * 40)
 
     def test_unsafe_archive_paths(self):
-        for name in ("../minicloud", "/minicloud", "a//b", "C:minicloud", "a\\b", "./minicloud", "CON", "a/NUL.txt", "a."):
+        for name in ("../selfrun", "/selfrun", "a//b", "C:selfrun", "a\\b", "./selfrun", "CON", "a/NUL.txt", "a."):
             self.assertFalse(safe(name), name)
 
 

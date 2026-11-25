@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
+using Selfrun.Common.Data;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 internal enum UnmatchedMigrationStatus
 {
@@ -19,7 +19,7 @@ internal sealed record UnmatchedMigrationEvaluation(
 /// <summary>
 /// Isolates read-only PostgreSQL upgrade compatibility for databases upgraded in place
 /// from the last workspace-bearing release (server-v0.0.1-rc.4).
-/// These migrations are recognized only as already applied, never created or executed by app-only Minicloud.
+/// These migrations are recognized only as already applied, never created or executed by app-only Selfrun.
 /// </summary>
 internal static class RetiredWorkspaceMigrationGuard
 {
@@ -59,7 +59,7 @@ internal static class RetiredWorkspaceMigrationGuard
     }
 
     internal static async Task ValidateUnmatchedMigrationsAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         IEnumerable<string> unmatchedMigrations,
         CancellationToken cancellationToken)
     {
@@ -70,17 +70,17 @@ internal static class RetiredWorkspaceMigrationGuard
                 return;
             case UnmatchedMigrationStatus.UnknownMigrations:
                 throw new InvalidOperationException(
-                    $"The Minicloud database has migrations unknown to this release ({string.Join(", ", evaluation.UnknownMigrations)}); refusing to downgrade.");
+                    $"The Selfrun database has migrations unknown to this release ({string.Join(", ", evaluation.UnknownMigrations)}); refusing to downgrade.");
             case UnmatchedMigrationStatus.IncompleteRetiredWorkspaceHistory:
                 throw new InvalidOperationException(
-                    "The Minicloud database has an incomplete workspace migration history. Finish upgrading it with the workspace-bearing release before retrying.");
+                    "The Selfrun database has an incomplete workspace migration history. Finish upgrading it with the workspace-bearing release before retrying.");
             case UnmatchedMigrationStatus.CompleteRetiredWorkspaceHistory:
                 await EnsureAllWorkspacesRetiredAsync(db, cancellationToken);
                 return;
         }
     }
 
-    private static async Task EnsureAllWorkspacesRetiredAsync(MinicloudDbContext db, CancellationToken cancellationToken)
+    private static async Task EnsureAllWorkspacesRetiredAsync(SelfrunDbContext db, CancellationToken cancellationToken)
     {
         // Verify retirement without modifying legacy tables or trusting their absence.
         // Querying the tables directly also fails closed if required legacy tables are missing.
@@ -101,7 +101,7 @@ internal static class RetiredWorkspaceMigrationGuard
         if (hasUnretiredWorkspaces)
         {
             throw new InvalidOperationException(
-                "The Minicloud database contains workspaces that have not been retired. Permanently delete all workspaces with the workspace-bearing release before upgrading.");
+                "The Selfrun database contains workspaces that have not been retired. Permanently delete all workspaces with the workspace-bearing release before upgrading.");
         }
     }
 }

@@ -3,12 +3,12 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Api.Services;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Api.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/github-apps")]
 public sealed class GitHubAppsController(GitHubAppService apps, ControlPlaneAuthorization authorization,

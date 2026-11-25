@@ -1,17 +1,17 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 public static class EndpointResults
 {
     public static ControlPlanePrincipal RequirePrincipal(HttpContext http) =>
         http.User.GetControlPlanePrincipal() ?? throw new InvalidOperationException("Authenticated control-plane principal was not resolved.");
 
-    public static IResult ValidationProblem(string message, Minicloud.Common.Validation.ValidationResult validation) =>
+    public static IResult ValidationProblem(string message, Selfrun.Common.Validation.ValidationResult validation) =>
         Results.BadRequest(new ErrorResponse(new ErrorBody("validation_failed", message, validation.Errors)));
 
     public static IResult Forbidden() =>
@@ -29,10 +29,10 @@ public static class EndpointResults
     public static IResult DeploymentNotFound() => NotFound("deployment_not_found", "Deployment was not found.");
 
     public static IResult DeploymentNumberExhausted() =>
-        Conflict(Minicloud.Common.Data.DeploymentNumberExhaustedException.Code, "No deployment numbers remain for this organization today.");
+        Conflict(Selfrun.Common.Data.DeploymentNumberExhaustedException.Code, "No deployment numbers remain for this organization today.");
 
     public static async Task<IResult?> VerifyTargetOwnershipAsync(
-        MinicloudDbContext db,
+        SelfrunDbContext db,
         string? appId,
         string? applicationId,
         string? environmentId,

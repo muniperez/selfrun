@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Minicloud.Common.Providers.GoogleCloud;
+namespace Selfrun.Common.Providers.GoogleCloud;
 
 public sealed class GoogleCloudOptions
 {

@@ -3,17 +3,17 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Services;
-using Minicloud.Telemetry.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Services;
+using Selfrun.Telemetry.Data;
 
-namespace Minicloud.Telemetry.Services;
+namespace Selfrun.Telemetry.Services;
 
 public sealed record GrafanaSessionSnapshot(
     string SessionId,
     string OrganizationId,
     string AppId,
-    string MinicloudUserId,
+    string SelfrunUserId,
     string GrafanaLogin,
     string DataSourceUid,
     DateTimeOffset ExpiresAt);
@@ -47,7 +47,7 @@ public sealed class GrafanaSessionService(
         var now = timeProvider.GetUtcNow();
         var expiresAt = now.Add(TelemetryLimits.GrafanaLaunchCodeTtl);
         var dsUid = $"mcl-{request.AppId}";
-        var login = GrafanaProxyGuard.IdentityFor(request.MinicloudUserId, request.OrganizationId);
+        var login = GrafanaProxyGuard.IdentityFor(request.SelfrunUserId, request.OrganizationId);
 
         var launch = new TelemetryLaunchCode
         {
@@ -55,7 +55,7 @@ public sealed class GrafanaSessionService(
             CodeHash = HashLaunchCode(code, options.Value.AuthSigningKey),
             OrganizationId = request.OrganizationId,
             AppId = request.AppId,
-            MinicloudUserId = request.MinicloudUserId,
+            SelfrunUserId = request.SelfrunUserId,
             Destination = safeDestination,
             GrafanaLogin = login,
             DataSourceUid = dsUid,
@@ -121,7 +121,7 @@ public sealed class GrafanaSessionService(
             Id = Guid.NewGuid().ToString("N"),
             OrganizationId = row.OrganizationId,
             AppId = row.AppId,
-            MinicloudUserId = row.MinicloudUserId,
+            SelfrunUserId = row.SelfrunUserId,
             GrafanaLogin = row.GrafanaLogin,
             DataSourceUid = row.DataSourceUid,
             SessionHash = HashSessionToken(sessionToken),
@@ -173,7 +173,7 @@ public sealed class GrafanaSessionService(
             session.Id,
             session.OrganizationId,
             session.AppId,
-            session.MinicloudUserId,
+            session.SelfrunUserId,
             session.GrafanaLogin,
             session.DataSourceUid,
             session.ExpiresAt);

@@ -43,7 +43,7 @@ class EmailRecoveryTests(unittest.TestCase):
         values = {
             "connectionUri": ("smtp://mail-sink:1025/?disable_starttls=true" if plaintext else
                               "smtps://synthetic-user:synthetic%24%27%23%5Cpassword@smtp.example.invalid:465/"),
-            "fromAddress": "recovery@example.invalid", "fromName": "MiniCloud fixture",
+            "fromAddress": "recovery@example.invalid", "fromName": "Selfrun fixture",
         }
         self.write(path, json.dumps(values).encode())
         option = {"enabled": True, "smtpFile": str(path)}
@@ -57,7 +57,7 @@ class EmailRecoveryTests(unittest.TestCase):
         subject.execute()
         original = (subject.root / "secrets/kratos.env").read_bytes()
         command, env = subject.compose_invocation("up", "-d", "kratos")
-        self.assertNotIn("MINICLOUD_EMAIL_RECOVERY_ENABLED", env)
+        self.assertNotIn("SELFRUN_EMAIL_RECOVERY_ENABLED", env)
         self.assertNotIn(str(subject.root / "bundle/compose.email-recovery.yml"), command)
         self.assertNotIn(b"COURIER_", original)
         resumed = self.subject()
@@ -85,8 +85,8 @@ class EmailRecoveryTests(unittest.TestCase):
         self.assertEqual(0o600, secret.stat().st_mode & 0o777)
         command, env = subject.compose_invocation("up", "-d", "kratos", "api")
         self.assertIn(str(subject.root / "bundle/compose.email-recovery.yml"), command)
-        self.assertEqual("true", env["MINICLOUD_EMAIL_RECOVERY_ENABLED"])
-        self.assertEqual("false", env["MINICLOUD_GOOGLE_OIDC_ENABLED"])
+        self.assertEqual("true", env["SELFRUN_EMAIL_RECOVERY_ENABLED"])
+        self.assertEqual("false", env["SELFRUN_GOOGLE_OIDC_ENABLED"])
         self.assertNotIn(values["connectionUri"], json.dumps([command, env, subject.state]))
         self.assertEqual(str(path), subject.state["configuration"]["emailRecovery"]["smtpFile"])
         resumed = self.subject()
@@ -259,7 +259,7 @@ class EmailRecoveryTests(unittest.TestCase):
     def _write_release(self, directory, *, tag, payload, images=None, dependencies=None):
         directory.mkdir(mode=0o700, exist_ok=True)
         version = tag.removeprefix("server-v")
-        archive = directory / f"minicloud-server-{version}.tar.gz"
+        archive = directory / f"selfrun-server-{version}.tar.gz"
         with tarfile.open(archive, "w:gz") as target:
             for name, data in payload.items():
                 member = tarfile.TarInfo(name)
@@ -370,7 +370,7 @@ class EmailRecoveryTests(unittest.TestCase):
         upgrader.load_state(manifest=previous_manifest)
         self.assertEqual(original_secret, secret.read_bytes())
         command, env = upgrader.compose_invocation("up", "-d", "kratos", "api")
-        self.assertNotIn("MINICLOUD_EMAIL_RECOVERY_ENABLED", env)
+        self.assertNotIn("SELFRUN_EMAIL_RECOVERY_ENABLED", env)
         self.assertNotIn("compose.email-recovery.yml", " ".join(command))
 
         # Attempting to enable emailRecovery in-place on a preexisting password-only install fails closed.

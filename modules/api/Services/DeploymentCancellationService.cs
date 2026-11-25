@@ -1,13 +1,13 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class DeploymentCancellationService(
-    MinicloudDbContext db, ControlPlaneAuthorization authorization, AuditEventService audit, TimeProvider clock)
+    SelfrunDbContext db, ControlPlaneAuthorization authorization, AuditEventService audit, TimeProvider clock)
 {
     public async Task<(int Status, string? Code)> RequestAsync(ControlPlanePrincipal principal, string id, CancellationToken ct)
     {

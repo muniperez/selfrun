@@ -3,7 +3,7 @@
 `POST /otlp/v1/logs` on the telemetry gateway authenticates the app credential,
 reads a bounded body, optionally decompresses it, decodes OTLP protobuf,
 normalizes records, applies quota and forwards a Loki push. With
-`OperatorDiagnostics:Enabled=true`, each stage emits a `Minicloud.Operator` span
+`OperatorDiagnostics:Enabled=true`, each stage emits a `Selfrun.Operator` span
 (`otlp.auth`, `otlp.read`, `otlp.gzip`, `otlp.decode`, `otlp.normalize`,
 `otlp.quota`, `otlp.encode`, `otlp.forward`) that carries only the `operation`
 tag. Request bodies, tenant IDs and credentials are never attached.

@@ -26,9 +26,9 @@ class PasskeysConfigTests(unittest.TestCase):
         subject = self.subject()
         subject.state = {"installationId": "synthetic"}
         env = subject.environment()
-        self.assertEqual("true", env["MINICLOUD_PASSKEY_ENABLED"])
-        self.assertEqual("Minicloud", env["MINICLOUD_PASSKEY_RP_DISPLAY_NAME"])
-        self.assertEqual("cloud.example.com", env["MINICLOUD_PASSKEY_RP_ID"])
+        self.assertEqual("true", env["SELFRUN_PASSKEY_ENABLED"])
+        self.assertEqual("Selfrun", env["SELFRUN_PASSKEY_RP_DISPLAY_NAME"])
+        self.assertEqual("cloud.example.com", env["SELFRUN_PASSKEY_RP_ID"])
 
     def test_parent_domain_rp_id_and_custom_display_name_are_accepted(self):
         self.configure({
@@ -39,17 +39,17 @@ class PasskeysConfigTests(unittest.TestCase):
         subject = self.subject()
         subject.state = {"installationId": "synthetic"}
         env = subject.environment()
-        self.assertEqual("true", env["MINICLOUD_PASSKEY_ENABLED"])
-        self.assertEqual("Example Cloud", env["MINICLOUD_PASSKEY_RP_DISPLAY_NAME"])
-        self.assertEqual("example.com", env["MINICLOUD_PASSKEY_RP_ID"])
+        self.assertEqual("true", env["SELFRUN_PASSKEY_ENABLED"])
+        self.assertEqual("Example Cloud", env["SELFRUN_PASSKEY_RP_DISPLAY_NAME"])
+        self.assertEqual("example.com", env["SELFRUN_PASSKEY_RP_ID"])
 
     def test_explicit_disable_sets_passkey_flag_false(self):
         self.configure({"enabled": False})
         subject = self.subject()
         subject.state = {"installationId": "synthetic"}
         env = subject.environment()
-        self.assertEqual("false", env["MINICLOUD_PASSKEY_ENABLED"])
-        self.assertEqual("cloud.example.com", env["MINICLOUD_PASSKEY_RP_ID"])
+        self.assertEqual("false", env["SELFRUN_PASSKEY_ENABLED"])
+        self.assertEqual("cloud.example.com", env["SELFRUN_PASSKEY_RP_ID"])
 
     def test_invalid_rp_id_display_name_or_unknown_fields_fail_before_mutation(self):
         for option in (

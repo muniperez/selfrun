@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Auth;
+namespace Selfrun.Common.Auth;
 
 /// <summary>
 /// Plain actor identity decoupled from HTTP claims and token adapters.

@@ -1,7 +1,7 @@
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 /// <summary>
 /// Trusts a configured private OpenBao CA for OpenBao requests only. Process-wide

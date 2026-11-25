@@ -18,7 +18,7 @@ import time
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 MANIFEST = json.loads((HERE / "workspace-upgrade.json").read_text())
-API_PROJECT = Path("modules/api/Minicloud.Api.csproj")
+API_PROJECT = Path("modules/api/Selfrun.Api.csproj")
 HISTORY = 'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId"'
 
 
@@ -34,7 +34,7 @@ def loopback_port():
 
 def build_api(source, output):
     run("dotnet", "build", source / API_PROJECT, "-c", "Release", "-o", output, "--nologo", "-v", "quiet")
-    return output / "Minicloud.Api.dll"
+    return output / "Selfrun.Api.dll"
 
 
 def postgres16_bin():
@@ -129,7 +129,7 @@ class Postgres:
             "ASPNETCORE_ENVIRONMENT": "Production",
             "Database__Provider": "Postgres",
             "Database__RunMigrationsOnStartup": "false",
-            "ConnectionStrings__Minicloud":
+            "ConnectionStrings__Selfrun":
                 f"Host=127.0.0.1;Port={self.port};Database={database};Username=synthetic;Password={self.password}",
         }
 

@@ -4,11 +4,11 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed record GrafanaGatewayResolution(string AppId, string OrganizationId, string TenantId, string DataSourceUid);
 public sealed record GrafanaGatewayOutcome(int StatusCode, byte[]? Body, string? ContentType, string? ErrorCode, string? ErrorMessage);
@@ -24,7 +24,7 @@ public sealed record GrafanaGatewayOutcome(int StatusCode, byte[]? Body, string?
 /// and arbitrary upstreams are denied.
 /// </summary>
 public sealed class GrafanaQueryGateway(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     TimeProvider timeProvider,
     IHttpClientFactory httpClients,
     IOptions<TelemetryIngestionOptions> options,

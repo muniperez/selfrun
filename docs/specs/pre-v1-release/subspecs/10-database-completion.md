@@ -1,12 +1,12 @@
 # T10 — Complete demonstrated database/runtime defects
 
-Repository: `muniventures/minicloud`. Owner: one DB/runtime agent.
+Repository: `muniperez/selfrun`. Owner: one DB/runtime agent.
 Depends on: T00. Can run in parallel with: T20 and T30; later image/installation work on separate files.
 Status: remaining causes unconfirmed; merged repairs are baseline.
 
 ## Existing implementation to preserve
 
-[PR #17](https://github.com/muniventures/minicloud/pull/17) already implements sanitized operation errors, sparse/failure log flushing, failed resource transitions and bounded access-container readiness. Use the [six DB repair specs](../../database-release-repairs/00-execution-plan.md) for behavior and test cases; do not replay their original implementation sequence wholesale.
+[PR #17](https://github.com/muniperez/selfrun/pull/17) already implements sanitized operation errors, sparse/failure log flushing, failed resource transitions and bounded access-container readiness. Use the [six DB repair specs](../../database-release-repairs/00-execution-plan.md) for behavior and test cases; do not replay their original implementation sequence wholesale.
 
 ## Remaining code work
 

@@ -1,26 +1,26 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public interface IAppSecretService
 {
-    Task<AppSecretValue> EnsurePostgresPasswordAsync(MinicloudApp app, string? requestedPassword, CancellationToken cancellationToken);
+    Task<AppSecretValue> EnsurePostgresPasswordAsync(SelfrunApp app, string? requestedPassword, CancellationToken cancellationToken);
 }
 
 public sealed record AppSecretValue(string Value, bool ShouldUpdateDatabasePassword, bool WasGenerated);
 
 public sealed class AppSecretService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     SecretEncryptionService encryption,
     IIdGenerator ids,
     TimeProvider timeProvider) : IAppSecretService
 {
     public const string PostgresPasswordSecretName = "postgres_password";
 
-    public async Task<AppSecretValue> EnsurePostgresPasswordAsync(MinicloudApp app, string? requestedPassword, CancellationToken cancellationToken)
+    public async Task<AppSecretValue> EnsurePostgresPasswordAsync(SelfrunApp app, string? requestedPassword, CancellationToken cancellationToken)
     {
         var secret = await db.AppSecrets.SingleOrDefaultAsync(
             x => x.AppId == app.Id && x.Name == PostgresPasswordSecretName,
@@ -77,7 +77,7 @@ public sealed class AppSecretService(
     }
 
     private async Task<bool> UpsertSecretAsync(
-        MinicloudApp app,
+        SelfrunApp app,
         string value,
         bool shouldUpdateExisting,
         DateTimeOffset updatedAt,

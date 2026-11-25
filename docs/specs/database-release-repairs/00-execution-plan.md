@@ -64,7 +64,7 @@ Use one integration owner plus up to three implementation agents. The integratio
 | B — runtime and operations | R2 + R1 D20 → R4B | Agent/deployment controller and runtime-agent files; `SshDeployStep.cs`/`DeploymentLogWriter.cs` for D20; later private maintenance helper, private remote-deploy script, and their tests. D20 belongs to this same lane to avoid competing edits with R2. |
 | C — client and qualification preparation | R5 → R6 local/offline preparation | CLI/release/installer files and CLI tests; then acceptance cases and assertions. No paid allocation or hosted writes during preparation. |
 
-Public product ownership is in `minicloud/`. Hosted deployment/recovery scripts belong in private `minicloud-services/`; retained private product modules are historical and must not receive these product fixes. Paths and line references in the specs describe the current source and must be rechecked when work begins.
+Public product ownership is in `selfrun/`. Hosted deployment/recovery scripts belong in the private hosted operations repository; retained private product modules are historical and must not receive these product fixes. Paths and line references in the specs describe the current source and must be rechecked when work begins.
 
 If a reproduced cause crosses a listed boundary, request a file handoff from the integration owner. Do not refactor or split modules merely to manufacture parallelism. Read-only investigation may overlap; two agents must not write the same file or change the same hosted resource concurrently.
 

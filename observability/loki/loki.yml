@@ -1,14 +1,14 @@
-# Minicloud observability: Loki configuration template (T10).
+# Selfrun observability: Loki configuration template (T10).
 #
 # Pinned against grafana/loki:3.5.2 (see observability/README.md for the digest).
 # This file is the dev/local template. Production renders byte-identical content
 # via write_observability_configs() in
-# scripts/github-actions/minicloud-deploy/remote-deploy.sh so the VPS config is
+# scripts/github-actions/selfrun-deploy/remote-deploy.sh so the VPS config is
 # always versioned with the deploy script. Keep the two in sync.
 #
 # Design (see features/product/grafana-application-logs/1.grafana-application-logs.md):
 # - Single-binary monolith, colocated beta. Filesystem storage only.
-# - auth_enabled: true, single-tenant queries only. The Minicloud telemetry
+# - auth_enabled: true, single-tenant queries only. The Selfrun telemetry
 #   gateway (T12) strips client tenant headers and sets X-Scope-OrgID
 #   server-side; Loki trusts only that gateway, never browsers or SDKs.
 # - TSDB schema v13, 24h index period, WAL, compactor, 2-day retention.

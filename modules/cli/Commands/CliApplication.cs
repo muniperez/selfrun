@@ -5,11 +5,11 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Reflection;
-using Minicloud.Cli.Api;
-using Minicloud.Cli.Auth;
-using Minicloud.Cli.Config;
+using Selfrun.Cli.Api;
+using Selfrun.Cli.Auth;
+using Selfrun.Cli.Config;
 
-namespace Minicloud.Cli.Commands;
+namespace Selfrun.Cli.Commands;
 
 public sealed partial class CliApplication
 {
@@ -23,7 +23,7 @@ public sealed partial class CliApplication
     private readonly IConsole _console;
     private readonly CliEnvironment _environment;
     private readonly TokenStore _tokenStore;
-    private readonly MinicloudApiClient _apiClient;
+    private readonly SelfrunApiClient _apiClient;
     private readonly Rendering.IDeploymentTimingSink _timingSink;
 
     public Rendering.IDeploymentTimingSink TimingSink => _timingSink;
@@ -32,7 +32,7 @@ public sealed partial class CliApplication
         IConsole console,
         CliEnvironment environment,
         TokenStore tokenStore,
-        MinicloudApiClient apiClient,
+        SelfrunApiClient apiClient,
         Rendering.IDeploymentTimingSink? timingSink = null)
     {
         _console = console;
@@ -191,7 +191,7 @@ public sealed partial class CliApplication
 
     private void PrintHelp()
     {
-        _console.WriteLine($"Selfrun CLI version {GetVersion()} (formerly MiniCloud)");
+        _console.WriteLine($"Selfrun CLI version {GetVersion()}");
         _console.WriteLine("Deploy and manage containerized services on your private infrastructure.");
         _console.WriteLine();
         _console.WriteLine("Usage:");
@@ -225,7 +225,7 @@ public sealed partial class CliApplication
         _console.WriteLine("  --env           Show active CLI environment configuration");
         _console.WriteLine();
         _console.WriteLine("Run 'selfrun help <command>' or 'selfrun <command> --help' for details on a command.");
-        _console.WriteLine("Documentation: https://selfrun.dev (source: https://github.com/muniventures/minicloud)");
+        _console.WriteLine("Documentation: https://selfrun.dev (source: https://github.com/muniperez/selfrun)");
     }
 
     private int PrintCommandHelp(string command)
@@ -282,10 +282,10 @@ public sealed partial class CliApplication
                 _console.WriteLine();
                 _console.WriteLine("Options:");
                 _console.WriteLine("  --all                   Deploy all configured services unconditionally");
-                _console.WriteLine("  --config <path>         Path to config file (default: selfrun.yml, fallback: minicloud.yml)");
+                _console.WriteLine("  --config <path>         Path to config file (default: selfrun.yml)");
                 _console.WriteLine("  --database <type>       Provision database (e.g. postgres, none)");
                 _console.WriteLine("  --pgpassword <pwd>      Postgres database password");
-                _console.WriteLine($"  --build-jobs N          Run 1 to {MinicloudConfigValidator.MaxDeploymentServices} local builds at once. Overrides buildJobs in selfrun.yml (default: {DefaultBuildJobs})");
+                _console.WriteLine($"  --build-jobs N          Run 1 to {SelfrunConfigValidator.MaxDeploymentServices} local builds at once. Overrides buildJobs in selfrun.yml (default: {DefaultBuildJobs})");
                 _console.WriteLine("  --no-publish            Deploy pre-built images without building or publishing");
                 return CliExitCodes.Success;
 

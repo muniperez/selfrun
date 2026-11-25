@@ -1,16 +1,16 @@
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Redaction;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Redaction;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 internal static class RuntimeLogBatch
 {
     public static async Task<List<int>> FindNewAsync(
-        MinicloudDbContext db, string serverId, IReadOnlyList<RuntimeLogIngestRecord> records, CancellationToken cancellationToken)
+        SelfrunDbContext db, string serverId, IReadOnlyList<RuntimeLogIngestRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
         {
@@ -38,7 +38,7 @@ internal static class RuntimeLogBatch
     }
 
     public static async Task<int> SaveAsync(
-        MinicloudDbContext db, RuntimeServer server, IReadOnlyList<RuntimeLogIngestRecord> records,
+        SelfrunDbContext db, RuntimeServer server, IReadOnlyList<RuntimeLogIngestRecord> records,
         IReadOnlyList<int> pending, IIdGenerator ids, DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (pending.Count == 0)

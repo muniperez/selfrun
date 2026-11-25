@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class AppTelemetrySettings
 {
@@ -9,7 +9,7 @@ public sealed class AppTelemetrySettings
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string TenantId { get; set; } = default!;
     public bool Enabled { get; set; }
     public bool Deleting { get; set; }
@@ -29,7 +29,7 @@ public sealed class TelemetryIngestionCredential
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string ServiceName { get; set; } = default!;
     public string Name { get; set; } = default!;
     public string KeyPrefix { get; set; } = default!;
@@ -61,7 +61,7 @@ public sealed class GrafanaUserBinding
     public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
-    public string MinicloudUserId { get; set; } = default!;
+    public string SelfrunUserId { get; set; } = default!;
     public long GrafanaUserId { get; set; }
     public string ExpectedRole { get; set; } = "Viewer";
     public string ReconciliationStatus { get; set; } = "pending";
@@ -76,7 +76,7 @@ public sealed class GrafanaDataSourceBinding
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string GrafanaUid { get; set; } = default!;
     public string CredentialReference { get; set; } = default!;
     public string ReconciliationStatus { get; set; } = "pending";
@@ -91,7 +91,7 @@ public sealed class GrafanaLaunchCode
     public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public string MinicloudUserId { get; set; } = default!;
+    public string SelfrunUserId { get; set; } = default!;
     public string CodeHash { get; set; } = default!;
     public string Destination { get; set; } = default!;
     public DateTimeOffset ExpiresAt { get; set; }
@@ -105,7 +105,7 @@ public sealed class GrafanaProxySession
     public string Id { get; set; } = default!;
     public string OrganizationId { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public string MinicloudUserId { get; set; } = default!;
+    public string SelfrunUserId { get; set; } = default!;
     public string SessionHash { get; set; } = default!;
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset LastSeenAt { get; set; }

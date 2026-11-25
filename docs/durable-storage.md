@@ -10,7 +10,7 @@
 
 ## Customer configuration
 
-Add storage to a service in `selfrun.yml` (or legacy `minicloud.yml`), then run `selfrun deploy`:
+Add storage to a service in `selfrun.yml`, then run `selfrun deploy`:
 
 ```yaml
 services:
@@ -45,9 +45,9 @@ Provider behavior was checked against [Hetzner’s volume client](https://github
 The regular .NET and dashboard suites cover configuration, authorization, provider HTTP contracts, scoped service retention, identity recovery and inventory UI. Run the runtime checks directly:
 
 ```sh
-python3 scripts/github-actions/minicloud-deploy/test-storage-volume.py
-docker build -f scripts/github-actions/minicloud-deploy/test-storage.Dockerfile -t minicloud-storage-test:local scripts/github-actions/minicloud-deploy
-docker run --rm --privileged --network none minicloud-storage-test:local
+python3 scripts/github-actions/selfrun-deploy/test-storage-volume.py
+docker build -f scripts/github-actions/selfrun-deploy/test-storage.Dockerfile -t selfrun-storage-test:local scripts/github-actions/selfrun-deploy
+docker run --rm --privileged --network none selfrun-storage-test:local
 ```
 
 The privileged container uses only its own temporary loopback file and a test fstab. It verifies real ext4 mount, UID/GID, remount persistence, online filesystem growth and refusal to create a local fallback when the block device disappears. It does not contact Hetzner.

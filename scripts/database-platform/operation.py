@@ -37,7 +37,7 @@ def execute(request, run=subprocess.run):
     container = request['container']
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', container):
         raise ValueError('Invalid container binding')
-    admin = request.get('adminUser', 'minicloud')
+    admin = request.get('adminUser', 'selfrun')
     if not re.fullmatch(r'[a-z][a-z0-9_]{0,62}', admin):
         raise ValueError('Invalid administrator identity')
     password = request.get('password', '')
@@ -46,7 +46,7 @@ def execute(request, run=subprocess.run):
     literal = "'" + password.replace("'", "''") + "'"
     role_literal = "'" + request['username'] + "'"
     db_literal = "'" + request['databaseName'] + "'"
-    marker = "'minicloud.database:" + request['databaseName'] + "'"
+    marker = "'selfrun.database:" + request['databaseName'] + "'"
     # A retained role may only be reused when its platform marker matches. Role
     # creation+marker is atomic; a database created before interruption is safe
     # to recover only when owned by that marked role.
@@ -77,8 +77,8 @@ if __name__ == '__main__':
         with open(sys.argv[1]) as source:
             request = json.load(source)
         result = execute(request)
-        print('__MINICLOUD_DATABASE_RESULT__=' + json.dumps(result))
-        print('__MINICLOUD_DEPLOY_COMPLETE__=' + request['operationId'])
+        print('__SELFRUN_DATABASE_RESULT__=' + json.dumps(result))
+        print('__SELFRUN_DEPLOY_COMPLETE__=' + request['operationId'])
     except Exception as error:
-        print('__MINICLOUD_DATABASE_RESULT__=' + json.dumps({'status': 'failed', 'errorType': type(error).__name__}))
+        print('__SELFRUN_DATABASE_RESULT__=' + json.dumps({'status': 'failed', 'errorType': type(error).__name__}))
         raise SystemExit(1)

@@ -11,7 +11,7 @@ export type RuntimeConfig = {
 const developmentConfig: RuntimeConfig = {
   apiBaseUrl: "http://localhost:3210",
   appDomain: "app.muni.dev",
-  sourceUrl: "https://github.com/muniventures/minicloud",
+  sourceUrl: "https://github.com/muniperez/selfrun",
   auth: {
     origin: "http://localhost:3210",
     capabilitiesUrl: "http://localhost:3210/api/account/capabilities"

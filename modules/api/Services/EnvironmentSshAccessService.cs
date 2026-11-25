@@ -1,16 +1,16 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Common;
-using Minicloud.Common.Providers.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using Minicloud.Common.Contracts;
+using Selfrun.Common.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Common;
+using Selfrun.Common.Providers.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using Selfrun.Common.Contracts;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class SshAccessException(string code, string message, int statusCode) : Exception(message)
 {
@@ -19,14 +19,14 @@ public sealed class SshAccessException(string code, string message, int statusCo
 }
 
 public sealed class EnvironmentSshAccessService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     ControlPlaneAuthorization authorization,
     ProviderAccountClientFactory providerClients,
     IIdGenerator ids,
     TimeProvider clock)
 {
     public async Task ApplySelectionAsync(
-        MinicloudApp environment,
+        SelfrunApp environment,
         string? providerAccountId,
         SshAccessRequest request,
         ActorIdentity actor,

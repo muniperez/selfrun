@@ -1,17 +1,17 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Data;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Api.Providers;
-using Minicloud.Api.Services;
-using Minicloud.Common.Services;
-using Minicloud.Common.Validation;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Data;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Api.Providers;
+using Selfrun.Api.Services;
+using Selfrun.Common.Services;
+using Selfrun.Common.Validation;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController]
 [Authorize]
@@ -19,7 +19,7 @@ namespace Minicloud.Api.Controllers;
 public sealed class EnvironmentsController : ControllerBase
 {
     [HttpGet("{appId}")]
-    public async Task<IResult> GetEnvironment(string appId, [FromServices] MinicloudDbContext db,
+    public async Task<IResult> GetEnvironment(string appId, [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization, CancellationToken cancellationToken)
     {
         if (!await authorization.CanAccessAppAsync(RequirePrincipal(HttpContext).ToActorIdentity(), appId, OrganizationAction.ReadApps, cancellationToken))
@@ -34,7 +34,7 @@ public sealed class EnvironmentsController : ControllerBase
     public async Task<IResult> EnsureBranch(
         [FromRoute] string appId,
         [FromBody] EnsureAppBranchRequest request,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppBranchService branches,
         [FromServices] DeploymentPreparationService preparations,
@@ -73,7 +73,7 @@ public sealed class EnvironmentsController : ControllerBase
     public async Task<IResult> DestroyBranch(
         [FromRoute] string appId,
         [FromRoute] string branchAppId,
-        [FromServices] MinicloudDbContext db,
+        [FromServices] SelfrunDbContext db,
         [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] AppDeletionService deletion,
         CancellationToken cancellationToken)
@@ -105,7 +105,7 @@ public sealed class EnvironmentsController : ControllerBase
 
     [HttpPost("{appId}/plan")]
     public async Task<IResult> SelectPlan(string appId, SelectAppPlanRequest request,
-        [FromServices] MinicloudDbContext db, [FromServices] ControlPlaneAuthorization authorization,
+        [FromServices] SelfrunDbContext db, [FromServices] ControlPlaneAuthorization authorization,
         [FromServices] ProviderCatalogService catalog, [FromServices] DeploymentPreparationService preparations, CancellationToken ct)
     {
         if (!await authorization.CanAccessAppAsync(RequirePrincipal(HttpContext).ToActorIdentity(), appId, OrganizationAction.CreateDeployments, ct))

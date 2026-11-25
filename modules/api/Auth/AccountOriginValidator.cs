@@ -1,4 +1,4 @@
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed class AccountOriginValidator(IConfiguration configuration)
 {

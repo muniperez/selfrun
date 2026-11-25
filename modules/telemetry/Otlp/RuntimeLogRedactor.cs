@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
-using Minicloud.Common.Redaction;
+using Selfrun.Common.Redaction;
 
-namespace Minicloud.Telemetry.Otlp;
+namespace Selfrun.Telemetry.Otlp;
 
 public static partial class RuntimeLogRedactor
 {

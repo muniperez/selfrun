@@ -3,7 +3,7 @@
 The application/environment migration separates the product identity in `applications`
 from its environment runtimes in `apps`. The latter table and its IDs remain in place
 so existing server, deployment, domain, storage, and secret-store references survive.
-`MinicloudApp` is the compatibility name of the runtime environment entity.
+`SelfrunApp` is the compatibility name of the runtime environment entity.
 
 This is a maintenance-window upgrade. Local migration tests do not qualify a hosted
 installation or authorize running this procedure against production.

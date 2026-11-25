@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public sealed class CursorStore(string path)
 {

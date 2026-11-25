@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Minicloud.Common.Models;
+namespace Selfrun.Common.Models;
 
 public sealed class RuntimeServer
 {
@@ -9,7 +9,7 @@ public sealed class RuntimeServer
     public string OrganizationId { get; set; } = default!;
     public Organization Organization { get; set; } = default!;
     public string AppId { get; set; } = default!;
-    public MinicloudApp App { get; set; } = default!;
+    public SelfrunApp App { get; set; } = default!;
     public string? ProviderAccountId { get; set; }
     public string Provider { get; set; } = default!;
     public string? ProviderServerId { get; set; }

@@ -136,7 +136,7 @@ class AccessRollbackTests(unittest.TestCase):
                     if readiness_attempts==1: raise subprocess.CalledProcessError(1,args)
                 return SimpleNamespace(stdout=output,returncode=0)
             def mapped_path(value):
-                return base if value=='/opt/minicloud/apps' else Path(value)
+                return base if value=='/opt/selfrun/apps' else Path(value)
             with patch.object(access,'Path',side_effect=mapped_path), patch.object(access,'wait_for_postgres',side_effect=wait):
                 with self.assertRaisesRegex(RuntimeError,'prior access configuration restored') as failure:
                     access.expose(dict(appSlug='fixture',databases=[dict(databaseName='fixture_db',username='fixture_user',mode='internal')]),run)

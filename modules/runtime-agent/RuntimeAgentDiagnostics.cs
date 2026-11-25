@@ -1,25 +1,25 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
-namespace Minicloud.RuntimeAgent;
+namespace Selfrun.RuntimeAgent;
 
 public static class RuntimeAgentDiagnostics
 {
-    public const string MeterName = "Minicloud.RuntimeAgent";
-    public const string ActivitySourceName = "Minicloud.RuntimeAgent";
+    public const string MeterName = "Selfrun.RuntimeAgent";
+    public const string ActivitySourceName = "Selfrun.RuntimeAgent";
 
     private static readonly Meter Meter = new(MeterName);
     private static readonly ActivitySource ActivitySource = new(ActivitySourceName);
-    private static readonly Counter<long> OperationCalls = Meter.CreateCounter<long>("minicloud.runtime.agent.operation.calls");
-    private static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>("minicloud.runtime.agent.operation.duration", "s");
-    private static readonly Counter<long> ChildLaunches = Meter.CreateCounter<long>("minicloud.runtime.agent.child.launches");
-    private static readonly Counter<long> Bytes = Meter.CreateCounter<long>("minicloud.runtime.agent.bytes", "By");
-    private static readonly Counter<long> Records = Meter.CreateCounter<long>("minicloud.runtime.agent.records", "{record}");
-    private static readonly Counter<long> CursorWrites = Meter.CreateCounter<long>("minicloud.runtime.agent.cursor.writes", "{write}");
-    private static readonly Counter<long> ExporterDrops = Meter.CreateCounter<long>("minicloud.runtime.agent.exporter.drops", "{drop}");
+    private static readonly Counter<long> OperationCalls = Meter.CreateCounter<long>("selfrun.runtime.agent.operation.calls");
+    private static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>("selfrun.runtime.agent.operation.duration", "s");
+    private static readonly Counter<long> ChildLaunches = Meter.CreateCounter<long>("selfrun.runtime.agent.child.launches");
+    private static readonly Counter<long> Bytes = Meter.CreateCounter<long>("selfrun.runtime.agent.bytes", "By");
+    private static readonly Counter<long> Records = Meter.CreateCounter<long>("selfrun.runtime.agent.records", "{record}");
+    private static readonly Counter<long> CursorWrites = Meter.CreateCounter<long>("selfrun.runtime.agent.cursor.writes", "{write}");
+    private static readonly Counter<long> ExporterDrops = Meter.CreateCounter<long>("selfrun.runtime.agent.exporter.drops", "{drop}");
     private static int _exporterQueueLag;
     private static readonly ObservableGauge<int> ExporterQueueLag = Meter.CreateObservableGauge(
-        "minicloud.runtime.agent.exporter.queue_lag",
+        "selfrun.runtime.agent.exporter.queue_lag",
         () => Volatile.Read(ref _exporterQueueLag),
         "{item}");
 

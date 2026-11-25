@@ -5,13 +5,13 @@ Date: 2026-11-08.
 
 ## Outcome and confirmed requirements
 
-An organization can configure several cloud providers at the same time, including several accounts or credential scopes of the same provider. Each account has its own credentials in OpenBao and its own user-configured plan mappings. A deployment references only a Minicloud plan name. Minicloud resolves the account, region, and provider SKU internally.
+An organization can configure several cloud providers at the same time, including several accounts or credential scopes of the same provider. Each account has its own credentials in OpenBao and its own user-configured plan mappings. A deployment references only a Selfrun plan name. Selfrun resolves the account, region, and provider SKU internally.
 
 Confirmed with the user:
 
 - Each organization manages its own providers and plans.
 - Each plan selects exactly one provider account. There is no automatic fallback to another account when quota is exhausted.
-- A new plan starts with a UUID as its name. The user can rename it and reference the chosen name from the CLI or `minicloud.yml` without specifying a provider.
+- A new plan starts with a UUID as its name. The user can rename it and reference the chosen name from the CLI or `selfrun.yml` without specifying a provider.
 - Plan names must be unique for the user. With organization ownership, this specification interprets that as unique within the selected organization, across all its provider accounts. Names can repeat in another organization.
 - This work produces a specification before implementation.
 
@@ -33,7 +33,7 @@ Paths below are relative to the product repository. These observations describe 
 | CLI deployment configuration identifies an app; the control plane currently owns its plan selection. Environment selection happens before deployment preparation. | `docs/cli.md:107`; `modules/cli/Commands/CliApplication.Deploy.cs:104` |
 | Worker provisioning reads the app plan, resolves a type-only client, and reuses registered servers. Discovery searches the selected client's scope by generated server name. | `modules/worker/Pipeline/Steps/ResolveProvisionServerStep.cs:71`, `:93`, `:108` |
 | Server and runtime records have provider type and external resource ID, but no provider-account identity. Deletion groups targets by type and ID. | `modules/common/Models/ControlPlaneModels.cs:264`; `modules/common/Models/RuntimeModels.cs:5`; `modules/worker/Deletion/AppDeletionProcessor.cs:99` |
-| Volume records have no account binding. External volume IDs are globally unique in the current database mapping. Volumes survive app deletion. | `modules/common/Models/AppStorageVolume.cs:3`; `modules/common/Data/MinicloudDbContext.cs:52`; `modules/common/Services/AppStorageService.cs:19` |
+| Volume records have no account binding. External volume IDs are globally unique in the current database mapping. Volumes survive app deletion. | `modules/common/Models/AppStorageVolume.cs:3`; `modules/common/Data/SelfrunDbContext.cs:52`; `modules/common/Services/AppStorageService.cs:19` |
 | The secret abstraction returns store/path/version references, but its write request and OpenBao namespace are app/service-specific. OpenBao reads currently ignore the reference version. | `modules/common/Services/ISecretStore.cs:3`; `modules/common/Services/OpenBaoSecretStore.cs:15`, `:29`, `:101` |
 | Authorization already follows organizations, roles, and API-key scopes, but has no provider/plan permissions. | `modules/common/Services/ControlPlaneAuthorization.cs:10`, `:43`, `:60` |
 | Build-target identity, runtime registration, and DNS ownership checks also compare provider type and resource ID. | `modules/common/Registry/ImageBuildTargetService.cs:26`; `modules/worker/Pipeline/Steps/RuntimeAgentDeployment.cs:79`; `modules/worker/Pipeline/DomainDnsReconciler.cs:38`; `modules/api/Controllers/RuntimeController.cs:258` |
@@ -106,10 +106,10 @@ services:
 Proposed commands:
 
 ```sh
-minicloud plans list
-minicloud deploy --plan "Hetzner secondary small"
-minicloud deploy --environment staging --plan "Hetzner secondary small"
-minicloud environments create staging --plan "Hetzner secondary small"
+selfrun plans list
+selfrun deploy --plan "Hetzner secondary small"
+selfrun deploy --environment staging --plan "Hetzner secondary small"
+selfrun environments create staging --plan "Hetzner secondary small"
 ```
 
 - Add optional top-level YAML `plan` and optional deploy `--plan`. Precedence is CLI flag, then YAML, then the selected environment's saved plan. Omitting both preserves existing configurations and uses the saved binding.
@@ -118,7 +118,7 @@ minicloud environments create staging --plan "Hetzner secondary small"
 - A provisioned environment accepts an explicit name only when it resolves to the same saved plan ID. A different ID returns `plan_change_requires_migration`; ordinary deploy never moves or resizes a server. Even equivalent SKUs on another account are different placements.
 - A reservation with an unknown allocation outcome also prevents changing plans. A definite rejection with no external resource and no retained data can permit a later explicit selection after reconciliation.
 - Resolve and validate before local image builds, image publication, artifact upload, or provider allocation. Include the resolved placement in build-target identity so preparation and worker execution cannot choose different accounts or architectures.
-- Add `minicloud plans list` for discoverability. It returns current names and safe mapping metadata. `init` can show the catalog and save the chosen name; it must preserve existing app identity and YAML content.
+- Add `selfrun plans list` for discoverability. It returns current names and safe mapping metadata. `init` can show the catalog and save the chosen name; it must preserve existing app identity and YAML content.
 - Provider credentials and provider selectors do not belong in customer YAML. The provider is determined entirely by the resolved plan.
 - Each environment retains its own plan. A newly created branch uses an explicit plan if provided, otherwise inherits its parent's plan ID at creation. Existing branch/environment bindings are unchanged by later parent edits. Remove the current unconditional Vultr branch plan.
 
@@ -138,7 +138,7 @@ Proposed routes, following existing `/v1` organization authorization patterns:
 
 App creation, app update, environment creation, branch creation, and deployment admission accept a plan name where selection is needed. Reuse the existing `plan` string field where practical; define its new meaning explicitly as the organization plan name. Responses include `planId`, current `plan` name, and safe account/type/placement information where relevant. Internal worker input uses stable IDs and snapshots, never name lookup.
 
-`GET /api/plans` supplies name resolution and discovery; a dedicated global-name route is unnecessary. Request schema and OpenAPI must distinguish the provider's SKU from the user's Minicloud plan name.
+`GET /api/plans` supplies name resolution and discovery; a dedicated global-name route is unnecessary. Request schema and OpenAPI must distinguish the provider's SKU from the user's Selfrun plan name.
 
 Return explicit errors for unknown/duplicate plan names, unsupported provider types, cross-organization references, disabled accounts/plans, invalid placement, immutable mapping changes, stale revisions, unavailable credentials, unresolved resource ownership, and a requested change to an existing environment's placement. Never substitute a global default or silently ignore an invalid name.
 
@@ -206,12 +206,12 @@ Rollback: before admissions reopen, restore the coordinated database/secret back
 
 ## Implementation sequence and affected files
 
-1. **Catalog and schema:** add provider-account/plan entities and constraints; replace enum usage in `modules/common/Models/ControlPlaneModels.cs`, extend `RuntimeModels.cs`, `AppStorageVolume.cs`, `modules/common/Data/MinicloudDbContext.cs` and migrations. Preserve organization and retained-resource ownership.
+1. **Catalog and schema:** add provider-account/plan entities and constraints; replace enum usage in `modules/common/Models/ControlPlaneModels.cs`, extend `RuntimeModels.cs`, `AppStorageVolume.cs`, `modules/common/Data/SelfrunDbContext.cs` and migrations. Preserve organization and retained-resource ownership.
 2. **Credentials and client creation:** extend `modules/common/Services/ISecretStore.cs` and `OpenBaoSecretStore.cs`; add account credential lifecycle and account-aware client factory; change `modules/common/Providers/ProviderServiceCollectionExtensions.cs`, adapter constructors/options and worker registration. Reuse existing adapters/retry logic; no new package is required by this spec.
 3. **API, policy and admission:** add provider/plan controllers/contracts, authorization actions/scopes and sanitized audit events; update `modules/contracts/Contracts/AppDtos.cs`, `modules/common/Validation/ControlPlaneValidation.cs`, `modules/api/Controllers/AppsController.cs`, `DeploymentsController.cs`, `modules/api/Services/AppEnvironmentService.cs`, `AppBranchService.cs`, and deployment preparation/lifecycle paths. Remove silent invalid-plan updates.
 4. **Whole lifecycle:** update `modules/worker/Pipeline/Steps/ResolveProvisionServerStep.cs`, pipeline context, storage/runtime steps, `modules/worker/Deletion/AppDeletionProcessor.cs`, `modules/common/Services/AppStorageService.cs`, `CustomDomainVerificationService.cs`, `modules/worker/Pipeline/DomainDnsReconciler.cs`, `modules/api/Controllers/RuntimeController.cs` and `modules/common/Registry/ImageBuildTargetService.cs`. Search all remaining provider/resource comparisons before declaring migration complete.
-5. **CLI and portal:** extend `modules/cli/Config/MinicloudConfig.cs`, loader/writer/validator and deploy/init/environment/branch commands; add plan discovery; update dashboard routes, API client, models and dynamic app/environment selectors. Add Providers/account-detail/plan forms. Preserve sole/multiple-environment selection behavior.
-6. **Import and rollout:** deliver resumable operator import and mismatch reporting, migration fixtures, self-host examples and docs. Qualify API/worker cutover before CLI release and hosted browser acceptance. Hosted operations changes belong in `minicloud-services`, product changes in this repository.
+5. **CLI and portal:** extend `modules/cli/Config/SelfrunConfig.cs`, loader/writer/validator and deploy/init/environment/branch commands; add plan discovery; update dashboard routes, API client, models and dynamic app/environment selectors. Add Providers/account-detail/plan forms. Preserve sole/multiple-environment selection behavior.
+6. **Import and rollout:** deliver resumable operator import and mismatch reporting, migration fixtures, self-host examples and docs. Qualify API/worker cutover before CLI release and hosted browser acceptance. Hosted operations changes belong in the private hosted operations repository, product changes in this repository.
 
 ## Acceptance and verification
 
@@ -235,7 +235,7 @@ Rollback: before admissions reopen, restore the coordinated database/secret back
 | A16 | Portal supports account/plan add/edit/rename/disable, secret replacement and connection-check failures; app/environment choices come from the catalog, with empty/loading/error states and no static prices. |
 | A17 | Registry preparation, runtime token registration, domain ownership, DNS reconciliation and deletion all reject inconsistent account bindings; build-target identity changes when effective placement changes. |
 
-Implement targeted .NET, PostgreSQL migration, mocked provider HTTP, CLI config/precedence, and dashboard tests first. Existing starting points include `modules/tests/Minicloud.Tests/ControlPlaneCoreTests.cs`, `AppEnvironmentServiceTests.cs`, `AppBranchServiceTests.cs`, `ImageBuildTargetTests.cs`, worker provider/pipeline/deletion tests, and CLI deployment/config tests. Test actual PostgreSQL uniqueness and locking rather than relying only on an in-memory database.
+Implement targeted .NET, PostgreSQL migration, mocked provider HTTP, CLI config/precedence, and dashboard tests first. Existing starting points include `modules/tests/Selfrun.Tests/ControlPlaneCoreTests.cs`, `AppEnvironmentServiceTests.cs`, `AppBranchServiceTests.cs`, `ImageBuildTargetTests.cs`, worker provider/pipeline/deletion tests, and CLI deployment/config tests. Test actual PostgreSQL uniqueness and locking rather than relying only on an in-memory database.
 
 Then run the affected .NET suites, dashboard tests/build, and CLI help/config validation following `README.md`. Disposable live qualification must separately demonstrate two distinct accounts of the same provider, a second provider type, reuse, credential rotation, a quota/error path, retained-volume safety, and deletion targeting. Live billable provisioning requires a separately authorized execution phase; local HTTP fixtures are not live provider evidence.
 

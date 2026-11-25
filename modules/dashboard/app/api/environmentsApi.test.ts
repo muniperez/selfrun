@@ -18,7 +18,7 @@ it.each(["staging.api.example.test", "example.com"])("sends %s as a JSON object 
   expect(request).toHaveBeenCalledWith(expect.stringContaining("/api/domains?appId=app_1"), expect.objectContaining({
     method: "POST",
     credentials: "include",
-    headers: expect.objectContaining({ "Content-Type": "application/json", "X-Minicloud-CSRF": "synthetic-csrf" })
+    headers: expect.objectContaining({ "Content-Type": "application/json", "X-Selfrun-CSRF": "synthetic-csrf" })
   }));
   const [, options] = request.mock.calls[0];
   expect(JSON.parse(options.body)).toEqual({ serviceName: "backend", hostname });

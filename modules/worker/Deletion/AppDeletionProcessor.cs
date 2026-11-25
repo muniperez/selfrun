@@ -1,17 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
-using Minicloud.Common.Providers;
-using Minicloud.Common.Providers.Dns;
-using static Minicloud.Common.Providers.ProviderServiceCollectionExtensions;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
+using Selfrun.Common.Providers;
+using Selfrun.Common.Providers.Dns;
+using static Selfrun.Common.Providers.ProviderServiceCollectionExtensions;
 
-namespace Minicloud.Worker.Deletion;
+namespace Selfrun.Worker.Deletion;
 
 public sealed class AppDeletionProcessor(
-    MinicloudDbContext db, VpsProviderClientResolver providers,
+    SelfrunDbContext db, VpsProviderClientResolver providers,
     ICloudflareDnsClient dns, ILogger<AppDeletionProcessor> logger, IOptions<ManagedDomainOptions>? managedDomains = null,
     ProviderAccountClientFactory? accountClients = null, MaintenanceParticipant? maintenance = null)
 {
@@ -65,7 +65,7 @@ public sealed class AppDeletionProcessor(
                     }
                 }
                 await DeleteInfrastructureAsync(app, ct);
-                if (db.Database.IsNpgsql()) { await db.Database.ExecuteSqlRawAsync($"SELECT pg_advisory_xact_lock({Minicloud.Common.Registry.ImagePublicationService.LockKey})", ct); }
+                if (db.Database.IsNpgsql()) { await db.Database.ExecuteSqlRawAsync($"SELECT pg_advisory_xact_lock({Selfrun.Common.Registry.ImagePublicationService.LockKey})", ct); }
                 var audits = await db.AuditEvents.Where(x => x.AppId == app.Id).ToListAsync(ct);
                 foreach (var audit in audits)
                 {
@@ -157,7 +157,7 @@ public sealed class AppDeletionProcessor(
         });
     }
 
-    public async Task DeleteInfrastructureAsync(MinicloudApp app, CancellationToken ct)
+    public async Task DeleteInfrastructureAsync(SelfrunApp app, CancellationToken ct)
     {
         var servers = await db.ServerInstances.Where(x => x.AppId == app.Id).ToListAsync(ct);
         var runtimes = await db.RuntimeServers.Where(x => x.AppId == app.Id).ToListAsync(ct);
@@ -208,7 +208,7 @@ public sealed class AppDeletionProcessor(
         }
         foreach (var domain in domains)
         {
-            if (domain.Kind == DomainBindingService.KindMinicloudSubdomain && _managedDomains.ManageDnsRecords)
+            if (domain.Kind == DomainBindingService.KindSelfrunSubdomain && _managedDomains.ManageDnsRecords)
             {
                 await dns.DeleteDnsRecordsAsync(domain.Hostname, ct);
             }

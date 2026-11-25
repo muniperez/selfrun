@@ -1,21 +1,21 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Common.Data;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Data;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Services;
+namespace Selfrun.Api.Services;
 
 public sealed class AppBranchService(
-    MinicloudDbContext db,
+    SelfrunDbContext db,
     AppServiceSecretService serviceSecrets,
     IIdGenerator ids,
     TimeProvider timeProvider,
     TelemetryService? telemetry = null,
     ProviderCatalogService? catalog = null)
 {
-    public async Task<MinicloudApp> EnsureAsync(MinicloudApp parent, string branchName, CancellationToken cancellationToken, string? planName = null)
+    public async Task<SelfrunApp> EnsureAsync(SelfrunApp parent, string branchName, CancellationToken cancellationToken, string? planName = null)
     {
         await db.Entry(parent).ReloadAsync(cancellationToken);
         if (parent.ApplicationId is null || parent.EnvironmentKind != EnvironmentKinds.Persistent || parent.BranchName is not null)
@@ -65,14 +65,14 @@ public sealed class AppBranchService(
                 if (planName is null && parent.PlanId is not null)
                     await db.Entry(parent).Reference(x => x.SelectedPlan).LoadAsync(cancellationToken);
                 selectedPlan = await catalog.ResolveAsync(parent.OrganizationId, planName ?? parent.SelectedPlan?.Name
-                    ?? Minicloud.Common.Validation.ControlPlaneValidation.ToWireValue(parent.Plan), cancellationToken);
+                    ?? Selfrun.Common.Validation.ControlPlaneValidation.ToWireValue(parent.Plan), cancellationToken);
             }
             catch (ProviderCatalogException ex) { throw new AppBranchException(ex.Code, ex.Message); }
         }
 
         var now = timeProvider.GetUtcNow();
         var slug = BranchSlug(parent.Slug, normalized);
-        var branch = new MinicloudApp
+        var branch = new SelfrunApp
         {
             Id = ids.NewId("app"),
             OrganizationId = parent.OrganizationId,
@@ -127,14 +127,14 @@ public sealed class AppBranchService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task DestroyAsync(MinicloudApp branch, CancellationToken cancellationToken)
+    public async Task DestroyAsync(SelfrunApp branch, CancellationToken cancellationToken)
     {
         if (branch.ParentAppId is null || branch.BranchName is null)
         {
             throw new AppBranchException("branch_destroy_invalid", "Main apps cannot be destroyed through the branch lifecycle.");
         }
 
-        // T90: GitHub branch-teardown dispatch was decommissioned. minicloud-worker
+        // T90: GitHub branch-teardown dispatch was decommissioned. selfrun-worker
         // owns infrastructure teardown; the API removes local branch state only.
         await DeleteSecretValuesAsync(branch.Id, cancellationToken);
         if (telemetry is not null)

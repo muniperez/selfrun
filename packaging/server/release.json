@@ -15,10 +15,6 @@
     "protocolVersion": 1,
     "minimumVersion": null,
     "maximumExclusiveVersion": null,
-    "sourceRevisions": [
-      "2a5ae0ccea6c3dd680b4146586ec0668c60c8b93",
-      "7a4b16130215ea8b2c74221cb02c5e45344d4427",
-      "3b27fa11605d94a3073be68c235835d1e37e29d8"
-    ]
+    "sourceRevisions": []
   }
 }

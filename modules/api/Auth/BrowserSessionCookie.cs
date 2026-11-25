@@ -1,12 +1,12 @@
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Models;
-using Minicloud.Common.Services;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Models;
+using Selfrun.Common.Services;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public static class BrowserSessionCookie
 {
-    public const string Name = "__Host-minicloud-session";
+    public const string Name = "__Host-selfrun-session";
 
     /// <summary>
     /// Remembered sessions persist across browser restarts until their maximum lifetime; standard sessions use a

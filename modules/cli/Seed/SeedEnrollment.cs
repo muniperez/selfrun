@@ -4,13 +4,13 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using Minicloud.Cli.Commands;
+using Selfrun.Cli.Commands;
 
-namespace Minicloud.Cli.Seed;
+namespace Selfrun.Cli.Seed;
 
 internal static class SeedEnrollment
 {
-    private const string Protocol = "minicloud-seed-host-v1";
+    private const string Protocol = "selfrun-seed-host-v1";
 
     internal static byte[] CreateSecret(string path)
     {
@@ -49,8 +49,8 @@ protocol = "{{Protocol}}"
 message = f"{protocol}\n{{seedId}}\n{key_type} {blob}".encode("ascii")
 proof = hmac.new(bytes.fromhex("{{Convert.ToHexString(secret)}}"), message, hashlib.sha256).hexdigest()
 
-banner = pathlib.Path("/etc/ssh/minicloud-seed-enrollment")
-config = pathlib.Path("/etc/ssh/sshd_config.d/01-minicloud-seed-enrollment.conf")
+banner = pathlib.Path("/etc/ssh/selfrun-seed-enrollment")
+config = pathlib.Path("/etc/ssh/sshd_config.d/01-selfrun-seed-enrollment.conf")
 pathlib.Path("/run/sshd").mkdir(mode=0o755, exist_ok=True)
 if effective_banner() != "none":
     raise RuntimeError("Existing SSH banner retained; seed enrollment blocked.")

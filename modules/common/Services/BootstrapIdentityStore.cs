@@ -1,4 +1,4 @@
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class BootstrapException(string code, int statusCode, string message) : Exception(message)
 {

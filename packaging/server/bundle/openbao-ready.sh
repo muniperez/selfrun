@@ -3,7 +3,7 @@ set -eu
 
 BAO_ADDR=${BAO_ADDR:-https://openbao:8200}
 BAO_CACERT=${BAO_CACERT:-/run/secrets/openbao-ca.crt}
-TOKEN_FILE=${OPENBAO_TOKEN_FILE:-/run/minicloud-openbao/token}
+TOKEN_FILE=${OPENBAO_TOKEN_FILE:-/run/selfrun-openbao/token}
 
 unset BAO_TOKEN
 [ -r "$TOKEN_FILE" ] && [ -s "$TOKEN_FILE" ] || exit 1

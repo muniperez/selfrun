@@ -1,0 +1,342 @@
+// SPDX-License-Identifier: MPL-2.0
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Selfrun.Cli.Commands;
+using Selfrun.Cli.Seed;
+
+namespace Selfrun.Tests;
+
+public sealed class SeedProviderTests
+{
+    private const string Operation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string Credential = "synthetic-provider-credential-never-log";
+    private static SeedSelection Selection(string provider) => new(provider, "region", "size", "cloud.example.com", "apps.example.com", "server-v1.2.3");
+
+    [Theory]
+    [InlineData("hetzner", "servers", "ssh_keys")]
+    [InlineData("digitalocean", "droplets", "ssh_keys")]
+    [InlineData("vultr", "instances", "sshkey_id")]
+    public async Task Guided_create_sends_first_boot_data_to_only_the_owned_server_request(string name, string endpoint, string keyField)
+    {
+        var fixture = new Fixture(name);
+        using var provider = fixture.CreateProvider();
+        var selection = Selection(name);
+        var quote = await provider.QuoteAsync(selection, Operation, default);
+        var keyId = await provider.CreateKeyAsync(Operation, "ssh-ed25519 synthetic-fixture", default);
+        var state = new SeedState { Id = Operation, Plan = new(selection, quote, "digest", "source"), SshKeyId = keyId };
+        var data = SeedEnrollment.UserData(Operation, Enumerable.Repeat((byte)42, 32).ToArray());
+        await provider.CreateServerAsync(state, default, data);
+
+        var mutations = fixture.Requests.Where(x => x.Method == "POST").ToArray();
+        Assert.Equal(2, mutations.Length);
+        Assert.DoesNotContain("user_data", mutations[0].Body);
+        Assert.EndsWith("/" + endpoint, mutations[1].Path);
+        Assert.DoesNotContain(Credential, mutations[1].Body);
+        using var payload = JsonDocument.Parse(mutations[1].Body);
+        var actual = payload.RootElement.GetProperty("user_data").GetString()!;
+        Assert.Equal(data, name == "vultr" ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(actual)) : actual);
+        Assert.Equal(keyId, Assert.Single(payload.RootElement.GetProperty(keyField).EnumerateArray()).ToString());
+    }
+
+    [Theory]
+    [InlineData("hetzner")]
+    [InlineData("digitalocean")]
+    [InlineData("vultr")]
+    public async Task Account_identity_matches_the_quote_without_reading_creation_catalog_or_quota(string name)
+    {
+        var fixture = new Fixture(name);
+        using var provider = fixture.CreateProvider();
+        var quote = await provider.QuoteAsync(Selection(name), Operation, default);
+        var path = name == "hetzner" ? "servers" : "account";
+        var identity = fixture.Bodies[path];
+        fixture.Bodies.Clear();
+        fixture.Bodies[path] = identity;
+        fixture.Requests.Clear();
+
+        Assert.Equal(quote.Account, await provider.GetAccountIdentityAsync(default));
+        Assert.Equal("GET", Assert.Single(fixture.Requests).Method);
+    }
+
+    [Fact]
+    public async Task DigitalOcean_team_binding_survives_same_team_user_and_credential_rotation()
+    {
+        var fixture = new Fixture("digitalocean");
+        using var provider = fixture.CreateProvider();
+        var quote = await provider.QuoteAsync(Selection("digitalocean"), Operation, default);
+        Assert.Equal("DigitalOcean team synthetic-team", quote.Account);
+        var config = new SeedPortableConfig
+        {
+            SchemaVersion = 1, SeedId = Operation, Provider = "digitalocean", ProviderAccount = quote.Account,
+            Region = "region", Size = "size", Domain = "cloud.example.com", AppDomain = "apps.example.com",
+            ServerVersion = "server-v1.2.3", InitialCreationIntent = SeedPortableConfig.CreationIntent,
+            ProviderCredential = Credential
+        };
+        var state = config.State();
+        state.Plan = state.Plan with { Quote = quote with { CredentialScope = "authorized-account-access" } };
+        var approval = SeedPortable.Approval(config, state, "new_seed", "public-key", true);
+        fixture.Bodies["account"] = new { account = new { uuid = "different-user", team = new { uuid = "synthetic-team", name = "renamed-team" },
+            status = "active", email_verified = true, droplet_limit = 5 } };
+        fixture.ExpectedCredential = "synthetic-rotated-credential";
+        using var rotated = fixture.CreateProvider();
+        Assert.Equal(quote.Account, await rotated.GetAccountIdentityAsync(default));
+        var rotatedQuote = await rotated.QuoteAsync(Selection("digitalocean"), Operation, default);
+        state.Plan = state.Plan with { Quote = rotatedQuote with { CredentialScope = "authorized-account-access" } };
+        Assert.Equal(approval, SeedPortable.Approval(config with { ProviderCredential = fixture.ExpectedCredential },
+            state, "new_seed", "public-key", true));
+        fixture.Bodies["account"] = new { account = new { uuid = "different-user", team = new { uuid = "different-team" } } };
+        Assert.NotEqual(quote.Account, await rotated.GetAccountIdentityAsync(default));
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    [Fact]
+    public async Task DigitalOcean_without_team_preserves_the_individual_account_contract()
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["account"] = new { account = new { uuid = "synthetic-user", status = "active", email_verified = true, droplet_limit = 5 } };
+        using var provider = fixture.CreateProvider();
+        Assert.Equal("DigitalOcean account synthetic-user", await provider.GetAccountIdentityAsync(default));
+        Assert.Equal("DigitalOcean account synthetic-user", (await provider.QuoteAsync(Selection("digitalocean"), Operation, default)).Account);
+    }
+
+    [Fact]
+    public async Task DigitalOcean_accepts_opaque_API_identifiers_without_requiring_a_GUID()
+    {
+        var fixture = new Fixture("digitalocean");
+        var team = new string('t', 40);
+        fixture.Bodies["account"] = new { account = new { uuid = new string('u', 40), team = new { uuid = team } } };
+        using var provider = fixture.CreateProvider();
+        Assert.Equal("DigitalOcean team " + team, await provider.GetAccountIdentityAsync(default));
+    }
+
+    [Theory]
+    [InlineData("provisioning", true)]
+    [InlineData("provision", false)]
+    [InlineData("subscriptions_view", false)]
+    public async Task Vultr_quote_requires_the_provisioning_ACL_reported_by_the_account_API(string acl, bool accepted)
+    {
+        var fixture = new Fixture("vultr");
+        fixture.Bodies["account"] = new { account = new { email = "synthetic@example.invalid", acls = new[] { acl } } };
+        using var provider = fixture.CreateProvider();
+        if (accepted)
+            Assert.NotNull(await provider.QuoteAsync(Selection("vultr"), Operation, default));
+        else
+            Assert.Contains("provisioning ACL", (await Assert.ThrowsAsync<CliCommandException>(
+                () => provider.QuoteAsync(Selection("vultr"), Operation, default))).Message);
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{\"name\":\"team-without-id\"}")]
+    [InlineData("{\"uuid\":null}")]
+    [InlineData("{\"uuid\":\"\"}")]
+    [InlineData("{\"uuid\":\" \"}")]
+    [InlineData("{\"uuid\":42}")]
+    [InlineData("\"invalid-team\"")]
+    public async Task DigitalOcean_supplied_team_requires_a_valid_identifier_without_user_fallback(string team)
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["account"] = JsonSerializer.Deserialize<JsonElement>(
+            "{\"account\":{\"uuid\":\"synthetic-user\",\"status\":\"active\",\"email_verified\":true,\"droplet_limit\":5,\"team\":" + team + "}}");
+        using var provider = fixture.CreateProvider();
+        var error = await Assert.ThrowsAsync<CliCommandException>(() => provider.GetAccountIdentityAsync(default));
+        Assert.Contains("team identity is missing or invalid", error.Message);
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.QuoteAsync(Selection("digitalocean"), Operation, default));
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"uuid\":null}")]
+    [InlineData("{\"uuid\":\"\"}")]
+    [InlineData("{\"uuid\":42}")]
+    public async Task DigitalOcean_individual_only_scope_requires_a_valid_user_identifier(string account)
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["account"] = JsonSerializer.Deserialize<JsonElement>("{\"account\":" + account + "}");
+        using var provider = fixture.CreateProvider();
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.GetAccountIdentityAsync(default));
+        Assert.Equal("GET", Assert.Single(fixture.Requests).Method);
+    }
+
+    [Theory]
+    [InlineData("hetzner", 2)]
+    [InlineData("digitalocean", 1)]
+    [InlineData("vultr", 1)]
+    public async Task All_provider_adapters_resolve_authoritative_catalog_prices_then_send_no_secret_to_host(string name, int costs)
+    {
+        var fixture = new Fixture(name);
+        using var provider = new SeedProvider(name, Credential, fixture);
+        var quote = await provider.QuoteAsync(Selection(name), Operation, default);
+        Assert.All(fixture.Requests, x => Assert.Equal("GET", x.Method));
+        Assert.Equal(costs, quote.Costs.Length);
+        Assert.All(quote.Costs, x => Assert.Equal("USD", x.Currency));
+        Assert.Equal(name == "hetzner" ? 11m : 12m, quote.Costs[0].Monthly);
+        Assert.Equal("42", quote.Image);
+        Assert.Equal("root", quote.SshUser);
+        Assert.DoesNotContain(Credential, JsonSerializer.Serialize(quote));
+        var key = await provider.CreateKeyAsync(Operation, "ssh-ed25519 synthetic-fixture", default);
+        var state = new SeedState { Id = Operation, Plan = new(Selection(name), quote, "digest", "source"), SshKeyId = key };
+        var server = await provider.CreateServerAsync(state, default);
+        SeedLifecycle.Match(state, server);
+        foreach (var request in fixture.Requests.Where(x => x.Method == "POST"))
+        {
+            Assert.DoesNotContain(Credential, request.Body);
+            Assert.DoesNotContain("user_data", request.Body);
+            Assert.DoesNotContain("password", request.Body);
+        }
+        Assert.Equal("server", server.Id);
+        Assert.Equal(2, fixture.Requests.Count(x => x.Method == "POST"));
+        if (name == "digitalocean")
+        {
+            using var request = JsonDocument.Parse(fixture.Requests.Last().Body);
+            Assert.Equal(quote.NetworkId, request.RootElement.GetProperty("vpc_uuid").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("region", false)]
+    [InlineData("other-region", true)]
+    public async Task DigitalOcean_refuses_implicit_creation_of_a_default_shared_network(string region, bool isDefault)
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["vpcs"] = new { vpcs = region.Length == 0 ? Array.Empty<object>() : new[] { new { id = "unusable-network", region, @default = isDefault } } };
+        using var provider = new SeedProvider("digitalocean", Credential, fixture);
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.QuoteAsync(Selection("digitalocean"), Operation, default));
+        Assert.All(fixture.Requests, x => Assert.Equal("GET", x.Method));
+    }
+
+    [Theory]
+    [InlineData("hetzner")]
+    [InlineData("digitalocean")]
+    [InlineData("vultr")]
+    public async Task Api_error_bodies_never_enter_errors_or_retry_mutations(string name)
+    {
+        var fixture = new Fixture(name) { Deny = true };
+        using var provider = new SeedProvider(name, Credential, fixture);
+        var error = await Assert.ThrowsAsync<CliCommandException>(() => provider.QuoteAsync(Selection(name), Operation, default));
+        Assert.DoesNotContain(Credential, error.Message);
+        Assert.Single(fixture.Requests);
+        Assert.Equal("GET", fixture.Requests[0].Method);
+    }
+
+    [Fact]
+    public async Task Pagination_cannot_send_bearer_credential_to_another_origin()
+    {
+        var fixture = new Fixture("digitalocean");
+        fixture.Bodies["droplets"] = new { droplets = Array.Empty<object>(), links = new { pages = new { next = "https://unrelated.invalid/v2/droplets" } } };
+        using var provider = new SeedProvider("digitalocean", Credential, fixture);
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.QuoteAsync(Selection("digitalocean"), Operation, default));
+        Assert.Equal(2, fixture.Requests.Count);
+        Assert.All(fixture.Requests, x => Assert.Equal("api.digitalocean.com", x.Host));
+    }
+
+    [Theory]
+    [InlineData("hetzner")]
+    [InlineData("digitalocean")]
+    [InlineData("vultr")]
+    public async Task Name_alone_is_never_server_ownership(string name)
+    {
+        var fixture = new Fixture(name);
+        var server = fixture.Server(false);
+        var field = name switch { "hetzner" => "servers", "digitalocean" => "droplets", _ => "instances" };
+        fixture.Bodies[field] = new Dictionary<string, object> { [field] = new[] { server } };
+        using var provider = new SeedProvider(name, Credential, fixture);
+        Assert.Null(await provider.FindServerAsync(Operation, default));
+        Assert.Single(fixture.Requests);
+    }
+
+    [Theory]
+    [InlineData("hetzner")]
+    [InlineData("digitalocean")]
+    [InlineData("vultr")]
+    public async Task User_provider_key_lookup_is_observational_and_refuses_ambiguous_matches(string name)
+    {
+        var fixture = new Fixture(name);
+        var path = name switch { "hetzner" => "ssh_keys", "digitalocean" => "account/keys", _ => "ssh-keys" };
+        var key = new { id = "original-user-key", name = "user-owned", public_key = "ssh-ed25519 synthetic comment",
+            ssh_key = "ssh-ed25519 synthetic comment" };
+        fixture.Bodies[path] = new { ssh_keys = new[] { key } };
+        using var provider = fixture.CreateProvider();
+        Assert.Equal("original-user-key", await provider.FindUserKeyAsync("ssh-ed25519 synthetic", default));
+        fixture.Bodies[path] = new { ssh_keys = new[] { key, key } };
+        await Assert.ThrowsAsync<CliCommandException>(() => provider.FindUserKeyAsync("ssh-ed25519 synthetic", default));
+        Assert.All(fixture.Requests, request => Assert.Equal("GET", request.Method));
+    }
+
+    internal sealed class Fixture : HttpMessageHandler
+    {
+        private readonly string provider;
+        public readonly Dictionary<string, object> Bodies = [];
+        public readonly List<(string Method, string Host, string Body, string Path)> Requests = [];
+        public bool Deny;
+        public string ExpectedCredential = Credential;
+        internal SeedProvider CreateProvider() => new(provider, ExpectedCredential, this);
+        public Fixture(string provider)
+        {
+            this.provider = provider;
+            Bodies["servers"] = new { servers = Array.Empty<object>() };
+            Bodies["instances"] = new { instances = Array.Empty<object>() };
+            Bodies["droplets"] = new { droplets = Array.Empty<object>() };
+            Bodies["ssh_keys"] = Bodies["account/keys"] = Bodies["ssh-keys"] = new { ssh_keys = Array.Empty<object>() };
+            Bodies["locations"] = new { locations = new[] { new { id = 1, name = "region" } } };
+            Bodies["server_types"] = new { server_types = new[] { new { id = 1, name = "size", architecture = "x86", cores = 2,
+                memory = 2, disk = 40, locations = new[] { new { name = "region", available = true } } } } };
+            Bodies["images"] = new { images = new[] { new { id = 42, os_flavor = "ubuntu", os_version = "24.04", architecture = "x86",
+                type = "system", status = "available", disk_size = 10 } } };
+            Bodies["pricing"] = new { pricing = new { currency = "USD",
+                server_types = new[] { new { id = 1, prices = new[] { new { location = "region", price_monthly = new { net = "11" },
+                    price_hourly = new { net = "0.02" }, included_traffic = 1000000000, price_per_tb_traffic = new { net = "1" } } } } },
+                primary_ips = new[] { new { type = "ipv4", prices = new[] { new { location = "region", price_monthly = new { net = "1" }, price_hourly = new { net = "0.001" } } } } } } };
+            Bodies["account"] = provider == "digitalocean"
+                ? (object)new { account = new { uuid = "synthetic-user", team = new { uuid = "synthetic-team", name = "Synthetic Team" },
+                    status = "active", email_verified = true, droplet_limit = 5 } }
+                : new { account = new { email = "synthetic@example.invalid", acls = new[] { "provisioning" } } };
+            Bodies["regions"] = provider == "digitalocean"
+                ? (object)new { regions = new[] { new { slug = "region", available = true } } }
+                : new { regions = new[] { new { id = "region" } } };
+            Bodies["sizes"] = new { sizes = new[] { new { slug = "size", available = true, regions = new[] { "region" }, disk = 40,
+                vcpus = 2, memory = 2048, transfer = 1, price_monthly = 12, price_hourly = 0.02m } } };
+            Bodies["vpcs"] = new { vpcs = new[] { new { id = "synthetic-existing-network", region = "region", @default = true } } };
+            Bodies["images/ubuntu-24-04-x64"] = new { image = new { id = 42, distribution = "Ubuntu", slug = "ubuntu-24-04-x64",
+                @public = true, regions = new[] { "region" }, min_disk_size = 10 } };
+            Bodies["plans"] = new { plans = new[] { new { id = "size", type = "vc2", locations = new[] { "region" }, monthly_cost = 12,
+                bandwidth = 1000, vcpu_count = 2, ram = 2048, disk = 40 } } };
+            Bodies["regions/region/availability"] = new { available_plans = new[] { "size" } };
+            Bodies["os"] = new { os = new[] { new { id = 42, family = "ubuntu", arch = "x64", name = "Ubuntu 24.04 x64" } } };
+        }
+
+        public object Server(bool owned) => provider switch
+        {
+            "hetzner" => new { id = "server", name = "mc-seed-" + Operation, location = new { name = "region" },
+                server_type = new { name = "size" }, image = new { id = 42 },
+                labels = new Dictionary<string, string> { ["selfrun-seed"] = owned ? Operation : "different" },
+                public_net = new { ipv4 = new { id = 99, ip = "203.0.113.1" } } },
+            "digitalocean" => new { id = "server", name = "mc-seed-" + Operation, region = new { slug = "region" }, size_slug = "size",
+                image = new { id = 42 }, tags = new[] { owned ? "mc-seed-" + Operation : "unrelated" },
+                networks = new { v4 = new[] { new { type = "public", ip_address = "203.0.113.1" } } } },
+            _ => (object)new { id = "server", label = "mc-seed-" + Operation, region = "region", plan = "size", os_id = 42,
+                tags = new[] { owned ? "mc-seed-" + Operation : "unrelated" }, main_ip = "203.0.113.1" }
+        };
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.Equal(ExpectedCredential, request.Headers.Authorization?.Parameter);
+            Requests.Add((request.Method.Method, request.RequestUri!.Host, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct),
+                request.RequestUri.AbsolutePath));
+            if (Deny) return new(HttpStatusCode.Forbidden) { Content = new StringContent(Credential) };
+            var path = string.Join("/", request.RequestUri.AbsolutePath.Split('/').Skip(2));
+            if (request.Method == HttpMethod.Post)
+            {
+                var serverObject = provider switch { "hetzner" => "server", "digitalocean" => "droplet", _ => "instance" };
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(path is "ssh_keys" or "ssh-keys" or "account/keys"
+                    ? (object)new { ssh_key = new { id = 7 } } : new Dictionary<string, object> { [serverObject] = Server(true) }) };
+            }
+            Assert.True(Bodies.ContainsKey(path), "Unexpected synthetic endpoint: " + path);
+            return new(HttpStatusCode.OK) { Content = JsonContent.Create(Bodies[path]) };
+        }
+    }
+}

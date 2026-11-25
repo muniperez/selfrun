@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace Minicloud.Common.Redaction;
+namespace Selfrun.Common.Redaction;
 
 /// <summary>
 /// Canonical core log redaction shared by backend, runtime agent, and CLI.

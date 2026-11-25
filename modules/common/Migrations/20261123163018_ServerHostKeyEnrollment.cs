@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace Minicloud.Common.Migrations
+namespace Selfrun.Common.Migrations
 {
     /// <summary>
     /// Adds per-server SSH host-key trust. Worker-provisioned servers record the Ed25519 fingerprint verified through

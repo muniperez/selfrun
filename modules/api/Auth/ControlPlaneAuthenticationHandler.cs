@@ -3,7 +3,7 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 
-namespace Minicloud.Api.Auth;
+namespace Selfrun.Api.Auth;
 
 public sealed class ControlPlaneAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
@@ -46,7 +46,7 @@ public sealed class ControlPlaneAuthenticationHandler(
                 : AuthenticateResult.Success(CreateTicket(bearerPrincipal));
         }
 
-        var cookie = Request.Cookies["__Host-minicloud-session"];
+        var cookie = Request.Cookies["__Host-selfrun-session"];
         if (string.IsNullOrWhiteSpace(cookie))
         {
             return AuthenticateResult.NoResult();

@@ -5,11 +5,11 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Renci.SshNet;
 
-namespace Minicloud.Worker.Ssh;
+namespace Selfrun.Worker.Ssh;
 
 /// <summary>
 /// SSH.NET implementation of <see cref="ISshDeploymentClient"/>.
-/// Connects as <c>minicloud@&lt;server-ip&gt;</c>, SFTPs the deployment
+/// Connects as <c>selfrun@&lt;server-ip&gt;</c>, SFTPs the deployment
 /// payload plus remote-deploy.sh, then runs it with stdin closed.
 /// </summary>
 public sealed class SshDeploymentClient : ISshDeploymentClient
@@ -181,13 +181,13 @@ public sealed class SshDeploymentClient : ISshDeploymentClient
             commandTimeout,
             async (source, line) =>
             {
-                var isCompletionMarker = line.StartsWith("__MINICLOUD_DEPLOY_COMPLETE__=", StringComparison.Ordinal);
+                var isCompletionMarker = line.StartsWith("__SELFRUN_DEPLOY_COMPLETE__=", StringComparison.Ordinal);
                 lock (outputGate)
                 {
                     outputLines.Add(line);
                     if (isCompletionMarker)
                     {
-                        completionSha = line["__MINICLOUD_DEPLOY_COMPLETE__=".Length..].Trim();
+                        completionSha = line["__SELFRUN_DEPLOY_COMPLETE__=".Length..].Trim();
                     }
                 }
 

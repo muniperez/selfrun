@@ -1,16 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Minicloud.Api.Auth;
-using Minicloud.Common.Contracts;
-using Minicloud.Common.Data;
-using Minicloud.Common.Services;
-using static Minicloud.Api.Controllers.EndpointResults;
+using Selfrun.Api.Auth;
+using Selfrun.Common.Contracts;
+using Selfrun.Common.Data;
+using Selfrun.Common.Services;
+using static Selfrun.Api.Controllers.EndpointResults;
 
-namespace Minicloud.Api.Controllers;
+namespace Selfrun.Api.Controllers;
 
 [ApiController, Authorize, Route("api/database-servers")]
-public sealed class DatabaseServersController(MinicloudDbContext db, DatabaseManagementService service) : ControllerBase
+public sealed class DatabaseServersController(SelfrunDbContext db, DatabaseManagementService service) : ControllerBase
 {
     [HttpGet]
     public Task<IResult> List(string organizationId, CancellationToken ct) => DatabasesController.Handle(async () =>

@@ -4,10 +4,10 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Minicloud.Common.Providers.Common;
+using Selfrun.Common.Providers.Common;
 using System.Net.Http;
 
-namespace Minicloud.Common.Providers.Dns;
+namespace Selfrun.Common.Providers.Dns;
 
 public sealed class CloudflareDnsClient : ICloudflareDnsClient
 {

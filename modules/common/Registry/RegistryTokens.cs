@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
-namespace Minicloud.Common.Registry;
+namespace Selfrun.Common.Registry;
 
 public sealed class RegistryTokens(IOptions<RegistryOptions> options, TimeProvider clock)
 {

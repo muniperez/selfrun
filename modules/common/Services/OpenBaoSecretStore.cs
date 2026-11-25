@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using System.Net.Http;
 
-namespace Minicloud.Common.Services;
+namespace Selfrun.Common.Services;
 
 public sealed class OpenBaoSecretStore(HttpClient httpClient, IOptions<OpenBaoSecretStoreOptions> options) : ISecretStore
 {
