@@ -1,25 +1,93 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Download Selfrun CLI test builds for macOS, Linux, and Windows, or build from source.">
   <link rel="canonical" href="https://selfrun.dev/downloads.html">
   <title>Download the CLI | Selfrun</title>
   <link rel="icon" href="./mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <header class="frame header"><a class="brand" href="./"><img src="./mark.svg" alt="" width="30" height="30">Selfrun</a></header>
-  <main class="frame hero">
-    <h1>Download the CLI</h1>
-    <p>Choose the computer where you’ll run Selfrun setup. These are unsigned test builds.</p>
-    <ul class="download-list">
-      <li><a href="./downloads/selfrun-seed-osx-arm64.tar.gz" download>macOS · Apple silicon</a></li>
-      <li><a href="./downloads/selfrun-seed-win-x64.zip" download>Windows · x64</a></li>
-      <li><a href="./downloads/selfrun-seed-linux-x64.tar.gz" download>Linux · x64</a></li>
-      <li><a href="./downloads/selfrun-seed-linux-arm64.tar.gz" download>Linux · ARM64</a></li>
-    </ul>
-    <p>Extract the archive and put <code>selfrun</code> (<code>selfrun.exe</code> on Windows) on your PATH. <a href="./#setup">Continue setup</a></p>
+  <a class="skip-link visually-hidden" href="#downloads-title">Skip to content</a>
+
+  <header class="site-header">
+    <div class="frame header-inner">
+      <a class="brand" href="./">
+        <img src="./mark.svg" alt="" width="28" height="28">
+        <span>Selfrun</span>
+      </a>
+      <nav aria-label="Primary">
+        <ul class="nav-list">
+          <li><a href="./#get-started">Get started</a></li>
+          <li><a href="./#how-it-works">How it works</a></li>
+          <li><a href="./downloads.html" aria-current="page">Downloads</a></li>
+          <li><a href="https://github.com/muniperez/selfrun/tree/main/docs">Docs</a></li>
+          <li><a href="https://github.com/muniperez/selfrun">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main class="frame" id="main">
+    <section class="hero">
+      <h1 id="downloads-title" tabindex="-1">Download the CLI</h1>
+      <p class="hero-lead">Standalone test builds for macOS, Windows, and Linux—no Git, Python, or .NET SDK required.</p>
+
+      <div class="callout">
+        <strong>Note:</strong> Unsigned test builds with embedded server source for <code>selfrun seed</code>.
+      </div>
+
+      <ul class="download-list" role="list">
+        <li>
+          <a href="./downloads/selfrun-seed-osx-arm64.tar.gz" download>
+            <span>macOS · Apple silicon</span>
+            <span class="meta">osx-arm64 · .tar.gz</span>
+          </a>
+        </li>
+        <li>
+          <a href="./downloads/selfrun-seed-win-x64.zip" download>
+            <span>Windows · x64</span>
+            <span class="meta">win-x64 · .zip</span>
+          </a>
+        </li>
+        <li>
+          <a href="./downloads/selfrun-seed-linux-x64.tar.gz" download>
+            <span>Linux · x64 (glibc)</span>
+            <span class="meta">linux-x64 · .tar.gz</span>
+          </a>
+        </li>
+        <li>
+          <a href="./downloads/selfrun-seed-linux-arm64.tar.gz" download>
+            <span>Linux · ARM64 (glibc)</span>
+            <span class="meta">linux-arm64 · .tar.gz</span>
+          </a>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Install</h2>
+      <p class="section-intro">Extract the archive, put <code>selfrun</code> (<code>selfrun.exe</code> on Windows) on your <code>PATH</code>, then continue with <a href="./#step-seed">step 1 (bootstrap)</a> or <a href="./#step-connect">step 2 (sign in)</a>.</p>
+      <pre role="region" aria-label="Verify the installed CLI" tabindex="0"><code>selfrun --version
+selfrun seed</code></pre>
+
+      <h3 class="subhead">Build from source</h3>
+      <p class="section-intro">Prefer building locally with Git and the .NET 10 SDK? See <a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md#publish-from-a-clone">publish from a clone</a> and <a href="https://github.com/muniperez/selfrun/blob/main/docs/cli-distribution.md">CLI distribution</a>.</p>
+    </section>
   </main>
+
+  <footer class="site-footer">
+    <div class="frame footer-inner">
+      <span>Selfrun · <a href="https://github.com/muniperez/selfrun/blob/main/docs/licensing.md">MPL-2.0 (CLI) &amp; AGPL-3.0-only (Server)</a></span>
+      <ul class="footer-links" role="list">
+        <li><a href="./">Home</a></li>
+        <li><a href="https://github.com/muniperez/selfrun/tree/main/docs">Docs</a></li>
+        <li><a href="https://github.com/muniperez/selfrun">GitHub</a></li>
+        <li><a href="https://github.com/muniperez/selfrun/blob/main/SECURITY.md">Security</a></li>
+      </ul>
+    </div>
+  </footer>
 </body>
 </html>

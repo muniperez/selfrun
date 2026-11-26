@@ -1,128 +1,160 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Self-hosted application hosting. Deploy and manage Docker services in your own cloud account.">
-  <meta property="og:title" content="Selfrun | Self-hosted application hosting">
-  <meta property="og:description" content="Deploy and manage Docker services in your own cloud account.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Selfrun is a self-hosted PaaS. Connect a cloud account and deploy web apps, APIs, background workers, and databases.">
+  <meta property="og:title" content="Selfrun | Run your own PaaS">
+  <meta property="og:description" content="Connect a cloud account and deploy web apps, APIs, workers, and databases from the CLI or CI.">
   <meta property="og:url" content="https://selfrun.dev/">
   <link rel="canonical" href="https://selfrun.dev/">
-  <title>Selfrun | Self-hosted application hosting</title>
+  <title>Selfrun | Run your own PaaS</title>
   <link rel="icon" href="./mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <a class="skip" href="#main">Skip to content</a>
-  <header class="frame header">
-    <a class="brand" href="./"><img src="./mark.svg" alt="" width="30" height="30">Selfrun</a>
-    <nav aria-label="Main">
-      <a href="#deployments">Deployments</a>
-      <a href="#setup">Setup</a>
-      <a href="https://github.com/muniperez/selfrun">GitHub</a>
-    </nav>
+  <a class="skip-link visually-hidden" href="#hero-title">Skip to content</a>
+
+  <header class="site-header">
+    <div class="frame header-inner">
+      <a class="brand" href="./">
+        <img src="./mark.svg" alt="" width="28" height="28">
+        <span>Selfrun</span>
+      </a>
+      <nav aria-label="Primary">
+        <ul class="nav-list">
+          <li><a href="#get-started">Get started</a></li>
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="./downloads.html">Downloads</a></li>
+          <li><a href="https://github.com/muniperez/selfrun/tree/main/docs">Docs</a></li>
+          <li><a href="https://github.com/muniperez/selfrun">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
   </header>
 
   <main class="frame" id="main">
-    <section class="hero" aria-labelledby="headline">
-      <h1 id="headline">Selfrun hosts apps on your servers</h1>
-      <p>Use the Selfrun CLI to deploy Docker services, check their logs, and put a web app on your own domain.</p>
+    <section class="hero">
+      <h1 id="hero-title" tabindex="-1">Run your own PaaS</h1>
+      <p class="hero-lead">Connect a cloud account and deploy web apps, APIs, background workers, and databases from the CLI or CI. Selfrun provisions the servers, configures domains and HTTPS, and leaves billing with your provider.</p>
       <div class="actions">
-        <a class="primary" href="#setup">Set up Selfrun</a>
-        <a class="secondary" href="https://github.com/muniperez/selfrun">View source on GitHub</a>
+        <a class="btn btn-primary" href="#get-started">Get started</a>
+        <a class="btn" href="#how-it-works">How it works</a>
+        <a class="btn" href="https://github.com/muniperez/selfrun">GitHub</a>
       </div>
+
+      <a class="hero-diagram" href="./media/selfrun-architecture.svg">
+        <img src="./media/selfrun-architecture.svg" width="980" height="192" fetchpriority="high" alt="Platform overview: you connect from the Selfrun CLI, web console, or CI over HTTPS to one Control Plane VPS hosted once, which provisions isolated App VPSs in your cloud account—one per environment—with automatic HTTPS.">
+      </a>
     </section>
 
-    <section class="feature" id="deployments" aria-labelledby="deployments-title">
-      <div>
-        <h2 id="deployments-title">Deploy Docker services</h2>
-        <p>Run <code>selfrun init</code> in an app repo and select the services to deploy. By default, <code>selfrun deploy</code> builds images with Docker Buildx, publishes them to Selfrun's registry, and deploys the selected services.</p>
-        <p>One app can have a public frontend, a private API, and a worker. Update them separately, give staging its own environment, and attach an HTTPS domain to a public service. The dashboard shows deployment history and which services are running.</p>
-        <a href="#first-deploy">Deploy an app</a>
+    <section class="section" id="get-started">
+      <h2>Get started</h2>
+      <p class="section-intro">Bootstrap a control-plane VPS, connect the CLI, and deploy your first app. If your team already runs Selfrun, <a href="./downloads.html">download the CLI</a> and jump to <a href="#step-connect">step 2</a>.</p>
+
+      <div class="requirements">
+        <h3>Requirements</h3>
+        <ul class="req-list">
+          <li>OpenSSH on your workstation</li>
+          <li>A cloud provider account and API token</li>
+          <li>A domain where you can add DNS records</li>
+        </ul>
       </div>
-      <figure>
-        <a href="./media/services.png"><img src="./media/services.png" width="1440" height="850" alt="Selfrun dashboard showing public and private services, their addresses, and whether they are running" loading="lazy"></a>
-      </figure>
-    </section>
 
-    <section class="section" id="setup" aria-labelledby="setup-title">
-      <h2 id="setup-title">Set up Selfrun</h2>
-      <p class="intro">A <strong>Selfrun instance</strong> is your installation of Selfrun. Its dashboard, API, container registry, and deployment worker run together on one virtual private server (VPS). It has its own HTTPS dashboard address, such as <code>cloud.example.com</code>. It creates and manages separate VMs for app hosting in your Hetzner, DigitalOcean, or Vultr account. Your provider bills you for those resources.</p>
-      <p class="intro">If someone already runs Selfrun for your team, get the dashboard address and sign-in details from them and <a href="#cli-login">sign in from your terminal</a>.</p>
-
-      <ol class="setup-list">
-        <li id="self-host">
-          <h3>Install Selfrun on a VPS</h3>
-          <ol class="install-list">
-            <li><a href="./downloads.html">Download the CLI for your platform</a> or <a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md#publish-from-a-clone">build it from source</a>.</li>
-            <li>Run the setup wizard.<pre tabindex="0"><code>selfrun seed</code></pre></li>
-          </ol>
+      <ol class="steps">
+        <li class="step" id="step-seed">
+          <h3>1. Bootstrap your control plane</h3>
+          <p>The control plane runs your private cloud—it hosts the web console and API, executes deployments, and tracks your servers, domains, and secrets.</p>
+          <p><a href="./downloads.html">Download the CLI</a> (or <a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md#publish-from-a-clone">build from source</a>) and run the interactive setup:</p>
+          <pre role="region" aria-label="Bootstrap Selfrun" tabindex="0"><code>selfrun seed</code></pre>
+          <a class="seed-diagram" href="./media/selfrun-seed.svg">
+            <img src="./media/selfrun-seed.svg" width="880" height="84" loading="lazy" alt="Seed flow: run selfrun seed to pick a provider, size, and domain; provision a fresh VPS and verify SSH; start the control plane console and API; point DNS and claim your admin account at /setup.">
+          </a>
+          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md">Control-plane setup guide</a></p>
         </li>
 
-        <li id="cli-login">
-          <h3>Sign in from your terminal</h3>
-          <p>Use the CLI you set up above. If you’re joining an existing server, use the <a href="https://github.com/muniperez/selfrun/blob/main/docs/cli-distribution.md">CLI version your team provides</a>. Replace <code>cloud.example.com</code> with your dashboard hostname.</p>
-          <pre tabindex="0"><code>selfrun instance add work cloud.example.com
+        <li class="step" id="step-connect">
+          <h3>2. Sign in and create a server plan</h3>
+          <p>A server plan maps a cloud provider account, region, and machine size to a name like <code>small</code>. You can connect multiple provider accounts and define as many plans as you need.</p>
+          <p>Sign in from your terminal, then add a provider account and plan under <strong>Plans</strong> in the web console:</p>
+          <pre role="region" aria-label="Connect CLI and sign in" tabindex="0"><code>selfrun instance add prod cloud.example.com
 selfrun login</code></pre>
-          <p><code>work</code> is a name for this server on your computer. Complete sign-in in the browser, then return to your terminal.</p>
+          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/providers.md">Providers &amp; plans guide</a></p>
         </li>
 
-        <li id="first-deploy">
-          <h3>Deploy your first app</h3>
-          <p>In the dashboard, open <strong>Plans → Provider accounts</strong> and add your cloud account. Then choose <strong>Plans → Add plan</strong> and select a region and server size. You'll pick this plan when you create an app.</p>
-          <p>Open your app’s Git checkout with Docker and Buildx running. Use a supported Node.js, .NET, or Spring Boot service, or include a Dockerfile in each service folder. Run <code>selfrun init</code> to select or create an app, choose the folders and plan, and write <code>selfrun.yml</code>. Your first deployment can create a billable VPS under that plan.</p>
-          <pre tabindex="0"><code>selfrun init</code></pre>
-          <p>Before deploying, review <code>selfrun.yml</code>. Keep the app ID that <code>init</code> wrote and check each service’s folder, Dockerfile, port, and public access. Here is an example <code>services</code> section for a public frontend and a private API:</p>
-          <pre tabindex="0"><code>services:
-  web:
-    sourcePath: web
-    dockerfile: web/Dockerfile
-    port: 3000
-    public: true
-  api:
-    sourcePath: api
-    dockerfile: api/Dockerfile
-    port: 8080
-    public: false</code></pre>
-          <p>Deploy the configured services:</p>
-          <pre tabindex="0"><code>selfrun deploy</code></pre>
-          <p>For a public service, use the hostname under your configured app domain. With Cloudflare DNS management enabled, Selfrun creates the record. Otherwise open the run in <strong>Deployments</strong> and follow its DNS message: create an A record for the printed hostname pointing to the app VPS IP. After DNS resolves and deployment completes, open the public URL.</p>
-          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#create-a-deployment-config">Configure service folders, ports, and Dockerfiles</a></p>
+        <li class="step" id="step-deploy">
+          <h3>3. Deploy an app</h3>
+          <p>Apps are configured and deployed from the CLI. Selfrun detects your services, provisions a dedicated server using your chosen plan, sets up HTTPS, and prints the live URL.</p>
+          <p>In your project repository, generate <code>selfrun.yml</code> and deploy:</p>
+          <pre role="region" aria-label="Initialize and deploy an app" tabindex="0"><code>selfrun init
+selfrun deploy --build-mode source</code></pre>
+          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md">CLI &amp; config reference</a></p>
         </li>
-
-        <li id="manage">
-          <h3>Check and update your app</h3>
-          <ul class="manage-list">
-            <li><strong>Deployments</strong> shows whether a deploy is queued, running, or finished. Open a deployment to see its progress and logs.</li>
-            <li><strong>Apps → your app → Services</strong> shows which services are running and their addresses. Choose the environment first if you have more than one.</li>
-            <li><strong>Apps → your app → Logs</strong> shows runtime output when log collection is enabled. Set regular variables in <code>selfrun.yml</code> with <code>env</code>. Store secret values under <strong>Secrets</strong> and reference them with <code>secretEnv</code>.</li>
-            <li><strong>Apps → your app → Domains</strong> is where you add a hostname, verify it with DNS, and attach it to a public service.</li>
-            <li><strong>App settings</strong> has controls to delete an app or environment. Back up data before deleting it and confirm the VPS is gone in your provider console. Retained volumes can still incur charges.</li>
-          </ul>
-          <p>After changing code or configuration, run <code>selfrun deploy</code> again to update the changed services. Use <code>selfrun status --watch</code> to follow a deploy and <code>selfrun logs my-app</code> for runtime logs when log collection is enabled.</p>
-          <p><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#status-logs-and-apps">Deployment status and runtime logs</a></p>
-        </li>
-
       </ol>
     </section>
 
-    <section class="section" id="architecture" aria-labelledby="architecture-title">
-      <h2 id="architecture-title">What runs on each server</h2>
-      <p class="intro">The instance VPS hosts the dashboard, API, registry, and worker. PostgreSQL stores control-plane state, and OpenBao stores secrets. A separate app VPS runs your containers. OpenTelemetry log ingestion is optional.</p>
-      <figure class="diagram">
-        <a href="./media/selfrun-architecture.svg"><img src="./media/selfrun-architecture.svg" alt="The dashboard and CLI call the Selfrun API on the control plane. The worker deploys Docker services to app servers." width="1120" height="480" loading="lazy"></a>
-      </figure>
-      <ul class="projects" aria-label="Open-source components">
-        <li><a href="https://www.postgresql.org/"><img src="./media/postgresql.svg" alt="" width="28" height="28">PostgreSQL</a></li>
-        <li><a href="https://openbao.org/"><img src="./media/openbao.svg" alt="" width="28" height="28">OpenBao</a></li>
-        <li><a href="https://opentelemetry.io/"><img src="./media/opentelemetry.svg" alt="" width="28" height="28">OpenTelemetry</a></li>
-      </ul>
+    <section class="section" id="how-it-works">
+      <h2>How it works</h2>
+      <p class="section-intro">Host the control plane once on a small VPS. Every app environment runs on a dedicated server in your cloud account, managed from the web console or CLI.</p>
+
+      <div class="overview-grid">
+        <div class="topic">
+          <h3>Control plane &amp; server plans</h3>
+          <p>One VPS runs your dashboard, API, secrets, and deployment engine. Connect multiple cloud accounts across providers and define named plans (region and server size) so repositories never hardcode cloud credentials or machine types.</p>
+          <ul class="topic-links" role="list">
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md">Control-plane setup</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/providers.md">Providers &amp; plans</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/server-maintenance.md">Maintenance</a></li>
+          </ul>
+        </div>
+
+        <div class="topic">
+          <h3>Apps, environments &amp; domains</h3>
+          <p>Deploy public web apps, private internal APIs, and background workers together or redeploy one service at a time. Give staging, production, and Git branch previews separate servers with automatic HTTPS and custom domains.</p>
+          <ul class="topic-links" role="list">
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md">CLI &amp; <code>selfrun.yml</code></a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#named-application-environments">Environments</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#branch-deployments">Branch previews</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#service-subdomains">Domains</a></li>
+          </ul>
+        </div>
+
+        <div class="topic">
+          <h3>Databases, volumes &amp; secrets</h3>
+          <p>Run a database alongside an app or provision dedicated database servers with scheduled encrypted backups and restore. Attach expandable persistent volumes for files and inject scoped secrets into services at runtime.</p>
+          <ul class="topic-links" role="list">
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/specs/database-management-and-backups.md">Databases &amp; backups</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/durable-storage.md">Durable storage</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/cli.md#runtime-environment-variables-and-secrets">Secrets</a></li>
+          </ul>
+        </div>
+
+        <div class="topic">
+          <h3>CLI, CI &amp; coding agents</h3>
+          <p>Trigger deployments from your terminal, CI pipelines, or a connected Git repository. Because deploys, health checks, and runtime logs all run through the CLI, coding agents can deploy changes, inspect failures, and verify live URLs directly.</p>
+          <ul class="topic-links" role="list">
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/github-actions.md">CI workflows</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/github-app.md">Git integration</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/agent-workflows.md">Agent workflows</a></li>
+            <li><a href="https://github.com/muniperez/selfrun/blob/main/docs/api.md">HTTP API</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="more-docs"><a href="https://github.com/muniperez/selfrun/tree/main/docs">Browse all documentation on GitHub →</a></p>
     </section>
   </main>
 
-  <footer class="frame footer">
-    <span>Selfrun</span>
-    <a href="https://github.com/muniperez/selfrun">Source and documentation</a>
+  <footer class="site-footer">
+    <div class="frame footer-inner">
+      <span>Selfrun · <a href="https://github.com/muniperez/selfrun/blob/main/docs/licensing.md">MPL-2.0 (CLI) &amp; AGPL-3.0-only (Server)</a></span>
+      <ul class="footer-links" role="list">
+        <li><a href="./downloads.html">Downloads</a></li>
+        <li><a href="https://github.com/muniperez/selfrun/tree/main/docs">Docs</a></li>
+        <li><a href="https://github.com/muniperez/selfrun">GitHub</a></li>
+        <li><a href="https://github.com/muniperez/selfrun/blob/main/SECURITY.md">Security</a></li>
+      </ul>
+    </div>
   </footer>
 </body>
 </html>

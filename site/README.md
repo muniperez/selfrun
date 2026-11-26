@@ -15,9 +15,7 @@ site/build.sh .local/artifacts/pages-preview/selfrun
 python3 -m http.server 8248 --bind 127.0.0.1 --directory .local/artifacts/pages-preview/selfrun
 ```
 
-Open <http://127.0.0.1:8248/>. Use a fresh output directory for each build. The
-project marks come from the artwork sources credited in the
-[root README](../README.md#open-source-components).
+Open <http://127.0.0.1:8248/>. Use a fresh output directory for each build.
 
 ## Publish
 

@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="84" viewBox="0 0 880 84" role="img" aria-labelledby="seed-title seed-desc">
+  <title id="seed-title">How selfrun seed works</title>
+  <desc id="seed-desc">Running selfrun seed lets you pick a provider, size, and domain, provisions a fresh VPS in your cloud account, starts the control plane, and prints the DNS records and /setup URL.</desc>
+  <defs>
+    <marker id="seed-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1L9 5L0 9Z" fill="#737373"/>
+    </marker>
+  </defs>
+  <style>
+    text {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      fill: #171717;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .title {
+      font-size: 13.5px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+      fill: #171717;
+    }
+    .desc {
+      font-size: 12px;
+      fill: #525252;
+    }
+    .box {
+      fill: #ffffff;
+      stroke: #d4d4d4;
+      stroke-width: 1.25;
+    }
+    .connector {
+      fill: none;
+      stroke: #737373;
+      stroke-width: 1.35;
+      stroke-linecap: round;
+      marker-end: url(#seed-arrow);
+    }
+  </style>
+
+  <rect width="880" height="84" fill="#fafafa"/>
+
+  <g>
+    <rect x="2" y="6" width="198" height="72" rx="7" class="box"/>
+    <text x="18" y="34" class="title mono">selfrun seed</text>
+    <text x="18" y="56" class="desc">Pick provider, size &amp; domain</text>
+  </g>
+
+  <path d="M200 42H226" class="connector"/>
+
+  <g>
+    <rect x="228" y="6" width="198" height="72" rx="7" class="box"/>
+    <text x="244" y="34" class="title">Provision VPS</text>
+    <text x="244" y="56" class="desc">Create VM &amp; verify SSH</text>
+  </g>
+
+  <path d="M426 42H452" class="connector"/>
+
+  <g>
+    <rect x="454" y="6" width="198" height="72" rx="7" class="box"/>
+    <text x="470" y="34" class="title">Start control plane</text>
+    <text x="470" y="56" class="desc">Launch console &amp; API</text>
+  </g>
+
+  <path d="M652 42H678" class="connector"/>
+
+  <g>
+    <rect x="680" y="6" width="198" height="72" rx="7" class="box"/>
+    <text x="696" y="34" class="title">Point DNS &amp; claim</text>
+    <text x="696" y="56" class="desc">HTTPS &amp; <tspan class="mono" fill="#171717">/setup</tspan> in browser</text>
+  </g>
+</svg>

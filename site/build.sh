@@ -10,10 +10,7 @@ install -m 644 "$root/site/public/"{index.html,downloads.html,styles.css,mark.sv
 mkdir "$output/media"
 assets=(
     selfrun-architecture.svg
-    projects/openbao.svg
-    projects/opentelemetry.svg
-    projects/postgresql.svg
-    screenshots/services.png
+    selfrun-seed.svg
 )
 for asset in "${assets[@]}"; do
     install -m 644 "$root/docs/assets/$asset" "$output/media/"
