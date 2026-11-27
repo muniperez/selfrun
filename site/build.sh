@@ -8,10 +8,4 @@ mkdir -p "$(dirname "$output")"
 mkdir "$output"
 install -m 644 "$root/site/public/"{index.html,downloads.html,styles.css,mark.svg} "$output/"
 mkdir "$output/media"
-assets=(
-    selfrun-architecture.svg
-    selfrun-seed.svg
-)
-for asset in "${assets[@]}"; do
-    install -m 644 "$root/docs/assets/$asset" "$output/media/"
-done
+install -m 644 "$root/docs/assets/screenshots/console.png" "$output/media/"

@@ -13,9 +13,13 @@
   <a class="skip-link visually-hidden" href="#downloads-title">Skip to content</a>
 
   <header class="site-header">
-    <div class="frame header-inner">
+    <div class="container header-inner">
       <a class="brand" href="./">
-        <img src="./mark.svg" alt="" width="28" height="28">
+        <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="5" fill="#f2f2f3"/>
+          <path d="M8 7h16v4H12v2.5h5L13.5 17H8V7z" fill="#0b0b0c"/>
+          <path d="M24 25H8v-4h12v-2.5h-5L18.5 15H24v10z" fill="#0b0b0c"/>
+        </svg>
         <span>Selfrun</span>
       </a>
       <nav aria-label="Primary">
@@ -30,14 +34,12 @@
     </div>
   </header>
 
-  <main class="frame" id="main">
-    <section class="hero">
+  <main class="container" id="main">
+    <section class="downloads-hero">
       <h1 id="downloads-title" tabindex="-1">Download the CLI</h1>
-      <p class="hero-lead">Standalone test builds for macOS, Windows, and Linux—no Git, Python, or .NET SDK required.</p>
+      <p class="downloads-lead">Standalone test builds for macOS, Windows, and Linux—no Git, Python, or .NET SDK required.</p>
 
-      <div class="callout">
-        <strong>Note:</strong> Unsigned test builds with embedded server source for <code>selfrun seed</code>.
-      </div>
+      <p class="downloads-callout"><strong>Note:</strong> Unsigned test builds with embedded server source for <code>selfrun seed</code>.</p>
 
       <ul class="download-list" role="list">
         <li>
@@ -70,16 +72,23 @@
     <section class="section">
       <h2>Install</h2>
       <p class="section-intro">Extract the archive, put <code>selfrun</code> (<code>selfrun.exe</code> on Windows) on your <code>PATH</code>, then continue with <a href="./#step-seed">step 1 (bootstrap)</a> or <a href="./#step-connect">step 2 (sign in)</a>.</p>
-      <pre role="region" aria-label="Verify the installed CLI" tabindex="0"><code>selfrun --version
-selfrun seed</code></pre>
+
+      <div class="term-tile downloads-term">
+        <div class="term-bar" aria-hidden="true">
+          <span class="term-dots"><i></i><i></i><i></i></span>
+          <span class="term-label">~</span>
+        </div>
+        <pre role="region" aria-label="Verify the installed CLI" tabindex="0"><code><span class="prompt">$</span> selfrun --version
+<span class="prompt">$</span> selfrun seed</code></pre>
+      </div>
 
       <h3 class="subhead">Build from source</h3>
-      <p class="section-intro">Prefer building locally with Git and the .NET 10 SDK? See <a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md#publish-from-a-clone">publish from a clone</a> and <a href="https://github.com/muniperez/selfrun/blob/main/docs/cli-distribution.md">CLI distribution</a>.</p>
+      <p class="downloads-note">Prefer building locally with Git and the .NET 10 SDK? See <a href="https://github.com/muniperez/selfrun/blob/main/docs/stateless-seed.md#publish-from-a-clone">publish from a clone</a> and <a href="https://github.com/muniperez/selfrun/blob/main/docs/cli-distribution.md">CLI distribution</a>.</p>
     </section>
   </main>
 
   <footer class="site-footer">
-    <div class="frame footer-inner">
+    <div class="container footer-inner">
       <span>Selfrun · <a href="https://github.com/muniperez/selfrun/blob/main/docs/licensing.md">MPL-2.0 (CLI) &amp; AGPL-3.0-only (Server)</a></span>
       <ul class="footer-links" role="list">
         <li><a href="./">Home</a></li>
