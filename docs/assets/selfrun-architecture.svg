@@ -1,49 +1,114 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="480" viewBox="0 0 1120 480" role="img" aria-labelledby="title description">
-  <title id="title">Selfrun components and workflows</title>
-  <desc id="description">Operators and agents use the dashboard or CLI to reach the self-hosted control plane. The worker provisions runtime servers and deploys application services. Service users connect through HTTPS.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="192" viewBox="0 0 980 192" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Selfrun platform overview</title>
+  <desc id="arch-desc">From the CLI, web console, or CI, you connect over HTTPS to a single Control Plane VPS hosted once, which provisions isolated App VPSs in your cloud account—one per environment—with automatic HTTPS.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0L10 5L0 10Z" fill="#51637d"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 1L9 5L0 9Z" fill="#404040"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 1L9 5L0 9Z" fill="#737373"/>
     </marker>
   </defs>
   <style>
-    text { font-family: system-ui, sans-serif; fill: #152135; }
-    .heading { font-size: 22px; font-weight: 650; }
-    .label { font-size: 16px; }
-    .small { font-size: 15px; fill: #40536c; }
-    .boundary { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1.5; }
-    .card { fill: #fff; stroke: #d2dbe8; stroke-width: 1.5; }
-    .connector { fill: none; stroke: #51637d; stroke-width: 1.5; marker-end: url(#arrow); }
+    text {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      fill: #171717;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .meta {
+      font-size: 11px;
+      font-weight: 600;
+      fill: #737373;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      fill: #171717;
+    }
+    .item {
+      font-size: 13px;
+      fill: #404040;
+    }
+    .edge {
+      font-size: 11.5px;
+      font-weight: 600;
+      fill: #404040;
+    }
+    .edge-muted {
+      font-size: 11px;
+      fill: #737373;
+    }
+    .node {
+      fill: #ffffff;
+      stroke: #d4d4d4;
+      stroke-width: 1.25;
+    }
+    .node-stack {
+      fill: #f3f3f3;
+      stroke: #dcdcdc;
+      stroke-width: 1.25;
+    }
+    .solid {
+      fill: none;
+      stroke: #404040;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      marker-end: url(#arrow);
+    }
+    .dashed {
+      fill: none;
+      stroke: #737373;
+      stroke-width: 1.35;
+      stroke-dasharray: 4 4;
+      stroke-linecap: round;
+      marker-end: url(#arrow-muted);
+    }
   </style>
-  <rect x="1" y="1" width="1118" height="478" rx="19" fill="#fff" stroke="#d2dbe8" stroke-width="2"/>
-  <rect x="40" y="29" width="222" height="124" rx="11" class="card"/>
-  <text x="60" y="65" class="heading">Operator or agent</text>
-  <text x="60" y="99" class="label">Browser dashboard</text>
-  <text x="60" y="125" class="label">Selfrun CLI</text>
 
-  <rect x="315" y="29" width="765" height="172" rx="11" class="boundary"/>
-  <text x="337" y="62" class="heading">Control plane VPS</text>
-  <text x="337" y="87" class="small">Caddy terminates HTTPS for the dashboard and API</text>
-  <rect x="337" y="107" width="219" height="72" rx="8" class="card"/>
-  <text x="353" y="137" class="label">API + deployment worker</text>
-  <text x="353" y="161" class="small">Jobs, status and provisioning</text>
-  <rect x="570" y="107" width="235" height="72" rx="8" class="card"/>
-  <text x="586" y="137" class="label">PostgreSQL + OpenBao</text>
-  <text x="586" y="161" class="small">State and secrets</text>
-  <rect x="819" y="107" width="239" height="72" rx="8" class="card"/>
-  <text x="835" y="137" class="label">Ory Kratos</text>
-  <text x="835" y="161" class="small">Operator identity</text>
-  <path d="M263 92H313" class="connector"/>
+  <rect width="980" height="192" rx="8" fill="#fafafa"/>
 
-  <path d="M446 201V263" class="connector"/>
-  <rect x="383" y="219" width="125" height="28" rx="5" fill="#fff"/>
-  <text x="395" y="239" class="small">Deploy services</text>
+  <!-- 1. Workflow -->
+  <g>
+    <rect x="4" y="14" width="220" height="160" rx="8" class="node"/>
+    <text x="24" y="40" class="meta">You &amp; automation</text>
+    <text x="24" y="63" class="title">Workflow</text>
+    <text x="24" y="95" class="item"><tspan class="mono" fill="#171717">selfrun</tspan> CLI</text>
+    <text x="24" y="120" class="item">Web console</text>
+    <text x="24" y="145" class="item">CI &amp; coding agents</text>
+  </g>
 
-  <rect x="190" y="265" width="512" height="125" rx="11" class="boundary"/>
-  <text x="211" y="302" class="heading">Application runtime VPS</text>
-  <text x="211" y="333" class="label">Docker runs public and private services</text>
-  <text x="211" y="360" class="small">Caddy routes public service domains over HTTPS</text>
+  <!-- Arrow 1 -->
+  <text x="268" y="84" text-anchor="middle" class="edge">HTTPS</text>
+  <path d="M224 94H310" class="solid"/>
 
-  <path d="M446 423V392" class="connector"/>
-  <text x="446" y="449" class="label" text-anchor="middle">App visitors connect over HTTPS</text>
+  <!-- 2. Control Plane -->
+  <g>
+    <rect x="312" y="14" width="284" height="160" rx="8" class="node"/>
+    <text x="332" y="40" class="meta">1 VPS · hosted once</text>
+    <text x="332" y="63" class="title">Control Plane VPS</text>
+    <text x="332" y="95" class="item">Dashboard, API &amp; access control</text>
+    <text x="332" y="120" class="item">Builds, deployments &amp; secrets</text>
+    <text x="332" y="145" class="item">Provisions VMs in your cloud</text>
+  </g>
+
+  <!-- Arrow 2 -->
+  <text x="644" y="70" text-anchor="middle" class="edge">Deploys</text>
+  <path d="M596 80H690" class="solid"/>
+
+  <path d="M692 114H598" class="dashed"/>
+  <text x="644" y="133" text-anchor="middle" class="edge-muted">Health &amp; logs</text>
+
+  <!-- 3. Deployed Apps (stacked slightly to show 1 VPS per env) -->
+  <g>
+    <rect x="700" y="20" width="276" height="160" rx="8" class="node-stack"/>
+    <rect x="692" y="14" width="276" height="160" rx="8" class="node"/>
+    <text x="712" y="40" class="meta">Your cloud · 1 VPS per env</text>
+    <text x="712" y="63" class="title">Deployed Apps</text>
+    <text x="712" y="95" class="item">Web apps, private APIs &amp; workers</text>
+    <text x="712" y="120" class="item">Databases &amp; persistent storage</text>
+    <text x="712" y="145" class="item">Automatic HTTPS &amp; custom domains</text>
+  </g>
 </svg>
